@@ -8,7 +8,7 @@ import {
 // ─────────────────────────────────────────────
 // Word export
 // ─────────────────────────────────────────────
-async function exportToDocx({ sections, content, info, displayOrder }) {
+async function exportToDocx({ content, info, displayOrder }) {
   if (!window.docx) {
     await new Promise((resolve, reject) => {
       const s = document.createElement("script");
@@ -17,9 +17,10 @@ async function exportToDocx({ sections, content, info, displayOrder }) {
       document.head.appendChild(s);
     });
   }
-  const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel } = window.docx;
+  const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel, TableOfContents } = window.docx;
   const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
   const L = 1701, R = 851, T = 1134, B = 1134, INDENT = 709, LINE = 360;
+  const LINE_SINGLE = 240;
 
   function cleanMarkdown(line) {
     return line.replace(/^#{1,6}\s+/, "").replace(/\*\*(.+?)\*\*/g, "$1")
@@ -72,8 +73,39 @@ async function exportToDocx({ sections, content, info, displayOrder }) {
     return result;
   }
 
+  function sourcePara(text) {
+    const cleaned = text.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1").trim();
+    if (!cleaned) return null;
+    return new Paragraph({
+      spacing: { line: LINE, lineRule: "auto", before: 0, after: Math.round(LINE * 0.3) },
+      alignment: AlignmentType.BOTH,
+      indent: { left: INDENT, hanging: INDENT },
+      children: [new TextRun({ text: cleaned, font: FONT, size: SIZE, color: "000000" })],
+    });
+  }
+
+
   const children = [];
-  let lastChapter = null; // відстежуємо поточний розділ
+
+  // ── Сторінка 1: порожня ──
+  children.push(new Paragraph({ spacing: { before: 0, after: 0, line: LINE, lineRule: "auto" }, children: [] }));
+
+  // ── Сторінка 2: ЗМІСТ (автоматичний Word TOC) ──
+  children.push(new Paragraph({
+    pageBreakBefore: true,
+    alignment: AlignmentType.CENTER,
+    spacing: { line: LINE_SINGLE, lineRule: "auto", before: 0, after: LINE_SINGLE * 2 },
+    children: [new TextRun({ text: "ЗМІСТ", font: FONT, size: SIZE, bold: true, color: "000000" })],
+  }));
+  children.push(new TableOfContents("ЗМІСТ", {
+    hyperlink: true,
+    headingStyleRange: "1-2",
+    b: false,
+  }));
+
+  // ── Сторінки 3+: основний текст ──
+  let lastChapter = null;
+  let firstMainSec = true;
 
   for (let i = 0; i < displayOrder.length; i++) {
     const sec = displayOrder[i]; const txt = content[sec.id];
@@ -83,22 +115,29 @@ async function exportToDocx({ sections, content, info, displayOrder }) {
     const thisChapter = isSubsection ? sec.id.split(".")[0] : null;
 
     // Визначаємо чи потрібен page break
-    let needsPageBreak = i > 0;
-    if (isSubsection) {
+    let needsPageBreak = true;
+    if (firstMainSec) { needsPageBreak = true; firstMainSec = false; }
+    else if (isSubsection) {
       const prevSec = displayOrder.slice(0, i).reverse().find(s => content[s.id]);
       const prevIsSubsection = prevSec && !["intro", "conclusions", "sources"].includes(prevSec.type) && /^\d+\.\d+/.test(prevSec.id || "");
       needsPageBreak = !prevIsSubsection || thisChapter !== prevSec?.id?.split(".")?.[0];
     }
-    if (needsPageBreak && i > 0) children.push(new Paragraph({ pageBreakBefore: true, spacing: { before: 0, after: 0, line: LINE, lineRule: "auto" }, children: [] }));
+    if (needsPageBreak) children.push(new Paragraph({ pageBreakBefore: true, spacing: { before: 0, after: 0, line: LINE, lineRule: "auto" }, children: [] }));
+
+    if (sec.type === "sources") {
+      children.push(heading1(sec.label));
+      txt.split("\n").forEach(line => {
+        const p = sourcePara(line);
+        if (p) children.push(p);
+      });
+      continue;
+    }
 
     if (!isSubsection) {
-      // Вступ, Висновки, Список джерел
       children.push(heading1(sec.label));
     } else {
-      // Підрозділ — спочатку перевіряємо чи треба заголовок розділу
       if (thisChapter !== lastChapter) {
         lastChapter = thisChapter;
-        // Формуємо назву розділу з sectionTitle
         const rawTitle = sec.sectionTitle || `РОЗДІЛ ${thisChapter}`;
         const alreadyHasPrefix = rawTitle.trim().toUpperCase().startsWith(`РОЗДІЛ ${thisChapter}`);
         const chapterLabel = alreadyHasPrefix ? rawTitle.trim() : `РОЗДІЛ ${thisChapter}. ${rawTitle}`;
@@ -110,6 +149,7 @@ async function exportToDocx({ sections, content, info, displayOrder }) {
   }
 
   const doc = new Document({
+    features: { updateFields: true },
     styles: {
       default: { document: { run: { font: FONT, size: SIZE, color: "000000" }, paragraph: { spacing: { line: LINE, lineRule: "auto" } } } },
       paragraphStyles: [
@@ -268,13 +308,22 @@ ${langLine}
 ${forbiddenWords}
 
 ## СТИЛЬ ПИСЬМА
-Починай кожен підрозділ із сильного вступного речення що одразу вводить у тему.
+Починай кожен підрозділ із захоплюючого гачка, що одразу вводить у тему.
 Пиши короткими, чіткими реченнями. Використовуй активний стан дієслів.
-Уникай крапок з комою та надмірно довгих речень. Чергуй довжину речень для природного ритму читання.
-Додавай короткі конкретні приклади для пояснення теоретичних положень.
-Використовуй природні сполучники: "тож", "отже", "водночас", "при цьому".
-Кожен підрозділ завершується логічно — повним реченням та підсумковою думкою. Не обривай текст.
-Зберігай теплий але академічний тон. Науковий зміст — пріоритет.`;
+Замінюй жаргон і складні терміни на повсякденні слова. Використовуй мінімум скорочень.
+Уникай крапок з комою та надмірно довгих речень. Розбивай довгі речення на менші шматки.
+Чергуй довжину речень для природного ритму читання.
+Додавай короткі, зрозумілі приклади для пояснення теоретичних положень.
+Використовуй неформальні сполучники: "тож", "тоді", "отже", "водночас".
+Використовуй окремі короткі фрагменти, коли це здається природним.
+Вставляй прості метафори для ясності там, де це доречно.
+Перетворюй категоричні твердження на м'які пропозиції. Вставляй короткі переходи між абзацами.
+Використовуй фразові дієслова (наприклад, "розпочати", "виявити", "розглянути").
+Зменшуй драматичну терміновість і пафос.
+Зберігай усі ключові факти недоторканими.
+Прийми теплий, розмовний але академічний тон. Малюй яскраві образи простою мовою.
+Зберігай оригінальну структуру підрозділу, але послаблюй формальність.
+Кожен підрозділ завершується логічно, повним реченням та підсумковою думкою. Не обривай текст.`;
 }
 
 const FIELD_LABELS = {
@@ -402,17 +451,17 @@ function buildPreviewStructure(totalPages) {
   ];
 }
 
-function calcSourceDist(secs) {
+function calcSourceDist(secs, overallPages) {
   const mainSecs = secs.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
-  const totalPages = mainSecs.reduce((sum, s) => sum + (s.pages || 0), 0);
-  if (!totalPages) return { dist: {}, total: 0 };
-  let multiplier = totalPages <= 10 ? 1.0 : totalPages <= 30 ? 1.5 : 2.0;
-  const total = Math.max(mainSecs.length * 2, Math.round(totalPages * multiplier));
+  const secPagesSum = mainSecs.reduce((sum, s) => sum + (s.pages || 0), 0);
+  if (!secPagesSum) return { dist: {}, total: 0 };
+  // К-сть джерел = к-сті сторінок основного тексту роботи
+  const total = Math.max(mainSecs.length * 2, overallPages || secPagesSum);
   const minPerSec = Math.max(1, Math.floor(total / mainSecs.length / 2));
   const dist = {}; let assigned = 0;
   mainSecs.forEach((s, i) => {
     if (i === mainSecs.length - 1) { dist[s.id] = Math.max(minPerSec, total - assigned); }
-    else { const share = Math.max(minPerSec, Math.round((s.pages / totalPages) * total)); dist[s.id] = share; assigned += share; }
+    else { const share = Math.max(minPerSec, Math.round((s.pages / secPagesSum) * total)); dist[s.id] = share; assigned += share; }
   });
   return { dist, total: Object.values(dist).reduce((a, b) => a + b, 0) };
 }
@@ -430,14 +479,26 @@ function SpinDot({ light }) {
 function Shimmer({ width = "100%", height = 13 }) {
   return <div style={{ width, height, borderRadius: 4, background: "linear-gradient(90deg,#e8e4da 25%,#f5f2ea 50%,#e8e4da 75%)", backgroundSize: "200% 100%", animation: "shimmer 1.4s infinite" }} />;
 }
-function StagePills({ stage }) {
+function StagePills({ stage, maxStageIdx, onNavigate }) {
   const cur = STAGE_KEYS.indexOf(stage);
+  const maxReached = maxStageIdx ?? cur;
   return <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-    {STAGES.map((l, i) => (
-      <div key={i} style={{ padding: "4px 12px", borderRadius: 20, fontSize: 11, letterSpacing: "1px", background: i === cur ? "#e8ff47" : i < cur ? "#1e2a00" : "transparent", color: i === cur ? "#111" : i < cur ? "#6a9000" : "#555", border: `1px solid ${i === cur ? "#e8ff47" : i < cur ? "#3a5000" : "#444"}` }}>
-        {i < cur ? "✓ " : ""}{l}
-      </div>
-    ))}
+    {STAGES.map((l, i) => {
+      const isClickable = i <= maxReached && onNavigate;
+      return (
+        <div key={i}
+          onClick={isClickable ? () => onNavigate(STAGE_KEYS[i]) : undefined}
+          style={{
+            padding: "4px 12px", borderRadius: 20, fontSize: 11, letterSpacing: "1px",
+            background: i === cur ? "#e8ff47" : i < cur ? "#1e2a00" : i <= maxReached ? "#2a3a00" : "transparent",
+            color: i === cur ? "#111" : i < cur ? "#6a9000" : i <= maxReached ? "#8aaa30" : "#555",
+            border: `1px solid ${i === cur ? "#e8ff47" : i < cur ? "#3a5000" : i <= maxReached ? "#4a6a00" : "#444"}`,
+            cursor: isClickable ? "pointer" : "default",
+          }}>
+          {i < cur ? "✓ " : i > cur && i <= maxReached ? "↩ " : ""}{l}
+        </div>
+      );
+    })}
   </div>;
 }
 function FieldBox({ label, children }) {
@@ -528,6 +589,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const { user } = useAuth();
 
   const [stage, setStage] = useState("input");
+  const [maxStageIdx, setMaxStageIdx] = useState(0);
   const [tplText, setTplText] = useState("");
   const [comment, setComment] = useState("");
   const [clientPlan, setClientPlan] = useState("");
@@ -585,14 +647,14 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
           if (d.sections?.length) {
             setSections(d.sections);
             setPlanDisplay(buildPlanText(d.sections));
-            const { dist, total } = calcSourceDist(d.sections);
+            const { dist, total } = calcSourceDist(d.sections, parsePagesAvg(d.info?.pages));
             setSourceDist(dist); setSourceTotal(total);
           }
           if (d.methodInfo) setMethodInfo(d.methodInfo);
           if (d.content) setContent(d.content);
           if (d.citInputs) setCitInputs(d.citInputs);
           if (d.refList) setRefList(d.refList);
-          if (d.stage) setStage(d.stage);
+          if (d.stage) { setStage(d.stage); setMaxStageIdx(Math.max(0, STAGE_KEYS.indexOf(d.stage))); }
           if (d.genIdx !== undefined) setGenIdx(d.genIdx);
         }
       } catch (e) { console.error("Load error:", e); }
@@ -600,6 +662,12 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     };
     load();
   }, [orderId, user]);
+
+  // Оновлюємо maxStageIdx коли просуваємось вперед
+  useEffect(() => {
+    const idx = STAGE_KEYS.indexOf(stage);
+    if (idx >= 0) setMaxStageIdx(prev => Math.max(prev, idx));
+  }, [stage]);
 
   // ── Збереження в Firestore ──
   const saveToFirestore = async (patch) => {
@@ -663,7 +731,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
 {
   "totalPages": 30,
   "chaptersCount": 2,
-  "subsectionsPerChapter": 3,
+  "subsectionsPerChapter": 2,
   "hasChapterConclusions": true,
   "chapterTypes": ["theory","analysis"],
   "exampleTOC": "ВСТУП\nРОЗДІЛ 1. Назва\n1.1 Підрозділ\nВисновки до Розділу 1\nРОЗДІЛ 2...",
@@ -698,6 +766,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
 Правила:
 - totalPages: загальний обсяг роботи в сторінках (число, не рахуючи додатки і список джерел)
 - chaptersCount: к-сть розділів (null якщо не вказано)
+- subsectionsPerChapter: порахуй к-сть підрозділів в одному розділі з exampleTOC (null якщо не вказано)
 - hasChapterConclusions: true ТІЛЬКИ якщо методичка явно вимагає висновки до кожного розділу
 - introComponents: точний перелік елементів вступу згідно методички
 - sourcesStyle: "APA", "ДСТУ 8302:2015", "MLA" або інший — точно як у методичці
@@ -801,7 +870,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     const finalizeSections = async (secs) => {
       const withPrompts = secs.map(s => ({ ...s, prompts: s.type === "sources" ? 0 : Math.max(1, Math.ceil((s.pages || 1) / 3)) }));
       setSections(withPrompts); setPlanDisplay(buildPlanText(withPrompts));
-      const { dist, total } = calcSourceDist(withPrompts);
+      const { dist, total } = calcSourceDist(withPrompts, parsePagesAvg(d?.pages));
       setSourceDist(dist); setSourceTotal(total);
       setInfo(p => p ? { ...p, sourceCount: String(total) } : p);
       await saveToFirestore({ sections: withPrompts, stage: "plan", status: "plan_ready", info: { ...d, sourceCount: String(total) } });
@@ -818,7 +887,11 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
       const chapCount = methodInfo.chaptersCount || (totalPages >= 40 ? 3 : 2);
       const hasConcl = methodInfo.hasChapterConclusions || false;
       const chTypes = methodInfo.chapterTypes?.length ? methodInfo.chapterTypes : ["theory", "analysis", "recommendations"].slice(0, chapCount);
-      const subsCount = methodInfo.subsectionsPerChapter || 3;
+      // Якщо не витягнулось — рахуємо з exampleTOC (підрозділи виду "1.1", "1.2" тощо)
+      const subsFromTOC = methodInfo.exampleTOC
+        ? (methodInfo.exampleTOC.match(/^\s*1\.\d+/gm) || []).length || null
+        : null;
+      const subsCount = methodInfo.subsectionsPerChapter || subsFromTOC || 3;
 
       const planPrompt = `Склади план ${d.type} на тему: "${d.topic}". Галузь: ${d.subject}. Обсяг: ${totalPages} стор.
 
@@ -877,7 +950,11 @@ chapter_conclusion id формат: "1.conclusions", "2.conclusions" тощо.
     }
   };
 
-  const startGen = () => { setContent({}); setGenIdx(0); setPaused(false); setStage("writing"); };
+  const startGen = () => {
+    const ORDER = ["theory", "analysis", "recommendations", "chapter_conclusion", "intro", "conclusions", "sources"];
+    setSections(prev => [...prev].sort((a, b) => ORDER.indexOf(a.type) - ORDER.indexOf(b.type)));
+    setContent({}); setGenIdx(0); setPaused(false); setStage("writing");
+  };
 
   // ── Генерація тексту ──
   useEffect(() => {
@@ -1215,16 +1292,16 @@ ${paragraphs.join("\n")}`;
       const batchPrompt = `Визнач в яких абзацах яке джерело доречне. Стиль: ${sourcesStyle}.
 
 ПРАВИЛА:
-1. Кожне джерело ставити МАКСИМУМ 2-3 рази на весь підрозділ, не в кожному абзаці.
-2. Якщо на підрозділ є тільки 1 джерело — ставити його не більше 2-3 разів у найбільш доречних місцях.
+1. Кожне джерело ставити МАКСИМУМ 2 рази на весь текст роботи — враховуй ВСІ підрозділи разом.
+2. Не ставити одне джерело підряд у кількох абзацах поспіль.
 3. Посилання ставити лише там де абзац ПРЯМО спирається на це джерело (визначення, факт, цитата).
-4. Не ставити одне джерело підряд у кількох абзацах поспіль.
+4. Розподіляй джерела рівномірно між підрозділами — не концентруй всі в одному.
 5. Формат відповіді — JSON де значення це НОМЕР джерела (ціле число), а не текст посилання.
 
 ${secsSummary}
 
 Поверни ТІЛЬКИ JSON (без markdown):
-{"citations":{"1.1":{"0":1,"3":1},"1.2":{"1":2,"5":2}}}
+{"citations":{"1.1":{"0":1,"3":2},"1.2":{"1":3,"5":4}}}
 де ключ підрозділу — id, ключ абзацу — індекс (0-based), значення — номер джерела (ціле число).`;
 
       try {
@@ -1265,7 +1342,7 @@ ${secsSummary}
     const accessDate = `${String(today.getDate()).padStart(2, "0")}.${String(today.getMonth() + 1).padStart(2, "0")}.${today.getFullYear()}`;
     const sourcesOrder = methodInfo?.sourcesOrder === "alphabetical" ? "Список відсортований за алфавітом." : "Список у порядку першої появи у тексті.";
     const sourcesGrouping = methodInfo?.sourcesGrouping ? `Групування: ${methodInfo.sourcesGrouping}.` : "";
-    const fmtPrompt = `Оформ список джерел відповідно до стилю ${sourcesStyle}. ${sourcesOrder} ${sourcesGrouping} Збережи номери. Поверни ТІЛЬКИ список без заголовка.\nСьогодні: ${accessDate}. Для онлайн-джерел додай "(дата звернення: ${accessDate})".\n\n${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
+    const fmtPrompt = `Оформ список джерел відповідно до стилю ${sourcesStyle}. ${sourcesOrder} ${sourcesGrouping} Збережи номери. Поверни ТІЛЬКИ список без заголовка.\nСьогодні: ${accessDate}. Для онлайн-джерел додай "URL: [посилання] (дата звернення: ${accessDate})". НЕ використовуй "[Електронний ресурс]" — замість нього завжди пиши URL.\n\n${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
     let fmtResult;
     try {
       fmtResult = await callClaude([{ role: "user", content: fmtPrompt }], null,
@@ -1349,7 +1426,7 @@ ${secsSummary}
         {info?.topic && <div style={{ fontSize: 12, color: "#666", marginLeft: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 300 }}>{info.topic}</div>}
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
           <SaveIndicator saving={saving} saved={saved} />
-          <StagePills stage={stage} />
+          <StagePills stage={stage} maxStageIdx={maxStageIdx} onNavigate={running ? null : (s) => setStage(s === "input" && info ? "parsed" : s)} />
         </div>
       </div>
 
@@ -1378,7 +1455,15 @@ ${secsSummary}
                 <DropZone fileLabel={fileLabel} onFile={handleFile} />
               </FieldBox>
             </div>
-            <PrimaryBtn onClick={doAnalyze} disabled={!tplText.trim()} loading={running} msg={loadMsg} label="Аналізувати →" />
+            <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+              <PrimaryBtn onClick={doAnalyze} disabled={!tplText.trim()} loading={running} msg={loadMsg} label="Аналізувати →" />
+              {info && !running && (
+                <button onClick={() => setStage("parsed")}
+                  style={{ background: "transparent", border: "1.5px solid #555", color: "#555", borderRadius: 8, padding: "11px 22px", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+                  Продовжити без повторного аналізу →
+                </button>
+              )}
+            </div>
           </div>
         )}
 
@@ -1643,9 +1728,11 @@ ${secsSummary}
                         </div>
                       )}
                       <div style={{ fontSize: 11, color: "#888", letterSpacing: "1px", textTransform: "uppercase", marginBottom: 5 }}>Вставте джерела (кожне з нового рядка):</div>
-                      <textarea value={citInputs[sec.id] || ""} onChange={e => setCitInputs(p => ({ ...p, [sec.id]: e.target.value }))}
+                      <textarea value={citInputs[sec.id] || ""}
+                        onChange={e => { setCitInputs(p => ({ ...p, [sec.id]: e.target.value })); e.target.style.height = "auto"; e.target.style.height = e.target.scrollHeight + "px"; }}
+                        onFocus={e => { e.target.style.height = "auto"; e.target.style.height = e.target.scrollHeight + "px"; }}
                         placeholder={"Петренко В.І. Психологія навчання. Київ: Наука, 2020. 245 с.\nSmirnova O. Child development. Oxford: OUP, 2019."}
-                        style={{ ...TA_WHITE, minHeight: 80 }} />
+                        style={{ ...TA_WHITE, minHeight: 80, overflow: "hidden", resize: "none" }} />
                       {secRefs.length > 0 && <div style={{ fontSize: 11, color: "#5a8a2a", marginTop: 4 }}>✓ {secRefs.length} джерело(а) введено → [{startIdx}–{startIdx + secRefs.length - 1}]</div>}
                     </div>
                   </div>

@@ -17,6 +17,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin }) {
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState("");
     const [filterStatus, setFilterStatus] = useState(null); // null = всі
+    const [infoOrder, setInfoOrder] = useState(null); // модалка деталей
 
     useEffect(() => {
         const load = async () => {
@@ -152,7 +153,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin }) {
                         <input
                             value={search}
                             onChange={e => setSearch(e.target.value)}
-                            placeholder="Пошук за темою, типом, дедлайном..."
+                            placeholder="Пошук за темою, типом, дедлайном, номером замовлення..."
                             style={{ width: "100%", padding: "11px 14px 11px 40px", border: "1.5px solid #d4cfc4", borderRadius: 8, fontSize: 14, fontFamily: "'Spectral',serif", background: "#fff", color: "#1a1a14", outline: "none" }}
                         />
                         {search && (
@@ -203,6 +204,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin }) {
                                             {order.pages && <span>{order.pages} стор.</span>}
                                             {order.deadline && <span>⏰ {order.deadline}</span>}
                                             <span style={{ color: "#bbb" }}>{order.createdAt?.slice(0, 10) || ""}</span>
+                                            <span style={{ color: "#ccc", fontFamily: "monospace", fontSize: 10 }}>#{order.id.slice(0, 8)}</span>
                                         </div>
                                     </div>
 
@@ -224,6 +226,37 @@ export default function Dashboard({ onOpen, onNew, onAdmin }) {
                     </div>
                 )}
             </div>
+
+            {/* Модалка деталей замовлення */}
+            {infoOrder && (
+                <div onClick={() => setInfoOrder(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+                    <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 12, padding: 28, maxWidth: 520, width: "100%", boxShadow: "0 8px 40px rgba(0,0,0,0.18)", fontFamily: "'Spectral',Georgia,serif" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+                            <div style={{ fontFamily: "'Spectral SC',serif", fontSize: 14, letterSpacing: 2, color: "#1a1a14" }}>ДЕТАЛІ ЗАМОВЛЕННЯ</div>
+                            <button onClick={() => setInfoOrder(null)} style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "#aaa" }}>✕</button>
+                        </div>
+                        <div style={{ fontSize: 11, color: "#aaa", fontFamily: "monospace", marginBottom: 16 }}>#{infoOrder.id}</div>
+                        {[
+                            { label: "Тема", val: infoOrder.topic },
+                            { label: "Тип роботи", val: infoOrder.type },
+                            { label: "Галузь / спеціальність", val: infoOrder.subject },
+                            { label: "К-сть сторінок", val: infoOrder.pages },
+                            { label: "Мова", val: infoOrder.language },
+                            { label: "Унікальність", val: infoOrder.uniqueness },
+                            { label: "Дедлайн", val: infoOrder.deadline },
+                            { label: "К-сть джерел", val: infoOrder.sourceCount },
+                            { label: "Додатково", val: infoOrder.extras },
+                            { label: "Вимоги методички", val: infoOrder.methodNotes },
+                            { label: "Дата створення", val: infoOrder.createdAt?.slice(0, 10) },
+                        ].filter(r => r.val).map(r => (
+                            <div key={r.label} style={{ display: "flex", gap: 12, marginBottom: 10, fontSize: 13 }}>
+                                <div style={{ color: "#888", minWidth: 160, flexShrink: 0 }}>{r.label}</div>
+                                <div style={{ color: "#1a1a14", fontWeight: 500 }}>{r.val}</div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
