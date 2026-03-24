@@ -204,6 +204,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin }) {
                                             {order.pages && <span>{order.pages} стор.</span>}
                                             {order.deadline && <span>⏰ {order.deadline}</span>}
                                             <span style={{ color: "#bbb" }}>{order.createdAt?.slice(0, 10) || ""}</span>
+                                            {order.info?.orderNumber && <span style={{ background: "#f0e8ff", color: "#5a1a8a", padding: "1px 8px", borderRadius: 8, fontSize: 11, fontFamily: "monospace" }}>№ {order.info.orderNumber}</span>}
                                             <span style={{ color: "#ccc", fontFamily: "monospace", fontSize: 10 }}>#{order.id.slice(0, 8)}</span>
                                         </div>
                                     </div>
