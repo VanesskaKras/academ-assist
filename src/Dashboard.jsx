@@ -7,7 +7,7 @@ const STATUS_LABELS = {
     new: { label: "Нове", color: "#888", bg: "#f5f5f5", dot: "#ccc" },
     plan_ready: { label: "План готовий", color: "#5a7a2a", bg: "#eef5e4", dot: "#8ac040" },
     plan_approved: { label: "План затверджено", color: "#1a5a8a", bg: "#e4f0ff", dot: "#4a9ade" },
-    writing: { label: "В роботі", color: "#8a5a1a", bg: "#fff5e4", dot: "#d4902a" },
+    writing: { label: "В роботі", color: "#2a7a6a", bg: "#e4f5f2", dot: "#3abfa0" },
     done: { label: "Готово", color: "#1a6a1a", bg: "#e4ffe4", dot: "#4aba4a" },
 };
 
@@ -124,7 +124,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin }) {
                     <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
                         {[
                             { label: "Всього", val: counts.all, color: "#1a1a14", bg: "#e8e4d8", key: null },
-                            { label: "В роботі", val: counts.writing, color: "#8a5a1a", bg: "#fff5e4", key: "writing" },
+                            { label: "В роботі", val: counts.writing, color: "#2a7a6a", bg: "#e4f5f2", key: "writing" },
                             { label: "План", val: counts.plan_ready, color: "#1a5a8a", bg: "#e4f0ff", key: "plan_ready" },
                             { label: "Готово", val: counts.done, color: "#1a6a1a", bg: "#e4ffe4", key: "done" },
                         ].map(s => {
