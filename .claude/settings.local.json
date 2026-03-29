@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(del \"c:\\\\Users\\\\vanes\\\\academ-assist\\\\CLAUDE.md\")"
+    ]
+  }
+}

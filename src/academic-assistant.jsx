@@ -247,6 +247,167 @@ async function exportPlanToDocx({ sections, info }) {
 }
 
 // ─────────────────────────────────────────────
+// Презентація (.pptx)
+// ─────────────────────────────────────────────
+async function exportToPptx(slides, info) {
+  if (!window.PptxGenJS) {
+    await new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = "https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js";
+      s.onload = resolve; s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+  const pptx = new window.PptxGenJS();
+  pptx.layout = "LAYOUT_16x9";
+
+  const BG_DARK   = "1A2744";
+  const BG_LIGHT  = "F5F7FA";
+  const ACCENT    = "6B8F71";
+  const ACCENT_L  = "A8C5AE";
+  const TEXT_DARK = "1A2744";
+  const TEXT_MID  = "3D5A80";
+  const TEXT_LIGHT= "FFFFFF";
+  const TEXT_DIM  = "8899AA";
+  const DIVIDER   = "E0E6EE";
+  const FH = "Georgia", FB = "Calibri";
+
+  function topBar(s) {
+    s.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 10, h: 0.06, fill: { color: BG_DARK } });
+  }
+  function slideTitle(s, title) {
+    s.addText(title || "", { x: 0.4, y: 0.12, w: 9.2, h: 0.9, fontSize: 22, bold: true, color: TEXT_DARK, fontFace: FH, wrap: true });
+  }
+  function slideNum(s, idx) {
+    s.addText(String(idx + 1), { x: 9.2, y: 5.1, w: 0.5, h: 0.35, fontSize: 9, color: TEXT_DIM, fontFace: FB, align: "right" });
+  }
+
+  slides.forEach((slide, idx) => {
+    const s = pptx.addSlide();
+    const isDark = slide.type === "title" || slide.type === "final";
+    s.background = { color: isDark ? BG_DARK : BG_LIGHT };
+
+    if (slide.type === "title") {
+      s.addShape(pptx.ShapeType.rect, { x: 0.5, y: 3.05, w: 3.5, h: 0.04, fill: { color: ACCENT } });
+      s.addText(slide.title || info?.topic || "Презентація", {
+        x: 0.5, y: 1.1, w: 9, h: 1.7, fontSize: 28, bold: true,
+        color: TEXT_LIGHT, fontFace: FH, align: "left", wrap: true,
+      });
+      if (slide.subtitle || info?.type) {
+        s.addText(slide.subtitle || info?.type || "", {
+          x: 0.5, y: 3.2, w: 9, h: 0.7, fontSize: 15, color: ACCENT_L, fontFace: FB, align: "left",
+        });
+      }
+
+    } else if (slide.type === "final") {
+      s.addText(slide.text || "Дякую за увагу!", {
+        x: 0.5, y: 1.8, w: 9, h: 1.4, fontSize: 32, bold: true,
+        color: TEXT_LIGHT, fontFace: FH, align: "center",
+      });
+      s.addShape(pptx.ShapeType.rect, { x: 3.5, y: 3.35, w: 3, h: 0.04, fill: { color: ACCENT } });
+
+    } else if (slide.type === "cards") {
+      topBar(s); slideTitle(s, slide.title); slideNum(s, idx);
+      const cards = slide.cards || [];
+      const n = Math.min(cards.length, 3);
+      const cw = (9.2 - 0.2 * (n - 1)) / n;
+      cards.slice(0, n).forEach((card, ci) => {
+        const cx = 0.4 + ci * (cw + 0.2), cy = 1.1;
+        s.addShape(pptx.ShapeType.rect, { x: cx + 0.06, y: cy + 0.06, w: cw, h: 4.1, fill: { color: "000000", transparency: 92 }, line: { color: "ffffff", pt: 0 } });
+        s.addShape(pptx.ShapeType.rect, { x: cx, y: cy, w: cw, h: 4.1, fill: { color: "ffffff" }, line: { color: DIVIDER, pt: 0.5 } });
+        s.addShape(pptx.ShapeType.rect, { x: cx, y: cy, w: cw, h: 0.65, fill: { color: ACCENT }, line: { pt: 0 } });
+        s.addText(card.heading || "", { x: cx + 0.1, y: cy, w: cw - 0.2, h: 0.65, fontSize: 11, bold: true, color: TEXT_LIGHT, fontFace: FH, valign: "middle", wrap: true });
+        s.addText(card.text || "", { x: cx + 0.12, y: cy + 0.72, w: cw - 0.24, h: 3.3, fontSize: 11, color: TEXT_DARK, fontFace: FB, valign: "top", wrap: true, lineSpacingMultiple: 1.3 });
+      });
+
+    } else if (slide.type === "stats") {
+      topBar(s); slideTitle(s, slide.title); slideNum(s, idx);
+      const stats = slide.stats || [];
+      const n = Math.min(stats.length, 4);
+      const sw = 9.2 / n;
+      stats.slice(0, n).forEach((stat, si) => {
+        const sx = 0.4 + si * sw;
+        s.addText(stat.value || "", { x: sx, y: 1.55, w: sw - 0.1, h: 1.1, fontSize: 22, bold: true, color: ACCENT, fontFace: FH, align: "center", wrap: true });
+        s.addText(stat.label || "", { x: sx, y: 2.7, w: sw - 0.1, h: 1.0, fontSize: 11, color: TEXT_DARK, fontFace: FB, align: "center", wrap: true, lineSpacingMultiple: 1.2 });
+        if (stat.sub) s.addText(stat.sub, { x: sx, y: 3.75, w: sw - 0.1, h: 0.5, fontSize: 9, italic: true, color: TEXT_DIM, fontFace: FB, align: "center" });
+        if (si < n - 1) s.addShape(pptx.ShapeType.rect, { x: sx + sw - 0.05, y: 1.55, w: 0.01, h: 2.6, fill: { color: DIVIDER } });
+      });
+
+    } else if (slide.type === "steps") {
+      topBar(s); slideTitle(s, slide.title); slideNum(s, idx);
+      const items = slide.items || [];
+      const rh = Math.min(1.05, 4.3 / Math.max(items.length, 1));
+      items.forEach((item, ii) => {
+        const iy = 1.15 + ii * rh;
+        s.addShape(pptx.ShapeType.ellipse, { x: 0.35, y: iy + 0.05, w: 0.62, h: 0.62, fill: { color: ACCENT }, line: { pt: 0 } });
+        s.addText(item.num || String(ii + 1), { x: 0.35, y: iy + 0.05, w: 0.62, h: 0.62, fontSize: 14, bold: true, color: TEXT_LIGHT, fontFace: FH, align: "center", valign: "middle" });
+        s.addText(item.heading || "", { x: 1.1, y: iy + 0.02, w: 8.5, h: 0.38, fontSize: 13, bold: true, color: TEXT_DARK, fontFace: FH });
+        if (item.text) s.addText(item.text, { x: 1.1, y: iy + 0.42, w: 8.5, h: rh - 0.48, fontSize: 11, color: TEXT_MID, fontFace: FB, wrap: true });
+      });
+
+    } else if (slide.type === "conclusions") {
+      topBar(s); slideTitle(s, slide.title || "ВИСНОВКИ"); slideNum(s, idx);
+      const pts = (slide.items || slide.points || []).map(p => ({ text: p, options: { bullet: { indent: 15 }, paraSpaceAfter: 8 } }));
+      if (pts.length > 0) s.addText(pts, { x: 0.4, y: 1.1, w: 9.2, h: 4.3, fontSize: 14, color: TEXT_DARK, fontFace: FB, valign: "top", wrap: true, lineSpacingMultiple: 1.4 });
+
+    } else {
+      // content, toc
+      topBar(s); slideTitle(s, slide.title); slideNum(s, idx);
+      const pts = (slide.bullets || slide.points || []).map(p => ({ text: p, options: { bullet: { indent: 15 }, paraSpaceAfter: 6 } }));
+      if (pts.length > 0) s.addText(pts, { x: 0.4, y: 1.1, w: 9.2, h: 4.3, fontSize: 15, color: TEXT_DARK, fontFace: FB, valign: "top", wrap: true, lineSpacingMultiple: 1.3 });
+    }
+  });
+
+  const safeName = (info?.topic || "презентація").replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
+  await pptx.writeFile({ fileName: safeName + ".pptx" });
+}
+
+// ─────────────────────────────────────────────
+// Доповідь (.docx)
+// ─────────────────────────────────────────────
+async function exportSpeechToDocx(text, info) {
+  if (!window.docx) {
+    await new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = "https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.min.js";
+      s.onload = resolve; s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+  const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header } = window.docx;
+  const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
+  const L = 1701, R = 851, T = 1134, B = 1134, INDENT = 709, LINE = 360;
+
+  const children = text.split("\n").map(line => {
+    const raw = line.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1").trim();
+    if (!raw) return new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] });
+    return new Paragraph({
+      indent: { firstLine: INDENT },
+      spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
+      alignment: AlignmentType.BOTH,
+      children: [new TextRun({ text: raw, font: FONT, size: SIZE, color: "000000" })],
+    });
+  });
+
+  const doc = new Document({
+    styles: { default: { document: { run: { font: FONT, size: SIZE, color: "000000" }, paragraph: { spacing: { line: LINE, lineRule: "auto" } } } } },
+    sections: [{
+      properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: T, right: R, bottom: B, left: L } }, pageNumberStart: 1 },
+      headers: { default: new Header({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, spacing: { before: 0, after: 0 }, children: [new TextRun({ children: [PageNumber.CURRENT], font: FONT, size: SIZE_NUM, color: "000000" })] })] }) },
+      children,
+    }],
+  });
+
+  const blob = await Packer.toBlob(doc);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const safeName = (info?.topic || "доповідь").replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
+  a.href = url; a.download = safeName + " - доповідь.docx";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+// ─────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────
 const MODEL = "claude-sonnet-4-6";        // для генерації тексту
@@ -296,12 +457,14 @@ function buildSYS(lang = "Українська") {
 ## МОВА ТА ДЖЕРЕЛА
 ${langLine}
 Джерела: тільки українські або зарубіжні. Російські та білоруські — ЗАБОРОНЕНО повністю.
+Дослідники та вчені: НЕ посилатись і НЕ згадувати російських та білоруських науковців, дослідників або теоретиків. Замість них використовувати українських, західних або інших зарубіжних вчених.
 
 ## ФОРМАТУВАННЯ (суворо)
 НЕ використовуй markdown розмітку: жодних #, ##, **, *, - на початку рядка. Пиши звичайний текст.
 НЕ виділяй нічого жирним шрифтом у тексті підрозділів.
 НЕ повторюй назву підрозділу на початку тексту — одразу починай зміст.
-НЕ додавай посилання на джерела у тексті підрозділів. Список джерел буде окремо в кінці.
+НЕ додавай посилання на джерела у тексті підрозділів.
+КАТЕГОРИЧНО ЗАБОРОНЕНО додавати список літератури, список джерел або використаних джерел в кінці підрозділу. Жодних "Список використаних джерел:", "Джерела:", "References:" тощо.
 КАТЕГОРИЧНО ЗАБОРОНЕНО використовувати довге тире "—" (em dash). Замість нього використовуй кому, крапку з комою, або перебудуй речення. Символ "—" не повинен з'являтися в тексті ЖОДНОГО разу.
 
 ## ЗАБОРОНЕНІ СЛОВА
@@ -313,6 +476,7 @@ ${forbiddenWords}
 Замінюй жаргон і складні терміни на повсякденні слова. Використовуй мінімум скорочень.
 Уникай крапок з комою та надмірно довгих речень. Розбивай довгі речення на менші шматки.
 Чергуй довжину речень для природного ритму читання.
+Чергуй довжину абзаців: короткі абзаци (2-3 речення) мають чергуватись із довшими (5-7 речень). Уникай однакового розміру абзаців поспіль.
 Додавай короткі, зрозумілі приклади для пояснення теоретичних положень.
 Використовуй неформальні сполучники: "тож", "тоді", "отже", "водночас".
 Використовуй окремі короткі фрагменти, коли це здається природним.
@@ -412,7 +576,85 @@ async function callClaude(messages, signal, systemPrompt, maxTokens, onWait, mod
       console.error("Claude API unexpected response:", JSON.stringify(data).slice(0, 300));
       throw new Error("No content in response: " + JSON.stringify(data).slice(0, 200));
     }
+    if (data.usage) {
+      const PRICES = { [MODEL]: { in: 3, out: 15 }, [MODEL_FAST]: { in: 0.80, out: 4 } };
+      const p = PRICES[model || MODEL] || PRICES[MODEL];
+      const cost = (data.usage.input_tokens * p.in + data.usage.output_tokens * p.out) / 1_000_000;
+      window.dispatchEvent(new CustomEvent("apicost", { detail: { cost, model: model || MODEL, inTok: data.usage.input_tokens, outTok: data.usage.output_tokens } }));
+    }
     return data.content.map(b => b.text || "").join("") || "";
+  }
+}
+
+async function callGemini(messages, signal, systemPrompt, maxTokens, onWait, model) {
+  const MAX_RETRIES = 5;
+  let delay = 12000;
+
+  const toGeminiPart = (c) => {
+    if ((c.type === "document" || c.type === "image") && c.source?.type === "base64")
+      return { inlineData: { mimeType: c.source.media_type || "application/pdf", data: c.source.data } };
+    return { text: c.text || c.content || "" };
+  };
+
+  const contents = messages.map((msg, i) => {
+    if (Array.isArray(msg.content)) {
+      const parts = msg.content.map(toGeminiPart);
+      if (i === 0 && systemPrompt) {
+        const firstTextIdx = parts.findIndex(p => p.text !== undefined);
+        if (firstTextIdx >= 0) parts[firstTextIdx] = { text: systemPrompt + "\n\n" + parts[firstTextIdx].text };
+        else parts.unshift({ text: systemPrompt });
+      }
+      return { role: msg.role === "assistant" ? "model" : "user", parts };
+    }
+    return {
+      role: msg.role === "assistant" ? "model" : "user",
+      parts: [{ text: (i === 0 && systemPrompt ? systemPrompt + "\n\n" : "") + (msg.content || "") }],
+    };
+  });
+
+  const body = {
+    _model: model || "gemini-2.5-flash",
+    contents,
+    generationConfig: { maxOutputTokens: maxTokens || 8000, thinkingConfig: { thinkingBudget: 0 } },
+  };
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const res = await fetch("/api/gemini", {
+      method: "POST", signal,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (res.status === 429 || res.status === 503) {
+      if (attempt === MAX_RETRIES) throw new Error(res.status === 503 ? "Gemini перевантажений, спробуйте ще раз" : "Rate limit: спробуйте через хвилину");
+      const waitSec = Math.ceil(delay / 1000);
+      for (let s = waitSec; s > 0; s--) {
+        if (onWait) onWait(s);
+        await new Promise(r => setTimeout(r, 1000));
+        if (signal?.aborted) { const e = new Error("AbortError"); e.name = "AbortError"; throw e; }
+      }
+      delay = Math.min(delay * 1.5, 60000);
+      continue;
+    }
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      throw new Error("Gemini API " + res.status + ": " + errText.slice(0, 200));
+    }
+    const data = await res.json();
+    const candidate = data.candidates?.[0];
+    const finishReason = candidate?.finishReason;
+    if (finishReason && finishReason !== "STOP" && finishReason !== "MAX_TOKENS") {
+      throw new Error(`Gemini зупинився: ${finishReason}. ${candidate?.content ? "" : "Відповідь порожня."}`);
+    }
+    const text = candidate?.content?.parts?.filter(p => !p.thought)?.map(p => p.text || "").join("") || "";
+    if (!text) {
+      console.error("Gemini порожня відповідь. Raw:", JSON.stringify(data).slice(0, 500));
+      throw new Error("Gemini: порожня відповідь" + (finishReason ? ` (${finishReason})` : ""));
+    }
+    if (data.usageMetadata) {
+      const cost = (data.usageMetadata.promptTokenCount * 0.075 + data.usageMetadata.candidatesTokenCount * 0.30) / 1_000_000;
+      window.dispatchEvent(new CustomEvent("apicost", { detail: { cost, model: "gemini-2.5-flash", inTok: data.usageMetadata.promptTokenCount, outTok: data.usageMetadata.candidatesTokenCount } }));
+    }
+    return text;
   }
 }
 
@@ -567,10 +809,105 @@ function DropZone({ fileLabel, onFile }) {
     <div onClick={() => fileRef.current.click()} onDrop={handleDrop} onDragOver={e => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)}
       style={{ minHeight: 90, border: `1.5px dashed ${dragging ? "#1a1a14" : "#c4bfb4"}`, borderRadius: 6, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, cursor: "pointer", padding: 14, background: dragging ? "#e8e4d8" : "#ede9e0", transition: "all .2s" }}>
       <div style={{ fontSize: 24 }}>{fileLabel ? "📄" : "⬆️"}</div>
-      <div style={{ fontSize: 12, color: "#888", textAlign: "center" }}>{fileLabel || "Перетягніть або клікніть для вибору PDF / DOCX"}</div>
+      <div style={{ fontSize: 12, color: "#888", textAlign: "center" }}>{fileLabel || "Перетягніть або клікніть для вибору PDF"}</div>
       {fileLabel && <div style={{ fontSize: 10, color: "#aaa" }}>(клікніть щоб замінити)</div>}
     </div>
-    <input ref={fileRef} type="file" accept=".pdf,.docx" style={{ display: "none" }} onChange={e => { const f = e.target.files[0]; if (f) processFile(f); }} />
+    <input ref={fileRef} type="file" accept=".pdf" style={{ display: "none" }} onChange={e => { const f = e.target.files[0]; if (f) processFile(f); }} />
+  </>;
+}
+
+function PhotoDropZone({ photos, onAdd, onRemove }) {
+  const fileRef = useRef();
+  const [dragging, setDragging] = useState(false);
+
+  function processFiles(files) {
+    Array.from(files).forEach(f => {
+      if (!f.type.startsWith("image/")) return;
+      const r = new FileReader();
+      r.onload = ev => onAdd({ name: f.name, b64: ev.target.result.split(",")[1], type: f.type });
+      r.readAsDataURL(f);
+    });
+  }
+
+  return (
+    <div>
+      <div
+        onClick={() => fileRef.current.click()}
+        onDrop={e => { e.preventDefault(); setDragging(false); processFiles(e.dataTransfer.files); }}
+        onDragOver={e => { e.preventDefault(); setDragging(true); }}
+        onDragLeave={() => setDragging(false)}
+        style={{ minHeight: 60, border: `1.5px dashed ${dragging ? "#1a1a14" : "#c4bfb4"}`, borderRadius: 6, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4, cursor: "pointer", padding: 10, background: dragging ? "#e8e4d8" : "#ede9e0", transition: "all .2s" }}
+      >
+        <div style={{ fontSize: 20 }}>🖼️</div>
+        <div style={{ fontSize: 12, color: "#888", textAlign: "center" }}>Перетягніть або клікніть для вибору фото</div>
+      </div>
+      <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple style={{ display: "none" }} onChange={e => { processFiles(e.target.files); e.target.value = ""; }} />
+      {photos.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+          {photos.map((p, i) => (
+            <div key={i} style={{ position: "relative", display: "inline-block" }}>
+              <img src={`data:${p.type};base64,${p.b64}`} alt={p.name} style={{ height: 56, width: 56, objectFit: "cover", borderRadius: 4, border: "1px solid #c4bfb4" }} />
+              <button onClick={() => onRemove(i)} style={{ position: "absolute", top: -6, right: -6, width: 18, height: 18, borderRadius: "50%", background: "#8a1a1a", color: "#fff", border: "none", cursor: "pointer", fontSize: 11, lineHeight: "18px", padding: 0 }}>×</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ClientPlanInput({ onExtracted, extracted }) {
+  const fileRef = useRef();
+  const [extracting, setExtracting] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [previewSrc, setPreviewSrc] = useState(null);
+
+  async function handlePhoto(file) {
+    if (!file || !file.type.startsWith("image/")) return;
+    setExtracting(true);
+    try {
+      const b64 = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = e => { setPreviewSrc(e.target.result); res(e.target.result.split(",")[1]); };
+        r.onerror = rej;
+        r.readAsDataURL(file);
+      });
+      const raw = await callClaude([{ role: "user", content: [
+        { type: "image", source: { type: "base64", media_type: file.type, data: b64 } },
+        { type: "text", text: "Extract the table of contents / plan from this image. Copy all lines exactly as they appear (chapter numbers, subsection numbers, titles). Return only the plain text of the plan, no explanations." }
+      ]}], null, "Return only plain text, no markdown.", 800, null, MODEL_FAST);
+      onExtracted(raw.trim());
+    } catch (e) {
+      console.warn("plan photo extract failed:", e.message);
+    } finally {
+      setExtracting(false);
+      setDragging(false);
+    }
+  }
+
+  function onDrop(e) {
+    e.preventDefault();
+    const file = e.dataTransfer.files[0];
+    if (file) handlePhoto(file);
+  }
+
+  return <>
+    <div
+      onClick={() => !extracting && fileRef.current.click()}
+      onDrop={onDrop}
+      onDragOver={e => { e.preventDefault(); setDragging(true); }}
+      onDragLeave={() => setDragging(false)}
+      style={{ minHeight: 90, border: `1.5px dashed ${dragging ? "#5a8a30" : "#c4bfb4"}`, borderRadius: 6, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, cursor: extracting ? "wait" : "pointer", padding: 14, background: dragging ? "#e8e4d8" : "#ede9e0", transition: "all .2s" }}
+    >
+      {extracting
+        ? <><div style={{ fontSize: 22 }}>⏳</div><div style={{ fontSize: 12, color: "#888" }}>Розпізнаю план...</div></>
+        : previewSrc && extracted
+          ? <><img src={previewSrc} alt="" style={{ maxHeight: 56, maxWidth: "100%", borderRadius: 4, objectFit: "contain" }} /><div style={{ fontSize: 11, color: "#5a8a30" }}>✓ План розпізнано</div><div style={{ fontSize: 10, color: "#aaa" }}>(клікніть щоб замінити)</div></>
+          : <><div style={{ fontSize: 22 }}>📷</div><div style={{ fontSize: 12, color: "#888", textAlign: "center" }}>Перетягніть або клікніть для вибору фото плану</div></>
+      }
+    </div>
+    <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }}
+      onChange={e => { const f = e.target.files[0]; if (f) handlePhoto(f); e.target.value = ""; }} />
   </>;
 }
 
@@ -597,6 +934,8 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [fileB64, setFileB64] = useState(null);
   const [fileType, setFileType] = useState(null);
   const [methodInfo, setMethodInfo] = useState(null); // структурна інфо з методички
+  const [commentAnalysis, setCommentAnalysis] = useState(null); // {planHints, writingHints}
+  const [photos, setPhotos] = useState([]); // [{name, b64, type}] — додаткові фото
   const [info, setInfo] = useState(null);
   const [sections, setSections] = useState([]);
   const [planDisplay, setPlanDisplay] = useState("");
@@ -624,6 +963,25 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [regenPrompt, setRegenPrompt] = useState("");
   const [regenLoading, setRegenLoading] = useState(false);
   const [apiError, setApiError] = useState("");
+  const [presentationSlides, setPresentationSlides] = useState(null);
+  const [speechText, setSpeechText] = useState("");
+  const [presLoading, setPresLoading] = useState(false);
+  const [speechLoading, setSpeechLoading] = useState(false);
+  const [sessionCost, setSessionCost] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("sessionCost")) || { claude: 0, gemini: 0 }; } catch { return { claude: 0, gemini: 0 }; }
+  });
+  useEffect(() => {
+    const handler = (e) => {
+      const isGemini = e.detail.model?.startsWith("gemini");
+      setSessionCost(c => {
+        const next = isGemini ? { ...c, gemini: c.gemini + e.detail.cost } : { ...c, claude: c.claude + e.detail.cost };
+        localStorage.setItem("sessionCost", JSON.stringify(next));
+        return next;
+      });
+    };
+    window.addEventListener("apicost", handler);
+    return () => window.removeEventListener("apicost", handler);
+  }, []);
 
   // Зберігаємо актуальний id документа (може змінитись після першого збереження)
   const currentIdRef = useRef(orderId || null);
@@ -651,9 +1009,12 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
             setSourceDist(dist); setSourceTotal(total);
           }
           if (d.methodInfo) setMethodInfo(d.methodInfo);
+          if (d.commentAnalysis) setCommentAnalysis(d.commentAnalysis);
           if (d.content) setContent(d.content);
           if (d.citInputs) setCitInputs(d.citInputs);
           if (d.refList) setRefList(d.refList);
+          if (d.presentationSlides) setPresentationSlides(d.presentationSlides);
+          if (d.speechText) setSpeechText(d.speechText);
           if (d.stage) { setStage(d.stage); setMaxStageIdx(Math.max(0, STAGE_KEYS.indexOf(d.stage))); }
           if (d.genIdx !== undefined) setGenIdx(d.genIdx);
         }
@@ -720,6 +1081,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
 
     // КРОК 2: Якщо є методичка — пауза між запитами щоб не перевищити rate limit
     if (fileB64) {
+      setApiError("");
       setLoadMsg("Читаю методичку...");
       await new Promise(r => setTimeout(r, 2000)); // пауза між двома API-викликами
       const methodMsgs = [
@@ -732,9 +1094,9 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   "totalPages": 30,
   "chaptersCount": 2,
   "subsectionsPerChapter": 2,
-  "hasChapterConclusions": true,
+  "hasChapterConclusions": false,
   "chapterTypes": ["theory","analysis"],
-  "exampleTOC": "ВСТУП\nРОЗДІЛ 1. Назва\n1.1 Підрозділ\nВисновки до Розділу 1\nРОЗДІЛ 2...",
+  "exampleTOC": "ВСТУП\nРОЗДІЛ 1. Назва\n1.1 Підрозділ\n1.2 Підрозділ\nРОЗДІЛ 2. Назва\n2.1 Підрозділ\n2.2 Підрозділ\nВИСНОВКИ\nСПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ",
   "introComponents": ["актуальність теми", "мета дослідження", "завдання", "об'єкт", "предмет", "методи", "матеріал дослідження", "наукова новизна", "структура роботи"],
   "theoryRequirements": "огляд літератури, теоретичні засади, закінчується висновком про необхідність дослідження",
   "analysisRequirements": "результати власних досліджень, лінгвістичне обґрунтування",
@@ -767,17 +1129,18 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
 - totalPages: загальний обсяг роботи в сторінках (число, не рахуючи додатки і список джерел)
 - chaptersCount: к-сть розділів (null якщо не вказано)
 - subsectionsPerChapter: порахуй к-сть підрозділів в одному розділі з exampleTOC (null якщо не вказано)
-- hasChapterConclusions: true ТІЛЬКИ якщо методичка явно вимагає висновки до кожного розділу
+- hasChapterConclusions: true ВИКЛЮЧНО якщо в методичці є явна пряма вимога "висновки до розділу" або "висновки до кожного розділу". Якщо немає такого тексту — завжди false
 - introComponents: точний перелік елементів вступу згідно методички
 - sourcesStyle: "APA", "ДСТУ 8302:2015", "MLA" або інший — точно як у методичці
 - sourcesOrder: "alphabetical" або "citation_order"
 - sourcesGrouping: якщо є правила групування джерел за мовами — вкажи
 - citationStyle: як оформляти посилання в тексті (в дужках, у виносках тощо)
 - formatting: всі деталі оформлення — шрифт, розміри, поля, відступи, нумерація
-- exampleTOC: якщо є зразок змісту в додатках — скопіюй його структуру` }
+- exampleTOC: шукай ВИКЛЮЧНО розділ/додаток зі словами "зразок змісту", "зразок плану", "приклад змісту", "приклад плану", "зразок оформлення змісту" — тобто явний приклад структури СТУДЕНТСЬКОЇ роботи. Просто "ЗМІСТ" на початку документа (зміст самої методички) — ІГНОРУЙ повністю. Якщо знайшов справжній зразок — скопіюй лише рядки плану (ВСТУП, РОЗДІЛ 1, 1.1, 1.2, ВИСНОВКИ тощо). Якщо такого зразка НЕ знайшов — поверни null (не вигадуй).
+- Якщо exampleTOC = null: тоді уважно проаналізуй розділ "Структура роботи" або "Структура та зміст роботи" і витягни з нього: chaptersCount (к-сть розділів), subsectionsPerChapter (к-сть підрозділів), hasChapterConclusions (чи потрібні висновки до розділів), chapterTypes (теоретичний/аналітичний/практичний тощо), otherRequirements (що має бути в кожному розділі)` }
       ];
       try {
-        const raw = await callClaude([{ role: "user", content: methodMsgs }], null, "Respond only with valid JSON. No markdown, no comments.", 4000, (s) => setLoadMsg(`Читаю методичку... зачекайте ${s}с`));
+        const raw = await callGemini([{ role: "user", content: methodMsgs }], null, "Respond only with valid JSON. No markdown, no comments.", 8000, (s) => setLoadMsg(`Читаю методичку... зачекайте ${s}с`), "gemini-2.5-flash");
         const jsonMatch = raw.match(/\{[\s\S]*\}/);
         const parsed = JSON.parse(jsonMatch?.[0] || raw.replace(/```json|```/g, "").trim());
         setMethodInfo(parsed);
@@ -791,6 +1154,34 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     } else {
       setMethodInfo(null);
       await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, stage: "parsed", status: "new" });
+    }
+
+    // КРОК 3: Аналіз коментаря клієнта (+ фото якщо є)
+    if (comment?.trim() || photos.length > 0) {
+      setLoadMsg("Аналізую коментар...");
+      await new Promise(r => setTimeout(r, 1000));
+      try {
+        const caContent = [];
+        // Додаємо фото перед текстом (Claude бачить їх перед запитом)
+        for (const ph of photos) {
+          caContent.push({ type: "image", source: { type: "base64", media_type: ph.type, data: ph.b64 } });
+        }
+        caContent.push({ type: "text", text: `Проаналізуй${photos.length > 0 ? " фото та" : ""} коментар клієнта до академічної роботи на тему "${newInfo?.topic || ""}". Витягни конкретні підказки для виконавця.${comment?.trim() ? `\nКОМЕНТАР КЛІЄНТА:\n${comment}` : ""}${photos.length > 0 ? `\n\nФОТО: ${photos.length} зображень.` : ""}
+
+Поверни ТІЛЬКИ JSON (без markdown):
+{"planHints":"що врахувати при побудові структури та плану (назви розділів, висновки до розділів, к-сть розділів тощо)","writingHints":"що врахувати при написанні тексту (стиль, акценти, особливі вимоги)","photoTOC":"якщо на фото є готовий план/зміст роботи (рядки виду Chapter 1 / Розділ 1, 1.1, 1.2, Introduction тощо) — скопіюй його текст дослівно. Якщо плану на фото немає — null"}` });
+        const caRaw = await callClaude([{ role: "user", content: caContent }],
+          null, "Respond only with valid JSON. No markdown.", 600, null, MODEL_FAST);
+        const caMatch = caRaw.match(/\{[\s\S]*\}/);
+        const caParsed = JSON.parse(caMatch?.[0] || caRaw);
+        setCommentAnalysis(caParsed);
+        await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, commentAnalysis: caParsed, stage: "parsed", status: "new" });
+      } catch (e) {
+        console.warn("commentAnalysis failed:", e.message);
+        setCommentAnalysis(null);
+      }
+    } else {
+      setCommentAnalysis(null);
     }
 
     setRunning(false); runningRef.current = false; setLoadMsg(""); setStage("parsed");
@@ -808,17 +1199,19 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     for (const line of lines) {
       const isChapter = /^(розділ\s*\d+|chapter\s*\d+|\d+[\.\)]\s+[А-ЯҐЄІЇа-яґєії])/i.test(line);
       const isSubsection = /^\d+\.\d+/.test(line) || /^[-–•]\s+/.test(line);
-      const isSpecial = /^(вступ\b|висновк|список)/i.test(line);
+      const isChapterConclusion = /^висновк\w*\s+до\s+(розділ|chapter)/i.test(line);
+      const isSpecial = !isChapterConclusion && /^(вступ\b|висновк|список|загальн)/i.test(line);
       if (isSpecial) continue;
-      if (isChapter) { current = { title: line.trim(), subsections: [] }; chapters.push(current); }
+      if (isChapterConclusion && current) { current.hasConclusion = true; continue; }
+      if (isChapter) { current = { title: line.trim(), subsections: [], hasConclusion: false }; chapters.push(current); }
       else if (isSubsection && current) current.subsections.push(line.replace(/^[-–•]\s+/, "").trim());
       else if (current && !isSubsection && line.length > 3) current.subsections.push(line);
-      else if (!current && line.length > 3) { current = { title: line.trim(), subsections: [] }; chapters.push(current); }
+      else if (!current && line.length > 3) { current = { title: line.trim(), subsections: [], hasConclusion: false }; chapters.push(current); }
     }
     if (!chapters.length) return null;
     const mainPages = Math.round(totalPages * 0.80);
     const pagesPerChapter = Math.max(1, Math.round(mainPages / chapters.length));
-    const introPages = Math.max(1, Math.round(totalPages * 0.05));
+    const introPages = 2;
     const concPages = Math.max(1, Math.round(totalPages * 0.05));
     const sections = []; let chapNum = 0;
     for (const ch of chapters) {
@@ -834,6 +1227,9 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
           sections.push({ id: `${chapNum}.${i + 1}`, label: hasNum ? subs[i] : `${chapNum}.${i + 1} ${subs[i]}`, sectionTitle: ch.title.toUpperCase(), pages: pagesPerSub, type: chType });
         }
       }
+      if (ch.hasConclusion) {
+        sections.push({ id: `${chapNum}.conclusions`, label: `Висновки до розділу ${chapNum}`, sectionTitle: ch.title.toUpperCase(), pages: 1, type: "chapter_conclusion", chapterNum: String(chapNum) });
+      }
     }
     sections.push({ id: "intro", label: "ВСТУП", pages: introPages, type: "intro" });
     sections.push({ id: "conclusions", label: "ВИСНОВКИ", pages: concPages, type: "conclusions" });
@@ -841,24 +1237,28 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     return sections;
   };
 
-  const buildDefaultPlan = (totalPages) => {
+  const buildDefaultPlan = (totalPages, lang = "Українська") => {
+    const isEn = /англ|english/i.test(lang || "");
     const needThirdChapter = totalPages >= 40;
     const mainPages = Math.round(totalPages * 0.80);
     const chapCount = needThirdChapter ? 3 : 2;
     const pagesPerCh = Math.max(1, Math.round(mainPages / chapCount));
     const pagesPerSub = Math.max(1, Math.round(pagesPerCh / 3));
-    const introPages = Math.max(1, Math.round(totalPages * 0.05));
+    const introPages = 2;
     const concPages = Math.max(1, Math.round(totalPages * 0.05));
-    const chapterNames = [`РОЗДІЛ 1. ТЕОРЕТИЧНІ ОСНОВИ ДОСЛІДЖЕННЯ`, `РОЗДІЛ 2. АНАЛІЗ ТА ПРАКТИЧНА ЧАСТИНА`, ...(needThirdChapter ? [`РОЗДІЛ 3. РЕКОМЕНДАЦІЇ ТА ПРОПОЗИЦІЇ`] : [])];
+    const chapterNames = isEn
+      ? [`CHAPTER 1. THEORETICAL FOUNDATIONS`, `CHAPTER 2. ANALYSIS AND PRACTICAL PART`, ...(needThirdChapter ? [`CHAPTER 3. RECOMMENDATIONS AND PROPOSALS`] : [])]
+      : [`РОЗДІЛ 1. ТЕОРЕТИЧНІ ОСНОВИ ДОСЛІДЖЕННЯ`, `РОЗДІЛ 2. АНАЛІЗ ТА ПРАКТИЧНА ЧАСТИНА`, ...(needThirdChapter ? [`РОЗДІЛ 3. РЕКОМЕНДАЦІЇ ТА ПРОПОЗИЦІЇ`] : [])];
     const chTypes = ["theory", "analysis", "recommendations"];
     const sections = [];
     chapterNames.forEach((chName, ci) => {
       const chapNum = ci + 1;
-      for (let i = 1; i <= 3; i++) sections.push({ id: `${chapNum}.${i}`, label: `${chapNum}.${i} [підрозділ ${chapNum}.${i}]`, sectionTitle: chName, pages: pagesPerSub, type: chTypes[ci] });
+      const subLabel = isEn ? `subsection ${chapNum}.` : `підрозділ ${chapNum}.`;
+      for (let i = 1; i <= 3; i++) sections.push({ id: `${chapNum}.${i}`, label: `${chapNum}.${i} [${subLabel}${i}]`, sectionTitle: chName, pages: pagesPerSub, type: chTypes[ci] });
     });
-    sections.push({ id: "intro", label: "ВСТУП", pages: introPages, type: "intro" });
-    sections.push({ id: "conclusions", label: "ВИСНОВКИ", pages: concPages, type: "conclusions" });
-    sections.push({ id: "sources", label: "СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ", pages: 1, type: "sources" });
+    sections.push({ id: "intro", label: isEn ? "INTRODUCTION" : "ВСТУП", pages: introPages, type: "intro" });
+    sections.push({ id: "conclusions", label: isEn ? "CONCLUSIONS" : "ВИСНОВКИ", pages: concPages, type: "conclusions" });
+    sections.push({ id: "sources", label: isEn ? "REFERENCES" : "СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ", pages: 1, type: "sources" });
     return sections;
   };
 
@@ -866,6 +1266,10 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const doGenPlan = async () => {
     setPlanLoading(true); setSections([]); setPlanDisplay(""); setStage("plan");
     const d = info; const totalPages = parsePagesAvg(d.pages);
+    const isEnglish = /англ|english/i.test(d?.language || "");
+    const L = isEnglish
+      ? { intro: "INTRODUCTION", conclusions: "CONCLUSIONS", sources: "REFERENCES", chapConclLabel: (n) => `Conclusions to Chapter ${n}`, chapterWord: "CHAPTER", subsWord: "subsection" }
+      : { intro: "ВСТУП", conclusions: "ВИСНОВКИ", sources: "СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ", chapConclLabel: (n) => `Висновки до розділу ${n}`, chapterWord: "РОЗДІЛ", subsWord: "підрозділ" };
 
     const finalizeSections = async (secs) => {
       const withPrompts = secs.map(s => ({ ...s, prompts: s.type === "sources" ? 0 : Math.max(1, Math.ceil((s.pages || 1) / 3)) }));
@@ -882,47 +1286,185 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
       if (parsed?.length > 3) { await finalizeSections(parsed); return; }
     }
 
+    // Якщо на фото є готовий план — використати його структуру як шаблон
+    if (commentAnalysis?.photoTOC && typeof commentAnalysis.photoTOC === "string" && commentAnalysis.photoTOC.length > 20) {
+      try {
+        const toc = commentAnalysis.photoTOC;
+        const introP = 2;
+        const conclP = Math.max(2, Math.round(totalPages * 0.05));
+        const subsMatches = toc.match(/^\s*\d+\.\d+/gm) || [];
+        const totalSubsPhoto = subsMatches.length || 4;
+        const chapConclCount = (toc.match(/висновк\w*\s+до\s+розділ|conclusions?\s+to\s+chapter/gi) || []).length;
+        const pagesPerSub = Math.max(3, Math.round((totalPages - introP - conclP - chapConclCount) / totalSubsPhoto));
+        const photoTplPrompt = `A client provided a READY PLAN from a photo. Use its EXACT structure (number of chapters, subsections per chapter, chapter conclusions if present) but create NEW titles matching the topic below. Do NOT copy titles from the plan.
+
+TOPIC: "${d.topic}". Type: ${d.type}. Field: ${d.subject}. Pages: ${totalPages}.
+Language of work: ${d.language || "Ukrainian"} — all labels (INTRODUCTION, CONCLUSIONS, chapter/section titles) must be in the work language.
+
+PLAN FROM PHOTO (structure only, do not copy titles):
+${toc}
+
+PAGE DISTRIBUTION (total must equal ${totalPages}):
+- ${L.intro}: ${introP} p.
+- ${L.conclusions}: ${conclP} p.
+- Chapter conclusions: 1 p. each (if present in photo plan)
+- Each subsection: ~${pagesPerSub} p. (total subsections: ${totalSubsPhoto})
+
+Return ONLY JSON without markdown:
+{"sections":[{"id":"1.1","label":"1.1 Title","sectionTitle":"${L.chapterWord} 1. TITLE","pages":8,"type":"theory"},{"id":"intro","label":"${L.intro}","pages":2,"type":"intro"},{"id":"conclusions","label":"${L.conclusions}","pages":3,"type":"conclusions"},{"id":"sources","label":"${L.sources}","pages":2,"type":"sources"}]}`;
+        const raw = await callClaude([{ role: "user", content: photoTplPrompt }], null, "Respond only with valid JSON. No markdown.", 3000, null, MODEL_FAST);
+        const jsonMatch = raw.match(/\{[\s\S]*\}/);
+        const parsed = JSON.parse(jsonMatch?.[0] || raw.replace(/```json|```/g, "").trim());
+        const secs = parsed.sections || parsed;
+        if (Array.isArray(secs) && secs.length > 3) { await finalizeSections(secs); return; }
+      } catch (e) { console.warn("photoTOC plan failed:", e.message); }
+    }
+
+    // Якщо коментар містить приклад структури плану — використати як шаблон, адаптувати назви під тему
+    if (comment?.trim() && /розділ\s*\d+/i.test(comment)) {
+      try {
+        const introP = 2;
+        const conclP = Math.max(2, Math.round(totalPages * 0.05));
+        // Рахуємо підрозділи та висновки до розділів з прикладу
+        const subsMatches = comment.match(/^\s*\d+\.\d+[\.\s]/gm) || [];
+        const subsCount = subsMatches.length || 4;
+        const chapConclCount = (comment.match(/висновки до розділ/gi) || []).length;
+        const pagesForSubs = totalPages - introP - conclP - chapConclCount;
+        const pagesPerSub = Math.max(3, Math.round(pagesForSubs / subsCount));
+        const templatePrompt = `A client provided a STRUCTURE EXAMPLE. Count subsections per chapter ("1.1", "1.2", "2.1" etc.) and whether chapter conclusions exist.
+
+Do NOT copy titles from the example. Create NEW titles for the topic below. Use only: number of chapters, subsections per chapter, presence of chapter conclusions.
+
+TOPIC: "${d.topic}". Type: ${d.type}. Field: ${d.subject}. Pages: ${totalPages}.
+Language of work: ${d.language || "Ukrainian"} — all labels must be in this language.
+
+EXAMPLE (structure only, do not copy titles):
+${comment}
+
+PAGE DISTRIBUTION (total must equal ${totalPages}):
+- ${L.intro}: ${introP} p.
+- ${L.conclusions}: ${conclP} p.
+- Chapter conclusions: 1 p. each (if in example)
+- Each subsection: ${pagesPerSub} p. (total: ${subsCount})
+
+Allowed type values: "theory" | "analysis" | "recommendations" | "chapter_conclusion" | "intro" | "conclusions" | "sources"
+Chapter conclusion id format: "1.conclusions", "2.conclusions", "3.conclusions"
+
+Return ONLY JSON without markdown:
+{"sections":[
+  {"id":"1.1","label":"1.1 Section title","sectionTitle":"${L.chapterWord} 1. CHAPTER TITLE","pages":8,"type":"theory"},
+  {"id":"1.conclusions","label":"${L.chapConclLabel(1)}","sectionTitle":"${L.chapterWord} 1. CHAPTER TITLE","pages":1,"type":"chapter_conclusion"},
+  {"id":"intro","label":"${L.intro}","pages":3,"type":"intro"},
+  {"id":"conclusions","label":"${L.conclusions}","pages":3,"type":"conclusions"},
+  {"id":"sources","label":"${L.sources}","pages":2,"type":"sources"}
+]}`;
+        await new Promise(r => setTimeout(r, 1000));
+        const raw = await callClaude([{ role: "user", content: templatePrompt }], null, "Respond only with valid JSON. No markdown.", 3000, null, MODEL_FAST);
+        const jsonMatch = raw.match(/\{[\s\S]*\}/);
+        const parsed = JSON.parse(jsonMatch?.[0] || raw.replace(/```json|```/g, "").trim());
+        const secs = parsed.sections || parsed;
+        if (Array.isArray(secs) && secs.length > 3) { await finalizeSections(secs); return; }
+      } catch (e) { console.warn("comment template plan failed:", e.message); }
+    }
+
+    const commentHasConcl = commentAnalysis?.planHints ? /висновк\w*\s+до\s+розділ/i.test(commentAnalysis.planHints) : false;
+
     if (methodInfo) {
       // Маємо готову структурну інфу з методички — генеруємо план без PDF
       const chapCount = methodInfo.chaptersCount || (totalPages >= 40 ? 3 : 2);
-      const hasConcl = methodInfo.hasChapterConclusions || false;
+      const hasConcl = methodInfo.hasChapterConclusions === true || commentHasConcl || false;
       const chTypes = methodInfo.chapterTypes?.length ? methodInfo.chapterTypes : ["theory", "analysis", "recommendations"].slice(0, chapCount);
-      // Якщо не витягнулось — рахуємо з exampleTOC (підрозділи виду "1.1", "1.2" тощо)
-      const subsFromTOC = methodInfo.exampleTOC
-        ? (methodInfo.exampleTOC.match(/^\s*1\.\d+/gm) || []).length || null
+      const introP = 2;
+      const conclP = Math.max(2, Math.round(totalPages * 0.05));
+      const chapConclP = hasConcl ? chapCount : 0;
+
+      // Парсимо кількість підрозділів PER CHAPTER з exampleTOC (JS, не AI)
+      const parseSubsPerChapter = (toc) => {
+        if (!toc) return null;
+        const lines = toc.split('\n').map(l => l.trim()).filter(Boolean);
+        const chapters = [];
+        let cur = null;
+        for (const line of lines) {
+          if (/^(вступ|висновки|список|додатки)/i.test(line)) continue;
+          const isChHead = /^(розділ|chapter|section)/i.test(line) || /^\d+\.\s+[^\d]/.test(line);
+          const isNumSub = /^\d+\.\d+/.test(line);
+          if (isChHead) { cur = { subs: 0 }; chapters.push(cur); }
+          else if (isNumSub && cur) cur.subs++;
+          else if (cur && cur.subs === 0 && line.length > 3) cur.subs = 1; // unnumbered item
+        }
+        return chapters.length ? chapters : null;
+      };
+
+      const subsPerChap = methodInfo.exampleTOC ? parseSubsPerChapter(methodInfo.exampleTOC) : null;
+      const totalSubsCount = subsPerChap ? subsPerChap.reduce((s, c) => s + c.subs, 0) : (chapCount * (methodInfo.subsectionsPerChapter || 3));
+      const pagesPerSub = Math.max(3, Math.round((totalPages - introP - conclP - chapConclP) / totalSubsCount));
+
+      // Якщо є зразок плану з методички — використовуємо його як шаблон структури
+      // Будуємо явний перелік структури по розділах (JS вже порахував)
+      const chapterStructureHint = subsPerChap
+        ? subsPerChap.map((ch, i) => `- Розділ ${i + 1}: ${ch.subs} підрозділ${ch.subs === 1 ? " (може бути без номера, як проєктний модуль)" : "и"}`).join('\n')
         : null;
-      const subsCount = methodInfo.subsectionsPerChapter || subsFromTOC || 3;
 
-      const planPrompt = `Склади план ${d.type} на тему: "${d.topic}". Галузь: ${d.subject}. Обсяг: ${totalPages} стор.
+      const planPrompt = methodInfo.exampleTOC
+        ? `Create a plan for ${d.type} on topic: "${d.topic}". Field: ${d.subject}. Pages: ${totalPages}.
+Language of work: ${d.language || "Ukrainian"} — all labels and titles must be in this language.
+${commentAnalysis?.planHints ? `\nCLIENT HINTS:\n${commentAnalysis.planHints}\n` : ""}
+STRUCTURE (fixed, from methodical guide — do NOT change subsection counts):
+${chapterStructureHint || `- ${chapCount} chapters`}
+- Chapter conclusions: ${hasConcl ? "YES" : "NO"}
 
-ВИМОГИ З МЕТОДИЧКИ:
-- К-сть розділів: ${chapCount}
-- Підрозділів у кожному розділі: ${subsCount}
-- Висновки до розділів: ${hasConcl ? "ТАК — додай після останнього підрозділу кожного розділу" : "НІ — не додавай"}
-- Типи розділів: ${chTypes.join(", ")}
-${methodInfo.exampleTOC ? `- Приклад змісту з методички (використай як шаблон структури):\n${methodInfo.exampleTOC}` : ""}
-${methodInfo.otherRequirements ? `- Інші вимоги: ${methodInfo.otherRequirements}` : ""}
+EXAMPLE TOC FROM GUIDE (do NOT copy titles, structure already counted above):
+${methodInfo.exampleTOC}
+${methodInfo.otherRequirements ? `\nGUIDE REQUIREMENTS:\n${methodInfo.otherRequirements}` : ""}
 
-РОЗПОДІЛ СТОРІНОК:
-- Вступ: ${Math.max(2, Math.round(totalPages * 0.05))} стор.
-- Висновки: ${Math.max(2, Math.round(totalPages * 0.05))} стор.
-- Основна частина: ${Math.round(totalPages * 0.87)} стор. рівномірно між підрозділами
-${hasConcl ? "- Висновки до розділу: 1 стор." : ""}
+PAGE DISTRIBUTION (must sum to exactly ${totalPages}):
+- ${L.intro}: ${introP} p.
+- ${L.conclusions}: ${conclP} p.
+- Chapter conclusions: 1 p. each (if present)
+- Each subsection: ~${pagesPerSub} p. (total: ${totalSubsCount})
 
-ДОПУСТИМІ type: "theory" | "analysis" | "recommendations" | "chapter_conclusion" | "intro" | "conclusions" | "sources"
-chapter_conclusion id формат: "1.conclusions", "2.conclusions" тощо.
+Allowed type values: "theory" | "analysis" | "recommendations" | "chapter_conclusion" | "intro" | "conclusions" | "sources"
+Chapter conclusion id format: "1.conclusions", "2.conclusions", "3.conclusions"
 
-Поверни ТІЛЬКИ JSON без markdown:
+Return ONLY JSON without markdown:
 {"sections":[
-  {"id":"1.1","label":"1.1 Назва підрозділу","sectionTitle":"РОЗДІЛ 1. НАЗВА РОЗДІЛУ","pages":8,"type":"theory"},
-  {"id":"1.2","label":"1.2 Назва підрозділу","sectionTitle":"РОЗДІЛ 1. НАЗВА РОЗДІЛУ","pages":7,"type":"theory"},
-  {"id":"1.conclusions","label":"Висновки до розділу 1","sectionTitle":"РОЗДІЛ 1. НАЗВА РОЗДІЛУ","pages":1,"type":"chapter_conclusion"},
-  {"id":"2.1","label":"2.1 Назва підрозділу","sectionTitle":"РОЗДІЛ 2. НАЗВА РОЗДІЛУ","pages":8,"type":"analysis"},
-  {"id":"intro","label":"ВСТУП","pages":3,"type":"intro"},
-  {"id":"conclusions","label":"ВИСНОВКИ","pages":3,"type":"conclusions"},
-  {"id":"sources","label":"СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ","pages":2,"type":"sources"}
+  {"id":"1.1","label":"1.1 Section title","sectionTitle":"${L.chapterWord} 1. CHAPTER TITLE","pages":8,"type":"theory"},
+  {"id":"1.conclusions","label":"${L.chapConclLabel(1)}","sectionTitle":"${L.chapterWord} 1. CHAPTER TITLE","pages":1,"type":"chapter_conclusion"},
+  {"id":"intro","label":"${L.intro}","pages":3,"type":"intro"},
+  {"id":"conclusions","label":"${L.conclusions}","pages":3,"type":"conclusions"},
+  {"id":"sources","label":"${L.sources}","pages":2,"type":"sources"}
 ]}
-Порядок: підрозділи згруповані по розділах, потім intro, conclusions, sources.`;
+Order: subsections grouped by chapter (with chapter conclusions if needed), then intro, conclusions, sources.`
+        : `Create a plan for ${d.type} on topic: "${d.topic}". Field: ${d.subject}. Pages: ${totalPages}.
+Language of work: ${d.language || "Ukrainian"} — all labels and titles must be in this language.
+${commentAnalysis?.planHints ? `\nCLIENT HINTS:\n${commentAnalysis.planHints}\n` : ""}
+GUIDE REQUIREMENTS:
+- Chapters: ${chapCount}
+- Subsections per chapter: ${Math.round(totalSubsCount / chapCount)}
+- Chapter conclusions: ${hasConcl ? "YES — add after last subsection of each chapter" : "NO — do not add"}
+- Chapter types: ${chTypes.join(", ")}
+${methodInfo.otherRequirements ? `- Other requirements: ${methodInfo.otherRequirements}` : ""}
+
+PAGE DISTRIBUTION (must sum to exactly ${totalPages}):
+- ${L.intro}: ${introP} p.
+- ${L.conclusions}: ${conclP} p.
+- Each subsection: ~${pagesPerSub} p. (total: ${totalSubsCount})
+${hasConcl ? `- Chapter conclusions: 1 p. each (${chapCount} total)` : ""}
+
+Allowed type values: "theory" | "analysis" | "recommendations" | "chapter_conclusion" | "intro" | "conclusions" | "sources"
+Chapter conclusion id format: "1.conclusions", "2.conclusions" etc.
+
+Return ONLY JSON without markdown:
+{"sections":[
+  {"id":"1.1","label":"1.1 Section title","sectionTitle":"${L.chapterWord} 1. CHAPTER TITLE","pages":8,"type":"theory"},
+  {"id":"1.2","label":"1.2 Section title","sectionTitle":"${L.chapterWord} 1. CHAPTER TITLE","pages":7,"type":"theory"},${hasConcl ? `
+  {"id":"1.conclusions","label":"${L.chapConclLabel(1)}","sectionTitle":"${L.chapterWord} 1. CHAPTER TITLE","pages":1,"type":"chapter_conclusion"},` : ""}
+  {"id":"2.1","label":"2.1 Section title","sectionTitle":"${L.chapterWord} 2. CHAPTER TITLE","pages":8,"type":"analysis"},
+  {"id":"intro","label":"${L.intro}","pages":3,"type":"intro"},
+  {"id":"conclusions","label":"${L.conclusions}","pages":3,"type":"conclusions"},
+  {"id":"sources","label":"${L.sources}","pages":2,"type":"sources"}
+]}
+Order: subsections grouped by chapter, then intro, conclusions, sources.`;
 
       try {
         await new Promise(r => setTimeout(r, 3000)); // пауза після аналізу методички
@@ -935,8 +1477,8 @@ chapter_conclusion id формат: "1.conclusions", "2.conclusions" тощо.
       } catch (e) { console.error("methodInfo plan error:", e); }
     }
 
-    const defaultSecs = buildDefaultPlan(totalPages);
-    const namingPrompt = `Для ${d.type} на тему "${d.topic}" (галузь: ${d.subject}) придумай назви підрозділів.\nСтруктура фіксована:\n${defaultSecs.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type)).map(s => `${s.id} [${s.sectionTitle}]`).join("\n")}\n\nПоверни ТІЛЬКИ JSON без markdown:\n{"titles":{"1.1":"Назва","1.2":"Назва","2.1":"Назва","2.2":"Назва"}}`;
+    const defaultSecs = buildDefaultPlan(totalPages, d?.language);
+    const namingPrompt = `For ${d.type} on topic "${d.topic}" (field: ${d.subject}) create subsection titles.${commentAnalysis?.planHints ? `\nHINTS:\n${commentAnalysis.planHints}` : ""}\nFixed structure:\n${defaultSecs.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type)).map(s => `${s.id} [${s.sectionTitle}]`).join("\n")}\n\nReturn ONLY JSON without markdown:\n{"titles":{"1.1":"Title","1.2":"Title","2.1":"Title","2.2":"Title"}}`;
     try {
       await new Promise(r => setTimeout(r, 2000)); // пауза перед запитом
       const raw = await callClaude([{ role: "user", content: namingPrompt }], null, "Respond only with valid JSON. No markdown, no explanation.", 1000, null, MODEL_FAST);
@@ -991,55 +1533,51 @@ chapter_conclusion id формат: "1.conclusions", "2.conclusions" тощо.
     const isLarge = totalPages > 40; // більше 40 стор — великий обсяг
 
     if (sec.type === "intro") {
-      // Кількість абзаців актуальності залежить від обсягу роботи
-      const actualityParas = isLarge ? "10-12" : "6";
-      const conclusionsParas = isLarge ? "10-12" : "7";
-
       // Завдань — зазвичай стільки скільки підрозділів основної частини
       const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
       const tasksCount = Math.min(mainSecs.length, isLarge ? 8 : 5);
 
-      // Додаткові компоненти з методички
-      const extraComponents = methodInfo?.introComponents?.filter(c =>
-        !/(актуальність|мета|завдання|об.єкт|предмет)/i.test(c)
-      ) || [];
-      const extraStr = extraComponents.length > 0
-        ? `\nДОДАТКОВІ ЕЛЕМЕНТИ З МЕТОДИЧКИ: ${extraComponents.join(", ")}.`
-        : "";
+      // Будуємо список елементів вступу: стандартні + з методички
+      const defaultComponents = ["актуальність теми", "мета дослідження", "завдання дослідження", "об'єкт дослідження", "предмет дослідження", "методи дослідження", "структура роботи"];
+      const allComponents = methodInfo?.introComponents?.length
+        ? methodInfo.introComponents
+        : defaultComponents;
+
+      // Формуємо рядки структури
+      const componentLines = allComponents.map((comp, i) => {
+        const label = comp.charAt(0).toUpperCase() + comp.slice(1);
+        if (/актуальн/i.test(comp)) {
+          return `${label} (2 абзаци): абзац починається словами "Актуальність теми." — далі одразу сильне речення про проблему. Покажи чому тема важлива сьогодні, стан дослідженості у вітчизняній та зарубіжній науці.`;
+        }
+        if (/мета/i.test(comp)) {
+          return `${label}: абзац починається словами "Метою роботи є" — далі чітко сформульована мета, що відповідає темі "${d.topic}".`;
+        }
+        if (/завдання/i.test(comp)) {
+          return `${label} (${tasksCount} завдань): абзац починається словами "Для досягнення мети поставлено такі завдання:" — далі нумерований перелік. Завдання відповідають підрозділам:\n${mainSecs.map((s, j) => `   ${j + 1}) "${s.label}"`).join("\n")}`;
+        }
+        if (/об.єкт/i.test(comp)) {
+          return `${label}: абзац починається словами "Об'єктом дослідження є" — далі явище або процес, що досліджується.`;
+        }
+        if (/предмет/i.test(comp)) {
+          return `${label}: абзац починається словами "Предметом дослідження є" — далі конкретний аспект об'єкта, який аналізується.`;
+        }
+        if (/метод/i.test(comp)) {
+          return `${label}: абзац починається словами "Для вирішення поставлених завдань використано такі методи:" — далі перелік методів відповідно до теми.`;
+        }
+        if (/структура/i.test(comp)) {
+          return `${label}: абзац починається словами "Робота складається з вступу," — далі к-сть розділів, висновки, список джерел, загальний обсяг сторінок.`;
+        }
+        return `${label}: абзац починається з природного формулювання (НЕ повторювати мітку "${label}" двічі) — зміст відповідно до теми "${d.topic}".`;
+      });
 
       instruction = `Напиши ВСТУП для ${d.type} на тему "${d.topic}". Галузь: ${d.subject}.
 
 СТРУКТУРА ВСТУПУ (дотримуватись суворо, кожен елемент з нового абзацу):
 
-1. АКТУАЛЬНІСТЬ ТЕМИ (${actualityParas} абзаців):
-   - Починай без слів "Актуальність" на початку — одразу з сильного речення про проблему
-   - Покажи чому тема важлива сьогодні, які наукові прогалини існують
-   - Згадай стан дослідженості теми у вітчизняній та зарубіжній науці
-   - Плавно підведи до мети дослідження
-
-2. МЕТА ДОСЛІДЖЕННЯ (1 абзац):
-   Мета дослідження — [чітко сформульована мета, що відповідає темі "${d.topic}"].
-
-3. ЗАВДАННЯ ДОСЛІДЖЕННЯ (1 абзац, ${tasksCount} завдань):
-   Для досягнення мети поставлено такі завдання: 1) ...; 2) ...; 3) ...; [далі за потребою].
-   Завдання мають відповідати підрозділам роботи:
-${mainSecs.map((s, i) => `   ${i + 1}) підрозділ "${s.label}"`).join("\n")}
-
-4. ОБ'ЄКТ ДОСЛІДЖЕННЯ (1 абзац):
-   Об'єкт дослідження — [що саме досліджується, явище або процес].
-
-5. ПРЕДМЕТ ДОСЛІДЖЕННЯ (1 абзац):
-   Предмет дослідження — [конкретний аспект об'єкта, який аналізується у роботі].
-${extraStr}
-
-6. МЕТОДИ ДОСЛІДЖЕННЯ (1 абзац):
-   Для вирішення поставлених завдань використано такі методи: [перелік методів відповідно до теми].
-
-7. СТРУКТУРА РОБОТИ (1 абзац):
-   Робота складається з вступу, [к-сть] розділів, висновків та списку використаних джерел. Загальний обсяг роботи — [обсяг] сторінок.
+${componentLines.map((l, i) => `${i + 1}. ${l}`).join("\n\n")}
 ${methodInfo?.otherRequirements ? `\nВИМОГИ МЕТОДИЧКИ: ${methodInfo.otherRequirements}` : ""}
 
-НЕ додавай посилань. НЕ виділяй жирним. Пиши суцільним текстом абзацами без нумерації та заголовків.`;
+ВАЖЛИВО: кожен абзац починається так, як вказано вище — НЕ писати окремо мітку ("Мета.") і потім знову те саме слово ("Метою роботи..."). Назви НЕ виділяй жирним. НЕ додавай посилань. Пиши суцільним текстом абзацами.`;
 
     } else if (sec.type === "conclusions") {
       const conclusionsParas = isLarge ? "10-12" : "7";
@@ -1093,10 +1631,13 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ ДО ЦЬОГО РОЗДІЛУ: $
 ${planSummary}
 
 ${prevCtx ? `КОНТЕКСТ ПОПЕРЕДНІХ ПІДРОЗДІЛІВ:\n${prevCtx}\n` : ""}Обсяг: ~${approxParas} абзаців (~${sec.pages} стор.).
-Не обривай текст. Завершуй підсумковим абзацом. Без посилань [1],[2]. Без жирного.`;
+Не обривай текст. Завершуй підсумковим абзацом. Без посилань [1],[2]. Без жирного.
+Абзаци мають різнитись за довжиною: чергуй короткі (2-3 речення) з довшими (5-7 речень).`;
     }
+    if (commentAnalysis?.writingHints) instruction += `\n\nПІДКАЗКИ З КОМЕНТАРЯ КЛІЄНТА (врахуй при написанні):\n${commentAnalysis.writingHints}`;
+    const sectionMaxTokens = Math.min(60000, Math.max(8000, Math.round((sec.pages || 1) * 3000)));
     try {
-      const raw = await callClaude([{ role: "user", content: instruction }], ctrl.signal, buildSYS(lang), 8000, (s) => setLoadMsg(`Генерую: ${sec.label}... зачекайте ${s}с`));
+      const raw = await callClaude([{ role: "user", content: instruction }], ctrl.signal, buildSYS(lang), sectionMaxTokens, (s) => setLoadMsg(`Генерую: ${sec.label}... зачекайте ${s}с`));
       // Видаляємо довге тире на всякий випадок (модель іноді ігнорує заборону)
       const result = raw.replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "");
       const newContent = { ...contentRef.current, [sec.id]: result };
@@ -1133,27 +1674,29 @@ ${prevCtx ? `КОНТЕКСТ ПОПЕРЕДНІХ ПІДРОЗДІЛІВ:\n${pr
     const isLarge = totalPages > 40;
 
     if (sec.type === "intro") {
-      const actualityParas = isLarge ? "10-12" : "6";
       const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
       const tasksCount = Math.min(mainSecs.length, isLarge ? 8 : 5);
-      const extraComponents = methodInfo?.introComponents?.filter(c =>
-        !/(актуальність|мета|завдання|об.єкт|предмет)/i.test(c)
-      ) || [];
-      const extraStr = extraComponents.length > 0 ? `\nДОДАТКОВІ ЕЛЕМЕНТИ З МЕТОДИЧКИ: ${extraComponents.join(", ")}.` : "";
+      const defaultComponents = ["актуальність теми", "мета дослідження", "завдання дослідження", "об'єкт дослідження", "предмет дослідження", "методи дослідження", "структура роботи"];
+      const allComponents = methodInfo?.introComponents?.length ? methodInfo.introComponents : defaultComponents;
+      const componentLines = allComponents.map((comp) => {
+        const label = comp.charAt(0).toUpperCase() + comp.slice(1);
+        if (/актуальн/i.test(comp)) return `${label} (2 абзаци): абзац починається словами "Актуальність теми." — далі одразу сильне речення про проблему.`;
+        if (/мета/i.test(comp)) return `${label}: абзац починається словами "Метою роботи є" — далі чітко сформульована мета.`;
+        if (/завдання/i.test(comp)) return `${label} (${tasksCount} завдань): абзац починається словами "Для досягнення мети поставлено такі завдання:" — далі нумерований перелік.`;
+        if (/об.єкт/i.test(comp)) return `${label}: абзац починається словами "Об'єктом дослідження є" — далі явище або процес.`;
+        if (/предмет/i.test(comp)) return `${label}: абзац починається словами "Предметом дослідження є" — далі конкретний аспект об'єкта.`;
+        if (/метод/i.test(comp)) return `${label}: абзац починається словами "Для вирішення поставлених завдань використано такі методи:" — далі перелік.`;
+        if (/структура/i.test(comp)) return `${label}: абзац починається словами "Робота складається з вступу," — далі к-сть розділів, висновки, список джерел.`;
+        return `${label}: абзац починається з природного формулювання (НЕ повторювати мітку "${label}" двічі).`;
+      });
 
       instruction = `Перепиши ВСТУП для ${d.type} на тему "${d.topic}". Галузь: ${d.subject}.
 ${origSnippet}
 СТРУКТУРА ВСТУПУ (суворо дотримуватись):
 
-1. АКТУАЛЬНІСТЬ (${actualityParas} абзаців) — без слова "Актуальність" на початку, одразу з проблеми
-2. МЕТА ДОСЛІДЖЕННЯ (1 абзац): Мета дослідження — ...
-3. ЗАВДАННЯ (1 абзац, ${tasksCount} завдань): Для досягнення мети поставлено такі завдання: 1)...; 2)...;
-4. ОБ'ЄКТ ДОСЛІДЖЕННЯ (1 абзац): Об'єкт дослідження — ...
-5. ПРЕДМЕТ ДОСЛІДЖЕННЯ (1 абзац): Предмет дослідження — ...${extraStr}
-6. МЕТОДИ ДОСЛІДЖЕННЯ (1 абзац)
-7. СТРУКТУРА РОБОТИ (1 абзац)
-${methodInfo?.otherRequirements ? `ВИМОГИ МЕТОДИЧКИ: ${methodInfo.otherRequirements}` : ""}
-Без посилань. Без жирного. Без нумерації у тексті.${customInstructions}`;
+${componentLines.map((l, i) => `${i + 1}. ${l}`).join("\n")}
+${methodInfo?.otherRequirements ? `\nВИМОГИ МЕТОДИЧКИ: ${methodInfo.otherRequirements}` : ""}
+ВАЖЛИВО: кожен абзац починається так, як вказано вище — НЕ писати окремо мітку ("Мета.") і потім знову те саме слово ("Метою роботи..."). Назви НЕ виділяй жирним. Без посилань. Без нумерації у тексті.${customInstructions}`;
 
     } else if (sec.type === "conclusions") {
       const conclusionsParas = isLarge ? "10-12" : "7";
@@ -1173,8 +1716,9 @@ ${allCtx ? `\nЗМІСТ ПІДРОЗДІЛІВ:\n${allCtx}` : ""}${customInstru
 ${origSnippet}Обсяг: ~${approxParas} абзаців (~${sec.pages} стор.).
 Не обривай текст. Завершуй підсумковим абзацом. Без посилань. Без жирного.${customInstructions}`;
     }
+    const regenMaxTokens = Math.min(60000, Math.max(8000, Math.round((sec.pages || 1) * 3000)));
     try {
-      const raw = await callClaude([{ role: "user", content: instruction }], null, buildSYS(lang), 8000);
+      const raw = await callClaude([{ role: "user", content: instruction }], null, buildSYS(lang), regenMaxTokens);
       const result = raw.replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "");
       const newContent = { ...contentRef.current, [sec.id]: result };
       setContent(newContent);
@@ -1182,6 +1726,133 @@ ${origSnippet}Обсяг: ~${approxParas} абзаців (~${sec.pages} стор
       saveToFirestore({ content: newContent });
     } catch (e) { console.error(e); }
     setRegenLoading(false);
+  };
+
+  const generatePresentation = async () => {
+    setPresLoading(true);
+    try {
+      const fullText = sections
+        .filter(s => s.type !== "sources")
+        .map(s => {
+          const txt = content[s.id] || "";
+          if (!txt) return "";
+          const excerpt = txt.length > 3000
+            ? txt.substring(0, 1500) + "\n...\n" + txt.substring(txt.length - 1500)
+            : txt;
+          return `[${s.label}]:\n${excerpt}`;
+        })
+        .filter(Boolean).join("\n\n");
+
+      // ── Крок 1: аналіз тексту ──
+      const analysisSys = `Ти аналізуєш наукову роботу для створення презентації захисту.
+
+Уважно прочитай весь текст і витягни ТІЛЬКИ те що є в роботі.
+Нічого не вигадуй. Якщо даних немає — пиши null.
+
+Поверни JSON такої структури:
+
+{
+  "thesis": "головна теза роботи в 1 реченні",
+  "meta": {
+    "object": "об'єкт дослідження",
+    "subject": "предмет дослідження",
+    "goal": "мета дослідження",
+    "tasks": ["завдання 1", "завдання 2", "..."]
+  },
+  "methods": ["назва методики 1", "назва методики 2"],
+  "sample": "опис вибірки — кількість, вік, групи",
+  "authors": ["Прізвище І. (рік) — коротко що зробив"],
+  "stats": [
+    {
+      "value": "r = −0,67",
+      "description": "що з чим корелює",
+      "significance": "p < 0,01"
+    }
+  ],
+  "sections": [
+    {
+      "title": "назва розділу або підрозділу",
+      "key_finding": "головний висновок цього розділу — 1 речення",
+      "details": ["конкретна деталь 1", "конкретна деталь 2"]
+    }
+  ],
+  "conclusions": ["висновок 1", "висновок 2", "висновок 3"],
+  "recommendations": ["рекомендація 1", "рекомендація 2"]
+}
+
+Відповідай ТІЛЬКИ JSON без коментарів та пояснень.`;
+
+      const analysisRaw = await callClaude(
+        [{ role: "user", content: `Тема: "${info?.topic}"\nТип: ${info?.type}\n\n${fullText}` }],
+        null, analysisSys, 4000, null, "claude-sonnet-4-20250514"
+      );
+      const analysis = JSON.parse(analysisRaw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim());
+
+      // ── Крок 2: генерація слайдів ──
+      const slidesSys = `Ти отримуєш структурований аналіз наукової роботи у JSON.
+Створи на його основі JSON для презентації захисту — 11-12 слайдів.
+
+КРИТИЧНО:
+- Використовуй ТІЛЬКИ дані з наданого JSON
+- Нічого не вигадуй і не додавай від себе
+- Якщо поле null — не використовуй його на слайді
+
+Текст тез:
+- Максимум 10 слів на тезу
+- Активні конструкції: "контроль → перфекціонізм" замість "було встановлено що існує зв'язок"
+- Конкретно: цифри і факти, не загальні фрази
+
+Доступні типи слайдів:
+"title"       — поля: title, subtitle
+"content"     — поля: title, bullets (масив, макс 4 пункти)
+"cards"       — поля: title, cards (масив 3 об'єктів: heading + text)
+"stats"       — поля: title, stats (масив 3-4 об'єктів: value + label + sub)
+"steps"       — поля: title, items (масив об'єктів: num + heading + text)
+"conclusions" — поля: title, items (масив рядків, макс 6)
+"final"       — поля: text
+
+Обов'язкова послідовність: title → content (актуальність+мета) → steps (завдання) → cards (теорія) → cards (профіль) → cards (типологія) → steps (методологія) → stats (результати) → cards або content (додатково) → steps (рекомендації) → conclusions → final
+
+Відповідай ТІЛЬКИ JSON-масивом без коментарів та пояснень.`;
+
+      const slidesRaw = await callClaude(
+        [{ role: "user", content: JSON.stringify(analysis) }],
+        null, slidesSys, 6000, null, "claude-sonnet-4-20250514"
+      );
+      const slides = JSON.parse(slidesRaw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim());
+      setPresentationSlides(slides);
+      saveToFirestore({ presentationSlides: slides });
+    } catch (e) { alert("Помилка генерації презентації: " + e.message); }
+    setPresLoading(false);
+  };
+
+  const generateSpeech = async () => {
+    setSpeechLoading(true);
+    try {
+      const lang = info?.language || "Українська";
+      const sectionSummaries = sections
+        .filter(s => s.type !== "sources")
+        .map(s => { const txt = content[s.id] || ""; return txt ? `### ${s.label}\n${txt.substring(0, 700)}` : ""; })
+        .filter(Boolean).join("\n\n");
+      const prompt = `Напиши текст доповіді для захисту ${info?.type || "академічної роботи"} на тему "${info?.topic}".
+
+ЗМІСТ РОБОТИ:
+${sectionSummaries}
+
+Вимоги:
+- Обсяг: 5-7 хвилин виступу (приблизно 2-3 сторінки)
+- Структура: актуальність і мета, короткий огляд кожного розділу, висновки, завершення
+- Стиль: академічний але живий, це виступ а не читання
+- Мова: ${lang}
+- Без markdown, жирного тексту, нумерації`;
+      const raw = await callClaude(
+        [{ role: "user", content: prompt }], null, buildSYS(lang), 4000, null, MODEL
+      );
+      const result = raw.replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "");
+      setSpeechText(result);
+      saveToFirestore({ speechText: result });
+    } catch (e) { alert("Помилка генерації доповіді: " + e.message); }
+    setSpeechLoading(false);
   };
 
   const stopGen = () => { abortRef.current?.abort(); runningRef.current = false; setRunning(false); setPaused(true); setLoadMsg(""); };
@@ -1385,8 +2056,9 @@ ${secsSummary}
     setStage("input"); setTplText(""); setComment(""); setClientPlan("");
     setFileLabel(""); setFileB64(null); setFileType(null); setInfo(null);
     setSections([]); setPlanDisplay(""); setContent({}); setGenIdx(0);
-    setPaused(false); setPlanLoading(false); setMethodInfo(null); setSourceDist({}); setSourceTotal(0);
+    setPaused(false); setPlanLoading(false); setMethodInfo(null); setCommentAnalysis(null); setSourceDist({}); setSourceTotal(0);
     setKeywords({}); setCitInputs({}); setAllCitLoading(false); setRefList([]);
+    setPresentationSlides(null); setSpeechText("");
     runningRef.current = false; setRunning(false);
   };
 
@@ -1425,6 +2097,13 @@ ${secsSummary}
         <div style={{ fontFamily: "'Spectral SC',serif", fontSize: 19, letterSpacing: 5 }}>ASSIST</div>
         {info?.topic && <div style={{ fontSize: 12, color: "#666", marginLeft: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 300 }}>{info.topic}</div>}
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: "#888", background: "#2a2a20", borderRadius: 6, padding: "4px 10px" }}>
+            <span>Claude: <b style={{ color: "#e8ff47" }}>${sessionCost.claude.toFixed(4)}</b></span>
+            <span style={{ color: "#444" }}>|</span>
+            <span>Gemini: <b style={{ color: "#e8ff47" }}>${sessionCost.gemini.toFixed(4)}</b></span>
+            <button onClick={() => { const z = { claude: 0, gemini: 0 }; setSessionCost(z); localStorage.setItem("sessionCost", JSON.stringify(z)); }}
+              style={{ background: "transparent", border: "none", color: "#555", cursor: "pointer", fontSize: 13, lineHeight: 1, padding: "0 2px" }} title="Скинути">✕</button>
+          </div>
           <SaveIndicator saving={saving} saved={saved} />
           <StagePills stage={stage} maxStageIdx={maxStageIdx} onNavigate={running ? null : (s) => setStage(s === "input" && info ? "parsed" : s)} />
         </div>
@@ -1441,20 +2120,32 @@ ${secsSummary}
                 placeholder={"№ замовлення - 34455\nТип - Магістерська\n⏰Дедлайн - 06.03.2026\n⚡️Напрям - Гуманітарне\n📌Тематика - Психологія\n✈️Тема - Вплив гаджетів на когнітивну поведінку дітей\n⚙️К-кість стр. - 100-120\n⚙️Унікальність - 70-80%"}
                 style={{ ...TA, minHeight: 200 }} />
             </FieldBox>
-            <FieldBox label="Готовий план від клієнта (необов'язково)">
-              <textarea value={clientPlan} onChange={e => setClientPlan(e.target.value)}
-                placeholder="Вставте план клієнта якщо є. Порожньо = план згенерується автоматично."
-                style={{ ...TA, minHeight: 90 }} />
-            </FieldBox>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
+              <FieldBox label="Готовий план від клієнта (необов'язково)">
+                <textarea value={clientPlan} onChange={e => setClientPlan(e.target.value)}
+                  placeholder="Вставте план клієнта якщо є. Порожньо = план згенерується автоматично."
+                  style={{ ...TA, minHeight: 90 }} />
+              </FieldBox>
+              <FieldBox label="Або фото плану">
+                <ClientPlanInput onExtracted={setClientPlan} extracted={clientPlan} />
+              </FieldBox>
+            </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
               <FieldBox label="Коментар">
                 <textarea value={comment} onChange={e => setComment(e.target.value)}
                   placeholder="Додаткові побажання..." style={{ ...TA, minHeight: 90 }} />
               </FieldBox>
-              <FieldBox label="Методичка / приклад роботи">
+              <FieldBox label="Методичка (тільки PDF)">
                 <DropZone fileLabel={fileLabel} onFile={handleFile} />
               </FieldBox>
             </div>
+            <FieldBox label="Фото як додатковий матеріал (необов'язково)">
+              <PhotoDropZone
+                photos={photos}
+                onAdd={p => setPhotos(prev => [...prev, p])}
+                onRemove={i => setPhotos(prev => prev.filter((_, idx) => idx !== i))}
+              />
+            </FieldBox>
             <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
               <PrimaryBtn onClick={doAnalyze} disabled={!tplText.trim()} loading={running} msg={loadMsg} label="Аналізувати →" />
               {info && !running && (
@@ -1483,7 +2174,15 @@ ${secsSummary}
             </div>
             {info.pages?.includes("-") && <div style={{ fontSize: 12, color: "#888", marginBottom: 16, fontStyle: "italic" }}>Діапазон "{info.pages}" → середнє: {parsePagesAvg(info.pages)} стор.</div>}
 
-            {/* Карточка методички */}
+            {/* Карточка методички або помилка */}
+            {!methodInfo && fileB64 && apiError && (
+              <div style={{ border: "1.5px solid #f5c6c6", borderRadius: 8, overflow: "hidden", marginBottom: 20 }}>
+                <div style={{ background: "#8a1a1a", color: "#ffd0d0", padding: "9px 16px", fontFamily: "'Spectral SC',serif", fontSize: 11, letterSpacing: 2 }}>
+                  ⚠ ПОМИЛКА АНАЛІЗУ МЕТОДИЧКИ
+                </div>
+                <div style={{ padding: "12px 16px", background: "#fff5f5", fontSize: 13, color: "#8a1a1a" }}>{apiError}</div>
+              </div>
+            )}
             {methodInfo && (
               <div style={{ border: "1.5px solid #c8dfa0", borderRadius: 8, overflow: "hidden", marginBottom: 20 }}>
                 <div style={{ background: "#2a3a1a", color: "#a8d060", padding: "9px 16px", fontFamily: "'Spectral SC',serif", fontSize: 11, letterSpacing: 2 }}>
@@ -1492,7 +2191,13 @@ ${secsSummary}
                 <div style={{ padding: "14px 18px", background: "#f5faf0", display: "flex", flexWrap: "wrap", gap: 8 }}>
                   {methodInfo.totalPages && <span style={{ fontSize: 12, background: "#eef5e4", color: "#3a6010", padding: "3px 10px", borderRadius: 10 }}>📄 Обсяг: {methodInfo.totalPages} стор.</span>}
                   {methodInfo.chaptersCount && <span style={{ fontSize: 12, background: "#eef5e4", color: "#3a6010", padding: "3px 10px", borderRadius: 10 }}>📑 Розділів: {methodInfo.chaptersCount}</span>}
-                  {methodInfo.hasChapterConclusions && <span style={{ fontSize: 12, background: "#eef5e4", color: "#3a6010", padding: "3px 10px", borderRadius: 10 }}>✓ Висновки до розділів</span>}
+                  <span
+                    onClick={() => setMethodInfo(p => ({ ...p, hasChapterConclusions: !p.hasChapterConclusions }))}
+                    title="Клікніть щоб увімкнути/вимкнути"
+                    style={{ fontSize: 12, background: methodInfo.hasChapterConclusions ? "#eef5e4" : "#f0ece2", color: methodInfo.hasChapterConclusions ? "#3a6010" : "#888", padding: "3px 10px", borderRadius: 10, cursor: "pointer", userSelect: "none", border: "1px dashed " + (methodInfo.hasChapterConclusions ? "#a8d060" : "#ccc") }}
+                  >
+                    {methodInfo.hasChapterConclusions ? "✓ Висновки до розділів" : "✗ Без висновків до розділів"}
+                  </span>
                   {methodInfo.sourcesStyle && <span style={{ fontSize: 12, background: "#e4f0ff", color: "#1a5a8a", padding: "3px 10px", borderRadius: 10 }}>📚 Стиль: {methodInfo.sourcesStyle}</span>}
                   {methodInfo.sourcesOrder && <span style={{ fontSize: 12, background: "#e4f0ff", color: "#1a5a8a", padding: "3px 10px", borderRadius: 10 }}>{methodInfo.sourcesOrder === "alphabetical" ? "🔤 За алфавітом" : "🔢 За появою"}</span>}
                   {methodInfo.formatting?.font && <span style={{ fontSize: 12, background: "#f0ece2", color: "#555", padding: "3px 10px", borderRadius: 10 }}>🖋 {methodInfo.formatting.font} {methodInfo.formatting.fontSize}pt</span>}
@@ -1557,20 +2262,38 @@ ${secsSummary}
                   <div style={{ display: "grid", gridTemplateColumns: "36px 1fr 70px 54px 36px", background: "#1a1a14", color: "#e8ff47", padding: "9px 14px", fontSize: 11, letterSpacing: "1.5px", textTransform: "uppercase" }}>
                     <div>#</div><div>Підрозділ</div><div style={{ textAlign: "center" }}>Стор.</div><div style={{ textAlign: "center" }}>Промти</div><div />
                   </div>
-                  {sections.map((s, i) => {
-                    const isSpecial = ["intro", "conclusions", "sources"].includes(s.type);
-                    return (
-                      <div key={s.id} className="sec-row" style={{ display: "grid", gridTemplateColumns: "36px 1fr 70px 54px 36px", borderBottom: i < sections.length - 1 ? "1px solid #e4dfd4" : "none", background: isSpecial ? "#ede9e0" : i % 2 === 0 ? "#f5f2eb" : "#f0ece2", alignItems: "center", transition: "background .15s" }}>
-                        <div style={{ padding: "9px 10px", fontSize: 12, color: "#bbb" }}>{i + 1}</div>
-                        <input value={s.label} onChange={e => { const val = e.target.value; setSections(p => { const next = p.map((x, j) => j === i ? { ...x, label: val } : x); setPlanDisplay(buildPlanText(next)); return next; }); }} style={{ background: "transparent", border: "none", fontSize: 13, padding: "9px 8px", color: isSpecial ? "#888" : "#1a1a14", fontStyle: isSpecial ? "italic" : "normal", width: "100%", fontFamily: "'Spectral',serif" }} />
-                        <input type="number" min="1" value={s.pages} onChange={e => { const v = parseInt(e.target.value) || 1; setSections(p => { const next = p.map((x, j) => j === i ? { ...x, pages: v, prompts: x.type === "sources" ? 0 : Math.max(1, Math.ceil(v / 3)) } : x); setPlanDisplay(buildPlanText(next)); const { dist, total } = calcSourceDist(next); setSourceDist(dist); setSourceTotal(total); return next; }); }} style={{ background: "transparent", border: "none", fontSize: 13, padding: "9px 4px", color: "#1a1a14", textAlign: "center", width: "100%", fontFamily: "'Spectral',serif" }} />
-                        <div style={{ textAlign: "center", fontSize: 12, color: "#888", padding: "9px" }}>{s.type === "sources" ? "—" : s.prompts}</div>
-                        <div style={{ display: "flex", justifyContent: "center" }}>
-                          <button onClick={() => setSections(p => { const next = p.filter((_, j) => j !== i); setPlanDisplay(buildPlanText(next)); const { dist, total } = calcSourceDist(next); setSourceDist(dist); setSourceTotal(total); return next; })} style={{ background: "transparent", border: "none", color: "#bbb", fontSize: 15, cursor: "pointer", padding: "2px 4px", borderRadius: 4 }} onMouseEnter={e => e.currentTarget.style.color = "#c03030"} onMouseLeave={e => e.currentTarget.style.color = "#bbb"}>✕</button>
+                  {(() => {
+                    let lastChapterTitle = null;
+                    let rowNum = 0;
+                    const rows = [];
+                    sections.forEach((s, i) => {
+                      const isSpecial = ["intro", "conclusions", "sources"].includes(s.type);
+                      const isChapterConclusion = s.type === "chapter_conclusion";
+                      const isMainSub = !isSpecial && !isChapterConclusion && s.sectionTitle;
+                      if (isMainSub && s.sectionTitle !== lastChapterTitle) {
+                        lastChapterTitle = s.sectionTitle;
+                        rows.push(
+                          <div key={`chhead-${s.sectionTitle}`} style={{ display: "grid", gridTemplateColumns: "36px 1fr 70px 54px 36px", borderBottom: "1px solid #e4dfd4", background: "#ddd8c8", alignItems: "center" }}>
+                            <div style={{ padding: "8px 10px" }} />
+                            <div style={{ padding: "8px 8px", fontSize: 12, fontWeight: "bold", color: "#1a1a14", letterSpacing: "0.5px", gridColumn: "2 / 6", textTransform: "uppercase" }}>{s.sectionTitle}</div>
+                          </div>
+                        );
+                      }
+                      rowNum++;
+                      rows.push(
+                        <div key={s.id} className="sec-row" style={{ display: "grid", gridTemplateColumns: "36px 1fr 70px 54px 36px", borderBottom: i < sections.length - 1 ? "1px solid #e4dfd4" : "none", background: isSpecial ? "#ede9e0" : rowNum % 2 === 0 ? "#f5f2eb" : "#f0ece2", alignItems: "center", transition: "background .15s" }}>
+                          <div style={{ padding: "9px 10px", fontSize: 12, color: "#bbb" }}>{rowNum}</div>
+                          <input value={s.label} onChange={e => { const val = e.target.value; setSections(p => { const next = p.map((x, j) => j === i ? { ...x, label: val } : x); setPlanDisplay(buildPlanText(next)); return next; }); }} style={{ background: "transparent", border: "none", fontSize: 13, padding: "9px 8px", color: isSpecial ? "#888" : "#1a1a14", fontStyle: isSpecial ? "italic" : "normal", width: "100%", fontFamily: "'Spectral',serif" }} />
+                          <input type="number" min="1" value={s.pages} onChange={e => { const v = parseInt(e.target.value) || 1; setSections(p => { const next = p.map((x, j) => j === i ? { ...x, pages: v, prompts: x.type === "sources" ? 0 : Math.max(1, Math.ceil(v / 3)) } : x); setPlanDisplay(buildPlanText(next)); const { dist, total } = calcSourceDist(next); setSourceDist(dist); setSourceTotal(total); return next; }); }} style={{ background: "transparent", border: "none", fontSize: 13, padding: "9px 4px", color: "#1a1a14", textAlign: "center", width: "100%", fontFamily: "'Spectral',serif" }} />
+                          <div style={{ textAlign: "center", fontSize: 12, color: "#888", padding: "9px" }}>{s.type === "sources" ? "—" : s.prompts}</div>
+                          <div style={{ display: "flex", justifyContent: "center" }}>
+                            <button onClick={() => setSections(p => { const next = p.filter((_, j) => j !== i); setPlanDisplay(buildPlanText(next)); const { dist, total } = calcSourceDist(next); setSourceDist(dist); setSourceTotal(total); return next; })} style={{ background: "transparent", border: "none", color: "#bbb", fontSize: 15, cursor: "pointer", padding: "2px 4px", borderRadius: 4 }} onMouseEnter={e => e.currentTarget.style.color = "#c03030"} onMouseLeave={e => e.currentTarget.style.color = "#bbb"}>✕</button>
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    });
+                    return rows;
+                  })()}
                   <div style={{ padding: "10px 14px", background: "#f5f2eb", borderTop: "1px solid #e4dfd4" }}>
                     <button onClick={() => {
                       const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
@@ -1693,6 +2416,16 @@ ${secsSummary}
               </div>
               <div style={{ padding: "12px 16px", background: "#f0f5e8", border: "1px solid #c8dfa0", borderRadius: 8, marginBottom: 20, fontSize: 13, color: "#3a6010", lineHeight: "1.7" }}>
                 <strong>Як це працює:</strong> Вставте знайдені джерела до кожного підрозділу (кожне з нового рядка). Після заповнення натисніть <em>"Розставити всі посилання"</em>.
+                <div style={{ marginTop: 8 }}>
+                  <a
+                    href={`https://scholar.google.com/scholar?hl=uk&as_sdt=0%2C5&as_ylo=2021&q=${encodeURIComponent(info?.topic || "")}&btnG=`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "#1a5a8a", textDecoration: "none", background: "#e4f0ff", padding: "4px 12px", borderRadius: 6, border: "1px solid #b0d0f0" }}
+                  >
+                    🎓 Шукати джерела на Google Scholar →
+                  </a>
+                </div>
               </div>
               {allRefs.length > 0 && (
                 <div style={{ border: "1.5px solid #d4cfc4", borderRadius: 8, overflow: "hidden", marginBottom: 20 }}>
@@ -1810,6 +2543,65 @@ ${secsSummary}
             </div>
             <div style={{ marginTop: 12, padding: "10px 14px", background: "#f0ece2", borderRadius: 6, fontSize: 12, color: "#888" }}>
               Word: Times New Roman 14, міжрядковий 1.5, поля ліво 3см / право 1.5см / верх-низ 2см, абзац 1.25см, нумерація сторінок справа зверху.
+            </div>
+
+            {/* ── Додаткові матеріали ── */}
+            <div style={{ marginTop: 32, borderTop: "1.5px solid #d4cfc4", paddingTop: 24 }}>
+              <div style={{ fontSize: 11, color: "#888", letterSpacing: "2px", textTransform: "uppercase", marginBottom: 16 }}>Додаткові матеріали</div>
+              <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+
+                {/* Презентація */}
+                <div style={{ flex: 1, minWidth: 220, border: "1.5px solid #d4cfc4", borderRadius: 8, padding: "16px 18px" }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Презентація (.pptx)</div>
+                  <div style={{ fontSize: 12, color: "#888", marginBottom: 14 }}>10-14 слайдів з тезами на основі готової роботи</div>
+                  {!presentationSlides ? (
+                    <button onClick={generatePresentation} disabled={presLoading}
+                      style={{ background: presLoading ? "#aaa" : "#1a1a14", color: presLoading ? "#eee" : "#e8ff47", border: "none", borderRadius: 6, padding: "9px 20px", fontFamily: "'Spectral',serif", fontSize: 12, letterSpacing: "1px", cursor: presLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
+                      {presLoading ? <><SpinDot light />Генерую...</> : "Генерувати"}
+                    </button>
+                  ) : (
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button onClick={async () => { setPresLoading(true); try { await exportToPptx(presentationSlides, info); } catch (e) { alert("Помилка: " + e.message); } setPresLoading(false); }} disabled={presLoading}
+                        style={{ background: presLoading ? "#aaa" : "#1a4a1a", color: presLoading ? "#eee" : "#a8e060", border: "none", borderRadius: 6, padding: "9px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: presLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
+                        {presLoading ? <><SpinDot light />...</> : "⬇ Завантажити .pptx"}
+                      </button>
+                      <button onClick={() => setPresentationSlides(null)}
+                        style={{ background: "transparent", border: "1.5px solid #d4cfc4", color: "#888", borderRadius: 6, padding: "9px 14px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>
+                        Переробити
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Доповідь */}
+                <div style={{ flex: 1, minWidth: 220, border: "1.5px solid #d4cfc4", borderRadius: 8, padding: "16px 18px" }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Доповідь (.docx)</div>
+                  <div style={{ fontSize: 12, color: "#888", marginBottom: 14 }}>Текст виступу на захист (5-7 хвилин)</div>
+                  {!speechText ? (
+                    <button onClick={generateSpeech} disabled={speechLoading}
+                      style={{ background: speechLoading ? "#aaa" : "#1a1a14", color: speechLoading ? "#eee" : "#e8ff47", border: "none", borderRadius: 6, padding: "9px 20px", fontFamily: "'Spectral',serif", fontSize: 12, letterSpacing: "1px", cursor: speechLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
+                      {speechLoading ? <><SpinDot light />Генерую...</> : "Генерувати"}
+                    </button>
+                  ) : (
+                    <div>
+                      <div style={{ fontSize: 12, lineHeight: "1.8", color: "#444", maxHeight: 150, overflowY: "auto", background: "#f5f2ea", borderRadius: 6, padding: "10px 12px", marginBottom: 10, whiteSpace: "pre-wrap" }}>
+                        {speechText.substring(0, 450)}...
+                      </div>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button onClick={async () => { setSpeechLoading(true); try { await exportSpeechToDocx(speechText, info); } catch (e) { alert("Помилка: " + e.message); } setSpeechLoading(false); }} disabled={speechLoading}
+                          style={{ background: speechLoading ? "#aaa" : "#1a4a1a", color: speechLoading ? "#eee" : "#a8e060", border: "none", borderRadius: 6, padding: "9px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: speechLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
+                          {speechLoading ? <><SpinDot light />...</> : "⬇ Завантажити .docx"}
+                        </button>
+                        <button onClick={() => setSpeechText("")}
+                          style={{ background: "transparent", border: "1.5px solid #d4cfc4", color: "#888", borderRadius: 6, padding: "9px 14px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>
+                          Переробити
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+              </div>
             </div>
           </div>
         )}

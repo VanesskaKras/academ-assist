@@ -1,5 +1,6 @@
 // Збільшуємо ліміт body до 10MB для передачі PDF методичок
 export const config = {
+    maxDuration: 60,
     api: {
         bodyParser: {
             sizeLimit: "10mb",
@@ -17,9 +18,9 @@ export default async function handler(req, res) {
     try {
         const body = req.body;
 
-        // Захист від перевищення ліміту output токенів моделі (max 8192)
-        if (body.max_tokens && body.max_tokens > 8192) {
-            body.max_tokens = 8192;
+        // Захист від перевищення ліміту output токенів моделі
+        if (body.max_tokens && body.max_tokens > 64000) {
+            body.max_tokens = 64000;
         }
 
         const response = await fetch("https://api.anthropic.com/v1/messages", {
