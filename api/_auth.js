@@ -14,12 +14,15 @@ export function setCors(res) {
 // Повертає об'єкт користувача Firebase або null якщо токен недійсний
 export async function verifyToken(req) {
     const authHeader = req.headers["authorization"] || "";
-    if (!authHeader.startsWith("Bearer ")) return null;
+    if (!authHeader.startsWith("Bearer ")) {
+        console.error("[auth] No Bearer token in request");
+        return null;
+    }
     const idToken = authHeader.slice(7);
 
     const apiKey = process.env.FIREBASE_WEB_API_KEY;
     if (!apiKey) {
-        console.error("FIREBASE_WEB_API_KEY is not set");
+        console.error("[auth] FIREBASE_WEB_API_KEY is not set");
         return null;
     }
 
@@ -32,11 +35,15 @@ export async function verifyToken(req) {
                 body: JSON.stringify({ idToken }),
             }
         );
-        if (!res.ok) return null;
+        if (!res.ok) {
+            const errBody = await res.json().catch(() => ({}));
+            console.error("[auth] Firebase lookup failed:", res.status, JSON.stringify(errBody));
+            return null;
+        }
         const data = await res.json();
         return data.users?.[0] || null;
     } catch (e) {
-        console.error("Token verification error:", e.message);
+        console.error("[auth] Token verification error:", e.message);
         return null;
     }
 }
