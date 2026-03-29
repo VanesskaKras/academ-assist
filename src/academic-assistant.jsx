@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
-import { db } from "./firebase";
+import { db, auth } from "./firebase";
 import { useAuth } from "./AuthContext";
 import {
   doc, getDoc, setDoc, updateDoc, serverTimestamp,
@@ -540,10 +540,12 @@ function parseTemplate(text) {
 async function callClaude(messages, signal, systemPrompt, maxTokens, onWait, model) {
   const MAX_RETRIES = 5;
   let delay = 12000; // 12 сек початкова затримка при 429
+  const token = await auth.currentUser?.getIdToken().catch(() => null);
+  const authHeader = token ? { "Authorization": `Bearer ${token}` } : {};
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     const res = await fetch("/api/claude", {
       method: "POST", signal,
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeader },
       body: JSON.stringify({ model: model || MODEL, max_tokens: maxTokens || 8000, system: systemPrompt || buildSYS(), messages }),
     });
     if (res.status === 429) {
@@ -589,6 +591,8 @@ async function callClaude(messages, signal, systemPrompt, maxTokens, onWait, mod
 async function callGemini(messages, signal, systemPrompt, maxTokens, onWait, model) {
   const MAX_RETRIES = 5;
   let delay = 12000;
+  const token = await auth.currentUser?.getIdToken().catch(() => null);
+  const authHeader = token ? { "Authorization": `Bearer ${token}` } : {};
 
   const toGeminiPart = (c) => {
     if ((c.type === "document" || c.type === "image") && c.source?.type === "base64")
@@ -621,7 +625,7 @@ async function callGemini(messages, signal, systemPrompt, maxTokens, onWait, mod
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     const res = await fetch("/api/gemini", {
       method: "POST", signal,
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeader },
       body: JSON.stringify(body),
     });
     if (res.status === 429 || res.status === 503) {

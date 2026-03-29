@@ -2,6 +2,7 @@
 // shared.js — спільна логіка для academic-assistant та small-works
 // ─────────────────────────────────────────────
 import { useState, useRef, useCallback } from "react";
+import { auth } from "./firebase";
 
 // ── Моделі ──
 export const MODEL = "claude-sonnet-4-6";
@@ -46,10 +47,12 @@ ${forbiddenWords}
 export async function callClaude(messages, signal, systemPrompt, maxTokens, onWait, model) {
   const MAX_RETRIES = 5;
   let delay = 12000;
+  const token = await auth.currentUser?.getIdToken().catch(() => null);
+  const authHeader = token ? { "Authorization": `Bearer ${token}` } : {};
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     const res = await fetch("/api/claude", {
       method: "POST", signal,
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeader },
       body: JSON.stringify({ model: model || MODEL, max_tokens: maxTokens || 8000, system: systemPrompt || buildSYS(), messages }),
     });
     if (res.status === 429) {
