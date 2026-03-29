@@ -3,6 +3,7 @@
 // ─────────────────────────────────────────────
 import { useState, useRef, useCallback } from "react";
 import { auth } from "./firebase";
+import { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel } from "docx";
 
 // ── Моделі ──
 export const MODEL = "claude-sonnet-4-6";
@@ -101,15 +102,6 @@ export function parsePagesAvg(str) {
 
 // ── Word export (спільний для обох) ──
 export async function exportToDocx({ sections, content, info, displayOrder }) {
-  if (!window.docx) {
-    await new Promise((resolve, reject) => {
-      const s = document.createElement("script");
-      s.src = "https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.min.js";
-      s.onload = resolve; s.onerror = reject;
-      document.head.appendChild(s);
-    });
-  }
-  const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel } = window.docx;
   const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
   const L = 1701, R = 851, T = 1134, B = 1134, INDENT = 709, LINE = 360;
 
@@ -223,15 +215,6 @@ export async function exportToDocx({ sections, content, info, displayOrder }) {
 
 // ── Simple docx export для малих робіт (плоский текст без підрозділів) ──
 export async function exportSimpleDocx({ title, sections, info }) {
-  if (!window.docx) {
-    await new Promise((resolve, reject) => {
-      const s = document.createElement("script");
-      s.src = "https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.min.js";
-      s.onload = resolve; s.onerror = reject;
-      document.head.appendChild(s);
-    });
-  }
-  const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel } = window.docx;
   const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
   const L = 1701, R = 851, T = 1134, B = 1134, INDENT = 709, LINE = 360;
 

@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { db, auth } from "./firebase";
 import { useAuth } from "./AuthContext";
+import { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel, TableOfContents } from "docx";
+import PptxGenJS from "pptxgenjs";
 import {
   doc, getDoc, setDoc, updateDoc, serverTimestamp,
 } from "firebase/firestore";
@@ -9,15 +11,6 @@ import {
 // Word export
 // ─────────────────────────────────────────────
 async function exportToDocx({ content, info, displayOrder }) {
-  if (!window.docx) {
-    await new Promise((resolve, reject) => {
-      const s = document.createElement("script");
-      s.src = "https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.min.js";
-      s.onload = resolve; s.onerror = reject;
-      document.head.appendChild(s);
-    });
-  }
-  const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel, TableOfContents } = window.docx;
   const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
   const L = 1701, R = 851, T = 1134, B = 1134, INDENT = 709, LINE = 360;
   const LINE_SINGLE = 240;
@@ -180,15 +173,6 @@ async function exportToDocx({ content, info, displayOrder }) {
 // Export plan to docx
 // ─────────────────────────────────────────────
 async function exportPlanToDocx({ sections, info }) {
-  if (!window.docx) {
-    await new Promise((resolve, reject) => {
-      const s = document.createElement("script");
-      s.src = "https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.min.js";
-      s.onload = resolve; s.onerror = reject;
-      document.head.appendChild(s);
-    });
-  }
-  const { Document, Packer, Paragraph, TextRun, AlignmentType, HeadingLevel } = window.docx;
   const FONT = "Times New Roman", SIZE = 28, LINE = 360, INDENT = 709;
   const L = 1701, R = 851, T = 1134, B = 1134;
 
@@ -250,15 +234,7 @@ async function exportPlanToDocx({ sections, info }) {
 // Презентація (.pptx)
 // ─────────────────────────────────────────────
 async function exportToPptx(slides, info) {
-  if (!window.PptxGenJS) {
-    await new Promise((resolve, reject) => {
-      const s = document.createElement("script");
-      s.src = "https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js";
-      s.onload = resolve; s.onerror = reject;
-      document.head.appendChild(s);
-    });
-  }
-  const pptx = new window.PptxGenJS();
+  const pptx = new PptxGenJS();
   pptx.layout = "LAYOUT_16x9";
 
   const BG_DARK   = "1A2744";
@@ -366,15 +342,6 @@ async function exportToPptx(slides, info) {
 // Доповідь (.docx)
 // ─────────────────────────────────────────────
 async function exportSpeechToDocx(text, info) {
-  if (!window.docx) {
-    await new Promise((resolve, reject) => {
-      const s = document.createElement("script");
-      s.src = "https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.min.js";
-      s.onload = resolve; s.onerror = reject;
-      document.head.appendChild(s);
-    });
-  }
-  const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header } = window.docx;
   const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
   const L = 1701, R = 851, T = 1134, B = 1134, INDENT = 709, LINE = 360;
 
