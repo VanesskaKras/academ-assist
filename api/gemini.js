@@ -1,6 +1,4 @@
-import { setCors, verifyToken } from "./_auth.js";
-
-// Gemini 2.5 Flash — дешева альтернатива Sonnet для генерації тексту
+// Gemini 2.0 Flash — дешева альтернатива Sonnet для генерації тексту
 export const config = {
     maxDuration: 60,
     api: {
@@ -11,13 +9,17 @@ export const config = {
 };
 
 export default async function handler(req, res) {
-    setCors(res);
-
-    if (req.method === "OPTIONS") return res.status(204).end();
+    if (req.method === "GET") {
+        const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${process.env.GEMINI_API_KEY}`;
+        const r = await fetch(listUrl);
+        const d = await r.json();
+        return res.status(200).json(d);
+    }
     if (req.method !== "POST") return res.status(405).end();
 
-    const user = await verifyToken(req);
-    if (!user) return res.status(401).json({ error: "Unauthorized" });
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "POST");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
     try {
         const { _model, ...body } = req.body;
