@@ -14,8 +14,8 @@ export default function LoginPage() {
         setLoading(true);
         try {
             await login(email, password);
-        } catch {
-            setError("Невірний email або пароль");
+        } catch (err) {
+            setError(err.code || err.message || "Невірний email або пароль");
         }
         setLoading(false);
     };

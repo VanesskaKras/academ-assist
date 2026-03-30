@@ -283,7 +283,7 @@ export async function exportSimpleDocx({ title, sections, info }) {
 // і замініть CUSTOM_SOUND_URL на шлях, наприклад "/sounds/done.mp3"
 const CUSTOM_SOUND_URL = null; // або "/sounds/done.mp3"
 
-export function playDoneSound() {
+function _playAudioNow() {
   if (CUSTOM_SOUND_URL) {
     try { new Audio(CUSTOM_SOUND_URL).play(); } catch {}
     return;
@@ -304,6 +304,38 @@ export function playDoneSound() {
       osc.start(t); osc.stop(t + 0.35);
     });
   } catch {}
+}
+
+export function playDoneSound() {
+  if (!document.hidden) {
+    _playAudioNow();
+    return;
+  }
+  // Вкладка прихована — показуємо браузерне сповіщення
+  const showNotification = () => {
+    try {
+      new Notification("Текст готовий!", {
+        body: "Генерація завершена. Повертайтесь до вкладки.",
+        icon: "/favicon.ico",
+        silent: false,
+      });
+    } catch {}
+  };
+  if ("Notification" in window) {
+    if (Notification.permission === "granted") {
+      showNotification();
+    } else if (Notification.permission !== "denied") {
+      Notification.requestPermission().then(p => { if (p === "granted") showNotification(); });
+    }
+  }
+  // Запасний варіант: грати звук коли користувач повернеться на вкладку
+  const onVisible = () => {
+    if (!document.hidden) {
+      document.removeEventListener("visibilitychange", onVisible);
+      _playAudioNow();
+    }
+  };
+  document.addEventListener("visibilitychange", onVisible);
 }
 
 // ── Загальні стилі ──
