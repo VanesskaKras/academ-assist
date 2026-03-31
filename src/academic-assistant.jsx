@@ -8,7 +8,7 @@ import {
 // ─────────────────────────────────────────────
 // Word export
 // ─────────────────────────────────────────────
-async function exportToDocx({ content, info, displayOrder }) {
+async function exportToDocx({ content, info, displayOrder, appendicesText }) {
   if (!window.docx) {
     await new Promise((resolve, reject) => {
       const s = document.createElement("script");
@@ -189,6 +189,31 @@ async function exportToDocx({ content, info, displayOrder }) {
     children.push(...makeBlocks(txt, sec.label));
   }
 
+  // ── ДОДАТКИ (після списку джерел) ──
+  if (appendicesText && appendicesText.trim()) {
+    children.push(new Paragraph({ pageBreakBefore: true, spacing: { before: 0, after: 0, line: LINE, lineRule: "auto" }, children: [] }));
+    // Загальний заголовок розділу
+    children.push(heading1("ДОДАТКИ"));
+    appendicesText.split("\n").forEach(line => {
+      const raw = line.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1").trim();
+      if (!raw) {
+        children.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
+        return;
+      }
+      if (/^ДОДАТОК\s+[А-ЯA-Z]/i.test(raw)) {
+        // Підрозділ: "Додаток А", "Додаток Б" тощо
+        children.push(headingSubsection(raw));
+      } else {
+        children.push(new Paragraph({
+          indent: { firstLine: INDENT },
+          spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
+          alignment: AlignmentType.BOTH,
+          children: [new TextRun({ text: raw, font: FONT, size: SIZE, color: "000000" })],
+        }));
+      }
+    });
+  }
+
   const doc = new Document({
     features: { updateFields: true },
     styles: {
@@ -284,6 +309,58 @@ async function exportPlanToDocx({ sections, info }) {
   const safeName = ("план_" + (info?.topic || "робота")).replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
   a.href = url; a.download = safeName + ".docx";
   document.body.appendChild(a); a.click(); document.body.removeChild(a); a.href = "";
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+// ─────────────────────────────────────────────
+// Додатки (.docx)
+// ─────────────────────────────────────────────
+async function exportAppendixToDocx(text, info) {
+  if (!window.docx) {
+    await new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = "https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.min.js";
+      s.onload = resolve; s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+  const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header } = window.docx;
+  const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
+  const L = 1701, R = 851, T = 1134, B = 1134, INDENT = 709, LINE = 360;
+
+  const children = text.split("\n").map(line => {
+    const raw = line.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1").trim();
+    if (!raw) return new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] });
+    if (/^ДОДАТОК\s+[А-ЯA-Z]/i.test(raw)) {
+      return new Paragraph({
+        spacing: { line: LINE, lineRule: "auto", before: LINE, after: Math.round(LINE / 2) },
+        alignment: AlignmentType.CENTER,
+        children: [new TextRun({ text: raw.toUpperCase(), font: FONT, size: SIZE, bold: true, color: "000000" })],
+      });
+    }
+    return new Paragraph({
+      indent: { firstLine: INDENT },
+      spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
+      alignment: AlignmentType.BOTH,
+      children: [new TextRun({ text: raw, font: FONT, size: SIZE, color: "000000" })],
+    });
+  });
+
+  const doc = new Document({
+    styles: { default: { document: { run: { font: FONT, size: SIZE, color: "000000" }, paragraph: { spacing: { line: LINE, lineRule: "auto" } } } } },
+    sections: [{
+      properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: T, right: R, bottom: B, left: L } }, pageNumberStart: 1 },
+      headers: { default: new Header({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, spacing: { before: 0, after: 0 }, children: [new TextRun({ children: [PageNumber.CURRENT], font: FONT, size: SIZE_NUM, color: "000000" })] })] }) },
+      children,
+    }],
+  });
+
+  const blob = await Packer.toBlob(doc);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const safeName = (info?.topic || "додатки").replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
+  a.href = url; a.download = safeName + " - додатки.docx";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
@@ -709,6 +786,43 @@ const FIELD_LABELS = {
   subject: "Тематика / предмет", direction: "Галузь / напрям", uniqueness: "Унікальність",
   language: "Мова роботи", deadline: "Дедлайн", extras: "Додаткові матеріали",
   methodNotes: "Вимоги методички",
+};
+
+// Визначає чи є робота з психології або педагогіки
+const isPsychoPed = (info) => {
+  const dir = ((info?.direction || "") + " " + (info?.subject || "")).toLowerCase();
+  return /психол|педагог/.test(dir);
+};
+
+// Визначає підрозділи що мають отримати інструкції емпіричного дослідження
+// Варіант 2: у плані є ключові слова — всі підрозділи того розділу
+// Варіант 1: ключових слів немає — один найбільш підходящий підрозділ
+const getEmpiricalSections = (sections, info) => {
+  const empty = { anchorId: null, chapterSectionIds: [] };
+  if (!isPsychoPed(info)) return empty;
+
+  const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
+  const empiricalRe = /дослідженн|емпіричн|анкетуванн|практичн.*дослідж|вибірк|результат.*дослідж/i;
+
+  // Варіант 2: є підрозділи з ключовими словами → беремо весь їх розділ
+  const matchingChapNums = new Set(
+    mainSecs
+      .filter(s => empiricalRe.test(s.label) || empiricalRe.test(s.sectionTitle || ""))
+      .map(s => s.id.split(".")[0])
+  );
+  if (matchingChapNums.size > 0) {
+    const ids = mainSecs
+      .filter(s => matchingChapNums.has(s.id.split(".")[0]))
+      .map(s => s.id);
+    return { anchorId: null, chapterSectionIds: ids };
+  }
+
+  // Варіант 1: ключових слів немає → один найкращий підрозділ
+  const practicalSecs = mainSecs.filter(s => ["analysis", "recommendations"].includes(s.type));
+  if (!practicalSecs.length) return empty;
+  const softRe = /практичн|аналіз|результат|застосуванн/i;
+  const best = practicalSecs.find(s => softRe.test(s.label)) || practicalSecs[practicalSecs.length - 1];
+  return { anchorId: best.id, chapterSectionIds: [] };
 };
 
 const STAGES = ["Дані", "Перевірка", "План", "Написання", "Джерела", "Готово"];
@@ -1278,6 +1392,8 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [presentationLoading, setPresentationLoading] = useState(false);
   const [presentationMsg, setPresentationMsg] = useState("");
   const [presentationReady, setPresentationReady] = useState(false);
+  const [appendicesText, setAppendicesText] = useState("");
+  const [appendicesLoading, setAppendicesLoading] = useState(false);
   const [sessionCost, setSessionCost] = useState(() => {
     try { return JSON.parse(localStorage.getItem("sessionCost")) || { claude: 0, gemini: 0 }; } catch { return { claude: 0, gemini: 0 }; }
   });
@@ -1325,6 +1441,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
           if (d.citInputs) setCitInputs(d.citInputs);
           if (d.refList) setRefList(d.refList);
           if (d.speechText) setSpeechText(d.speechText);
+          if (d.appendicesText) setAppendicesText(d.appendicesText);
           if (d.presentationReady) setPresentationReady(true);
           if (d.stage) { setStage(d.stage); setMaxStageIdx(Math.max(0, STAGE_KEYS.indexOf(d.stage))); }
           if (d.genIdx !== undefined) setGenIdx(d.genIdx);
@@ -1788,17 +1905,39 @@ Order: subsections grouped by chapter, then intro, conclusions, sources.`;
     }
 
     const defaultSecs = buildDefaultPlan(totalPages, d?.language);
-    const namingPrompt = `For ${d.type} on topic "${d.topic}" (field: ${d.subject}) create subsection titles.${commentAnalysis?.planHints ? `\nHINTS:\n${commentAnalysis.planHints}` : ""}\nFixed structure:\n${defaultSecs.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type)).map(s => `${s.id} [${s.sectionTitle}]`).join("\n")}\n\nReturn ONLY JSON without markdown:\n{"titles":{"1.1":"Title","1.2":"Title","2.1":"Title","2.2":"Title"}}`;
+    // Для психології/педагогіки — перейменовуємо емпіричний розділ:
+    // до 40 стор (2 розділи): емпіричне = розділ 2 (type "analysis")
+    // від 40 стор (3 розділи): емпіричне = розділ 3 (type "recommendations")
+    const hasThreeChapters = totalPages >= 40;
+    const empiricalChapNum = hasThreeChapters ? 3 : 2;
+    const planSecs = isPsychoPed(d)
+      ? defaultSecs.map(s => {
+          const chapNum = parseInt(s.id.split(".")[0]);
+          if (!hasThreeChapters && s.type === "analysis" && chapNum === 2) {
+            const title = isEnglish ? "CHAPTER 2. EMPIRICAL RESEARCH" : "РОЗДІЛ 2. ЕМПІРИЧНЕ ДОСЛІДЖЕННЯ";
+            return { ...s, sectionTitle: title };
+          }
+          if (hasThreeChapters && s.type === "recommendations" && chapNum === 3) {
+            const title = isEnglish ? "CHAPTER 3. EMPIRICAL RESEARCH" : "РОЗДІЛ 3. ЕМПІРИЧНЕ ДОСЛІДЖЕННЯ";
+            return { ...s, sectionTitle: title };
+          }
+          return s;
+        })
+      : defaultSecs;
+    const psychoPedNamingHint = isPsychoPed(d)
+      ? `\nIMPORTANT for Chapter ${empiricalChapNum} (empirical research): subsections should cover: research methodology and sample description, questionnaire/survey instrument, results analysis and interpretation.`
+      : "";
+    const namingPrompt = `For ${d.type} on topic "${d.topic}" (field: ${d.subject}) create subsection titles.${commentAnalysis?.planHints ? `\nHINTS:\n${commentAnalysis.planHints}` : ""}${psychoPedNamingHint}\nFixed structure:\n${planSecs.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type)).map(s => `${s.id} [${s.sectionTitle}]`).join("\n")}\n\nReturn ONLY JSON without markdown:\n{"titles":{"1.1":"Title","1.2":"Title","2.1":"Title","2.2":"Title"}}`;
     try {
       await new Promise(r => setTimeout(r, 2000)); // пауза перед запитом
       const raw = await callClaude([{ role: "user", content: namingPrompt }], null, "Respond only with valid JSON. No markdown, no explanation.", 1000, null, MODEL_FAST);
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
       const parsed = JSON.parse(jsonMatch?.[0] || raw.replace(/```json|```/g, "").trim());
-      const namedSecs = defaultSecs.map(s => { const name = parsed.titles?.[s.id]; return name ? { ...s, label: `${s.id} ${name}` } : s; });
+      const namedSecs = planSecs.map(s => { const name = parsed.titles?.[s.id]; return name ? { ...s, label: `${s.id} ${name}` } : s; });
       await finalizeSections(namedSecs);
     } catch (e) {
       console.error("Naming error:", e);
-      await finalizeSections(defaultSecs);
+      await finalizeSections(planSecs);
     }
   };
 
@@ -2040,9 +2179,34 @@ ${chapCtx ? "ЗМІСТ ПІДРОЗДІЛІВ РОЗДІЛУ:\n" + chapCtx : ""
       };
       const methodReq = methodReqMap[sec.type] || methodInfo?.otherRequirements || "";
 
+      const empSecs = getEmpiricalSections(sections, d);
+      const isEmpChapter = empSecs.chapterSectionIds.includes(sec.id);
+      const isEmpAnchor = empSecs.anchorId === sec.id;
+      let empiricalBlock = "";
+      if (isEmpChapter) {
+        empiricalBlock = `
+
+КОНТЕКСТ (психолого-педагогічне емпіричне дослідження):
+Цей підрозділ є частиною емпіричного дослідження. Визнач за назвою підрозділу що саме писати:
+- якщо підрозділ про організацію або методику дослідження: опиши вибірку (20-30 респондентів: вік, категорія, умови відбору), метод анкетування, мету та структуру анкети, принцип проведення. Додай речення: "Анкета наведена у Додатку А."
+- якщо підрозділ про аналіз або результати: подай результати у вигляді таблиці markdown (|---|---| формат) з відсотковими показниками по запитаннях або категоріях, проаналізуй дані, зроби висновки
+- якщо підрозділ про рекомендації або практичні висновки: спирайся на результати анкетування вже описані в попередніх підрозділах, не повторюй опис анкети та вибірки`;
+      } else if (isEmpAnchor) {
+        empiricalBlock = `
+
+ОБОВ'ЯЗКОВО для цього підрозділу (психолого-педагогічне дослідження):
+Цей підрозділ має містити емпіричне дослідження:
+1. Вибірка: 25-30 респондентів (вік, категорія, умови відбору).
+2. Метод: анкетування. Мета анкети, структура (кількість і типи запитань, блоки).
+3. Принцип проведення: умови та порядок анкетування.
+4. Результати: таблиця markdown (|---|---| формат) з відсотковими показниками.
+5. Аналіз: інтерпретація результатів таблиці, зв'язок із темою.
+6. В тексті додай: "Анкета наведена у Додатку А."`;
+      }
+
       instruction = `Напиши підрозділ "${sec.label}" для ${d.type} на тему "${d.topic}". Галузь: ${d.subject}.
 Тип підрозділу: ${typeHints[sec.type] || "основний"}.
-${methodReq ? `ВИМОГИ МЕТОДИЧКИ ДО ЦЬОГО РОЗДІЛУ: ${methodReq}` : ""}
+${methodReq ? `ВИМОГИ МЕТОДИЧКИ ДО ЦЬОГО РОЗДІЛУ: ${methodReq}` : ""}${empiricalBlock}
 
 ПЛАН РОБОТИ (для розуміння структури та уникнення повторів):
 ${planSummary}
@@ -2129,8 +2293,24 @@ ${methodInfo?.conclusionsRequirements ? `ВИМОГИ МЕТОДИЧКИ: ${meth
 НЕ повторювати вступ. НЕ вводити нове. Без посилань. Без жирного. Без нумерації.
 ${allCtx ? `\nЗМІСТ ПІДРОЗДІЛІВ:\n${allCtx}` : ""}${customInstructions}`;
     } else {
+      const empSecsRegen = getEmpiricalSections(sections, d);
+      const isEmpChapterRegen = empSecsRegen.chapterSectionIds.includes(sec.id);
+      const isEmpAnchorRegen = empSecsRegen.anchorId === sec.id;
+      let empiricalBlockRegen = "";
+      if (isEmpChapterRegen) {
+        empiricalBlockRegen = `
+
+КОНТЕКСТ (психолого-педагогічне емпіричне дослідження):
+Визнач за назвою підрозділу що писати: організація/методика → вибірка 20-30 осіб + анкетування + "Анкета у Додатку А"; аналіз/результати → таблиці markdown + інтерпретація; рекомендації → на основі результатів без повтору опису анкети.`;
+      } else if (isEmpAnchorRegen) {
+        empiricalBlockRegen = `
+
+ОБОВ'ЯЗКОВО: вибірка 25-30 осіб, метод анкетування, принцип проведення, таблиця результатів markdown, аналіз, "Анкета у Додатку А."`;
+      }
+
       instruction = `Перепиши підрозділ "${sec.label}" для ${d.type} на тему "${d.topic}". Галузь: ${d.subject}.
-${origSnippet}Обсяг: ~${approxParas} абзаців (~${sec.pages} стор.).
+${origSnippet}${empiricalBlockRegen}
+Обсяг: ~${approxParas} абзаців (~${sec.pages} стор.).
 Не обривай текст. Завершуй підсумковим абзацом. Без посилань. Без жирного.${customInstructions}`;
     }
     const regenMaxTokens = Math.min(60000, Math.max(8000, Math.round((sec.pages || 1) * 3000)));
@@ -2172,6 +2352,45 @@ ${sectionSummaries}
       saveToFirestore({ speechText: result });
     } catch (e) { alert("Помилка генерації доповіді: " + e.message); }
     setSpeechLoading(false);
+  };
+
+  const doGenAppendices = async () => {
+    setAppendicesLoading(true);
+    try {
+      const lang = info?.language || "Українська";
+      const empSecs = getEmpiricalSections(sections, info);
+      const anchorId = empSecs.anchorId || empSecs.chapterSectionIds[0] || null;
+      const anchorCtx = anchorId && content[anchorId]
+        ? `КОНТЕКСТ ДОСЛІДЖЕННЯ:\n${content[anchorId].substring(0, 800)}`
+        : "";
+
+      const prompt = isPsychoPed(info)
+        ? `Згенеруй Додаток А для ${info?.type || "наукової роботи"} на тему "${info?.topic}". Галузь: ${info?.subject}.
+
+Додаток А містить анкету яка використовувалась для емпіричного дослідження.
+${anchorCtx}
+
+Вимоги:
+- Перший рядок: ДОДАТОК А
+- Другий рядок: назва анкети відповідно до теми
+- Звернення до респондента та інструкція (2-3 речення)
+- 12-15 запитань закритого типу з варіантами відповідей: а), б), в), г)
+- Запитання охоплюють різні аспекти теми дослідження
+- В кінці: "Дякуємо за участь у дослідженні!"
+- Мова: ${lang}
+- БЕЗ markdown, зірочок, жирного. Звичайний текст.`
+        : `Згенеруй розділ "Додатки" для ${info?.type || "наукової роботи"} на тему "${info?.topic}".
+Включи один або два додатки що логічно доповнюють роботу (таблиці, схеми, зразки документів тощо).
+Мова: ${lang}. БЕЗ markdown, зірочок, жирного.`;
+
+      const raw = await callClaude(
+        [{ role: "user", content: prompt }], null, buildSYS(lang), 6000, null, MODEL
+      );
+      const result = raw.replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "").replace(/[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF]/g, "");
+      setAppendicesText(result);
+      saveToFirestore({ appendicesText: result });
+    } catch (e) { alert("Помилка генерації додатків: " + e.message); }
+    setAppendicesLoading(false);
   };
 
   const generatePresentation = async () => {
@@ -2502,7 +2721,7 @@ ${secsSummary}
     setSections([]); setPlanDisplay(""); setContent({}); setGenIdx(0);
     setPaused(false); setPlanLoading(false); setMethodInfo(null); setCommentAnalysis(null); setSourceDist({}); setSourceTotal(0);
     setKeywords({}); setCitInputs({}); setAllCitLoading(false); setRefList([]);
-    setSpeechText("");
+    setSpeechText(""); setAppendicesText("");
     setPresentationReady(false); setPresentationMsg("");
     runningRef.current = false; setRunning(false);
   };
@@ -3006,10 +3225,61 @@ ${secsSummary}
               );
             })}
 
+            {/* ══ ДОДАТКИ ══ */}
+            <div style={{ marginTop: 24, border: "1.5px solid #d4cfc4", borderRadius: 8, overflow: "hidden" }}>
+              <div style={{ background: "#1a1a14", color: "#e8ff47", padding: "11px 18px", fontFamily: "'Spectral SC',serif", fontSize: 11, letterSpacing: 2, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span>ДОДАТКИ</span>
+                {isPsychoPed(info) && <span style={{ fontSize: 10, color: "#888", letterSpacing: 1 }}>Додаток А: Анкета дослідження</span>}
+              </div>
+              <div style={{ padding: "16px 18px", background: "#faf8f3" }}>
+                {!appendicesText ? (
+                  <div>
+                    <div style={{ fontSize: 12, color: "#888", marginBottom: 12, lineHeight: 1.6 }}>
+                      {isPsychoPed(info)
+                        ? "Анкета яка використовувалась у дослідженні. Генерується на основі теми та змісту роботи."
+                        : "Додайте матеріали для додатків або згенеруйте автоматично."}
+                    </div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button onClick={doGenAppendices} disabled={appendicesLoading}
+                        style={{ background: appendicesLoading ? "#aaa" : "#1a1a14", color: appendicesLoading ? "#eee" : "#e8ff47", border: "none", borderRadius: 6, padding: "9px 20px", fontFamily: "'Spectral',serif", fontSize: 12, letterSpacing: "1px", cursor: appendicesLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
+                        {appendicesLoading ? <><SpinDot light />Генерую...</> : "Генерувати →"}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <textarea
+                      value={appendicesText}
+                      onChange={e => setAppendicesText(e.target.value)}
+                      style={{ width: "100%", minHeight: 220, fontSize: 12, lineHeight: "1.85", color: "#2a2a1e", background: "#f5f2ea", borderRadius: 6, padding: "12px 14px", border: "1px solid #d4cfc4", fontFamily: "'Spectral',serif", resize: "vertical", boxSizing: "border-box" }}
+                    />
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                      <button onClick={() => navigator.clipboard.writeText(appendicesText)}
+                        style={{ background: "#1a1a14", color: "#e8ff47", border: "none", borderRadius: 6, padding: "9px 18px", fontFamily: "'Spectral',serif", fontSize: 12, letterSpacing: "1px", cursor: "pointer" }}>
+                        Скопіювати
+                      </button>
+                      <button onClick={async () => { setAppendicesLoading(true); try { await exportAppendixToDocx(appendicesText, info); } catch (e) { alert("Помилка: " + e.message); } setAppendicesLoading(false); }} disabled={appendicesLoading}
+                        style={{ background: appendicesLoading ? "#aaa" : "#1a4a1a", color: appendicesLoading ? "#eee" : "#a8e060", border: "none", borderRadius: 6, padding: "9px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: appendicesLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
+                        {appendicesLoading ? <><SpinDot light />...</> : "⬇ Завантажити .docx"}
+                      </button>
+                      <button onClick={() => { setAppendicesText(""); saveToFirestore({ appendicesText: "" }); }}
+                        style={{ background: "transparent", border: "1.5px solid #d4cfc4", color: "#888", borderRadius: 6, padding: "9px 14px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>
+                        Очистити
+                      </button>
+                      <button onClick={doGenAppendices} disabled={appendicesLoading}
+                        style={{ background: "transparent", border: "1.5px solid #d4cfc4", color: "#555", borderRadius: 6, padding: "9px 14px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: appendicesLoading ? "default" : "pointer" }}>
+                        Переробити
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 24 }}>
               <NavBtn onClick={() => setStage("sources")}>← Джерела</NavBtn>
               <button onClick={copyAll} style={{ background: "#1a1a14", color: "#e8ff47", border: "none", borderRadius: 7, padding: "11px 30px", fontFamily: "'Spectral',serif", fontSize: 13, letterSpacing: "1.5px", cursor: "pointer" }}>Скопіювати текст</button>
-              <button disabled={docxLoading} onClick={async () => { setDocxLoading(true); try { await exportToDocx({ sections, content, info, displayOrder }); } catch (e) { alert("Помилка: " + e.message); } setDocxLoading(false); }}
+              <button disabled={docxLoading} onClick={async () => { setDocxLoading(true); try { await exportToDocx({ sections, content, info, displayOrder, appendicesText }); } catch (e) { alert("Помилка: " + e.message); } setDocxLoading(false); }}
                 style={{ background: docxLoading ? "#aaa" : "#1a4a1a", color: docxLoading ? "#eee" : "#a8e060", border: "none", borderRadius: 7, padding: "11px 30px", fontFamily: "'Spectral',serif", fontSize: 13, letterSpacing: "1.5px", cursor: docxLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
                 {docxLoading ? <><SpinDot light />Генерую Word...</> : "⬇ Завантажити .docx"}
               </button>
