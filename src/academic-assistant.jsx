@@ -288,122 +288,6 @@ async function exportPlanToDocx({ sections, info }) {
 }
 
 // ─────────────────────────────────────────────
-// Презентація (.pptx)
-// ─────────────────────────────────────────────
-async function exportToPptx(slides, info) {
-  if (!window.PptxGenJS) {
-    await new Promise((resolve, reject) => {
-      const s = document.createElement("script");
-      s.src = "https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js";
-      s.onload = resolve; s.onerror = reject;
-      document.head.appendChild(s);
-    });
-  }
-  const pptx = new window.PptxGenJS();
-  pptx.layout = "LAYOUT_16x9";
-
-  const BG_DARK   = "1A2744";
-  const BG_LIGHT  = "F5F7FA";
-  const ACCENT    = "6B8F71";
-  const ACCENT_L  = "A8C5AE";
-  const TEXT_DARK = "1A2744";
-  const TEXT_MID  = "3D5A80";
-  const TEXT_LIGHT= "FFFFFF";
-  const TEXT_DIM  = "8899AA";
-  const DIVIDER   = "E0E6EE";
-  const FH = "Georgia", FB = "Calibri";
-
-  function topBar(s) {
-    s.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 10, h: 0.06, fill: { color: BG_DARK } });
-  }
-  function slideTitle(s, title) {
-    s.addText(title || "", { x: 0.4, y: 0.12, w: 9.2, h: 0.9, fontSize: 22, bold: true, color: TEXT_DARK, fontFace: FH, wrap: true });
-  }
-  function slideNum(s, idx) {
-    s.addText(String(idx + 1), { x: 9.2, y: 5.1, w: 0.5, h: 0.35, fontSize: 9, color: TEXT_DIM, fontFace: FB, align: "right" });
-  }
-
-  slides.forEach((slide, idx) => {
-    const s = pptx.addSlide();
-    const isDark = slide.type === "title" || slide.type === "final";
-    s.background = { color: isDark ? BG_DARK : BG_LIGHT };
-
-    if (slide.type === "title") {
-      s.addShape(pptx.ShapeType.rect, { x: 0.5, y: 3.05, w: 3.5, h: 0.04, fill: { color: ACCENT } });
-      s.addText(slide.title || info?.topic || "Презентація", {
-        x: 0.5, y: 1.1, w: 9, h: 1.7, fontSize: 28, bold: true,
-        color: TEXT_LIGHT, fontFace: FH, align: "left", wrap: true,
-      });
-      if (slide.subtitle || info?.type) {
-        s.addText(slide.subtitle || info?.type || "", {
-          x: 0.5, y: 3.2, w: 9, h: 0.7, fontSize: 15, color: ACCENT_L, fontFace: FB, align: "left",
-        });
-      }
-
-    } else if (slide.type === "final") {
-      s.addText(slide.text || "Дякую за увагу!", {
-        x: 0.5, y: 1.8, w: 9, h: 1.4, fontSize: 32, bold: true,
-        color: TEXT_LIGHT, fontFace: FH, align: "center",
-      });
-      s.addShape(pptx.ShapeType.rect, { x: 3.5, y: 3.35, w: 3, h: 0.04, fill: { color: ACCENT } });
-
-    } else if (slide.type === "cards") {
-      topBar(s); slideTitle(s, slide.title); slideNum(s, idx);
-      const cards = slide.cards || [];
-      const n = Math.min(cards.length, 3);
-      const cw = (9.2 - 0.2 * (n - 1)) / n;
-      cards.slice(0, n).forEach((card, ci) => {
-        const cx = 0.4 + ci * (cw + 0.2), cy = 1.1;
-        s.addShape(pptx.ShapeType.rect, { x: cx + 0.06, y: cy + 0.06, w: cw, h: 4.1, fill: { color: "000000", transparency: 92 }, line: { color: "ffffff", pt: 0 } });
-        s.addShape(pptx.ShapeType.rect, { x: cx, y: cy, w: cw, h: 4.1, fill: { color: "ffffff" }, line: { color: DIVIDER, pt: 0.5 } });
-        s.addShape(pptx.ShapeType.rect, { x: cx, y: cy, w: cw, h: 0.65, fill: { color: ACCENT }, line: { pt: 0 } });
-        s.addText(card.heading || "", { x: cx + 0.1, y: cy, w: cw - 0.2, h: 0.65, fontSize: 11, bold: true, color: TEXT_LIGHT, fontFace: FH, valign: "middle", wrap: true });
-        s.addText(card.text || "", { x: cx + 0.12, y: cy + 0.72, w: cw - 0.24, h: 3.3, fontSize: 11, color: TEXT_DARK, fontFace: FB, valign: "top", wrap: true, lineSpacingMultiple: 1.3 });
-      });
-
-    } else if (slide.type === "stats") {
-      topBar(s); slideTitle(s, slide.title); slideNum(s, idx);
-      const stats = slide.stats || [];
-      const n = Math.min(stats.length, 4);
-      const sw = 9.2 / n;
-      stats.slice(0, n).forEach((stat, si) => {
-        const sx = 0.4 + si * sw;
-        s.addText(stat.value || "", { x: sx, y: 1.55, w: sw - 0.1, h: 1.1, fontSize: 22, bold: true, color: ACCENT, fontFace: FH, align: "center", wrap: true });
-        s.addText(stat.label || "", { x: sx, y: 2.7, w: sw - 0.1, h: 1.0, fontSize: 11, color: TEXT_DARK, fontFace: FB, align: "center", wrap: true, lineSpacingMultiple: 1.2 });
-        if (stat.sub) s.addText(stat.sub, { x: sx, y: 3.75, w: sw - 0.1, h: 0.5, fontSize: 9, italic: true, color: TEXT_DIM, fontFace: FB, align: "center" });
-        if (si < n - 1) s.addShape(pptx.ShapeType.rect, { x: sx + sw - 0.05, y: 1.55, w: 0.01, h: 2.6, fill: { color: DIVIDER } });
-      });
-
-    } else if (slide.type === "steps") {
-      topBar(s); slideTitle(s, slide.title); slideNum(s, idx);
-      const items = slide.items || [];
-      const rh = Math.min(1.05, 4.3 / Math.max(items.length, 1));
-      items.forEach((item, ii) => {
-        const iy = 1.15 + ii * rh;
-        s.addShape(pptx.ShapeType.ellipse, { x: 0.35, y: iy + 0.05, w: 0.62, h: 0.62, fill: { color: ACCENT }, line: { pt: 0 } });
-        s.addText(item.num || String(ii + 1), { x: 0.35, y: iy + 0.05, w: 0.62, h: 0.62, fontSize: 14, bold: true, color: TEXT_LIGHT, fontFace: FH, align: "center", valign: "middle" });
-        s.addText(item.heading || "", { x: 1.1, y: iy + 0.02, w: 8.5, h: 0.38, fontSize: 13, bold: true, color: TEXT_DARK, fontFace: FH });
-        if (item.text) s.addText(item.text, { x: 1.1, y: iy + 0.42, w: 8.5, h: rh - 0.48, fontSize: 11, color: TEXT_MID, fontFace: FB, wrap: true });
-      });
-
-    } else if (slide.type === "conclusions") {
-      topBar(s); slideTitle(s, slide.title || "ВИСНОВКИ"); slideNum(s, idx);
-      const pts = (slide.items || slide.points || []).map(p => ({ text: p, options: { bullet: { indent: 15 }, paraSpaceAfter: 8 } }));
-      if (pts.length > 0) s.addText(pts, { x: 0.4, y: 1.1, w: 9.2, h: 4.3, fontSize: 14, color: TEXT_DARK, fontFace: FB, valign: "top", wrap: true, lineSpacingMultiple: 1.4 });
-
-    } else {
-      // content, toc
-      topBar(s); slideTitle(s, slide.title); slideNum(s, idx);
-      const pts = (slide.bullets || slide.points || []).map(p => ({ text: p, options: { bullet: { indent: 15 }, paraSpaceAfter: 6 } }));
-      if (pts.length > 0) s.addText(pts, { x: 0.4, y: 1.1, w: 9.2, h: 4.3, fontSize: 15, color: TEXT_DARK, fontFace: FB, valign: "top", wrap: true, lineSpacingMultiple: 1.3 });
-    }
-  });
-
-  const safeName = (info?.topic || "презентація").replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
-  await pptx.writeFile({ fileName: safeName + ".pptx" });
-}
-
-// ─────────────────────────────────────────────
 // Доповідь (.docx)
 // ─────────────────────────────────────────────
 async function exportSpeechToDocx(text, info) {
@@ -446,6 +330,263 @@ async function exportSpeechToDocx(text, info) {
   a.href = url; a.download = safeName + " - доповідь.docx";
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+// ─────────────────────────────────────────────
+// Presentation export (.pptx)
+// ─────────────────────────────────────────────
+async function exportToPptxFile(slideData, info) {
+  if (!window.PptxGenJS) {
+    await new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = "https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js";
+      s.onload = resolve; s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+
+  const pptx = new window.PptxGenJS();
+  pptx.layout = "LAYOUT_16x9";
+
+  const PALETTES = {
+    tech:      { darkBg: "1E2761", accent: "CADCFC", lightBg: "EEF3FF", text: "1E2761" },
+    medicine:  { darkBg: "2C5F2D", accent: "97BC62", lightBg: "F0F7F0", text: "1A3A1B" },
+    social:    { darkBg: "B85042", accent: "F5C6C0", lightBg: "FDF8F5", text: "5A1A0F" },
+    economics: { darkBg: "36454F", accent: "C8D8E4", lightBg: "F5F5F5", text: "2A3540" },
+    default:   { darkBg: "1A1A14", accent: "D4CF80", lightBg: "FAF8F3", text: "1A1A14" },
+  };
+
+  const detectPalette = (info) => {
+    const dir = ((info?.direction || "") + " " + (info?.subject || "")).toLowerCase();
+    if (/it|інформ|програм|комп|tech|техн|систем|цифр/.test(dir)) return "tech";
+    if (/медицин|біол|фарм|здоров|лікар/.test(dir)) return "medicine";
+    if (/право|психол|соціол|педагог|гуманіт|мов|освіт/.test(dir)) return "social";
+    if (/економ|менедж|фінанс|облік|маркет|бізнес/.test(dir)) return "economics";
+    return "default";
+  };
+
+  const paletteName = (slideData.palette && PALETTES[slideData.palette]) ? slideData.palette : detectPalette(info);
+  const P = PALETTES[paletteName];
+  const STRIP_W = 0.18;      // ліва акцентна смуга (товстіша)
+  const CONTENT_X = STRIP_W + 0.12;
+  const CONTENT_W = 10 - CONTENT_X - 0.15;
+  const CONTENT_Y = 1.15;    // збільшений відступ від заголовка
+
+  for (const slide of (slideData.slides || [])) {
+    const s = pptx.addSlide();
+    const isDark = slide.type === "title" || slide.type === "thanks";
+
+    // ══ Темні слайди (title / thanks) ══
+    if (isDark) {
+      s.background = { color: P.darkBg };
+      s.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 10, h: 0.13, fill: { color: P.accent }, line: { type: "none" } });
+      s.addShape(pptx.ShapeType.rect, { x: 0, y: 5.5, w: 10, h: 0.125, fill: { color: P.accent }, line: { type: "none" } });
+
+      if (slide.type === "title") {
+        s.addText(slide.title || info?.topic || "", {
+          x: 0.7, y: 0.9, w: 8.6, h: 2.5,
+          fontSize: 26, bold: true, color: "FFFFFF",
+          fontFace: "Georgia", align: "center", valign: "middle", wrap: true,
+        });
+        const subLines = [slide.subtitle, slide.author, slide.supervisor, String(slide.year || new Date().getFullYear())].filter(Boolean);
+        s.addText(subLines.join("\n"), {
+          x: 0.7, y: 3.6, w: 8.6, h: 1.5,
+          fontSize: 13, color: P.accent, fontFace: "Calibri",
+          align: "center", valign: "top", wrap: true,
+        });
+      } else {
+        s.addText(slide.text || "Дякую за увагу!", {
+          x: 0.7, y: 1.6, w: 8.6, h: 2.0,
+          fontSize: 42, bold: true, color: "FFFFFF",
+          fontFace: "Georgia", align: "center", valign: "middle",
+        });
+        if (info?.topic) {
+          s.addText(info.topic, {
+            x: 0.7, y: 3.8, w: 8.6, h: 0.8,
+            fontSize: 12, color: P.accent, fontFace: "Calibri", align: "center",
+          });
+        }
+      }
+
+    // ══ Світлі слайди (контент) ══
+    } else {
+      s.background = { color: P.lightBg };
+      // Ліва смуга — 0.18" (товстіша)
+      s.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: STRIP_W, h: 5.625, fill: { color: P.darkBg }, line: { type: "none" } });
+
+      // Заголовок — без лінії знизу, більший відступ
+      s.addText(slide.heading || "", {
+        x: STRIP_W + 0.07, y: 0.14, w: 10 - STRIP_W - 0.22, h: 0.78,
+        fontSize: 22, bold: true, color: P.text,
+        fontFace: "Georgia", align: "center", valign: "middle",
+      });
+      // Лінії під заголовком НЕМАЄ — тільки відступ (CONTENT_Y = 1.15)
+
+      // ── RELEVANCE: 3 кольорові картки ──
+      if (slide.type === "relevance") {
+        const pts = slide.points || [];
+        const n = Math.min(pts.length, 3);
+        const gap = 0.12;
+        const cardW = (CONTENT_W - (n - 1) * gap) / Math.max(n, 1);
+        const cardsY = slide.accent ? CONTENT_Y + 0.5 : CONTENT_Y;
+        const cardH = 5.625 - cardsY - 0.28;
+
+        if (slide.accent) {
+          s.addText(slide.accent.toUpperCase(), {
+            x: CONTENT_X, y: CONTENT_Y - 0.02, w: CONTENT_W, h: 0.42,
+            fontSize: 11, bold: true, color: P.darkBg, fontFace: "Calibri",
+            align: "center", valign: "middle", charSpacing: 3,
+          });
+        }
+        for (let i = 0; i < n; i++) {
+          const cx = CONTENT_X + i * (cardW + gap);
+          s.addShape(pptx.ShapeType.rect, { x: cx, y: cardsY, w: cardW, h: cardH, fill: { color: P.accent }, line: { type: "none" } });
+          s.addShape(pptx.ShapeType.ellipse, { x: cx + 0.12, y: cardsY + 0.14, w: 0.38, h: 0.38, fill: { color: P.darkBg }, line: { type: "none" } });
+          s.addText(String(i + 1), { x: cx + 0.12, y: cardsY + 0.14, w: 0.38, h: 0.38, fontSize: 12, bold: true, color: "FFFFFF", fontFace: "Calibri", align: "center", valign: "middle" });
+          s.addText(pts[i] || "", { x: cx + 0.12, y: cardsY + 0.62, w: cardW - 0.24, h: cardH - 0.76, fontSize: 13, color: P.text, fontFace: "Calibri", align: "left", valign: "top", wrap: true });
+        }
+
+      // ── GOALS: мета-блок + нумерований список ──
+      } else if (slide.type === "goals") {
+        let curY = CONTENT_Y;
+        if (slide.goal) {
+          s.addShape(pptx.ShapeType.rect, { x: CONTENT_X, y: curY, w: CONTENT_W, h: 0.75, fill: { color: P.darkBg }, line: { type: "none" } });
+          s.addText("Мета: " + slide.goal, {
+            x: CONTENT_X + 0.15, y: curY, w: CONTENT_W - 0.3, h: 0.75,
+            fontSize: 13, bold: true, color: "FFFFFF", fontFace: "Georgia",
+            align: "left", valign: "middle", wrap: true,
+          });
+          curY += 0.88;
+        }
+        if (slide.tasks?.length) {
+          const tasks = slide.tasks;
+          const taskH = Math.min((5.625 - curY - 0.25) / tasks.length, 0.78);
+          tasks.forEach((task, i) => {
+            const ty = curY + i * taskH;
+            const cSize = Math.min(0.44, taskH * 0.56);
+            s.addShape(pptx.ShapeType.ellipse, { x: CONTENT_X, y: ty + (taskH - cSize) / 2, w: cSize, h: cSize, fill: { color: P.accent }, line: { type: "none" } });
+            s.addText(String(i + 1), { x: CONTENT_X, y: ty + (taskH - cSize) / 2, w: cSize, h: cSize, fontSize: 13, bold: true, color: P.text, fontFace: "Calibri", align: "center", valign: "middle" });
+            s.addText(task, { x: CONTENT_X + 0.56, y: ty, w: CONTENT_W - 0.56, h: taskH, fontSize: 13, color: P.text, fontFace: "Calibri", align: "left", valign: "middle", wrap: true });
+          });
+        }
+
+      // ── LITERATURE: пункти + блок «прогалина» ──
+      } else if (slide.type === "literature") {
+        const hasGap = !!slide.gap;
+        const ptsH = hasGap ? 5.625 - CONTENT_Y - 1.1 : 5.625 - CONTENT_Y - 0.3;
+        if (slide.points?.length) {
+          const dynH = Math.min(ptsH, 0.55 + slide.points.length * 0.65);
+          const items = slide.points.map(p => ({ text: p, options: { bullet: { indent: 15 }, paraSpaceAfter: 10 } }));
+          s.addText(items, { x: CONTENT_X, y: CONTENT_Y, w: CONTENT_W, h: dynH, fontSize: 13, color: P.text, fontFace: "Calibri", valign: "top" });
+        }
+        if (hasGap) {
+          const gy = 5.625 - 1.0 - 0.1;
+          s.addShape(pptx.ShapeType.rect, { x: CONTENT_X, y: gy, w: CONTENT_W, h: 0.85, fill: { color: P.accent }, line: { type: "none" } });
+          s.addText("Прогалина: " + slide.gap, { x: CONTENT_X + 0.15, y: gy, w: CONTENT_W - 0.3, h: 0.85, fontSize: 12, bold: true, color: P.text, fontFace: "Calibri", align: "left", valign: "middle", wrap: true });
+        }
+
+      // ── RESULT: велика цифра зліва + пояснення справа ──
+      } else if (slide.type === "result") {
+        const accentNum = slide.accent_num;
+        const hasNum = !!accentNum && String(accentNum).length <= 12;
+        if (hasNum) {
+          const cSize = 2.4;
+          const cX = CONTENT_X + 0.05;
+          const cY = CONTENT_Y + (5.625 - CONTENT_Y - 0.3 - cSize) / 2;
+          s.addShape(pptx.ShapeType.ellipse, { x: cX, y: cY, w: cSize, h: cSize, fill: { color: P.accent }, line: { type: "none" } });
+          s.addText(String(accentNum), { x: cX, y: cY, w: cSize, h: cSize, fontSize: /^\d/.test(String(accentNum)) ? 42 : 22, bold: true, color: P.darkBg, fontFace: "Calibri", align: "center", valign: "middle", wrap: true });
+          if (slide.points?.length) {
+            const pX = CONTENT_X + cSize + 0.3;
+            const pW = 10 - pX - 0.2;
+            const dynH = Math.min(4.0, 0.55 + slide.points.length * 0.68);
+            const items = slide.points.map(p => ({ text: p, options: { bullet: { indent: 15 }, paraSpaceAfter: 12 } }));
+            s.addText(items, { x: pX, y: CONTENT_Y + 0.1, w: pW, h: dynH, fontSize: 13, color: P.text, fontFace: "Calibri", valign: "top" });
+          }
+        } else {
+          if (slide.points?.length) {
+            const dynH = Math.min(4.0, 0.55 + slide.points.length * 0.68);
+            const items = slide.points.map(p => ({ text: p, options: { bullet: { indent: 15 }, paraSpaceAfter: 12 } }));
+            s.addText(items, { x: CONTENT_X, y: CONTENT_Y, w: CONTENT_W - 1.3, h: dynH, fontSize: 13, color: P.text, fontFace: "Calibri", valign: "top" });
+          }
+          // Декоративна смуга справа
+          s.addShape(pptx.ShapeType.rect, { x: 10 - 1.2, y: CONTENT_Y, w: 0.9, h: 5.625 - CONTENT_Y - 0.3, fill: { color: P.accent }, line: { type: "none" } });
+        }
+
+      // ── CONCLUSIONS: нумерований список з кольоровими колами ──
+      } else if (slide.type === "conclusions") {
+        const pts = slide.points || [];
+        const n = Math.min(pts.length, 5);
+        const availH = 5.625 - CONTENT_Y - 0.28;
+        const itemH = availH / Math.max(n, 1);
+        const cSize = Math.min(0.46, itemH * 0.54);
+        pts.slice(0, 5).forEach((pt, i) => {
+          const ty = CONTENT_Y + i * itemH;
+          s.addShape(pptx.ShapeType.ellipse, { x: CONTENT_X, y: ty + (itemH - cSize) / 2, w: cSize, h: cSize, fill: { color: P.darkBg }, line: { type: "none" } });
+          s.addText(String(i + 1), { x: CONTENT_X, y: ty + (itemH - cSize) / 2, w: cSize, h: cSize, fontSize: 12, bold: true, color: "FFFFFF", fontFace: "Calibri", align: "center", valign: "middle" });
+          s.addText(pt, { x: CONTENT_X + cSize + 0.14, y: ty, w: CONTENT_W - cSize - 0.14, h: itemH, fontSize: 13, color: P.text, fontFace: "Calibri", align: "left", valign: "middle", wrap: true });
+        });
+
+      // ── PRACTICAL: 2–3 горизонтальні картки ──
+      } else if (slide.type === "practical") {
+        const pts = slide.points || [];
+        const n = Math.min(pts.length, 3);
+        const gap = 0.12;
+        const cardW = (CONTENT_W - (n - 1) * gap) / Math.max(n, 1);
+        const cardH = 5.625 - CONTENT_Y - 0.28;
+        for (let i = 0; i < n; i++) {
+          const cx = CONTENT_X + i * (cardW + gap);
+          s.addShape(pptx.ShapeType.rect, { x: cx, y: CONTENT_Y, w: cardW, h: cardH, fill: { color: P.accent }, line: { type: "none" } });
+          s.addShape(pptx.ShapeType.ellipse, { x: cx + 0.12, y: CONTENT_Y + 0.14, w: 0.38, h: 0.38, fill: { color: P.darkBg }, line: { type: "none" } });
+          s.addText(String(i + 1), { x: cx + 0.12, y: CONTENT_Y + 0.14, w: 0.38, h: 0.38, fontSize: 12, bold: true, color: "FFFFFF", fontFace: "Calibri", align: "center", valign: "middle" });
+          s.addText(pts[i] || "", { x: cx + 0.12, y: CONTENT_Y + 0.62, w: cardW - 0.24, h: cardH - 0.76, fontSize: 12, color: P.text, fontFace: "Calibri", align: "left", valign: "top", wrap: true });
+        }
+
+      // ── METHOD: акцентне коло справа + пункти зліва ──
+      } else if (slide.type === "method") {
+        const accentText = slide.accent;
+        const hasAccent = !!accentText && String(accentText).length <= 20;
+        const cSize = 2.2;
+        const bodyW = hasAccent ? CONTENT_W - cSize - 0.3 : CONTENT_W;
+
+        if (slide.points?.length) {
+          const dynH = Math.min(4.0, 0.55 + slide.points.length * 0.65);
+          const items = slide.points.map(p => ({ text: p, options: { bullet: { indent: 15 }, paraSpaceAfter: 10 } }));
+          s.addText(items, { x: CONTENT_X, y: CONTENT_Y, w: hasAccent ? bodyW : CONTENT_W - 1.3, h: dynH, fontSize: 13, color: P.text, fontFace: "Calibri", valign: "top" });
+        }
+        if (hasAccent) {
+          const cX = 10 - cSize - 0.2;
+          const cY = CONTENT_Y + (4.0 - cSize) / 2;
+          s.addShape(pptx.ShapeType.ellipse, { x: cX, y: cY, w: cSize, h: cSize, fill: { color: P.accent }, line: { type: "none" } });
+          s.addText(String(accentText), { x: cX, y: cY, w: cSize, h: cSize, fontSize: 16, bold: true, color: P.text, fontFace: "Georgia", align: "center", valign: "middle", wrap: true });
+        } else {
+          s.addShape(pptx.ShapeType.rect, { x: 10 - 1.2, y: CONTENT_Y, w: 0.9, h: 5.625 - CONTENT_Y - 0.3, fill: { color: P.accent }, line: { type: "none" } });
+        }
+
+      // ── DEFAULT: пункти + акцент або декор ──
+      } else {
+        const accentText = slide.accent_num || slide.accent || null;
+        const hasAccent = !!accentText && String(accentText).length <= 20;
+        const dynH = Math.min(4.0, 0.55 + (slide.points?.length || 1) * 0.65);
+
+        if (slide.points?.length) {
+          const items = slide.points.map(p => ({ text: p, options: { bullet: { indent: 15 }, paraSpaceAfter: 10 } }));
+          s.addText(items, { x: CONTENT_X, y: CONTENT_Y, w: hasAccent ? CONTENT_W - 2.7 : CONTENT_W - 1.3, h: dynH, fontSize: 13, color: P.text, fontFace: "Calibri", valign: "top" });
+        }
+        if (hasAccent) {
+          const cSize = 2.4;
+          const cX = 10 - cSize - 0.2;
+          const cY = CONTENT_Y + 0.25;
+          s.addShape(pptx.ShapeType.ellipse, { x: cX, y: cY, w: cSize, h: cSize, fill: { color: P.accent }, line: { type: "none" } });
+          s.addText(String(accentText), { x: cX, y: cY, w: cSize, h: cSize, fontSize: /^\d/.test(String(accentText)) ? 36 : 16, bold: true, color: P.text, fontFace: /^\d/.test(String(accentText)) ? "Calibri" : "Georgia", align: "center", valign: "middle", wrap: true });
+        } else {
+          s.addShape(pptx.ShapeType.rect, { x: 10 - 1.2, y: CONTENT_Y, w: 0.9, h: 5.625 - CONTENT_Y - 0.3, fill: { color: P.accent }, line: { type: "none" } });
+        }
+      }
+    }
+  }
+
+  const safeName = (info?.topic || "презентація").replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
+  await pptx.writeFile({ fileName: safeName + " - презентація.pptx" });
 }
 
 // ─────────────────────────────────────────────
@@ -1132,10 +1273,11 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [regenPrompt, setRegenPrompt] = useState("");
   const [regenLoading, setRegenLoading] = useState(false);
   const [apiError, setApiError] = useState("");
-  const [presentationSlides, setPresentationSlides] = useState(null);
   const [speechText, setSpeechText] = useState("");
-  const [presLoading, setPresLoading] = useState(false);
   const [speechLoading, setSpeechLoading] = useState(false);
+  const [presentationLoading, setPresentationLoading] = useState(false);
+  const [presentationMsg, setPresentationMsg] = useState("");
+  const [presentationReady, setPresentationReady] = useState(false);
   const [sessionCost, setSessionCost] = useState(() => {
     try { return JSON.parse(localStorage.getItem("sessionCost")) || { claude: 0, gemini: 0 }; } catch { return { claude: 0, gemini: 0 }; }
   });
@@ -1182,8 +1324,8 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
           if (d.content) setContent(d.content);
           if (d.citInputs) setCitInputs(d.citInputs);
           if (d.refList) setRefList(d.refList);
-          if (d.presentationSlides) setPresentationSlides(d.presentationSlides);
           if (d.speechText) setSpeechText(d.speechText);
+          if (d.presentationReady) setPresentationReady(true);
           if (d.stage) { setStage(d.stage); setMaxStageIdx(Math.max(0, STAGE_KEYS.indexOf(d.stage))); }
           if (d.genIdx !== undefined) setGenIdx(d.genIdx);
         }
@@ -2003,104 +2145,6 @@ ${origSnippet}Обсяг: ~${approxParas} абзаців (~${sec.pages} стор
     setRegenLoading(false);
   };
 
-  const generatePresentation = async () => {
-    setPresLoading(true);
-    try {
-      const fullText = sections
-        .filter(s => s.type !== "sources")
-        .map(s => {
-          const txt = content[s.id] || "";
-          if (!txt) return "";
-          const excerpt = txt.length > 3000
-            ? txt.substring(0, 1500) + "\n...\n" + txt.substring(txt.length - 1500)
-            : txt;
-          return `[${s.label}]:\n${excerpt}`;
-        })
-        .filter(Boolean).join("\n\n");
-
-      // ── Крок 1: аналіз тексту ──
-      const analysisSys = `Ти аналізуєш наукову роботу для створення презентації захисту.
-
-Уважно прочитай весь текст і витягни ТІЛЬКИ те що є в роботі.
-Нічого не вигадуй. Якщо даних немає — пиши null.
-
-Поверни JSON такої структури:
-
-{
-  "thesis": "головна теза роботи в 1 реченні",
-  "meta": {
-    "object": "об'єкт дослідження",
-    "subject": "предмет дослідження",
-    "goal": "мета дослідження",
-    "tasks": ["завдання 1", "завдання 2", "..."]
-  },
-  "methods": ["назва методики 1", "назва методики 2"],
-  "sample": "опис вибірки — кількість, вік, групи",
-  "authors": ["Прізвище І. (рік) — коротко що зробив"],
-  "stats": [
-    {
-      "value": "r = −0,67",
-      "description": "що з чим корелює",
-      "significance": "p < 0,01"
-    }
-  ],
-  "sections": [
-    {
-      "title": "назва розділу або підрозділу",
-      "key_finding": "головний висновок цього розділу — 1 речення",
-      "details": ["конкретна деталь 1", "конкретна деталь 2"]
-    }
-  ],
-  "conclusions": ["висновок 1", "висновок 2", "висновок 3"],
-  "recommendations": ["рекомендація 1", "рекомендація 2"]
-}
-
-Відповідай ТІЛЬКИ JSON без коментарів та пояснень.`;
-
-      const analysisRaw = await callClaude(
-        [{ role: "user", content: `Тема: "${info?.topic}"\nТип: ${info?.type}\n\n${fullText}` }],
-        null, analysisSys, 4000, null, "claude-sonnet-4-20250514"
-      );
-      const analysis = JSON.parse(analysisRaw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim());
-
-      // ── Крок 2: генерація слайдів ──
-      const slidesSys = `Ти отримуєш структурований аналіз наукової роботи у JSON.
-Створи на його основі JSON для презентації захисту — 11-12 слайдів.
-
-КРИТИЧНО:
-- Використовуй ТІЛЬКИ дані з наданого JSON
-- Нічого не вигадуй і не додавай від себе
-- Якщо поле null — не використовуй його на слайді
-
-Текст тез:
-- Максимум 10 слів на тезу
-- Активні конструкції: "контроль → перфекціонізм" замість "було встановлено що існує зв'язок"
-- Конкретно: цифри і факти, не загальні фрази
-
-Доступні типи слайдів:
-"title"       — поля: title, subtitle
-"content"     — поля: title, bullets (масив, макс 4 пункти)
-"cards"       — поля: title, cards (масив 3 об'єктів: heading + text)
-"stats"       — поля: title, stats (масив 3-4 об'єктів: value + label + sub)
-"steps"       — поля: title, items (масив об'єктів: num + heading + text)
-"conclusions" — поля: title, items (масив рядків, макс 6)
-"final"       — поля: text
-
-Обов'язкова послідовність: title → content (актуальність+мета) → steps (завдання) → cards (теорія) → cards (профіль) → cards (типологія) → steps (методологія) → stats (результати) → cards або content (додатково) → steps (рекомендації) → conclusions → final
-
-Відповідай ТІЛЬКИ JSON-масивом без коментарів та пояснень.`;
-
-      const slidesRaw = await callClaude(
-        [{ role: "user", content: JSON.stringify(analysis) }],
-        null, slidesSys, 6000, null, "claude-sonnet-4-20250514"
-      );
-      const slides = JSON.parse(slidesRaw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim());
-      setPresentationSlides(slides);
-      saveToFirestore({ presentationSlides: slides });
-    } catch (e) { alert("Помилка генерації презентації: " + e.message); }
-    setPresLoading(false);
-  };
-
   const generateSpeech = async () => {
     setSpeechLoading(true);
     try {
@@ -2128,6 +2172,116 @@ ${sectionSummaries}
       saveToFirestore({ speechText: result });
     } catch (e) { alert("Помилка генерації доповіді: " + e.message); }
     setSpeechLoading(false);
+  };
+
+  const generatePresentation = async () => {
+    setPresentationLoading(true);
+    setPresentationMsg("Аналізую текст роботи...");
+    try {
+      const lang = info?.language || "Українська";
+
+      // ── Крок 1: Gemini аналізує текст ──
+      const fullText = sections
+        .filter(s => s.type !== "sources")
+        .map(s => { const txt = content[s.id] || ""; return txt ? `### ${s.label}\n${txt.substring(0, 1500)}` : ""; })
+        .filter(Boolean).join("\n\n");
+
+      const geminiPrompt = `Проаналізуй наукову роботу та витягни структуровані дані для презентації. Поверни ТІЛЬКИ валідний JSON без markdown:
+{
+  "problem": "головна наукова проблема або гіпотеза (1-2 речення)",
+  "relevance": ["теза актуальності 1", "теза актуальності 2"],
+  "methodology": {
+    "object": "об'єкт дослідження",
+    "subject": "предмет дослідження",
+    "methods": ["метод 1", "метод 2", "метод 3"],
+    "tools": ["інструмент або база 1", "інструмент 2"]
+  },
+  "literature_summary": ["що вже досліджено 1", "що вже досліджено 2"],
+  "literature_gap": "прогалина або невирішена проблема (1 речення)",
+  "results": [
+    {"title": "назва першого результату", "points": ["пункт 1", "пункт 2"], "key_number": "число або % якщо є, інакше null"},
+    {"title": "назва другого результату", "points": ["пункт 1", "пункт 2"], "key_number": null},
+    {"title": "назва третього результату", "points": ["пункт 1", "пункт 2"], "key_number": null}
+  ],
+  "conclusions": ["висновок 1", "висновок 2", "висновок 3", "висновок 4", "висновок 5"],
+  "practical_value": ["де застосувати 1", "де застосувати 2"],
+  "field": "одне з: tech / medicine / social / economics / default"
+}
+
+ТЕКСТ РОБОТИ:
+${fullText}`;
+
+      const geminiRaw = await callGemini(
+        [{ role: "user", content: geminiPrompt }], null,
+        "Respond only with valid JSON. No markdown, no code blocks, no comments.", 4000,
+        (s) => setPresentationMsg(`Аналізую... зачекайте ${s}с`), "gemini-2.5-flash"
+      );
+
+      let analysis;
+      try {
+        analysis = JSON.parse(geminiRaw.replace(/```json\n?|\n?```/g, "").trim());
+      } catch { throw new Error("Gemini повернув некоректний JSON аналізу"); }
+
+      // ── Крок 2: Claude генерує зміст слайдів ──
+      setPresentationMsg("Генерую слайди...");
+
+      const claudePrompt = `На основі аналізу наукової роботи згенеруй зміст 13 слайдів презентації для захисту.
+
+МЕТАДАНІ РОБОТИ:
+- Тип: ${info?.type || "наукова робота"}
+- Тема: ${info?.topic || ""}
+- Галузь: ${info?.direction || info?.subject || ""}
+- Мова виступу: ${lang}
+
+АНАЛІЗ РОБОТИ (від Gemini):
+${JSON.stringify(analysis, null, 2)}
+
+Поверни ТІЛЬКИ валідний JSON (без markdown, без коментарів):
+{
+  "palette": "${analysis.field || "default"}",
+  "slides": [
+    {"type":"title","title":"${(info?.topic || "").replace(/"/g, "'")}","subtitle":"${(info?.type || "Наукова робота").replace(/"/g, "'")}","year":"${new Date().getFullYear()}"},
+    {"type":"relevance","heading":"Актуальність","points":["2-3 короткі тези"],"accent":"КЛЮЧОВЕ СЛОВО"},
+    {"type":"goals","heading":"Мета та завдання","goal":"мета в 1 реченні","tasks":["Завдання 1","Завдання 2","Завдання 3"]},
+    {"type":"literature","heading":"Стан питання","points":["2-3 тези"],"gap":"прогалина"},
+    {"type":"method","heading":"Методологія: об'єкт і предмет","points":["Об'єкт: ...","Предмет: ..."],"accent":"МЕТОД"},
+    {"type":"method","heading":"Методологія: методи дослідження","points":["метод 1","метод 2","метод 3"]},
+    {"type":"method","heading":"Методологія: інструментарій","points":["інструмент 1","інструмент 2"]},
+    {"type":"result","heading":"Результати: перший блок","points":["пункт 1","пункт 2"],"accent_num":"XX%"},
+    {"type":"result","heading":"Результати: другий блок","points":["пункт 1","пункт 2"],"accent_num":null},
+    {"type":"result","heading":"Результати: третій блок","points":["пункт 1","пункт 2"],"accent_num":null},
+    {"type":"conclusions","heading":"Висновки","points":["5 висновків що відповідають завданням"]},
+    {"type":"practical","heading":"Практичне значення","points":["2-3 пункти"],"accent":"СФЕРА"},
+    {"type":"thanks","text":"Дякую за увагу!"}
+  ]
+}
+
+Правила:
+- Всі тексти пиши мовою: ${lang}
+- Кожен bullet-пункт: максимум 1-2 речення, конкретно без води
+- accent і accent_num: коротко (1-4 слова або число з %)
+- palette: одне з tech / medicine / social / economics / default`;
+
+      const claudeRaw = await callClaude(
+        [{ role: "user", content: claudePrompt }], null,
+        "Respond only with valid JSON. No markdown, no comments.", 5000,
+        (s) => setPresentationMsg(`Генерую слайди... зачекайте ${s}с`), MODEL_FAST
+      );
+
+      let slideData;
+      try {
+        slideData = JSON.parse(claudeRaw.replace(/```json\n?|\n?```/g, "").trim());
+      } catch { throw new Error("Claude повернув некоректний JSON слайдів"); }
+
+      // ── Крок 3: Створюємо PPTX ──
+      setPresentationMsg("Створюю файл...");
+      await exportToPptxFile(slideData, info);
+
+      setPresentationReady(true);
+      saveToFirestore({ presentationReady: true });
+    } catch (e) { alert("Помилка генерації презентації: " + e.message); }
+    setPresentationLoading(false);
+    setPresentationMsg("");
   };
 
   const stopGen = () => { abortRef.current?.abort(); runningRef.current = false; setRunning(false); setPaused(true); setLoadMsg(""); };
@@ -2348,7 +2502,8 @@ ${secsSummary}
     setSections([]); setPlanDisplay(""); setContent({}); setGenIdx(0);
     setPaused(false); setPlanLoading(false); setMethodInfo(null); setCommentAnalysis(null); setSourceDist({}); setSourceTotal(0);
     setKeywords({}); setCitInputs({}); setAllCitLoading(false); setRefList([]);
-    setPresentationSlides(null); setSpeechText("");
+    setSpeechText("");
+    setPresentationReady(false); setPresentationMsg("");
     runningRef.current = false; setRunning(false);
   };
 
@@ -2872,22 +3027,23 @@ ${secsSummary}
                 {/* Презентація */}
                 <div style={{ flex: 1, minWidth: 220, border: "1.5px solid #d4cfc4", borderRadius: 8, padding: "16px 18px" }}>
                   <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Презентація (.pptx)</div>
-                  <div style={{ fontSize: 12, color: "#888", marginBottom: 14 }}>10-14 слайдів з тезами на основі готової роботи</div>
-                  {!presentationSlides ? (
-                    <button onClick={generatePresentation} disabled={presLoading}
-                      style={{ background: presLoading ? "#aaa" : "#1a1a14", color: presLoading ? "#eee" : "#e8ff47", border: "none", borderRadius: 6, padding: "9px 20px", fontFamily: "'Spectral',serif", fontSize: 12, letterSpacing: "1px", cursor: presLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
-                      {presLoading ? <><SpinDot light />Генерую...</> : "Генерувати"}
-                    </button>
-                  ) : (
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      <button onClick={async () => { setPresLoading(true); try { await exportToPptx(presentationSlides, info); } catch (e) { alert("Помилка: " + e.message); } setPresLoading(false); }} disabled={presLoading}
-                        style={{ background: presLoading ? "#aaa" : "#1a4a1a", color: presLoading ? "#eee" : "#a8e060", border: "none", borderRadius: 6, padding: "9px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: presLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
-                        {presLoading ? <><SpinDot light />...</> : "⬇ Завантажити .pptx"}
-                      </button>
-                      <button onClick={() => setPresentationSlides(null)}
-                        style={{ background: "transparent", border: "1.5px solid #d4cfc4", color: "#888", borderRadius: 6, padding: "9px 14px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>
-                        Переробити
-                      </button>
+                  <div style={{ fontSize: 12, color: "#888", marginBottom: 14 }}>13 слайдів для захисту з дизайном</div>
+                  <button
+                    onClick={generatePresentation}
+                    disabled={presentationLoading}
+                    style={{ background: presentationLoading ? "#aaa" : "#1a1a14", color: presentationLoading ? "#eee" : "#e8ff47", border: "none", borderRadius: 6, padding: "9px 20px", fontFamily: "'Spectral',serif", fontSize: 12, letterSpacing: "1px", cursor: presentationLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
+                    {presentationLoading
+                      ? <><SpinDot light />{presentationMsg || "Генерую..."}</>
+                      : presentationReady ? "Генерувати знову" : "Генерувати"}
+                  </button>
+                  {presentationReady && !presentationLoading && (
+                    <div style={{ marginTop: 10, fontSize: 12, color: "#2a6a2a", display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ fontSize: 14 }}>✓</span> Файл завантажено
+                    </div>
+                  )}
+                  {!presentationReady && !presentationLoading && (
+                    <div style={{ marginTop: 10, fontSize: 11, color: "#aaa", lineHeight: 1.5 }}>
+                      Gemini аналізує текст, Claude генерує слайди
                     </div>
                   )}
                 </div>

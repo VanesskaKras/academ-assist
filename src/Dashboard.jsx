@@ -65,7 +65,8 @@ export default function Dashboard({ onOpen, onNew, onAdmin }) {
                 o.topic?.toLowerCase().includes(q) ||
                 o.id?.toLowerCase().includes(q) ||
                 o.type?.toLowerCase().includes(q) ||
-                o.deadline?.toLowerCase().includes(q)
+                o.deadline?.toLowerCase().includes(q) ||
+                o.info?.orderNumber?.toLowerCase().includes(q)
             );
         }
         return result;
