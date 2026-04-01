@@ -8,7 +8,7 @@ import {
 // ─────────────────────────────────────────────
 // Word export
 // ─────────────────────────────────────────────
-async function exportToDocx({ content, info, displayOrder, appendicesText }) {
+async function exportToDocx({ content, info, displayOrder, appendicesText, titlePage }) {
   if (!window.docx) {
     await new Promise((resolve, reject) => {
       const s = document.createElement("script");
@@ -17,7 +17,7 @@ async function exportToDocx({ content, info, displayOrder, appendicesText }) {
       document.head.appendChild(s);
     });
   }
-  const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel, TableOfContents, Table, TableRow, TableCell, WidthType, BorderStyle } = window.docx;
+  const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel, TableOfContents, Table, TableRow, TableCell, WidthType, BorderStyle, ExternalHyperlink } = window.docx;
   const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
   const L = 1701, R = 851, T = 1134, B = 1134, INDENT = 709, LINE = 360;
   const LINE_SINGLE = 240;
@@ -62,17 +62,19 @@ async function exportToDocx({ content, info, displayOrder, appendicesText }) {
   function makeTableDocx(lines) {
     const border = { style: BorderStyle.SINGLE, size: 1, color: "000000" };
     const cellBorders = { top: border, bottom: border, left: border, right: border };
-    const rows = lines
-      .filter(l => !/^\s*\|[-:| ]+\|\s*$/.test(l))
-      .map(l => {
+    const filteredLines = lines.filter(l => !/^\s*\|[-:| ]+\|\s*$/.test(l));
+    const rows = filteredLines.map((l, rowIndex) => {
         const cells = l.replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.trim());
+        const isHeader = rowIndex === 0;
         return new TableRow({
           children: cells.map(cellText =>
             new TableCell({
               borders: cellBorders,
+              margins: { left: 57, right: 57, top: 57, bottom: 57 },
               children: [new Paragraph({
-                spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
-                children: [new TextRun({ text: cellText, font: FONT, size: SIZE, color: "000000" })],
+                alignment: isHeader ? AlignmentType.CENTER : AlignmentType.LEFT,
+                spacing: { line: 240, lineRule: "exact", before: 0, after: 0 },
+                children: [new TextRun({ text: cellText, font: FONT, size: 24, color: "000000", bold: isHeader })],
               })],
             })
           ),
@@ -100,7 +102,26 @@ async function exportToDocx({ content, info, displayOrder, appendicesText }) {
         }
         if (tableLines.filter(l => !/^\s*\|[-:| ]+\|\s*$/.test(l)).length > 0) {
           result.push(makeTableDocx(tableLines));
+          result.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
         }
+        continue;
+      }
+      if (/^Таблиця\s+\d/.test(line.trim())) {
+        result.push(new Paragraph({
+          alignment: AlignmentType.RIGHT,
+          spacing: { line: LINE, lineRule: "auto", before: Math.round(LINE * 0.5), after: 0 },
+          children: [new TextRun({ text: line.trim(), font: FONT, size: SIZE, color: "000000" })],
+        }));
+        i++;
+        continue;
+      }
+      if (/^Рис\.\s+\d/.test(line.trim())) {
+        result.push(new Paragraph({
+          alignment: AlignmentType.CENTER,
+          spacing: { line: LINE, lineRule: "auto", before: 0, after: Math.round(LINE * 0.5) },
+          children: [new TextRun({ text: line.trim(), font: FONT, size: SIZE, color: "000000" })],
+        }));
+        i++;
         continue;
       }
       const raw = cleanMarkdown(line);
@@ -114,6 +135,21 @@ async function exportToDocx({ content, info, displayOrder, appendicesText }) {
     return result;
   }
 
+  function sourceParaChildren(text) {
+    const URL_RE = /(https?:\/\/[^\s]+)/g;
+    const parts = text.split(URL_RE);
+    return parts.map(part => {
+      if (URL_RE.test(part)) {
+        URL_RE.lastIndex = 0;
+        return new ExternalHyperlink({
+          link: part,
+          children: [new TextRun({ text: part, font: FONT, size: SIZE, color: "0563C1", underline: {} })],
+        });
+      }
+      URL_RE.lastIndex = 0;
+      return new TextRun({ text: part, font: FONT, size: SIZE, color: "000000" });
+    });
+  }
   function sourcePara(text) {
     const cleaned = text.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1").trim();
     if (!cleaned) return null;
@@ -121,15 +157,27 @@ async function exportToDocx({ content, info, displayOrder, appendicesText }) {
       spacing: { line: LINE, lineRule: "auto", before: 0, after: Math.round(LINE * 0.3) },
       alignment: AlignmentType.BOTH,
       indent: { left: INDENT, hanging: INDENT },
-      children: [new TextRun({ text: cleaned, font: FONT, size: SIZE, color: "000000" })],
+      children: sourceParaChildren(cleaned),
     });
   }
 
 
   const children = [];
 
-  // ── Сторінка 1: порожня ──
-  children.push(new Paragraph({ spacing: { before: 0, after: 0, line: LINE, lineRule: "auto" }, children: [] }));
+  // ── Сторінка 1: титульна ──
+  if (titlePage && titlePage.trim()) {
+    const titleLines = titlePage.split("\n");
+    titleLines.forEach((line, idx) => {
+      children.push(new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { line: LINE, lineRule: "auto", before: 0, after: idx === titleLines.length - 1 ? 0 : Math.round(LINE * 0.2) },
+        indent: { firstLine: 0 },
+        children: [new TextRun({ text: line, font: FONT, size: SIZE, color: "000000" })],
+      }));
+    });
+  } else {
+    children.push(new Paragraph({ spacing: { before: 0, after: 0, line: LINE, lineRule: "auto" }, children: [] }));
+  }
 
   // ── Сторінка 2: ЗМІСТ (автоматичний Word TOC) ──
   children.push(new Paragraph({
@@ -201,8 +249,12 @@ async function exportToDocx({ content, info, displayOrder, appendicesText }) {
         return;
       }
       if (/^ДОДАТОК\s+[А-ЯA-Z]/i.test(raw)) {
-        // Підрозділ: "Додаток А", "Додаток Б" тощо
-        children.push(headingSubsection(raw));
+        children.push(new Paragraph({
+          alignment: AlignmentType.RIGHT,
+          indent: { firstLine: 0 },
+          spacing: { line: LINE, lineRule: "auto", before: LINE, after: Math.round(LINE / 2) },
+          children: [new TextRun({ text: raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase(), font: FONT, size: SIZE, bold: false, color: "000000" })],
+        }));
       } else {
         children.push(new Paragraph({
           indent: { firstLine: INDENT },
@@ -324,27 +376,96 @@ async function exportAppendixToDocx(text, info) {
       document.head.appendChild(s);
     });
   }
-  const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header } = window.docx;
+  const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel, Table, TableRow, TableCell, WidthType, BorderStyle } = window.docx;
   const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
   const L = 1701, R = 851, T = 1134, B = 1134, INDENT = 709, LINE = 360;
 
-  const children = text.split("\n").map(line => {
-    const raw = line.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1").trim();
-    if (!raw) return new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] });
-    if (/^ДОДАТОК\s+[А-ЯA-Z]/i.test(raw)) {
-      return new Paragraph({
-        spacing: { line: LINE, lineRule: "auto", before: LINE, after: Math.round(LINE / 2) },
-        alignment: AlignmentType.CENTER,
-        children: [new TextRun({ text: raw.toUpperCase(), font: FONT, size: SIZE, bold: true, color: "000000" })],
+  function cleanMarkdown(line) {
+    return line.replace(/^#{1,6}\s+/, "").replace(/\*\*(.+?)\*\*/g, "$1")
+      .replace(/\*(.+?)\*/g, "$1").replace(/^[-*]\s+/, "").replace(/^\d+\.\s+/, "").trim();
+  }
+  function makeTableDocx(lines) {
+    const border = { style: BorderStyle.SINGLE, size: 1, color: "000000" };
+    const cellBorders = { top: border, bottom: border, left: border, right: border };
+    const filteredLines = lines.filter(l => !/^\s*\|[-:| ]+\|\s*$/.test(l));
+    const rows = filteredLines.map((l, rowIndex) => {
+      const cells = l.replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.trim());
+      const isHeader = rowIndex === 0;
+      return new TableRow({
+        children: cells.map(cellText =>
+          new TableCell({
+            borders: cellBorders,
+            margins: { left: 57, right: 57, top: 57, bottom: 57 },
+            children: [new Paragraph({
+              alignment: isHeader ? AlignmentType.CENTER : AlignmentType.LEFT,
+              spacing: { line: 240, lineRule: "exact", before: 0, after: 0 },
+              children: [new TextRun({ text: cellText, font: FONT, size: 24, color: "000000", bold: isHeader })],
+            })],
+          })
+        ),
       });
+    });
+    return new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows });
+  }
+
+  const children = [];
+  const lines = text.split("\n");
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (/^\s*\|/.test(line)) {
+      const tableLines = [];
+      while (i < lines.length && /^\s*\|/.test(lines[i])) { tableLines.push(lines[i]); i++; }
+      if (tableLines.filter(l => !/^\s*\|[-:| ]+\|\s*$/.test(l)).length > 0) {
+        children.push(makeTableDocx(tableLines));
+        children.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
+      }
+      continue;
     }
-    return new Paragraph({
+    if (/^Таблиця\s+\d/.test(line.trim())) {
+      children.push(new Paragraph({
+        alignment: AlignmentType.RIGHT,
+        spacing: { line: LINE, lineRule: "auto", before: Math.round(LINE * 0.5), after: 0 },
+        children: [new TextRun({ text: line.trim(), font: FONT, size: SIZE, color: "000000" })],
+      }));
+      i++; continue;
+    }
+    if (/^Рис\.\s+\d/.test(line.trim())) {
+      children.push(new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { line: LINE, lineRule: "auto", before: 0, after: Math.round(LINE * 0.5) },
+        children: [new TextRun({ text: line.trim(), font: FONT, size: SIZE, color: "000000" })],
+      }));
+      i++; continue;
+    }
+    const raw = cleanMarkdown(line);
+    if (!raw) { i++; continue; }
+    if (/^ДОДАТОК\s+[А-ЯA-Z]/i.test(raw)) {
+      children.push(new Paragraph({
+        spacing: { line: LINE, lineRule: "auto", before: LINE, after: Math.round(LINE / 2) },
+        alignment: AlignmentType.RIGHT,
+        children: [new TextRun({ text: raw.toUpperCase(), font: FONT, size: SIZE, bold: true, color: "000000" })],
+      }));
+      i++; continue;
+    }
+    if (/^#{1,6}\s/.test(line.trim())) {
+      children.push(new Paragraph({
+        heading: HeadingLevel.HEADING_2,
+        spacing: { line: LINE, lineRule: "auto", before: LINE, after: Math.round(LINE / 2) },
+        alignment: AlignmentType.LEFT,
+        indent: { firstLine: INDENT },
+        children: [new TextRun({ text: raw, font: FONT, size: SIZE, bold: true, color: "000000" })],
+      }));
+      i++; continue;
+    }
+    children.push(new Paragraph({
       indent: { firstLine: INDENT },
       spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
       alignment: AlignmentType.BOTH,
       children: [new TextRun({ text: raw, font: FONT, size: SIZE, color: "000000" })],
-    });
-  });
+    }));
+    i++;
+  }
 
   const doc = new Document({
     styles: { default: { document: { run: { font: FONT, size: SIZE, color: "000000" }, paragraph: { spacing: { line: LINE, lineRule: "auto" } } } } },
@@ -752,11 +873,24 @@ ${langLine}
 ## ФОРМАТУВАННЯ (суворо)
 НЕ використовуй markdown розмітку: жодних #, ##, **, *, - на початку рядка. Пиши звичайний текст.
 ВИНЯТОК: якщо в тексті потрібна таблиця — оформлюй її виключно у форматі markdown з вертикальними рисками: перший рядок — заголовки стовпців через |, другий рядок — розділювач |---|---|, далі рядки даних через |. Не використовуй / або інші символи як роздільники стовпців.
+ТАБЛИЦІ — обов'язкові правила:
+1. Перед кожною таблицею (на окремому рядку, одразу перед першим рядком |) пиши підпис: Таблиця X.Y – Назва таблиці (де X — номер розділу, Y — порядковий номер таблиці в цьому розділі, після тире назва таблиці).
+2. В тексті підрозділу перед таблицею обов'язково є речення що посилається на неї, наприклад: "наведено в Таблиці X.Y", "представлено в Таблиці X.Y", "показано в Таблиці X.Y" тощо. Без такого посилання таблиця не з'являється.
+РИСУНКИ — обов'язкові правила:
+1. Якщо підрозділ потребує рисунку (схема, графік, діаграма тощо) — встав плейсхолдер на окремому рядку після місця рисунку у форматі: Рис. X.Y – Назва рисунку (де X — номер розділу, Y — порядковий номер рисунку в цьому розділі).
+2. В тексті підрозділу перед плейсхолдером рисунку обов'язково є речення що посилається на нього, наприклад: "показано на Рис. X.Y", "зображено на Рис. X.Y", "наведено на Рис. X.Y" тощо. Без такого посилання рисунок не з'являється.
 НЕ виділяй нічого жирним шрифтом у тексті підрозділів.
 НЕ повторюй назву підрозділу на початку тексту — одразу починай зміст.
 НЕ додавай посилання на джерела у тексті підрозділів.
 КАТЕГОРИЧНО ЗАБОРОНЕНО додавати список літератури, список джерел або використаних джерел в кінці підрозділу. Жодних "Список використаних джерел:", "Джерела:", "References:" тощо.
-КАТЕГОРИЧНО ЗАБОРОНЕНО використовувати довге тире "—" (em dash). Замість нього використовуй кому, крапку з комою, або перебудуй речення. Символ "—" не повинен з'являтися в тексті ЖОДНОГО разу.
+КАТЕГОРИЧНО ЗАБОРОНЕНО використовувати довге тире "—" (em dash). Замість нього використовуй кому або перебудуй речення. Символ "—" не повинен з'являтися в тексті ЖОДНОГО разу.
+
+## ПРАВИЛА ПУНКТУАЦІЇ (суворо)
+Крапки: ставити завжди в кінці кожного речення.
+Коми: максимум 1 кома на речення. Якщо можна обійтись без коми — обходись без неї.
+Двокрапки: використовувати ВИКЛЮЧНО у розділі "ВСТУП". У всіх інших розділах двокрапки ЗАБОРОНЕНІ.
+Тире (будь-яке: коротке, довге, em dash): КАТЕГОРИЧНО ЗАБОРОНЕНО у будь-якому вигляді.
+Крапки з комою: КАТЕГОРИЧНО ЗАБОРОНЕНО.
 
 ## ЗАБОРОНЕНІ СЛОВА
 ${forbiddenWords}
@@ -765,7 +899,7 @@ ${forbiddenWords}
 Починай кожен підрозділ із захоплюючого гачка, що одразу вводить у тему.
 Пиши короткими, чіткими реченнями. Використовуй активний стан дієслів.
 Замінюй жаргон і складні терміни на повсякденні слова. Використовуй мінімум скорочень.
-Уникай крапок з комою та надмірно довгих речень. Розбивай довгі речення на менші шматки.
+Уникай надмірно довгих речень. Розбивай довгі речення на менші шматки.
 Чергуй довжину речень для природного ритму читання.
 Чергуй довжину абзаців: короткі абзаци (3-4 речення) мають чергуватись із довшими (5-7 речень). Уникай однакового розміру абзаців поспіль. ЗАБОРОНЕНО писати абзаци з одного або двох речень.
 Додавай короткі, зрозумілі приклади для пояснення теоретичних положень.
@@ -1394,6 +1528,8 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [presentationReady, setPresentationReady] = useState(false);
   const [appendicesText, setAppendicesText] = useState("");
   const [appendicesLoading, setAppendicesLoading] = useState(false);
+  const [appendicesCustomPrompt, setAppendicesCustomPrompt] = useState("");
+  const [titlePage, setTitlePage] = useState("");
   const [sessionCost, setSessionCost] = useState(() => {
     try { return JSON.parse(localStorage.getItem("sessionCost")) || { claude: 0, gemini: 0 }; } catch { return { claude: 0, gemini: 0 }; }
   });
@@ -1442,6 +1578,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
           if (d.refList) setRefList(d.refList);
           if (d.speechText) setSpeechText(d.speechText);
           if (d.appendicesText) setAppendicesText(d.appendicesText);
+          if (d.titlePage) setTitlePage(d.titlePage);
           if (d.presentationReady) setPresentationReady(true);
           if (d.stage) { setStage(d.stage); setMaxStageIdx(Math.max(0, STAGE_KEYS.indexOf(d.stage))); }
           if (d.genIdx !== undefined) setGenIdx(d.genIdx);
@@ -1552,7 +1689,9 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   },
   "requiredSections": ["титульний аркуш", "зміст", "вступ", "основна частина", "висновки", "список використаних джерел"],
   "optionalSections": ["перелік умовних позначень", "анотація іноземною мовою", "додатки"],
-  "otherRequirements": "виклад від першої особи множини (ми вважаємо) або безособові конструкції"
+  "otherRequirements": "виклад від першої особи множини (ми вважаємо) або безособові конструкції",
+  "recommendedSources": "Список рекомендованих джерел з методички: конкретні автори, видання, підручники, журнали. null якщо не вказано",
+  "titlePageTemplate": "МІНІСТЕРСТВО ОСВІТИ І НАУКИ УКРАЇНИ\nНазва університету\nКафедра назва\n\nКУРСОВА РОБОТА\nна тему:\n[ТЕМА]\n\nВиконав(ла): студент(ка) групи\nПрізвище Ім'я По-батькові\n\nНауковий керівник:\nПосада, ПІБ\n\nМісто – рік"
 }
 
 Правила:
@@ -1567,6 +1706,8 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
 - sourcesOrder: "alphabetical" або "citation_order"
 - sourcesGrouping: якщо є правила групування джерел за мовами — вкажи
 - citationStyle: як оформляти посилання в тексті (в дужках, у виносках тощо)
+- recommendedSources: якщо в методичці є список рекомендованої літератури або конкретні автори/видання для використання — перелічи їх одним рядком через крапку з комою. null якщо таких рекомендацій немає
+- titlePageTemplate: якщо в методичці є зразок титульної сторінки — відтвори його структуру як plain text, кожен рядок з нового рядка (\n). Де має бути тема роботи — постав плейсхолдер [ТЕМА]. Якщо зразка немає — поверни null (НЕ вигадуй)
 - formatting: всі деталі оформлення — шрифт, розміри, поля, відступи, нумерація
 - exampleTOC: шукай ВИКЛЮЧНО розділ/додаток зі словами "зразок змісту", "зразок плану", "приклад змісту", "приклад плану", "зразок оформлення змісту" — тобто явний приклад структури СТУДЕНТСЬКОЇ роботи. Просто "ЗМІСТ" на початку документа (зміст самої методички) — ІГНОРУЙ повністю. Якщо знайшов справжній зразок — скопіюй лише рядки плану (ВСТУП, РОЗДІЛ 1, 1.1, 1.2, ВИСНОВКИ тощо). Якщо такого зразка НЕ знайшов — поверни null (не вигадуй).
 - Якщо exampleTOC = null: тоді уважно проаналізуй розділ "Структура роботи" або "Структура та зміст роботи" і витягни з нього: chaptersCount (к-сть розділів), subsectionsPerChapter (к-сть підрозділів), hasChapterConclusions (чи потрібні висновки до розділів), chapterTypes (теоретичний/аналітичний/практичний тощо), otherRequirements (що має бути в кожному розділі)` }
@@ -1576,7 +1717,13 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
         const jsonMatch = raw.match(/\{[\s\S]*\}/);
         const parsed = JSON.parse(jsonMatch?.[0] || raw.replace(/```json|```/g, "").trim());
         setMethodInfo(parsed);
-        await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, methodInfo: parsed, stage: "parsed", status: "new" });
+        if (parsed.titlePageTemplate) {
+          const filled = parsed.titlePageTemplate.replace(/\[ТЕМА\]/g, newInfo?.topic || "[ТЕМА]");
+          setTitlePage(filled);
+          await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, methodInfo: parsed, titlePage: filled, stage: "parsed", status: "new" });
+        } else {
+          await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, methodInfo: parsed, stage: "parsed", status: "new" });
+        }
       } catch (e) {
         console.warn("methodInfo extract failed:", e.message);
         setApiError(e.message);
@@ -1744,7 +1891,7 @@ PAGE DISTRIBUTION (total must equal ${totalPages}):
 
 Return ONLY JSON without markdown:
 {"sections":[{"id":"1.1","label":"1.1 Title","sectionTitle":"${L.chapterWord} 1. TITLE","pages":8,"type":"theory"},{"id":"intro","label":"${L.intro}","pages":2,"type":"intro"},{"id":"conclusions","label":"${L.conclusions}","pages":3,"type":"conclusions"},{"id":"sources","label":"${L.sources}","pages":2,"type":"sources"}]}`;
-        const raw = await callClaude([{ role: "user", content: photoTplPrompt }], null, "Respond only with valid JSON. No markdown.", 3000, null, MODEL_FAST);
+        const raw = await callGemini([{ role: "user", content: photoTplPrompt }], null, "Respond only with valid JSON. No markdown.", 3000);
         const jsonMatch = raw.match(/\{[\s\S]*\}/);
         const parsed = JSON.parse(jsonMatch?.[0] || raw.replace(/```json|```/g, "").trim());
         const secs = parsed.sections || parsed;
@@ -1789,7 +1936,7 @@ Return ONLY JSON without markdown:
   {"id":"sources","label":"${L.sources}","pages":2,"type":"sources"}
 ]}`;
         await new Promise(r => setTimeout(r, 1000));
-        const raw = await callClaude([{ role: "user", content: templatePrompt }], null, "Respond only with valid JSON. No markdown.", 3000, null, MODEL_FAST);
+        const raw = await callGemini([{ role: "user", content: templatePrompt }], null, "Respond only with valid JSON. No markdown.", 3000);
         const jsonMatch = raw.match(/\{[\s\S]*\}/);
         const parsed = JSON.parse(jsonMatch?.[0] || raw.replace(/```json|```/g, "").trim());
         const secs = parsed.sections || parsed;
@@ -1895,7 +2042,7 @@ Order: subsections grouped by chapter, then intro, conclusions, sources.`;
 
       try {
         await new Promise(r => setTimeout(r, 3000)); // пауза після аналізу методички
-        const raw = await callClaude([{ role: "user", content: planPrompt }], null, "Respond only with valid JSON. No markdown, no explanation.", 3000, null, MODEL_FAST);
+        const raw = await callGemini([{ role: "user", content: planPrompt }], null, "Respond only with valid JSON. No markdown, no explanation.", 3000);
         const jsonMatch = raw.match(/\{[\s\S]*\}/);
         const parsed = JSON.parse(jsonMatch?.[0] || raw.replace(/```json|```/g, "").trim());
         const secs = parsed.sections || parsed;
@@ -2220,7 +2367,11 @@ ${prevCtx ? `КОНТЕКСТ ПОПЕРЕДНІХ ПІДРОЗДІЛІВ:\n${pr
     try {
       const raw = await callClaude([{ role: "user", content: instruction }], ctrl.signal, buildSYS(lang), sectionMaxTokens, (s) => setLoadMsg(`Генерую: ${sec.label}... зачекайте ${s}с`));
       // Видаляємо довге тире на всякий випадок (модель іноді ігнорує заборону)
-      const result = raw.replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "").replace(/[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF]/g, "");
+      const result = raw
+        .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
+        .replace(/[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF]/g, "")
+        .replace(/[„""]([^"„""]*)["""]/g, "«$1»")
+        .replace(/"([^"]*)"/g, "«$1»");
       const newContent = { ...contentRef.current, [sec.id]: result };
       setContent(newContent);
       runningRef.current = false; setRunning(false); setLoadMsg("");
@@ -2316,7 +2467,11 @@ ${origSnippet}${empiricalBlockRegen}
     const regenMaxTokens = Math.min(60000, Math.max(8000, Math.round((sec.pages || 1) * 3000)));
     try {
       const raw = await callClaude([{ role: "user", content: instruction }], null, buildSYS(lang), regenMaxTokens);
-      const result = raw.replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "").replace(/[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF]/g, "");
+      const result = raw
+        .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
+        .replace(/[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF]/g, "")
+        .replace(/[„""]([^"„""]*)["""]/g, "«$1»")
+        .replace(/"([^"]*)"/g, "«$1»");
       const newContent = { ...contentRef.current, [sec.id]: result };
       setContent(newContent);
       setRegenId(null); setRegenPrompt("");
@@ -2347,7 +2502,11 @@ ${sectionSummaries}
       const raw = await callClaude(
         [{ role: "user", content: prompt }], null, buildSYS(lang), 4000, null, MODEL
       );
-      const result = raw.replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "").replace(/[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF]/g, "");
+      const result = raw
+        .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
+        .replace(/[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF]/g, "")
+        .replace(/[„""]([^"„""]*)["""]/g, "«$1»")
+        .replace(/"([^"]*)"/g, "«$1»");
       setSpeechText(result);
       saveToFirestore({ speechText: result });
     } catch (e) { alert("Помилка генерації доповіді: " + e.message); }
@@ -2364,7 +2523,20 @@ ${sectionSummaries}
         ? `КОНТЕКСТ ДОСЛІДЖЕННЯ:\n${content[anchorId].substring(0, 800)}`
         : "";
 
-      const prompt = isPsychoPed(info)
+      // Збираємо контекст вже згенерованого тексту роботи
+      const generatedCtx = sections
+        .filter(s => content[s.id] && !["sources"].includes(s.type))
+        .map(s => `[${s.label}]\n${content[s.id].substring(0, 600)}`)
+        .join("\n\n");
+      const contentBlock = generatedCtx
+        ? `ТЕКСТ РОБОТИ (скорочено для контексту):\n${generatedCtx.substring(0, 3000)}`
+        : "";
+
+      const customBlock = appendicesCustomPrompt.trim()
+        ? `\nДОДАТКОВІ ІНСТРУКЦІЇ КОРИСТУВАЧА:\n${appendicesCustomPrompt.trim()}`
+        : "";
+
+      const prompt = isPsychoPed(info) && !appendicesCustomPrompt.trim()
         ? `Згенеруй Додаток А для ${info?.type || "наукової роботи"} на тему "${info?.topic}". Галузь: ${info?.subject}.
 
 Додаток А містить анкету яка використовувалась для емпіричного дослідження.
@@ -2379,14 +2551,19 @@ ${anchorCtx}
 - В кінці: "Дякуємо за участь у дослідженні!"
 - Мова: ${lang}
 - БЕЗ markdown, зірочок, жирного. Звичайний текст.`
-        : `Згенеруй розділ "Додатки" для ${info?.type || "наукової роботи"} на тему "${info?.topic}".
-Включи один або два додатки що логічно доповнюють роботу (таблиці, схеми, зразки документів тощо).
-Мова: ${lang}. БЕЗ markdown, зірочок, жирного.`;
+        : `Згенеруй розділ "Додатки" для ${info?.type || "наукової роботи"} на тему "${info?.topic}". Галузь: ${info?.subject || ""}.
+${contentBlock}
+${customBlock || `Включи один або два додатки що логічно доповнюють роботу (таблиці, схеми, зразки документів тощо).`}
+Мова: ${lang}. БЕЗ markdown, зірочок, жирного. Кожен додаток починається з нового рядка: ДОДАТОК А, ДОДАТОК Б тощо.`;
 
       const raw = await callClaude(
         [{ role: "user", content: prompt }], null, buildSYS(lang), 6000, null, MODEL
       );
-      const result = raw.replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "").replace(/[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF]/g, "");
+      const result = raw
+        .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
+        .replace(/[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF]/g, "")
+        .replace(/[„""]([^"„""]*)["""]/g, "«$1»")
+        .replace(/"([^"]*)"/g, "«$1»");
       setAppendicesText(result);
       saveToFirestore({ appendicesText: result });
     } catch (e) { alert("Помилка генерації додатків: " + e.message); }
@@ -2557,7 +2734,12 @@ ${JSON.stringify(analysis, null, 2)}
     // Якщо алфавітний порядок — сортуємо і перебудовуємо індекси
     let allRefs, indexMap;
     if (isAlphabetical) {
-      const sorted = [...rawRefs].sort((a, b) => a.localeCompare(b, "uk"));
+      const langGroup = (s) => /^[А-ЯҐЄІЇа-яґєії]/i.test(s) ? 0 : 1;
+      const sorted = [...rawRefs].sort((a, b) => {
+        const ga = langGroup(a), gb = langGroup(b);
+        if (ga !== gb) return ga - gb;
+        return a.localeCompare(b, ga === 0 ? "uk" : "en");
+      });
       indexMap = rawRefs.map(r => sorted.indexOf(r) + 1);
       allRefs = sorted;
     } else {
@@ -2671,16 +2853,43 @@ ${secsSummary}
       } catch (e) { console.error("Citation batch error:", e); }
     }
 
-    // ── Форматування списку джерел (один запит, Haiku) ──
+    // ── Форматування списку джерел (Gemini, до 100+ джерел без батчингу) ──
     const today = new Date();
     const accessDate = `${String(today.getDate()).padStart(2, "0")}.${String(today.getMonth() + 1).padStart(2, "0")}.${today.getFullYear()}`;
-    const sourcesOrder = methodInfo?.sourcesOrder === "alphabetical" ? "Список відсортований за алфавітом." : "Список у порядку першої появи у тексті.";
-    const sourcesGrouping = methodInfo?.sourcesGrouping ? `Групування: ${methodInfo.sourcesGrouping}.` : "";
-    const fmtPrompt = `Оформ список джерел відповідно до стилю ${sourcesStyle}. ${sourcesOrder} ${sourcesGrouping} Збережи номери. Поверни ТІЛЬКИ список без заголовка.\nСьогодні: ${accessDate}. Для онлайн-джерел додай "URL: [посилання] (дата звернення: ${accessDate})". НЕ використовуй "[Електронний ресурс]" — замість нього завжди пиши URL.\n\n${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
+    const isAlphabeticalOrder = methodInfo?.sourcesOrder === "alphabetical";
+    const sourcesOrder = isAlphabeticalOrder ? "Список відсортований за алфавітом." : "Список у порядку першої появи у тексті.";
+    const defaultGrouping = "спочатку українські джерела (кирилиця) за алфавітом, потім англійські (латиниця) за алфавітом";
+    const sourcesGrouping = methodInfo?.sourcesGrouping ? `Групування: ${methodInfo.sourcesGrouping}.` : (isAlphabeticalOrder ? `Групування: ${defaultGrouping}.` : "");
+    const isApaStyle = /APA/i.test(sourcesStyle);
+    const isDstu = /ДСТУ/i.test(sourcesStyle);
+    const styleRules = isApaStyle
+      ? `СТИЛЬ: APA 7th edition. СУВОРО дотримуйся APA — НЕ змішуй з ДСТУ чи іншими стилями.
+Правила APA:
+- Книга: Прізвище, І. І. (рік). Назва книги курсивом. Видавець.
+- Стаття: Прізвище, І. І. (рік). Назва статті. Назва журналу курсивом, том(номер), сторінки. https://doi.org/...
+- Розділ у збірнику: Прізвище, І. І. (рік). Назва розділу. В І. І. Редактор (Ред.), Назва збірника (сс. xx–xx). Видавець.
+- Онлайн-ресурс: Прізвище, І. І. (рік). Назва. Назва сайту. URL
+- НЕ використовуй двокрапку між містом і видавцем (це ДСТУ, не APA).
+- НЕ пиши "Київ:" або "Oxford:" перед видавцем (APA не вказує місто для більшості джерел після 7-го вид.).
+- НЕ додавай "Вип.", "Т.", "С." у журнальних статтях — використовуй том і сторінки у форматі APA.`
+      : isDstu
+      ? `СТИЛЬ: ДСТУ 8302:2015. СУВОРО дотримуйся ДСТУ — НЕ змішуй з APA чи іншими стилями.
+Правила ДСТУ 8302:2015:
+- Книга: Прізвище І. І. Назва книги. Місто : Видавець, рік. Кількість с.
+- Стаття: Прізвище І. І. Назва статті. Назва журналу. рік. № номер. С. xx–xx.
+- Онлайн: Прізвище І. І. Назва. URL: адреса (дата звернення: ${accessDate}).
+- Ініціали пишуться ПІСЛЯ прізвища без ком між прізвищем та ініціалами.
+- Між містом і видавцем — пробіл двокрапка пробіл ( : ).`
+      : `СТИЛЬ: ${sourcesStyle}. Точно дотримуйся цього стилю.`;
+    const fmtPrompt = `${styleRules}
+${sourcesOrder} ${sourcesGrouping}
+Збережи номери. Поверни ТІЛЬКИ список без заголовка. Для онлайн-джерел додай URL (дата звернення: ${accessDate}). НЕ використовуй "[Електронний ресурс]".
+
+${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
     let fmtResult;
     try {
-      fmtResult = await callClaude([{ role: "user", content: fmtPrompt }], null,
-        "You are a helpful assistant. Format the reference list exactly as requested.", 3000, null, MODEL_FAST);
+      fmtResult = await callGemini([{ role: "user", content: fmtPrompt }], null,
+        `You are a bibliographic formatting assistant. Format references strictly in ${sourcesStyle} style only. Do not mix citation styles. Return only the formatted list, no extra text.`, 16000);
       setRefList(fmtResult.split("\n").filter(Boolean));
       const srcSec = sections.find(s => s.type === "sources");
       if (srcSec) newContent[srcSec.id] = fmtResult;
@@ -3120,6 +3329,23 @@ ${secsSummary}
                   </a>
                 </div>
               </div>
+              {(methodInfo?.recommendedSources || commentAnalysis?.sourcesHints) && (
+                <div style={{ padding: "12px 16px", background: "#fff8e8", border: "1px solid #e8d48a", borderRadius: 8, marginBottom: 20, fontSize: 13, color: "#5a3a00", lineHeight: "1.7" }}>
+                  <div style={{ fontWeight: 600, marginBottom: 6 }}>Рекомендації щодо джерел:</div>
+                  {methodInfo?.recommendedSources && (
+                    <div style={{ marginBottom: commentAnalysis?.sourcesHints ? 8 : 0 }}>
+                      <span style={{ fontSize: 11, color: "#8a6010", textTransform: "uppercase", letterSpacing: "0.5px" }}>З методички: </span>
+                      {methodInfo.recommendedSources}
+                    </div>
+                  )}
+                  {commentAnalysis?.sourcesHints && (
+                    <div>
+                      <span style={{ fontSize: 11, color: "#8a6010", textTransform: "uppercase", letterSpacing: "0.5px" }}>Від клієнта: </span>
+                      {commentAnalysis.sourcesHints}
+                    </div>
+                  )}
+                </div>
+              )}
               {allRefs.length > 0 && (
                 <div style={{ border: "1.5px solid #d4cfc4", borderRadius: 8, overflow: "hidden", marginBottom: 20 }}>
                   <div style={{ background: "#2a3a1a", color: "#a8d060", padding: "9px 16px", fontFamily: "'Spectral SC',serif", fontSize: 11, letterSpacing: 2 }}>ПОПЕРЕДНІЙ СПИСОК ДЖЕРЕЛ ({allRefs.length} позицій)</div>
@@ -3195,6 +3421,35 @@ ${secsSummary}
             <Heading>✓ Роботу завершено!</Heading>
             <p style={{ fontSize: 13, color: "#888", marginBottom: 24 }}>Текст згенеровано. Скопіюйте або завантажте Word-файл.</p>
 
+            {/* ── ТИТУЛЬНА СТОРІНКА ── */}
+            <div style={{ border: "1.5px solid #aaa49a", borderRadius: 8, marginBottom: 10, overflow: "hidden" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 16px", background: "#1a1a14", borderBottom: "1px solid #2a2a20" }}>
+                <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#e8ff47", flexShrink: 0 }} />
+                <div style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "#f5f2eb" }}>ТИТУЛЬНА СТОРІНКА</div>
+                {titlePage && <button onClick={() => navigator.clipboard.writeText(titlePage)} style={{ background: "transparent", border: "1px solid #555", color: "#999", borderRadius: 5, padding: "3px 10px", fontSize: 10, cursor: "pointer", fontFamily: "'Spectral',serif", letterSpacing: 1 }}>COPY</button>}
+              </div>
+              <div style={{ padding: "14px 18px", background: "#faf8f3" }}>
+                {titlePage ? (
+                  <textarea
+                    value={titlePage}
+                    onChange={e => { setTitlePage(e.target.value); e.target.style.height = "auto"; e.target.style.height = e.target.scrollHeight + "px"; saveToFirestore({ titlePage: e.target.value }); }}
+                    onFocus={e => { e.target.style.height = "auto"; e.target.style.height = e.target.scrollHeight + "px"; }}
+                    style={{ width: "100%", minHeight: 200, fontSize: 13, lineHeight: "1.85", color: "#2a2a1e", background: "#f5f2ea", borderRadius: 6, padding: "12px 14px", border: "1px solid #d4cfc4", fontFamily: "'Spectral',serif", resize: "vertical", boxSizing: "border-box", overflow: "hidden" }}
+                  />
+                ) : (
+                  <div style={{ fontSize: 12, color: "#888", lineHeight: 1.6 }}>
+                    Шаблон титульної сторінки не знайдено в методичці. Введіть текст вручну:
+                    <textarea
+                      value={titlePage}
+                      onChange={e => { setTitlePage(e.target.value); saveToFirestore({ titlePage: e.target.value }); }}
+                      placeholder={"МІНІСТЕРСТВО ОСВІТИ І НАУКИ УКРАЇНИ\nНазва університету\n\nКУРСОВА РОБОТА\nна тему:\n" + (info?.topic || "[ТЕМА]")}
+                      style={{ width: "100%", minHeight: 160, fontSize: 13, lineHeight: "1.85", color: "#2a2a1e", background: "#f5f2ea", borderRadius: 6, padding: "12px 14px", border: "1px solid #d4cfc4", fontFamily: "'Spectral',serif", resize: "vertical", boxSizing: "border-box", marginTop: 8 }}
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+
             {displayOrder.map(sec => {
               const txt = content[sec.id];
               if (!txt) return null;
@@ -3239,6 +3494,12 @@ ${secsSummary}
                         ? "Анкета яка використовувалась у дослідженні. Генерується на основі теми та змісту роботи."
                         : "Додайте матеріали для додатків або згенеруйте автоматично."}
                     </div>
+                    <textarea
+                      value={appendicesCustomPrompt}
+                      onChange={e => setAppendicesCustomPrompt(e.target.value)}
+                      placeholder="Ваші інструкції для додатків (необов'язково). Наприклад: «Зроби додаток з порівняльною таблицею методів» або «Додай зразок анкети і схему дослідження»."
+                      style={{ width: "100%", minHeight: 72, fontSize: 12, lineHeight: "1.7", color: "#2a2a1e", background: "#f5f2ea", borderRadius: 6, padding: "10px 14px", border: "1px solid #d4cfc4", fontFamily: "'Spectral',serif", resize: "vertical", boxSizing: "border-box", marginBottom: 10 }}
+                    />
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                       <button onClick={doGenAppendices} disabled={appendicesLoading}
                         style={{ background: appendicesLoading ? "#aaa" : "#1a1a14", color: appendicesLoading ? "#eee" : "#e8ff47", border: "none", borderRadius: 6, padding: "9px 20px", fontFamily: "'Spectral',serif", fontSize: 12, letterSpacing: "1px", cursor: appendicesLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
@@ -3252,6 +3513,12 @@ ${secsSummary}
                       value={appendicesText}
                       onChange={e => setAppendicesText(e.target.value)}
                       style={{ width: "100%", minHeight: 220, fontSize: 12, lineHeight: "1.85", color: "#2a2a1e", background: "#f5f2ea", borderRadius: 6, padding: "12px 14px", border: "1px solid #d4cfc4", fontFamily: "'Spectral',serif", resize: "vertical", boxSizing: "border-box" }}
+                    />
+                    <textarea
+                      value={appendicesCustomPrompt}
+                      onChange={e => setAppendicesCustomPrompt(e.target.value)}
+                      placeholder="Інструкції для переробки (необов'язково)..."
+                      style={{ width: "100%", minHeight: 56, fontSize: 12, lineHeight: "1.7", color: "#2a2a1e", background: "#f5f2ea", borderRadius: 6, padding: "10px 14px", border: "1px solid #d4cfc4", fontFamily: "'Spectral',serif", resize: "vertical", boxSizing: "border-box", marginTop: 8 }}
                     />
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
                       <button onClick={() => navigator.clipboard.writeText(appendicesText)}
@@ -3279,7 +3546,7 @@ ${secsSummary}
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 24 }}>
               <NavBtn onClick={() => setStage("sources")}>← Джерела</NavBtn>
               <button onClick={copyAll} style={{ background: "#1a1a14", color: "#e8ff47", border: "none", borderRadius: 7, padding: "11px 30px", fontFamily: "'Spectral',serif", fontSize: 13, letterSpacing: "1.5px", cursor: "pointer" }}>Скопіювати текст</button>
-              <button disabled={docxLoading} onClick={async () => { setDocxLoading(true); try { await exportToDocx({ sections, content, info, displayOrder, appendicesText }); } catch (e) { alert("Помилка: " + e.message); } setDocxLoading(false); }}
+              <button disabled={docxLoading} onClick={async () => { setDocxLoading(true); try { await exportToDocx({ sections, content, info, displayOrder, appendicesText, titlePage }); } catch (e) { alert("Помилка: " + e.message); } setDocxLoading(false); }}
                 style={{ background: docxLoading ? "#aaa" : "#1a4a1a", color: docxLoading ? "#eee" : "#a8e060", border: "none", borderRadius: 7, padding: "11px 30px", fontFamily: "'Spectral',serif", fontSize: 13, letterSpacing: "1.5px", cursor: docxLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
                 {docxLoading ? <><SpinDot light />Генерую Word...</> : "⬇ Завантажити .docx"}
               </button>
