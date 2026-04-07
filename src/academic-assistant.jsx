@@ -1810,8 +1810,8 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
       } catch (e) {
         console.warn("methodInfo extract failed:", e.message);
         setApiError(e.message);
-        setMethodInfo(null);
-        await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, stage: "parsed", status: "new" });
+        if (!methodInfo) setMethodInfo(null);
+        await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, ...(methodInfo ? { methodInfo } : {}), stage: "parsed", status: "new" });
       }
     } else {
       // Якщо PDF не завантажено але methodInfo вже є (з попереднього аналізу) — залишаємо його
