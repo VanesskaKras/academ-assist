@@ -341,6 +341,10 @@ async function exportPlanToDocx({ sections, info }) {
         children.push(new Paragraph({ heading: HeadingLevel.HEADING_2, spacing: { line: LINE, lineRule: "auto", before: Math.round(LINE / 2), after: 0 }, alignment: AlignmentType.LEFT, indent: { firstLine: INDENT }, children: [new TextRun({ text: s.label, font: FONT, size: SIZE, color: "000000" })] }));
       }
     }
+    const chapConc = sections.find(s => s.type === "chapter_conclusion" && s.id === `${num}.conclusions`);
+    if (chapConc) {
+      children.push(new Paragraph({ heading: HeadingLevel.HEADING_2, spacing: { line: LINE, lineRule: "auto", before: Math.round(LINE / 2), after: 0 }, alignment: AlignmentType.LEFT, indent: { firstLine: INDENT }, children: [new TextRun({ text: chapConc.label, font: FONT, size: SIZE, color: "000000" })] }));
+    }
   }
   if (concs) children.push(new Paragraph({ heading: HeadingLevel.HEADING_1, spacing: { line: LINE, lineRule: "auto", before: LINE, after: Math.round(LINE / 2) }, alignment: AlignmentType.LEFT, indent: { firstLine: 0 }, children: [new TextRun({ text: "ВИСНОВКИ", font: FONT, size: SIZE, bold: true, color: "000000" })] }));
   if (srcs) children.push(new Paragraph({ heading: HeadingLevel.HEADING_1, spacing: { line: LINE, lineRule: "auto", before: LINE, after: Math.round(LINE / 2) }, alignment: AlignmentType.LEFT, indent: { firstLine: 0 }, children: [new TextRun({ text: "СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ", font: FONT, size: SIZE, bold: true, color: "000000" })] }));
@@ -1864,7 +1868,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     for (const line of lines) {
       const isChapter = /^розділ\s/i.test(line) || /^chapter\s/i.test(line) || /^\d+[\.\)]\s+[А-ЯҐЄІЇа-яґєії]/i.test(line);
       const isSubsection = /^\d+\.\d+/.test(line) || /^[-–•]\s+/.test(line);
-      const isChapterConclusion = /^висновк\w*\s+до\s+(\d+\s+|\w+\s+)?(розділ|chapter)/i.test(line);
+      const isChapterConclusion = /^висновк[^\s]*\s+до\s+/i.test(line);
       const isSpecial = !isChapterConclusion && /^(вступ[\s,\.!]?$|вступ\s|висновк|список|загальн|практичн|додатк|зміст)/i.test(line);
       if (isSpecial) continue;
       if (isChapterConclusion && current) { current.hasConclusion = true; continue; }
@@ -1958,7 +1962,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
         const toc = commentAnalysis.photoTOC;
         const subsMatches = toc.match(/^\s*\d+\.\d+/gm) || [];
         const totalSubsPhoto = subsMatches.length || 4;
-        const chapConclCount = (toc.match(/висновк\w*\s+до\s+розділ|conclusions?\s+to\s+chapter/gi) || []).length;
+        const chapConclCount = (toc.match(/висновк[^\s]*\s+до\s+|conclusions?\s+to\s+chapter/gi) || []).length;
         const pagesPerSub = Math.max(3, Math.round((totalPages - introP - conclP - chapConclCount) / totalSubsPhoto));
         const photoTplPrompt = `A client provided a READY PLAN from a photo. Use its EXACT structure (number of chapters, subsections per chapter, chapter conclusions if present) but create NEW titles matching the topic below. Do NOT copy titles from the plan.
 
@@ -2000,7 +2004,7 @@ Return ONLY JSON without markdown:
         const chapStructure = chapNums.length
           ? chapNums.map(n => `Chapter ${n}: EXACTLY ${chapSubsMap[n] || 2} subsection(s)`).join('\n')
           : `Each chapter: EXACTLY 2 subsections`;
-        const chapConclCount = (comment.match(/висновки до розділ/gi) || []).length;
+        const chapConclCount = (comment.match(/висновк[^\s]*\s+до\s+/gi) || []).length;
         const pagesForSubs = totalPages - introP - conclP - chapConclCount;
         const pagesPerSub = Math.max(3, Math.round(pagesForSubs / subsCount));
         const templatePrompt = `A client provided a STRUCTURE EXAMPLE. Use EXACTLY the structure below.
@@ -2029,7 +2033,9 @@ Chapter conclusion id format: "1.conclusions", "2.conclusions", "3.conclusions"
 Return ONLY JSON without markdown:
 {"sections":[
   {"id":"1.1","label":"1.1 Section title","sectionTitle":"${L.chapterWord} 1. CHAPTER TITLE","pages":8,"type":"theory"},
-  {"id":"1.conclusions","label":"${L.chapConclLabel(1)}","sectionTitle":"${L.chapterWord} 1. CHAPTER TITLE","pages":1,"type":"chapter_conclusion"},
+  ${chapConclCount > 0 ? `{"id":"1.conclusions","label":"${L.chapConclLabel(1)}","sectionTitle":"${L.chapterWord} 1. CHAPTER TITLE","pages":1,"type":"chapter_conclusion"},` : ""}
+  {"id":"2.1","label":"2.1 Section title","sectionTitle":"${L.chapterWord} 2. CHAPTER TITLE","pages":8,"type":"analysis"},
+  ${chapConclCount > 0 ? `{"id":"2.conclusions","label":"${L.chapConclLabel(2)}","sectionTitle":"${L.chapterWord} 2. CHAPTER TITLE","pages":1,"type":"chapter_conclusion"},` : ""}
   {"id":"intro","label":"${L.intro}","pages":3,"type":"intro"},
   {"id":"conclusions","label":"${L.conclusions}","pages":3,"type":"conclusions"},
   {"id":"sources","label":"${L.sources}","pages":2,"type":"sources"}
@@ -2043,7 +2049,7 @@ Return ONLY JSON without markdown:
       } catch (e) { console.warn("comment template plan failed:", e.message); }
     }
 
-    const commentHasConcl = commentAnalysis?.planHints ? /висновк\w*\s+до\s+розділ/i.test(commentAnalysis.planHints) : false;
+    const commentHasConcl = commentAnalysis?.planHints ? /висновк[^\s]*\s+до\s+/i.test(commentAnalysis.planHints) : false;
 
     if (methodInfo) {
       // Маємо готову структурну інфу з методички — генеруємо план без PDF
@@ -2103,11 +2109,13 @@ Return ONLY JSON without markdown:
 {"sections":[
   {"id":"1.1","label":"1.1 Section title","sectionTitle":"${L.chapterWord} 1. CHAPTER TITLE","pages":8,"type":"theory"},
   {"id":"1.conclusions","label":"${L.chapConclLabel(1)}","sectionTitle":"${L.chapterWord} 1. CHAPTER TITLE","pages":1,"type":"chapter_conclusion"},
+  {"id":"2.1","label":"2.1 Section title","sectionTitle":"${L.chapterWord} 2. CHAPTER TITLE","pages":8,"type":"analysis"},
+  {"id":"2.conclusions","label":"${L.chapConclLabel(2)}","sectionTitle":"${L.chapterWord} 2. CHAPTER TITLE","pages":1,"type":"chapter_conclusion"},
   {"id":"intro","label":"${L.intro}","pages":3,"type":"intro"},
   {"id":"conclusions","label":"${L.conclusions}","pages":3,"type":"conclusions"},
   {"id":"sources","label":"${L.sources}","pages":2,"type":"sources"}
 ]}
-Order: subsections grouped by chapter (with chapter conclusions if needed), then intro, conclusions, sources.`
+Order: subsections grouped by chapter (with chapter_conclusion after last subsection of each chapter), then intro, conclusions, sources.`
         : `Create a plan for ${d.type} on topic: "${d.topic}". Field: ${d.subject}. Pages: ${totalPages}.
 Language of work: ${d.language || "Ukrainian"} — all labels and titles must be in this language.
 ${commentAnalysis?.planHints ? `\nCLIENT HINTS:\n${commentAnalysis.planHints}\n` : ""}
@@ -2133,6 +2141,8 @@ Return ONLY JSON without markdown:
   {"id":"1.2","label":"1.2 Section title","sectionTitle":"${L.chapterWord} 1. CHAPTER TITLE","pages":7,"type":"theory"},${hasConcl ? `
   {"id":"1.conclusions","label":"${L.chapConclLabel(1)}","sectionTitle":"${L.chapterWord} 1. CHAPTER TITLE","pages":1,"type":"chapter_conclusion"},` : ""}
   {"id":"2.1","label":"2.1 Section title","sectionTitle":"${L.chapterWord} 2. CHAPTER TITLE","pages":8,"type":"analysis"},
+  {"id":"2.2","label":"2.2 Section title","sectionTitle":"${L.chapterWord} 2. CHAPTER TITLE","pages":7,"type":"analysis"},${hasConcl ? `
+  {"id":"2.conclusions","label":"${L.chapConclLabel(2)}","sectionTitle":"${L.chapterWord} 2. CHAPTER TITLE","pages":1,"type":"chapter_conclusion"},` : ""}
   {"id":"intro","label":"${L.intro}","pages":3,"type":"intro"},
   {"id":"conclusions","label":"${L.conclusions}","pages":3,"type":"conclusions"},
   {"id":"sources","label":"${L.sources}","pages":2,"type":"sources"}
