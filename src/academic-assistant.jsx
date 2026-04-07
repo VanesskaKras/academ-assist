@@ -1988,17 +1988,28 @@ Return ONLY JSON without markdown:
     if (comment?.trim() && /розділ\s*\d+/i.test(comment)) {
       try {
         // Рахуємо розділи, підрозділи та висновки до розділів з прикладу
-        const subsMatches = comment.match(/\b\d+\.\d+[\.\s]/g) || [];
-        const subsCount = subsMatches.length || 4;
         const chapNums = [...new Set((comment.match(/розділ\s*(\d+)/gi) || []).map(m => m.match(/\d+/)[0]))];
         const chapCount = chapNums.length || 2;
+        // Рахуємо підрозділи per chapter
+        const chapSubsMap = {};
+        for (const line of comment.split('\n')) {
+          const m = line.trim().match(/^(\d+)\.(\d+)/);
+          if (m) chapSubsMap[m[1]] = (chapSubsMap[m[1]] || 0) + 1;
+        }
+        const subsCount = Object.values(chapSubsMap).reduce((a, b) => a + b, 0) || 4;
+        const chapStructure = chapNums.length
+          ? chapNums.map(n => `Chapter ${n}: EXACTLY ${chapSubsMap[n] || 2} subsection(s)`).join('\n')
+          : `Each chapter: EXACTLY 2 subsections`;
         const chapConclCount = (comment.match(/висновки до розділ/gi) || []).length;
         const pagesForSubs = totalPages - introP - conclP - chapConclCount;
         const pagesPerSub = Math.max(3, Math.round(pagesForSubs / subsCount));
         const templatePrompt = `A client provided a STRUCTURE EXAMPLE. Use EXACTLY the structure below.
 
 Do NOT copy titles from the example. Create NEW titles for the topic below.
-IMPORTANT: The work must have EXACTLY ${chapCount} chapter(s) — no more, no less.
+MANDATORY STRUCTURE — you MUST follow this exactly:
+- EXACTLY ${chapCount} chapter(s)
+${chapStructure}
+${chapConclCount > 0 ? `- Chapter conclusions after each chapter` : `- NO chapter conclusions`}
 
 TOPIC: "${d.topic}". Type: ${d.type}. Field: ${d.subject}. Pages: ${totalPages}.
 Language of work: ${d.language || "Ukrainian"} — all labels must be in this language.
@@ -2009,7 +2020,7 @@ ${comment}
 PAGE DISTRIBUTION (total must equal ${totalPages}):
 - ${L.intro}: ${introP} p.
 - ${L.conclusions}: ${conclP} p.
-- Chapter conclusions: 1 p. each (if in example)
+- Chapter conclusions: 1 p. each (if present)
 - Each subsection: ${pagesPerSub} p. (total: ${subsCount})
 
 Allowed type values: "theory" | "analysis" | "recommendations" | "chapter_conclusion" | "intro" | "conclusions" | "sources"
