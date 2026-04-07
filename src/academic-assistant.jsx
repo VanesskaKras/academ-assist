@@ -1814,8 +1814,9 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
         await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, stage: "parsed", status: "new" });
       }
     } else {
-      setMethodInfo(null);
-      await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, stage: "parsed", status: "new" });
+      // Якщо PDF не завантажено але methodInfo вже є (з попереднього аналізу) — залишаємо його
+      if (!methodInfo) setMethodInfo(null);
+      await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, ...(methodInfo ? { methodInfo } : {}), stage: "parsed", status: "new" });
     }
 
     // КРОК 3: Аналіз коментаря клієнта (+ фото якщо є)
@@ -1986,15 +1987,18 @@ Return ONLY JSON without markdown:
     // Якщо коментар містить приклад структури плану — використати як шаблон, адаптувати назви під тему
     if (comment?.trim() && /розділ\s*\d+/i.test(comment)) {
       try {
-        // Рахуємо підрозділи та висновки до розділів з прикладу
+        // Рахуємо розділи, підрозділи та висновки до розділів з прикладу
         const subsMatches = comment.match(/\b\d+\.\d+[\.\s]/g) || [];
         const subsCount = subsMatches.length || 4;
+        const chapNums = [...new Set((comment.match(/розділ\s*(\d+)/gi) || []).map(m => m.match(/\d+/)[0]))];
+        const chapCount = chapNums.length || 2;
         const chapConclCount = (comment.match(/висновки до розділ/gi) || []).length;
         const pagesForSubs = totalPages - introP - conclP - chapConclCount;
         const pagesPerSub = Math.max(3, Math.round(pagesForSubs / subsCount));
-        const templatePrompt = `A client provided a STRUCTURE EXAMPLE. Count subsections per chapter ("1.1", "1.2", "2.1" etc.) and whether chapter conclusions exist.
+        const templatePrompt = `A client provided a STRUCTURE EXAMPLE. Use EXACTLY the structure below.
 
-Do NOT copy titles from the example. Create NEW titles for the topic below. Use only: number of chapters, subsections per chapter, presence of chapter conclusions.
+Do NOT copy titles from the example. Create NEW titles for the topic below.
+IMPORTANT: The work must have EXACTLY ${chapCount} chapter(s) — no more, no less.
 
 TOPIC: "${d.topic}". Type: ${d.type}. Field: ${d.subject}. Pages: ${totalPages}.
 Language of work: ${d.language || "Ukrainian"} — all labels must be in this language.
