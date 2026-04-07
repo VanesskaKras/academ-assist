@@ -1863,7 +1863,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     for (const line of lines) {
       const isChapter = /^розділ\s/i.test(line) || /^chapter\s/i.test(line) || /^\d+[\.\)]\s+[А-ЯҐЄІЇа-яґєії]/i.test(line);
       const isSubsection = /^\d+\.\d+/.test(line) || /^[-–•]\s+/.test(line);
-      const isChapterConclusion = /^висновк\w*\s+до\s+(\d+\s+)?(розділ|chapter)/i.test(line);
+      const isChapterConclusion = /^висновк\w*\s+до\s+(\d+\s+|\w+\s+)?(розділ|chapter)/i.test(line);
       const isSpecial = !isChapterConclusion && /^(вступ[\s,\.!]?$|вступ\s|висновк|список|загальн|практичн|додатк|зміст)/i.test(line);
       if (isSpecial) continue;
       if (isChapterConclusion && current) { current.hasConclusion = true; continue; }
@@ -1987,7 +1987,7 @@ Return ONLY JSON without markdown:
     if (comment?.trim() && /розділ\s*\d+/i.test(comment)) {
       try {
         // Рахуємо підрозділи та висновки до розділів з прикладу
-        const subsMatches = comment.match(/^\s*\d+\.\d+[\.\s]/gm) || [];
+        const subsMatches = comment.match(/\b\d+\.\d+[\.\s]/g) || [];
         const subsCount = subsMatches.length || 4;
         const chapConclCount = (comment.match(/висновки до розділ/gi) || []).length;
         const pagesForSubs = totalPages - introP - conclP - chapConclCount;
