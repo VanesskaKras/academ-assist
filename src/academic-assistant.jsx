@@ -110,9 +110,9 @@ async function exportToDocx({ content, info, displayOrder, appendicesText, title
       }
       if (/^Таблиця\s+\d/.test(line.trim())) {
         result.push(new Paragraph({
-          alignment: AlignmentType.RIGHT,
+          alignment: AlignmentType.BOTH,
           spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
-          indent: { firstLine: 0 },
+          indent: { firstLine: INDENT },
           children: [new TextRun({ text: line.trim(), font: FONT, size: SIZE, color: "000000" })],
         }));
         i++;
@@ -419,8 +419,9 @@ async function exportAppendixToDocx(text, info) {
     }
     if (/^Таблиця\s+\d/.test(line.trim())) {
       children.push(new Paragraph({
-        alignment: AlignmentType.RIGHT,
+        alignment: AlignmentType.BOTH,
         spacing: { line: LINE, lineRule: "auto", before: Math.round(LINE * 0.5), after: 0 },
+        indent: { firstLine: INDENT },
         children: [new TextRun({ text: line.trim(), font: FONT, size: SIZE, color: "000000" })],
       }));
       i++; continue;
@@ -1597,6 +1598,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [appendicesLoading, setAppendicesLoading] = useState(false);
   const [appendicesCustomPrompt, setAppendicesCustomPrompt] = useState("");
   const [titlePage, setTitlePage] = useState("");
+  const [showMissingSources, setShowMissingSources] = useState(false);
   const [sessionCost, setSessionCost] = useState(() => {
     try { return JSON.parse(localStorage.getItem("sessionCost")) || { claude: 0, gemini: 0 }; } catch { return { claude: 0, gemini: 0 }; }
   });
@@ -1639,6 +1641,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
             setSourceDist(dist); setSourceTotal(total);
           }
           if (d.methodInfo) setMethodInfo(d.methodInfo);
+          if (d.fileLabel) setFileLabel(d.fileLabel);
           if (d.commentAnalysis) setCommentAnalysis(d.commentAnalysis);
           if (d.content) setContent(d.content);
           if (d.citInputs) setCitInputs(d.citInputs);
@@ -1800,9 +1803,9 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
         if (parsed.titlePageTemplate) {
           const filled = parsed.titlePageTemplate.replace(/\[ТЕМА\]/g, newInfo?.topic || "[ТЕМА]");
           setTitlePage(filled);
-          await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, methodInfo: parsed, titlePage: filled, stage: "parsed", status: "new" });
+          await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, methodInfo: parsed, fileLabel, titlePage: filled, stage: "parsed", status: "new" });
         } else {
-          await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, methodInfo: parsed, stage: "parsed", status: "new" });
+          await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, methodInfo: parsed, fileLabel, stage: "parsed", status: "new" });
         }
       } catch (e) {
         console.warn("methodInfo extract failed:", e.message);
@@ -3042,6 +3045,7 @@ ${JSON.stringify(analysis, null, 2)}
     // ── Допоміжні функції ──
     const isTableRow = p => p.includes("|") || (p.match(/\t/g) || []).length >= 2;
     const stripCitations = text => text
+      .replace(/\s*\[\d+,\s*с\.\s*\d+\]/g, "")
       .replace(/\s*\[\d+\]/g, "")
       .replace(/\s*\([А-ЯҐЄІЇA-Z][а-яґєіїa-z\-A-Za-z]+(?:\s+et\s+al\.?)?(?:,\s*\d{4})?\)/g, "");
 
@@ -3070,7 +3074,8 @@ ${paragraphs.join("\n")}`;
 2. Не ставити одне джерело підряд у кількох абзацах поспіль.
 3. Посилання ставити лише там де абзац ПРЯМО спирається на це джерело (визначення, факт, цитата).
 4. Розподіляй джерела рівномірно між підрозділами — не концентруй всі в одному.
-5. Формат відповіді — JSON де значення це НОМЕР джерела (ціле число), а не текст посилання.
+5. ОБОВ'ЯЗКОВО: кожне джерело зі списку "доступні" має бути використане ХОЧА Б ОДИН РАЗ. Якщо після суворого розміщення за правилом 3 якесь джерело залишилось невикористаним — знайди підрозділ і абзац найближчий за тематикою і постав це джерело там.
+6. Формат відповіді — JSON де значення це НОМЕР джерела (ціле число), а не текст посилання.
 
 ${secsSummary}
 
@@ -3109,6 +3114,55 @@ ${secsSummary}
           }).join("\n");
           newContent[sec.id] = result;
         });
+
+        // ── Фолбек: примусово вставити джерела що так і не потрапили в текст ──
+        const placedNums = new Set();
+        secsWithRefs.forEach(sec => {
+          const text = newContent[sec.id] || "";
+          const matches = [...text.matchAll(/\[(\d+)[,\]]/g)];
+          matches.forEach(m => placedNums.add(Number(m[1])));
+          // APA/MLA: витягуємо номери через refCiteText
+          Object.entries(refCiteText).forEach(([n, cite]) => {
+            if (text.includes(cite)) placedNums.add(Number(n));
+          });
+        });
+
+        const allSourceNums = allRefs.map((_, i) => i + 1);
+        const unplaced = allSourceNums.filter(n => !placedNums.has(n));
+
+        if (unplaced.length > 0) {
+          // Для кожного нерозставленого — знаходимо підрозділ де воно є в secRefMap,
+          // і вставляємо в перший підходящий абзац без посилання
+          const insertCite = (text, cite) => {
+            const lines = text.split("\n");
+            const hasCite = l => /\[\d+/.test(l) || Object.values(refCiteText).some(c => l.includes(c));
+            // Шукаємо перший непустий абзац без посилання
+            for (let i = 0; i < lines.length; i++) {
+              const l = lines[i];
+              if (!l.trim() || isTableRow(l) || hasCite(l)) continue;
+              const trimmed = l.trimEnd();
+              const last = trimmed.slice(-1);
+              lines[i] = [".", "!", "?", "…"].includes(last)
+                ? trimmed.slice(0, -1) + " " + cite + last
+                : trimmed + " " + cite + ".";
+              return lines.join("\n");
+            }
+            return text; // якщо не знайшли місця — повертаємо без змін
+          };
+
+          unplaced.forEach(n => {
+            if (!refCiteText[n]) return;
+            // Знаходимо підрозділи де це джерело має бути
+            const targetSecs = secsWithRefs.filter(sec => secRefMap[sec.id]?.includes(n));
+            // Якщо немає — беремо будь-який підрозділ з контентом
+            const candidates = targetSecs.length ? targetSecs : secsWithRefs;
+            for (const sec of candidates) {
+              const before = newContent[sec.id];
+              const after = insertCite(before, refCiteText[n]);
+              if (after !== before) { newContent[sec.id] = after; break; }
+            }
+          });
+        }
       } catch (e) { console.error("Citation batch error:", e); }
     }
 
@@ -3226,11 +3280,11 @@ ${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
             ← Замовлення
           </button>
         )}
-        <div style={{ fontFamily: "'Spectral SC',serif", fontSize: 19, letterSpacing: 5, color: "#e8ff47" }}>ACADEM</div>
-        <div style={{ fontFamily: "'Spectral SC',serif", fontSize: 19, letterSpacing: 5 }}>ASSIST</div>
-        {info?.orderNumber && <div style={{ fontSize: 11, color: "#888", marginLeft: 8, whiteSpace: "nowrap", flexShrink: 0 }}>#{info.orderNumber}</div>}
-        {info?.topic && <div style={{ fontSize: 12, color: "#666", marginLeft: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 300 }}>{info.topic}</div>}
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ fontFamily: "'Spectral SC',serif", fontSize: 19, letterSpacing: 5, color: "#e8ff47", flexShrink: 0 }}>ACADEM</div>
+        <div style={{ fontFamily: "'Spectral SC',serif", fontSize: 19, letterSpacing: 5, flexShrink: 0 }}>ASSIST</div>
+        {info?.orderNumber && <div style={{ fontSize: 11, color: "#888", whiteSpace: "nowrap", flexShrink: 0 }}>#{info.orderNumber}</div>}
+        {info?.topic && <div style={{ fontSize: 12, color: "#666", flex: 1, minWidth: 0, lineHeight: 1.4 }}>{info.topic}</div>}
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0, marginLeft: "auto" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: "#888", background: "#2a2a20", borderRadius: 6, padding: "4px 10px" }}>
             <span>Claude: <b style={{ color: "#e8ff47" }}>${sessionCost.claude.toFixed(4)}</b></span>
             <span style={{ color: "#444" }}>|</span>
@@ -3271,6 +3325,11 @@ ${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
               </FieldBox>
               <FieldBox label="Методичка (тільки PDF)">
                 <DropZone fileLabel={fileLabel} onFile={handleFile} />
+                {methodInfo && !fileB64 && (
+                  <div style={{ fontSize: 11, color: "#7a8a5a", marginTop: 5 }}>
+                    ✓ Методичку вже проаналізовано. Завантажте PDF знову лише якщо потрібно перепроаналізувати.
+                  </div>
+                )}
               </FieldBox>
             </div>
             <FieldBox label="Фото як додатковий матеріал (необов'язково)">
@@ -3574,6 +3633,8 @@ ${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
         {stage === "sources" && (() => {
           const { allRefs } = globalRefData;
           let runningIdx = 0;
+          const missingSections = mainSections.filter(s => !(citInputs[s.id] || "").trim());
+          const visibleSections = showMissingSources ? missingSections : mainSections;
           return (
             <div className="fade">
               <Heading>05 / Джерела</Heading>
@@ -3629,13 +3690,17 @@ ${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
                   </div>
                 </div>
               )}
-              {mainSections.map(sec => {
+              {visibleSections.map(sec => {
                 const secRefs = (citInputs[sec.id] || "").split("\n").map(l => l.trim()).filter(Boolean);
                 const startIdx = runningIdx + 1; runningIdx += secRefs.length;
+                const hasSources = secRefs.length > 0;
                 return (
-                  <div key={sec.id} style={{ border: "1.5px solid #d4cfc4", borderRadius: 8, overflow: "hidden", marginBottom: 14 }}>
+                  <div key={sec.id} style={{ border: `1.5px solid ${hasSources ? "#d4cfc4" : "#e8a050"}`, borderRadius: 8, overflow: "hidden", marginBottom: 14 }}>
                     <div style={{ background: "#1a1a14", padding: "11px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: "#f5f2eb" }}>{sec.label}</div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ width: 8, height: 8, borderRadius: "50%", background: hasSources ? "#5ad060" : "#e8a050", flexShrink: 0, display: "inline-block" }} />
+                        <span style={{ fontSize: 13, fontWeight: 600, color: "#f5f2eb" }}>{sec.label}</span>
+                      </div>
                       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                         {secRefs.length > 0 && <div style={{ fontSize: 11, color: "#888" }}>джерела [{startIdx}–{startIdx + secRefs.length - 1}]</div>}
                         <div style={{ fontSize: 12, color: "#e8ff47", background: "#2a2a1a", padding: "2px 10px", borderRadius: 10 }}>потрібно: {sourceDist[sec.id] || "?"} дж.</div>

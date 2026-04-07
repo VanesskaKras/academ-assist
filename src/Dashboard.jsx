@@ -8,6 +8,7 @@ const STATUS_LABELS = {
     plan_ready: { label: "План готовий", color: "#5a7a2a", bg: "#eef5e4", dot: "#8ac040" },
     plan_approved: { label: "План затверджено", color: "#1a5a8a", bg: "#e4f0ff", dot: "#4a9ade" },
     writing: { label: "В роботі", color: "#2a7a6a", bg: "#e4f5f2", dot: "#3abfa0" },
+    sources: { label: "Джерела", color: "#8a5a1a", bg: "#fff3e0", dot: "#e8a050" },
     done: { label: "Готово", color: "#1a6a1a", bg: "#e4ffe4", dot: "#4aba4a" },
 };
 
@@ -18,6 +19,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin }) {
     const [search, setSearch] = useState("");
     const [filterStatus, setFilterStatus] = useState(null); // null = всі
     const [infoOrder, setInfoOrder] = useState(null); // модалка деталей
+    const [showHelp, setShowHelp] = useState(false);
 
     useEffect(() => {
         const load = async () => {
@@ -45,15 +47,18 @@ export default function Dashboard({ onOpen, onNew, onAdmin }) {
         setOrders(p => p.filter(o => o.id !== id));
     };
 
+    const needsSources = (o) => o.stage === "sources" || (o.status === "done" && (!o.refList || o.refList.length === 0));
+
     const filtered = useMemo(() => {
         let result = orders;
         // Фільтр по статусу
         if (filterStatus) {
             result = result.filter(o => {
                 const s = o.status || "new";
-                if (filterStatus === "writing") return s === "writing";
+                if (filterStatus === "sources") return needsSources(o);
+                if (filterStatus === "writing") return s === "writing" && o.stage !== "sources";
                 if (filterStatus === "plan_ready") return s === "plan_ready" || s === "plan_approved";
-                if (filterStatus === "done") return s === "done";
+                if (filterStatus === "done") return s === "done" && !needsSources(o);
                 if (filterStatus === "new") return s === "new";
                 return true;
             });
@@ -73,10 +78,11 @@ export default function Dashboard({ onOpen, onNew, onAdmin }) {
     }, [orders, search, filterStatus]);
 
     const counts = useMemo(() => {
-        const c = { all: orders.length, done: 0, writing: 0, plan_ready: 0, new: 0 };
+        const c = { all: orders.length, done: 0, writing: 0, sources: 0, plan_ready: 0, new: 0 };
         orders.forEach(o => {
             const s = o.status || "new";
-            if (s === "done") c.done++;
+            if (needsSources(o)) c.sources++;
+            else if (s === "done") c.done++;
             else if (s === "writing") c.writing++;
             else if (s === "plan_ready" || s === "plan_approved") c.plan_ready++;
             else c.new++;
@@ -95,6 +101,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin }) {
                     <div style={{ fontFamily: "'Spectral SC',serif", fontSize: 20, letterSpacing: 4 }}>ASSIST</div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <button onClick={() => setShowHelp(true)} title="Інструкція" style={{ background: "transparent", border: "1px solid #555", color: "#aaa", borderRadius: 6, padding: "6px 12px", cursor: "pointer", fontFamily: "inherit", fontSize: 14, lineHeight: 1 }}>ℹ</button>
                     {onAdmin && (
                         <button onClick={onAdmin} style={{ background: "#e8ff47", color: "#1a1a14", border: "none", borderRadius: 6, padding: "6px 16px", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700 }}>
                             ⚙ Адмін
@@ -125,8 +132,9 @@ export default function Dashboard({ onOpen, onNew, onAdmin }) {
                     <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
                         {[
                             { label: "Всього", val: counts.all, color: "#1a1a14", bg: "#e8e4d8", key: null },
-                            { label: "В роботі", val: counts.writing, color: "#2a7a6a", bg: "#e4f5f2", key: "writing" },
                             { label: "План", val: counts.plan_ready, color: "#1a5a8a", bg: "#e4f0ff", key: "plan_ready" },
+                            { label: "В роботі", val: counts.writing, color: "#2a7a6a", bg: "#e4f5f2", key: "writing" },
+                            { label: "Джерела", val: counts.sources, color: "#8a5a1a", bg: "#fff3e0", key: "sources" },
                             { label: "Готово", val: counts.done, color: "#1a6a1a", bg: "#e4ffe4", key: "done" },
                         ].map(s => {
                             const isActive = filterStatus === s.key;
@@ -183,7 +191,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin }) {
                 ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                         {filtered.map(order => {
-                            const st = STATUS_LABELS[order.status] || STATUS_LABELS.new;
+                            const st = (needsSources(order) ? STATUS_LABELS.sources : null) || STATUS_LABELS[order.status] || STATUS_LABELS.new;
                             const isSmall = order.mode === "small";
                             return (
                                 <div key={order.id} onClick={() => onOpen(order.id, order.mode || "large")}
@@ -228,6 +236,35 @@ export default function Dashboard({ onOpen, onNew, onAdmin }) {
                     </div>
                 )}
             </div>
+
+            {/* Модалка інструкції */}
+            {showHelp && (
+                <div onClick={() => setShowHelp(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+                    <div onClick={e => e.stopPropagation()} style={{ background: "#1a1a14", borderRadius: 14, padding: "32px 36px", maxWidth: 680, width: "100%", maxHeight: "85vh", overflowY: "auto", boxShadow: "0 12px 60px rgba(0,0,0,0.5)", fontFamily: "'Spectral',Georgia,serif", color: "#f5f2eb" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+                            <div style={{ fontFamily: "'Spectral SC',serif", fontSize: 16, letterSpacing: 3, color: "#e8ff47" }}>ІНСТРУКЦІЯ</div>
+                            <button onClick={() => setShowHelp(false)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#888", lineHeight: 1 }}>✕</button>
+                        </div>
+                        {[
+                            { title: "Що це за програма?", body: "ACADEM ASSIST — AI-асистент для написання академічних робіт. Він автоматично генерує текст курсових, дипломних та інших робіт на основі твоїх даних." },
+                            { title: "Типи робіт", body: "Нове замовлення — для курсових, дипломних, бакалаврських робіт.\nМала робота — для рефератів, тез, статей, есе, презентацій." },
+                            { title: "Крок 1 — Введення даних", body: "Вставте текст шаблону замовлення (бланк від викладача). За потреби додайте коментар та завантажте методичку (PDF). Якщо є готовий план — вставте або сфотографуйте його. Натисніть «Аналізувати»." },
+                            { title: "Крок 2 — Перевірка даних", body: "Перевірте витягнуті дані: тему, напрям, кількість сторінок, мову, дедлайн. Відредагуйте за потреби. Натисніть «Генерувати план»." },
+                            { title: "Крок 3 — План роботи", body: "Переглянте та відредагуйте назви розділів і підрозділів. Натисніть «Затвердити план» щоб розпочати написання." },
+                            { title: "Крок 4 — Написання тексту", body: "Система генерує текст по кожному підрозділу поступово. Прогрес відображається у верхній панелі. Можна зупинити і продовжити пізніше. Кожен підрозділ можна перегенерувати з додатковими вимогами." },
+                            { title: "Крок 5 — Джерела", body: "Введіть реальні джерела для кожного підрозділу. Скористайтесь кнопкою «Ключові слова» щоб знайти релевантні запити для пошуку. Натисніть «Сформувати список літератури»." },
+                            { title: "Крок 6 — Готово", body: "Завантажити .docx — готова робота з титульною сторінкою.\nДоповідь — текст для захисту у .docx.\nПрезентація — автоматичний .pptx.\nДодатки — генерує додатки до роботи.\nКопіювати текст — весь текст у буфер обміну." },
+                            { title: "Малі роботи", body: "Натисніть «Мала робота», оберіть тип (Реферат / Тези / Стаття / Есе / Презентація), заповніть форму і натисніть «Генерувати». Завантажте результат у .docx або .pptx." },
+                            { title: "Корисні поради", body: "Методичка значно покращує якість роботи — завантажуй її якщо є.\nЯкщо генерація переривається — поверніться до замовлення і продовжіть.\nЗвук лунає коли генерація завершена, навіть якщо вкладка прихована.\nВсі дані зберігаються автоматично в хмарі." },
+                        ].map(({ title, body }) => (
+                            <div key={title} style={{ marginBottom: 22 }}>
+                                <div style={{ fontSize: 13, fontWeight: 700, color: "#e8ff47", letterSpacing: 1, marginBottom: 6, fontFamily: "'Spectral SC',serif" }}>{title}</div>
+                                <div style={{ fontSize: 13, color: "#c8c4bb", lineHeight: 1.7, whiteSpace: "pre-line" }}>{body}</div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {/* Модалка деталей замовлення */}
             {infoOrder && (
