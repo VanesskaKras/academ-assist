@@ -3732,7 +3732,7 @@ ${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
                       </div>
                     </div>
                     <div style={{ padding: "14px 18px", background: "#faf8f3" }}>
-                      {keywords[sec.id] && (
+                      {Array.isArray(keywords[sec.id]) && keywords[sec.id].length > 0 && (
                         <div style={{ marginBottom: 10 }}>
                           <div style={{ fontSize: 11, color: "#888", letterSpacing: "1px", textTransform: "uppercase", marginBottom: 5 }}>Шукайте за фразами:</div>
                           <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
