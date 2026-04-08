@@ -2962,15 +2962,15 @@ ${JSON.stringify(analysis, null, 2)}
     }).join("\n\n");
     const prompt = `Проаналізуй текст підрозділів академічної роботи на тему "${info?.topic}" і для кожного підрозділу визнач пошукові ключові слова для Google Scholar, Scopus, eLibrary Ukraine. Ключові слова мають відображати конкретні терміни, концепції та підходи з тексту — не загальні назви розділів.\n\nПІДРОЗДІЛИ:\n${secBlocks}\n\nПоверни JSON об'єкт: {"keywords":{"1.1":["фраза укр","english phrase"],...}}`;
     try {
-      const geminiBody = (model) => JSON.stringify({
-        _model: model,
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig: { maxOutputTokens: 3000, responseMimeType: "application/json", ...(model === "gemini-2.5-flash" ? { thinkingConfig: { thinkingBudget: 0 } } : {}) },
+      const res = await fetch("/api/gemini", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          _model: "gemini-2.5-flash",
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          generationConfig: { maxOutputTokens: 3000, responseMimeType: "application/json", thinkingConfig: { thinkingBudget: 0 } },
+        }),
       });
-      let res = await fetch("/api/gemini", { method: "POST", headers: { "Content-Type": "application/json" }, body: geminiBody("gemini-2.5-flash") });
-      if (res.status === 503 || res.status === 429) {
-        res = await fetch("/api/gemini", { method: "POST", headers: { "Content-Type": "application/json" }, body: geminiBody("gemini-2.0-flash") });
-      }
       const data = await res.json();
       if (!res.ok) throw new Error(data.error?.message || JSON.stringify(data).slice(0, 200));
       const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
