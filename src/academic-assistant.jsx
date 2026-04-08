@@ -3055,12 +3055,57 @@ ${JSON.stringify(analysis, null, 2)}
     const isAPA = /APA/i.test(sourcesStyle);
     const isMLA = /MLA/i.test(sourcesStyle);
 
-    // Будуємо карту "номер → текст посилання" відповідно до стилю
+    // ── СПОЧАТКУ: Форматування списку джерел (Gemini) ──
+    const today = new Date();
+    const accessDate = `${String(today.getDate()).padStart(2, "0")}.${String(today.getMonth() + 1).padStart(2, "0")}.${today.getFullYear()}`;
+    const isAlphabeticalOrder = methodInfo?.sourcesOrder === "alphabetical";
+    const sourcesOrder = isAlphabeticalOrder ? "Список відсортований за алфавітом." : "Список у порядку першої появи у тексті.";
+    const defaultGrouping = "спочатку українські джерела (кирилиця) за алфавітом, потім англійські (латиниця) за алфавітом";
+    const sourcesGrouping = methodInfo?.sourcesGrouping ? `Групування: ${methodInfo.sourcesGrouping}.` : (isAlphabeticalOrder ? `Групування: ${defaultGrouping}.` : "");
+    const isApaStyle = /APA/i.test(sourcesStyle);
+    const isDstu = /ДСТУ/i.test(sourcesStyle);
+    const styleRules = isApaStyle
+      ? `СТИЛЬ: APA 7th edition. СУВОРО дотримуйся APA — НЕ змішуй з ДСТУ чи іншими стилями.
+Правила APA:
+- Книга: Прізвище, І. І. (рік). Назва книги курсивом. Видавець.
+- Стаття: Прізвище, І. І. (рік). Назва статті. Назва журналу курсивом, том(номер), сторінки. https://doi.org/...
+- Розділ у збірнику: Прізвище, І. І. (рік). Назва розділу. В І. І. Редактор (Ред.), Назва збірника (сс. xx–xx). Видавець.
+- Онлайн-ресурс: Прізвище, І. І. (рік). Назва. Назва сайту. URL
+- НЕ використовуй двокрапку між містом і видавцем (це ДСТУ, не APA).
+- НЕ пиши "Київ:" або "Oxford:" перед видавцем (APA не вказує місто для більшості джерел після 7-го вид.).
+- НЕ додавай "Вип.", "Т.", "С." у журнальних статтях — використовуй том і сторінки у форматі APA.`
+      : isDstu
+        ? `СТИЛЬ: ДСТУ 8302:2015. СУВОРО дотримуйся ДСТУ — НЕ змішуй з APA чи іншими стилями.
+Правила ДСТУ 8302:2015:
+- Книга: Прізвище І. І. Назва книги. Місто : Видавець, рік. Кількість с.
+- Стаття: Прізвище І. І. Назва статті. Назва журналу. рік. № номер. С. xx–xx.
+- Онлайн: Прізвище І. І. Назва. URL: адреса (дата звернення: ${accessDate}).
+- Ініціали пишуться ПІСЛЯ прізвища без ком між прізвищем та ініціалами.
+- Між містом і видавцем — пробіл двокрапка пробіл ( : ).`
+        : `СТИЛЬ: ${sourcesStyle}. Точно дотримуйся цього стилю.`;
+    const fmtPrompt = `${styleRules}
+${sourcesOrder} ${sourcesGrouping}
+Збережи номери. Поверни ТІЛЬКИ список без заголовка. Для онлайн-джерел додай URL (дата звернення: ${accessDate}). НЕ використовуй "[Електронний ресурс]". Якщо назва джерела написана ВЕЛИКИМИ ЛІТЕРАМИ — переведи у формат речення (перша літера велика, решта малі, окрім власних назв та абревіатур).
+
+${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
+    let fmtResult;
+    try {
+      fmtResult = await callGemini([{ role: "user", content: fmtPrompt }], null,
+        `You are a bibliographic formatting assistant. Format references strictly in ${sourcesStyle} style only. Do not mix citation styles. Return only the formatted list, no extra text.`, 16000);
+      setRefList(fmtResult.split("\n").filter(Boolean));
+      const srcSec = sections.find(s => s.type === "sources");
+      if (srcSec) newContent[srcSec.id] = fmtResult;
+    } catch (e) { console.error(e); }
+
+    // Будуємо карту "номер → текст посилання" з ВІДФОРМАТОВАНОГО списку (щоб мати точні номери сторінок)
+    // Якщо Gemini не повернув результат — fallback на raw
+    const fmtLines = fmtResult
+      ? fmtResult.split("\n").filter(Boolean).map(l => l.replace(/^\d+\.\s*/, ""))
+      : allRefs;
     const refCiteText = {};
-    allRefs.forEach((ref, i) => {
+    fmtLines.forEach((ref, i) => {
       const n = i + 1;
       if (isAPA) {
-        // Витягуємо прізвище першого автора і рік для APA: (Прізвище, рік)
         const authorMatch = ref.match(/^([А-ЯҐЄІЇA-Z][а-яґєіїa-z\-A-Za-z]+)/);
         const yearMatch = ref.match(/[\(\.\s](\d{4})[\)\.\,\s]/);
         const author = authorMatch?.[1] || `Автор${n}`;
@@ -3070,8 +3115,7 @@ ${JSON.stringify(analysis, null, 2)}
         const authorMatch = ref.match(/^([А-ЯҐЄІЇA-Z][а-яґєіїa-z\-A-Za-z]+)/);
         refCiteText[n] = `(${authorMatch?.[1] || `Автор${n}`})`;
       } else {
-        // ДСТУ та інші нумеровані стилі
-        // Витягуємо номер першої сторінки статті (С. 56 або С. 56–74), але НЕ загальний обсяг книги (210 с.)
+        // ДСТУ та інші нумеровані стилі — витягуємо номер першої сторінки статті
         const articlePageMatch = ref.match(/[Сс]\.\s*(\d+)\s*[–\-—]/); // діапазон С. 56–74
         const singlePageMatch = !articlePageMatch && ref.match(/[Сс]\.\s*(\d+)(?!\d*\s*с\.)/); // одна сторінка С. 56, але не "210 с."
         const engPageMatch = ref.match(/pp?\.\s*(\d+)/i); // англійські pp. 56
@@ -3203,48 +3247,6 @@ ${secsSummary}
         }
       } catch (e) { console.error("Citation batch error:", e); }
     }
-
-    // ── Форматування списку джерел (Gemini, до 100+ джерел без батчингу) ──
-    const today = new Date();
-    const accessDate = `${String(today.getDate()).padStart(2, "0")}.${String(today.getMonth() + 1).padStart(2, "0")}.${today.getFullYear()}`;
-    const isAlphabeticalOrder = methodInfo?.sourcesOrder === "alphabetical";
-    const sourcesOrder = isAlphabeticalOrder ? "Список відсортований за алфавітом." : "Список у порядку першої появи у тексті.";
-    const defaultGrouping = "спочатку українські джерела (кирилиця) за алфавітом, потім англійські (латиниця) за алфавітом";
-    const sourcesGrouping = methodInfo?.sourcesGrouping ? `Групування: ${methodInfo.sourcesGrouping}.` : (isAlphabeticalOrder ? `Групування: ${defaultGrouping}.` : "");
-    const isApaStyle = /APA/i.test(sourcesStyle);
-    const isDstu = /ДСТУ/i.test(sourcesStyle);
-    const styleRules = isApaStyle
-      ? `СТИЛЬ: APA 7th edition. СУВОРО дотримуйся APA — НЕ змішуй з ДСТУ чи іншими стилями.
-Правила APA:
-- Книга: Прізвище, І. І. (рік). Назва книги курсивом. Видавець.
-- Стаття: Прізвище, І. І. (рік). Назва статті. Назва журналу курсивом, том(номер), сторінки. https://doi.org/...
-- Розділ у збірнику: Прізвище, І. І. (рік). Назва розділу. В І. І. Редактор (Ред.), Назва збірника (сс. xx–xx). Видавець.
-- Онлайн-ресурс: Прізвище, І. І. (рік). Назва. Назва сайту. URL
-- НЕ використовуй двокрапку між містом і видавцем (це ДСТУ, не APA).
-- НЕ пиши "Київ:" або "Oxford:" перед видавцем (APA не вказує місто для більшості джерел після 7-го вид.).
-- НЕ додавай "Вип.", "Т.", "С." у журнальних статтях — використовуй том і сторінки у форматі APA.`
-      : isDstu
-        ? `СТИЛЬ: ДСТУ 8302:2015. СУВОРО дотримуйся ДСТУ — НЕ змішуй з APA чи іншими стилями.
-Правила ДСТУ 8302:2015:
-- Книга: Прізвище І. І. Назва книги. Місто : Видавець, рік. Кількість с.
-- Стаття: Прізвище І. І. Назва статті. Назва журналу. рік. № номер. С. xx–xx.
-- Онлайн: Прізвище І. І. Назва. URL: адреса (дата звернення: ${accessDate}).
-- Ініціали пишуться ПІСЛЯ прізвища без ком між прізвищем та ініціалами.
-- Між містом і видавцем — пробіл двокрапка пробіл ( : ).`
-        : `СТИЛЬ: ${sourcesStyle}. Точно дотримуйся цього стилю.`;
-    const fmtPrompt = `${styleRules}
-${sourcesOrder} ${sourcesGrouping}
-Збережи номери. Поверни ТІЛЬКИ список без заголовка. Для онлайн-джерел додай URL (дата звернення: ${accessDate}). НЕ використовуй "[Електронний ресурс]". Якщо назва джерела написана ВЕЛИКИМИ ЛІТЕРАМИ — переведи у формат речення (перша літера велика, решта малі, окрім власних назв та абревіатур).
-
-${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
-    let fmtResult;
-    try {
-      fmtResult = await callGemini([{ role: "user", content: fmtPrompt }], null,
-        `You are a bibliographic formatting assistant. Format references strictly in ${sourcesStyle} style only. Do not mix citation styles. Return only the formatted list, no extra text.`, 16000);
-      setRefList(fmtResult.split("\n").filter(Boolean));
-      const srcSec = sections.find(s => s.type === "sources");
-      if (srcSec) newContent[srcSec.id] = fmtResult;
-    } catch (e) { console.error(e); }
 
     setContent(newContent);
     setCitInputsSnapshot(JSON.stringify(citInputs));
