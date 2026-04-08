@@ -1194,7 +1194,7 @@ async function callGemini(messages, signal, systemPrompt, maxTokens, onWait, mod
   });
 
   const body = {
-    _model: model || "gemini-2.0-flash-lite",
+    _model: model || "gemini-2.5-flash",
     contents,
     generationConfig: { maxOutputTokens: maxTokens || 8000, thinkingConfig: { thinkingBudget: 0 }, ...(jsonMode ? { responseMimeType: "application/json" } : {}) },
   };
@@ -1233,7 +1233,7 @@ async function callGemini(messages, signal, systemPrompt, maxTokens, onWait, mod
     }
     if (data.usageMetadata) {
       const cost = (data.usageMetadata.promptTokenCount * 0.075 + data.usageMetadata.candidatesTokenCount * 0.30) / 1_000_000;
-      window.dispatchEvent(new CustomEvent("apicost", { detail: { cost, model: "gemini-2.0-flash-lite", inTok: data.usageMetadata.promptTokenCount, outTok: data.usageMetadata.candidatesTokenCount } }));
+      window.dispatchEvent(new CustomEvent("apicost", { detail: { cost, model: "gemini-2.5-flash", inTok: data.usageMetadata.promptTokenCount, outTok: data.usageMetadata.candidatesTokenCount } }));
     }
     return text;
   }
@@ -1801,7 +1801,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
 - requiredFormulas: шукай формули/розрахунки які студент має виконати у роботі. Поверни масив: [{"name":"назва показника","formula":"формула у вигляді plain text, наприклад β = Σ(kij × pi) / (m × n)","variables":"опис кожної змінної через крапку з комою","interpretation":"шкала інтерпретації результату якщо є в методичці","section":"analysis або recommendations"}]. null якщо формул немає.` }
       ];
       try {
-        const raw = await callGemini([{ role: "user", content: methodMsgs }], null, "Respond only with valid JSON. No markdown, no comments.", 8000, (s) => setLoadMsg(`Читаю методичку... зачекайте ${s}с`), "gemini-2.0-flash-lite", true);
+        const raw = await callGemini([{ role: "user", content: methodMsgs }], null, "Respond only with valid JSON. No markdown, no comments.", 8000, (s) => setLoadMsg(`Читаю методичку... зачекайте ${s}с`), "gemini-2.5-flash", true);
         const jsonMatch = raw.match(/\{[\s\S]*\}/);
         const parsed = JSON.parse(jsonMatch?.[0] || raw.replace(/```json|```/g, "").trim());
         setMethodInfo(parsed);
@@ -2744,7 +2744,7 @@ ${sectionSummaries}
       const raw = await callGemini(
         [{ role: "user", content: prompt }], null,
         `You are an expert academic writing assistant. Write a concise, factual oral defense speech for a scientific committee. Every sentence must state a concrete fact, method, result or conclusion — no filler phrases. No markdown formatting.`, 4000,
-        null, "gemini-2.0-flash-lite"
+        null, "gemini-2.5-flash"
       );
 
       const result = raw
@@ -2868,7 +2868,7 @@ ${fullText}`;
       const geminiRaw = await callGemini(
         [{ role: "user", content: geminiPrompt }], null,
         "Respond only with valid JSON. No markdown, no code blocks, no comments.", 4000,
-        (s) => setPresentationMsg(`Аналізую... зачекайте ${s}с`), "gemini-2.0-flash-lite"
+        (s) => setPresentationMsg(`Аналізую... зачекайте ${s}с`), "gemini-2.5-flash"
       );
 
       let analysis;
@@ -2966,7 +2966,7 @@ ${JSON.stringify(analysis, null, 2)}
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          _model: "gemini-2.0-flash-lite",
+          _model: "gemini-2.5-flash",
           contents: [{ role: "user", parts: [{ text: prompt }] }],
           generationConfig: { maxOutputTokens: 3000, responseMimeType: "application/json", thinkingConfig: { thinkingBudget: 0 } },
         }),
