@@ -1573,6 +1573,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [sourceTotal, setSourceTotal] = useState(0);
   const [keywords, setKeywords] = useState({});
   const [kwLoading, setKwLoading] = useState(false);
+  const [kwError, setKwError] = useState("");
   const [citInputs, setCitInputs] = useState({});
   const [docxLoading, setDocxLoading] = useState(false);
   const [planDocxLoading, setPlanDocxLoading] = useState(false);
@@ -2974,8 +2975,20 @@ ${JSON.stringify(analysis, null, 2)}
       if (!res.ok) throw new Error(data.error?.message || JSON.stringify(data).slice(0, 200));
       const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
       const parsed = JSON.parse(raw);
-      setKeywords(parsed.keywords || {});
-    } catch (e) { console.error(e); setApiError(e.message); }
+      const kwRaw = parsed.keywords || {};
+      const flattenKw = (v) => {
+        if (Array.isArray(v)) return v.map(item => typeof item === "object" && item !== null ? Object.values(item).join(" ") : String(item)).filter(Boolean);
+        if (typeof v === "object" && v !== null) return Object.values(v).flatMap(flattenKw);
+        return String(v).split(/[,;]+/).map(s => s.trim()).filter(Boolean);
+      };
+      const kwNorm = Object.fromEntries(
+        Object.entries(kwRaw).map(([k, v]) => {
+          const normalizedKey = k.match(/^(\d+\.\d+)/)?.[1] || k;
+          return [normalizedKey, flattenKw(v)];
+        })
+      );
+      setKeywords(kwNorm);
+    } catch (e) { console.error(e); setKwError(e.message); }
     setKwLoading(false);
   };
 
@@ -3671,7 +3684,8 @@ ${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
                     {methodInfo.sourcesOrder && <span style={{ fontSize: 11, background: "#eef5e4", color: "#3a6010", padding: "2px 10px", borderRadius: 10 }}>{methodInfo.sourcesOrder === "alphabetical" ? "🔤 За алфавітом" : "🔢 За порядком появи"}</span>}
                   </div>
                 )}
-                <GreenBtn onClick={doGenKeywords} loading={kwLoading} msg="Генерую ключові слова..." label={Object.keys(keywords).length > 0 ? "Оновити ключові слова" : "Генерувати ключові слова →"} />
+                <GreenBtn onClick={() => { setKwError(""); doGenKeywords(); }} loading={kwLoading} msg="Генерую ключові слова..." label={Object.keys(keywords).length > 0 ? "Оновити ключові слова" : "Генерувати ключові слова →"} />
+                {kwError && <div style={{ fontSize: 12, color: "#8a1a1a", background: "#fff5f5", border: "1px solid #e8b0b0", borderRadius: 6, padding: "4px 10px" }}>⚠ {kwError}</div>}
               </div>
               <div style={{ padding: "12px 16px", background: "#f0f5e8", border: "1px solid #c8dfa0", borderRadius: 8, marginBottom: 20, fontSize: 13, color: "#3a6010", lineHeight: "1.7" }}>
                 <strong>Як це працює:</strong> Вставте знайдені джерела до кожного підрозділу (кожне з нового рядка). Після заповнення натисніть <em>"Розставити всі посилання"</em>.
