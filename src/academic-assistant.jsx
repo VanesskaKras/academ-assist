@@ -1169,7 +1169,11 @@ async function callClaude(messages, signal, systemPrompt, maxTokens, onWait, mod
 
 async function callGemini(messages, signal, systemPrompt, maxTokens, onWait, model, jsonMode) {
   const MAX_RETRIES = 5;
+  const FALLBACK_MODEL = "gemini-1.5-flash";
+  const FALLBACK_AFTER_503 = 2;
   let delay = 12000;
+  let currentModel = model || "gemini-2.5-flash-lite";
+  let failCount503 = 0;
 
   const toGeminiPart = (c) => {
     if ((c.type === "document" || c.type === "image") && c.source?.type === "base64")
@@ -1194,12 +1198,13 @@ async function callGemini(messages, signal, systemPrompt, maxTokens, onWait, mod
   });
 
   const body = {
-    _model: model || "gemini-2.5-flash",
+    _model: currentModel,
     contents,
     generationConfig: { maxOutputTokens: maxTokens || 8000, thinkingConfig: { thinkingBudget: 0 }, ...(jsonMode ? { responseMimeType: "application/json" } : {}) },
   };
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    body._model = currentModel;
     const res = await fetch("/api/gemini", {
       method: "POST", signal,
       headers: { "Content-Type": "application/json" },
@@ -1207,6 +1212,14 @@ async function callGemini(messages, signal, systemPrompt, maxTokens, onWait, mod
     });
     if (res.status === 429 || res.status === 503) {
       if (attempt === MAX_RETRIES) throw new Error(res.status === 503 ? "Gemini перевантажений, спробуйте ще раз" : "Rate limit: спробуйте через хвилину");
+      if (res.status === 503) {
+        failCount503++;
+        if (failCount503 >= FALLBACK_AFTER_503 && currentModel !== FALLBACK_MODEL) {
+          currentModel = FALLBACK_MODEL;
+          failCount503 = 0;
+          delay = 3000;
+        }
+      }
       const waitSec = Math.ceil(delay / 1000);
       for (let s = waitSec; s > 0; s--) {
         if (onWait) onWait(s);
@@ -1233,7 +1246,7 @@ async function callGemini(messages, signal, systemPrompt, maxTokens, onWait, mod
     }
     if (data.usageMetadata) {
       const cost = (data.usageMetadata.promptTokenCount * 0.075 + data.usageMetadata.candidatesTokenCount * 0.30) / 1_000_000;
-      window.dispatchEvent(new CustomEvent("apicost", { detail: { cost, model: "gemini-2.5-flash", inTok: data.usageMetadata.promptTokenCount, outTok: data.usageMetadata.candidatesTokenCount } }));
+      window.dispatchEvent(new CustomEvent("apicost", { detail: { cost, model: currentModel, inTok: data.usageMetadata.promptTokenCount, outTok: data.usageMetadata.candidatesTokenCount } }));
     }
     return text;
   }
@@ -1801,7 +1814,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
 - requiredFormulas: шукай формули/розрахунки які студент має виконати у роботі. Поверни масив: [{"name":"назва показника","formula":"формула у вигляді plain text, наприклад β = Σ(kij × pi) / (m × n)","variables":"опис кожної змінної через крапку з комою","interpretation":"шкала інтерпретації результату якщо є в методичці","section":"analysis або recommendations"}]. null якщо формул немає.` }
       ];
       try {
-        const raw = await callGemini([{ role: "user", content: methodMsgs }], null, "Respond only with valid JSON. No markdown, no comments.", 8000, (s) => setLoadMsg(`Читаю методичку... зачекайте ${s}с`), "gemini-2.5-flash", true);
+        const raw = await callGemini([{ role: "user", content: methodMsgs }], null, "Respond only with valid JSON. No markdown, no comments.", 8000, (s) => setLoadMsg(`Читаю методичку... зачекайте ${s}с`), "gemini-2.5-flash-lite", true);
         const jsonMatch = raw.match(/\{[\s\S]*\}/);
         const parsed = JSON.parse(jsonMatch?.[0] || raw.replace(/```json|```/g, "").trim());
         setMethodInfo(parsed);
@@ -2744,7 +2757,7 @@ ${sectionSummaries}
       const raw = await callGemini(
         [{ role: "user", content: prompt }], null,
         `You are an expert academic writing assistant. Write a concise, factual oral defense speech for a scientific committee. Every sentence must state a concrete fact, method, result or conclusion — no filler phrases. No markdown formatting.`, 4000,
-        null, "gemini-2.5-flash"
+        null, "gemini-2.5-flash-lite"
       );
 
       const result = raw
@@ -2868,7 +2881,7 @@ ${fullText}`;
       const geminiRaw = await callGemini(
         [{ role: "user", content: geminiPrompt }], null,
         "Respond only with valid JSON. No markdown, no code blocks, no comments.", 4000,
-        (s) => setPresentationMsg(`Аналізую... зачекайте ${s}с`), "gemini-2.5-flash"
+        (s) => setPresentationMsg(`Аналізую... зачекайте ${s}с`), "gemini-2.5-flash-lite"
       );
 
       let analysis;
@@ -2894,7 +2907,7 @@ ${fullText}`;
 ${JSON.stringify(analysis, null, 2)}
 
 СТРУКТУРА — рівно 13 слайдів, суворо в такому порядку:
-1.  layout "hero"            — title: тема роботи, subtitle: тип · рік
+1.  layout "hero"            — title: тема роботи, subtitle: тип · ${new Date().getFullYear()}
 2.  layout "two_column"      — Актуальність: left=формулювання проблеми, right_type="text", right=чому це важливо
 3.  layout "icon_list"       — Мета та завдання: visual.items з icon/header/text (мета + 3-4 завдання)
 4.  layout "highlight_box"   — Стан питання: points=огляд літератури, accent=прогалина у дослідженнях
@@ -2966,7 +2979,7 @@ ${JSON.stringify(analysis, null, 2)}
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          _model: "gemini-2.5-flash",
+          _model: "gemini-2.5-flash-lite",
           contents: [{ role: "user", parts: [{ text: prompt }] }],
           generationConfig: { maxOutputTokens: 3000, responseMimeType: "application/json", thinkingConfig: { thinkingBudget: 0 } },
         }),
