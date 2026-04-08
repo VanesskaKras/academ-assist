@@ -26,11 +26,22 @@ export default async function handler(req, res) {
         const model = _model || "gemini-2.5-flash";
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`;
 
-        const response = await fetch(url, {
+        let response = await fetch(url, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
         });
+
+        // Fallback to gemini-2.0-flash if primary model is overloaded
+        if ((response.status === 503 || response.status === 429) && model === "gemini-2.5-flash") {
+            console.warn(`Gemini ${model} returned ${response.status}, retrying with gemini-2.0-flash`);
+            const fallbackUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
+            response = await fetch(fallbackUrl, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+            });
+        }
 
         const data = await response.json();
 
