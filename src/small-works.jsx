@@ -313,7 +313,7 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
     } else if (sec.id === "conclusions") {
       instruction = `Напиши ВИСНОВКИ для реферату на тему "${info?.topic}".
 Підсумуй основні результати по кожному розділу. Конкретні висновки без загальних фраз.
-Обсяг: ~${approxParas} абзаців. Без посилань. Без жирного.`;
+Обсяг: ~${approxParas} абзаців. Без посилань. Без жирного. Без нумерації. Пиши суцільними абзацами.`;
     } else {
       instruction = `Напиши розділ "${sec.label}" для реферату на тему "${info?.topic}". Галузь: ${info?.subject || ""}.
 ${info?.requirements ? `Вимоги до оформлення: ${info.requirements}` : ""}

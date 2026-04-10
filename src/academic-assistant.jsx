@@ -56,7 +56,7 @@ async function exportToDocx({ content, info, displayOrder, appendicesText, title
   function headingSubsection(text) {
     return new Paragraph({
       heading: HeadingLevel.HEADING_2,
-      spacing: { line: LINE, lineRule: "auto", before: LINE, after: Math.round(LINE / 2) },
+      spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
       alignment: AlignmentType.LEFT, indent: { firstLine: INDENT },
       children: [new TextRun({ text, font: FONT, size: SIZE, bold: true, color: "000000" })],
     });
@@ -131,7 +131,12 @@ async function exportToDocx({ content, info, displayOrder, appendicesText, title
       if (!raw) { i++; continue; }
       if (firstContentLine && isDuplicateTitle(line, secLabel)) { firstContentLine = false; i++; continue; }
       firstContentLine = false;
-      if (/^#{1,6}\s/.test(line.trim()) && raw) { result.push(headingSubsection(raw)); i++; continue; }
+      if (/^#{1,6}\s/.test(line.trim()) && raw) {
+        result.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
+        result.push(headingSubsection(raw));
+        result.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
+        i++; continue;
+      }
       result.push(bodyPara(raw));
       i++;
     }
@@ -157,7 +162,7 @@ async function exportToDocx({ content, info, displayOrder, appendicesText, title
     return new Paragraph({
       spacing: { line: LINE, lineRule: "auto", before: 0, after: Math.round(LINE * 0.3) },
       alignment: AlignmentType.BOTH,
-      indent: { left: INDENT, hanging: INDENT },
+      indent: { firstLine: INDENT },
       children: sourceParaChildren(cleaned),
     });
   }
@@ -233,7 +238,9 @@ async function exportToDocx({ content, info, displayOrder, appendicesText, title
         const chapterLabel = alreadyHasPrefix ? rawTitle.trim() : `РОЗДІЛ ${thisChapter}. ${rawTitle}`;
         children.push(heading1(chapterLabel));
       }
+      children.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
       children.push(headingSubsection(sec.label));
+      children.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
     }
     children.push(...makeBlocks(txt, sec.label));
   }
@@ -1561,6 +1568,7 @@ function serializeForFirestore(obj) {
 export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const { user } = useAuth();
 
+  const [scrolled, setScrolled] = useState(false);
   const [stage, setStage] = useState("input");
   const [maxStageIdx, setMaxStageIdx] = useState(0);
   const [tplText, setTplText] = useState("");
@@ -1590,6 +1598,8 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [citInputs, setCitInputs] = useState({});
   const [docxLoading, setDocxLoading] = useState(false);
   const [planDocxLoading, setPlanDocxLoading] = useState(false);
+  const [showManualPlanInput, setShowManualPlanInput] = useState(false);
+  const [manualPlanText, setManualPlanText] = useState("");
   const [namingLoading, setNamingLoading] = useState(false);
   const [allCitLoading, setAllCitLoading] = useState(false);
   const [refList, setRefList] = useState([]);
@@ -1638,6 +1648,11 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const abortRef = useRef(null);
   const contentRef = useRef(content);
   useEffect(() => { contentRef.current = content; }, [content]);
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 300);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   // ── Завантаження існуючого замовлення з Firestore ──
   useEffect(() => {
@@ -2369,6 +2384,14 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
     setFigKwLoading(false);
   };
 
+  // ── Авто-сканування рисунків при переході на done ──
+  useEffect(() => {
+    if (stage !== "done") return;
+    const newRefs = {};
+    sections.forEach(sec => { if (content[sec.id]) newRefs[sec.id] = scanFigures(content[sec.id]); });
+    setFigureRefs(newRefs);
+  }, [stage, content]);
+
   // ── Генерація тексту ──
   useEffect(() => {
     if (stage !== "writing" || paused) return;
@@ -2469,7 +2492,7 @@ ${conclReq ? `ВИМОГИ МЕТОДИЧКИ: ${conclReq}\n` : ""}${commentAnal
 - Далі — по одному абзацу на кожен виконаний підрозділ/завдання, конкретні результати
 - Останній абзац — перспективи подальших досліджень
 - НЕ повторювати те що сказано у вступі, НЕ вводити нову інформацію
-- Без посилань. Без жирного. Без нумерації.
+- Без посилань. Без жирного. Без нумерації. Пиши суцільними абзацами, не використовуй жодних списків.
 
 ЗМІСТ ПІДРОЗДІЛІВ (для формулювання конкретних висновків):
 ${allCtx || planSummary}`;
@@ -2483,7 +2506,7 @@ ${allCtx || planSummary}`;
       instruction = `Напиши "Висновки до розділу ${chapNum}" для ${d.type} на тему "${d.topic}".
 ${methodInfo?.chapterConclusionRequirements ? `ВИМОГИ МЕТОДИЧКИ: ${methodInfo.chapterConclusionRequirements}` : ""}
 Обсяг: 1 сторінка (~4-5 абзаців). ${chapConclReq}.
-Без нової інформації. Без посилань. Без жирного.
+Без нової інформації. Без посилань. Без жирного. Без нумерації. Пиши суцільними абзацами.
 ${chapCtx ? "ЗМІСТ ПІДРОЗДІЛІВ РОЗДІЛУ:\n" + chapCtx : ""}`;
     } else {
       // Вимоги з методички для цього типу підрозділу
@@ -3072,11 +3095,13 @@ ${JSON.stringify(analysis, null, 2)}
     const today = new Date();
     const accessDate = `${String(today.getDate()).padStart(2, "0")}.${String(today.getMonth() + 1).padStart(2, "0")}.${today.getFullYear()}`;
     const isAlphabeticalOrder = methodInfo?.sourcesOrder === "alphabetical";
-    const sourcesOrder = isAlphabeticalOrder ? "Список відсортований за алфавітом." : "Список у порядку першої появи у тексті.";
-    const defaultGrouping = "спочатку українські джерела (кирилиця) за алфавітом, потім англійські (латиниця) за алфавітом";
-    const sourcesGrouping = methodInfo?.sourcesGrouping ? `Групування: ${methodInfo.sourcesGrouping}.` : (isAlphabeticalOrder ? `Групування: ${defaultGrouping}.` : "");
     const isApaStyle = /APA/i.test(sourcesStyle);
     const isDstu = /ДСТУ/i.test(sourcesStyle);
+    const sourcesOrder = (isAlphabeticalOrder || isDstu) ? "Список відсортований за алфавітом." : "Список у порядку першої появи у тексті.";
+    const defaultGrouping = "спочатку законодавчі акти (закони, кодекси, постанови, накази тощо) за хронологією або номером; потім книги та журнальні статті кирилицею (українські та інші кириличні) за алфавітом; потім українські електронні джерела (сайти, онлайн-матеріали кирилицею) за алфавітом; наприкінці іноземні джерела (латиниця) за алфавітом";
+    const sourcesGrouping = methodInfo?.sourcesGrouping
+      ? `Групування: ${methodInfo.sourcesGrouping}.`
+      : (isDstu || isAlphabeticalOrder) ? `Групування за ДСТУ 8302:2015: ${defaultGrouping}.` : "";
     const styleRules = isApaStyle
       ? `СТИЛЬ: APA 7th edition. СУВОРО дотримуйся APA — НЕ змішуй з ДСТУ чи іншими стилями.
 Правила APA:
@@ -3094,7 +3119,8 @@ ${JSON.stringify(analysis, null, 2)}
 - Стаття: Прізвище І. І. Назва статті. Назва журналу. рік. № номер. С. xx–xx.
 - Онлайн: Прізвище І. І. Назва. URL: адреса (дата звернення: ${accessDate}).
 - Ініціали пишуться ПІСЛЯ прізвища без ком між прізвищем та ініціалами.
-- Між містом і видавцем — пробіл двокрапка пробіл ( : ).`
+- Між містом і видавцем — пробіл двокрапка пробіл ( : ).
+- ПОРЯДОК ГРУП: 1) законодавчі акти (за хронологією/номером); 2) книги та статті кирилицею за алфавітом; 3) українські електронні джерела за алфавітом; 4) іноземні джерела латиницею за алфавітом.`
         : `СТИЛЬ: ${sourcesStyle}. Точно дотримуйся цього стилю.`;
     const fmtPrompt = `${styleRules}
 ${sourcesOrder} ${sourcesGrouping}
@@ -3506,6 +3532,7 @@ ${secsSummary}
                     <div style={{ fontFamily: "'Spectral SC'", fontSize: 11, color: "#e8ff47", letterSpacing: 3 }}>ПЛАН ДЛЯ КОПІЮВАННЯ</div>
                     <div style={{ display: "flex", gap: 8 }}>
                       <button onClick={() => navigator.clipboard.writeText(planDisplay)} style={{ background: "transparent", border: "1px solid #555", color: "#aaa", borderRadius: 5, padding: "4px 12px", fontSize: 11, cursor: "pointer", fontFamily: "'Spectral',serif", letterSpacing: 1 }}>COPY</button>
+                      <button onClick={() => { setShowManualPlanInput(v => !v); setManualPlanText(""); }} style={{ background: showManualPlanInput ? "#3a2a00" : "transparent", border: "1px solid #888", color: "#e8c84a", borderRadius: 5, padding: "4px 12px", fontSize: 11, cursor: "pointer", fontFamily: "'Spectral',serif", letterSpacing: 1 }}>✏ Замінити</button>
                       <button
                         disabled={planDocxLoading}
                         onClick={async () => { setPlanDocxLoading(true); try { await exportPlanToDocx({ sections, info }); } catch (e) { alert("Помилка: " + e.message); } setPlanDocxLoading(false); }}
@@ -3516,6 +3543,38 @@ ${secsSummary}
                   </div>
                   <pre style={{ fontFamily: "'Spectral',serif", fontSize: 13, lineHeight: "2.1", whiteSpace: "pre-wrap", color: "#e0ddd4", margin: 0 }}>{planDisplay}</pre>
                 </div>
+
+                {showManualPlanInput && (
+                  <div style={{ background: "#1e1c0e", border: "1.5px solid #e8c84a", borderRadius: 8, padding: 16, marginBottom: 18 }}>
+                    <div style={{ fontFamily: "'Spectral SC'", fontSize: 11, color: "#e8c84a", letterSpacing: 3, marginBottom: 10 }}>ВСТАВИТИ НОВИЙ ПЛАН</div>
+                    <textarea
+                      value={manualPlanText}
+                      onChange={e => setManualPlanText(e.target.value)}
+                      placeholder={"РОЗДІЛ 1. Назва розділу\n    1.1 Назва підрозділу\n    1.2 Назва підрозділу\nРОЗДІЛ 2. Назва розділу\n    2.1 Назва підрозділу\n    ..."}
+                      style={{ width: "100%", minHeight: 180, background: "#141410", color: "#e0ddd4", border: "1px solid #555", borderRadius: 6, padding: "10px 12px", fontFamily: "'Spectral',serif", fontSize: 13, lineHeight: 1.8, resize: "vertical", boxSizing: "border-box" }}
+                    />
+                    <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                      <button
+                        onClick={() => {
+                          const parsed = parseClientPlan(manualPlanText.trim(), totalPagesNum);
+                          if (!parsed || !parsed.length) { alert("Не вдалося розпізнати план. Перевірте формат."); return; }
+                          const withPrompts = parsed.map(s => ({ ...s, prompts: s.type === "sources" ? 0 : Math.max(1, Math.ceil((s.pages || 3) / 3)) }));
+                          setSections(withPrompts);
+                          setPlanDisplay(buildPlanText(withPrompts));
+                          const { dist, total } = calcSourceDist(withPrompts);
+                          setSourceDist(dist); setSourceTotal(total);
+                          setShowManualPlanInput(false);
+                          setManualPlanText("");
+                        }}
+                        style={{ background: "#2a3a1a", color: "#a8d060", border: "none", borderRadius: 6, padding: "7px 20px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer", letterSpacing: 1 }}
+                      >Застосувати</button>
+                      <button
+                        onClick={() => { setShowManualPlanInput(false); setManualPlanText(""); }}
+                        style={{ background: "transparent", border: "1px solid #555", color: "#aaa", borderRadius: 6, padding: "7px 16px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}
+                      >Скасувати</button>
+                    </div>
+                  </div>
+                )}
 
                 {/* Sections table */}
                 <div style={{ fontSize: 12, color: "#888", marginBottom: 10, padding: "8px 12px", background: "#f0ece2", borderRadius: 6, lineHeight: "1.6" }}>
@@ -3959,18 +4018,19 @@ ${secsSummary}
 
             {/* ── Рисунки ── */}
             <div style={{ marginTop: 20, border: "1.5px solid #e8c84a", borderRadius: 8, overflow: "hidden" }}>
-              <button onClick={() => setFigPanelOpen(p => !p)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", background: "#fff8e8", border: "none", cursor: "pointer", fontFamily: "'Spectral',serif" }}>
-                <span style={{ fontWeight: 600, fontSize: 13, color: "#7a5000" }}>Рисунки у роботі</span>
-                <span style={{ fontSize: 11, color: "#b08020" }}>{figPanelOpen ? "▲ згорнути" : "▼ розгорнути"}</span>
-              </button>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", background: "#fff8e8", cursor: "pointer" }} onClick={() => setFigPanelOpen(p => !p)}>
+                <span style={{ fontWeight: 600, fontSize: 13, color: "#7a5000", fontFamily: "'Spectral',serif" }}>Рисунки у роботі</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }} onClick={e => e.stopPropagation()}>
+                  <button onClick={doScanAndGenFigures} disabled={figKwLoading} style={{ fontSize: 11, background: "transparent", border: "1px solid #c8a030", borderRadius: 5, padding: "3px 10px", cursor: figKwLoading ? "default" : "pointer", color: "#7a5000", fontFamily: "'Spectral',serif" }}>
+                    {figKwLoading ? "Оновлюю..." : "↻ Оновити"}
+                  </button>
+                  <span style={{ fontSize: 11, color: "#b08020", fontFamily: "'Spectral',serif" }} onClick={e => { e.stopPropagation(); setFigPanelOpen(p => !p); }}>{figPanelOpen ? "▲ згорнути" : "▼ розгорнути"}</span>
+                </div>
+              </div>
               {figPanelOpen && (
                 <div style={{ padding: "12px 16px", background: "#fffdf5" }}>
-                  {figureKeywords.length === 0 && Object.keys(figureRefs).length === 0 ? (
-                    <button onClick={doScanAndGenFigures} disabled={figKwLoading} style={{ fontSize: 12, background: "#e8c84a", border: "none", borderRadius: 6, padding: "6px 16px", cursor: "pointer", color: "#3a2000", fontFamily: "'Spectral',serif" }}>
-                      {figKwLoading ? "Шукаю..." : "Перевірити рисунки у роботі →"}
-                    </button>
-                  ) : figKwLoading ? (
-                    <div style={{ fontSize: 13, color: "#888" }}>Шукаю рисунки...</div>
+                  {figKwLoading ? (
+                    <div style={{ fontSize: 13, color: "#888" }}>Оновлюю рисунки...</div>
                   ) : Object.values(figureRefs).every(a => a.length === 0) ? (
                     <div style={{ fontSize: 13, color: "#888", fontStyle: "italic" }}>Рисунків у роботі не виявлено</div>
                   ) : (
@@ -4073,6 +4133,27 @@ ${secsSummary}
         )}
 
       </div>
+
+      {/* Scroll arrow */}
+      <button
+        onClick={() => scrolled ? window.scrollTo({ top: 0, behavior: "smooth" }) : window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" })}
+        title={scrolled ? "Нагору" : "Вниз"}
+        style={{
+          position: "fixed", right: 18, bottom: 24, zIndex: 999,
+          width: 38, height: 38, borderRadius: "50%",
+          background: "#1a1a14", border: "1.5px solid #444",
+          color: "#e8ff47", fontSize: 18, lineHeight: 1,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          cursor: "pointer", boxShadow: "0 2px 10px rgba(0,0,0,.25)",
+          transition: "opacity .2s, transform .2s",
+          opacity: 0.85,
+        }}
+        onMouseEnter={e => e.currentTarget.style.opacity = "1"}
+        onMouseLeave={e => e.currentTarget.style.opacity = "0.85"}
+      >
+        {scrolled ? "↑" : "↓"}
+      </button>
+
     </div>
   );
 }
