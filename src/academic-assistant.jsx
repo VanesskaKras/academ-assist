@@ -48,7 +48,7 @@ async function exportToDocx({ content, info, displayOrder, appendicesText, title
   function heading1(text) {
     return new Paragraph({
       heading: HeadingLevel.HEADING_1,
-      spacing: { line: LINE, lineRule: "auto", before: 0, after: LINE },
+      spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
       alignment: AlignmentType.CENTER, indent: { firstLine: 0 },
       children: [new TextRun({ text: text.toUpperCase(), font: FONT, size: SIZE, bold: true, color: "000000" })],
     });
@@ -191,11 +191,6 @@ async function exportToDocx({ content, info, displayOrder, appendicesText, title
     alignment: AlignmentType.CENTER,
     spacing: { line: LINE_SINGLE, lineRule: "auto", before: 0, after: LINE_SINGLE * 2 },
     children: [new TextRun({ text: "ЗМІСТ", font: FONT, size: SIZE, bold: true, color: "000000" })],
-  }));
-  children.push(new TableOfContents("ЗМІСТ", {
-    hyperlink: true,
-    headingStyleRange: "1-2",
-    b: false,
   }));
 
   // ── Сторінки 3+: основний текст ──
