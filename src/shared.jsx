@@ -42,6 +42,21 @@ ${forbiddenWords}
 Зберігай теплий але академічний тон. Науковий зміст — пріоритет.`;
 }
 
+// ── Виправлення латинських омогліфів у кириличному тексті ──
+// Замінює Latin a/e/o/p/c/x/i/v/... на кириличні аналоги лише в словах,
+// де вже є кирилиця (чисто латинські слова та JSON-ключі не зачіпаються)
+export function fixHomoglyphs(text) {
+  if (!text) return text;
+  const map = {
+    a:'а', e:'е', o:'о', p:'р', c:'с', x:'х', i:'і', v:'в',
+    A:'А', E:'Е', O:'О', P:'Р', C:'С', X:'Х', I:'І', B:'В', H:'Н', K:'К', M:'М', T:'Т',
+  };
+  return text.replace(/[а-яґєіїА-ЯҐЄІЇa-zA-Z'\u2019\-]+/g, word => {
+    if (!/[а-яґєіїА-ЯҐЄІЇ]/.test(word)) return word; // чисто латинське — не чіпаємо
+    return word.split('').map(ch => map[ch] ?? ch).join('');
+  });
+}
+
 // ── API ──
 export async function callClaude(messages, signal, systemPrompt, maxTokens, onWait, model) {
   const MAX_RETRIES = 5;
@@ -78,7 +93,7 @@ export async function callClaude(messages, signal, systemPrompt, maxTokens, onWa
     }
     const data = await res.json();
     if (!data.content) throw new Error("No content in response: " + JSON.stringify(data).slice(0, 200));
-    return data.content.map(b => b.text || "").join("") || "";
+    return fixHomoglyphs(data.content.map(b => b.text || "").join("") || "");
   }
 }
 

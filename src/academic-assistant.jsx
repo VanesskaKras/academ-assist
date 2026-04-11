@@ -1065,6 +1065,18 @@ function parseTemplate(text) {
   };
 }
 
+function fixHomoglyphs(text) {
+  if (!text) return text;
+  const map = {
+    a:'а', e:'е', o:'о', p:'р', c:'с', x:'х', i:'і', v:'в',
+    A:'А', E:'Е', O:'О', P:'Р', C:'С', X:'Х', I:'І', B:'В', H:'Н', K:'К', M:'М', T:'Т',
+  };
+  return text.replace(/[а-яґєіїА-ЯҐЄІЇa-zA-Z'\u2019\-]+/g, word => {
+    if (!/[а-яґєіїА-ЯҐЄІЇ]/.test(word)) return word;
+    return word.split('').map(ch => map[ch] ?? ch).join('');
+  });
+}
+
 async function callClaude(messages, signal, systemPrompt, maxTokens, onWait, model) {
   const MAX_RETRIES = 5;
   let delay = 12000;
@@ -1150,7 +1162,7 @@ async function callClaude(messages, signal, systemPrompt, maxTokens, onWait, mod
         const cost = (inputTokens * p.in + outputTokens * p.out) / 1_000_000;
         window.dispatchEvent(new CustomEvent("apicost", { detail: { cost, model: model || MODEL, inTok: inputTokens, outTok: outputTokens } }));
       }
-      return fullText;
+      return fixHomoglyphs(fullText);
     }
 
     // --- Non-streaming path (short JSON tasks) ---
@@ -1165,7 +1177,7 @@ async function callClaude(messages, signal, systemPrompt, maxTokens, onWait, mod
       const cost = (data.usage.input_tokens * p.in + data.usage.output_tokens * p.out) / 1_000_000;
       window.dispatchEvent(new CustomEvent("apicost", { detail: { cost, model: model || MODEL, inTok: data.usage.input_tokens, outTok: data.usage.output_tokens } }));
     }
-    return data.content.map(b => b.text || "").join("") || "";
+    return fixHomoglyphs(data.content.map(b => b.text || "").join("") || "");
   }
 }
 
@@ -1250,7 +1262,7 @@ async function callGemini(messages, signal, systemPrompt, maxTokens, onWait, mod
       const cost = (data.usageMetadata.promptTokenCount * 0.075 + data.usageMetadata.candidatesTokenCount * 0.30) / 1_000_000;
       window.dispatchEvent(new CustomEvent("apicost", { detail: { cost, model: currentModel, inTok: data.usageMetadata.promptTokenCount, outTok: data.usageMetadata.candidatesTokenCount } }));
     }
-    return text;
+    return fixHomoglyphs(text);
   }
 }
 
@@ -3117,8 +3129,11 @@ ${JSON.stringify(analysis, null, 2)}
 - Між містом і видавцем — пробіл двокрапка пробіл ( : ).
 - ПОРЯДОК ГРУП: 1) законодавчі акти (за хронологією/номером); 2) книги та статті кирилицею за алфавітом; 3) українські електронні джерела за алфавітом; 4) іноземні джерела латиницею за алфавітом.`
         : `СТИЛЬ: ${sourcesStyle}. Точно дотримуйся цього стилю.`;
+    const orderInstruction = isAlphabeticalOrder
+      ? `${sourcesOrder} ${sourcesGrouping}`
+      : `ПОРЯДОК ДЖЕРЕЛ ФІКСОВАНИЙ — за першою появою у тексті. КАТЕГОРИЧНО ЗАБОРОНЕНО сортувати за алфавітом або будь-яким іншим способом. Зберігай рівно той порядок, у якому джерела наведені нижче (1, 2, 3...).`;
     const fmtPrompt = `${styleRules}
-${sourcesOrder} ${sourcesGrouping}
+${orderInstruction}
 Збережи номери. Поверни ТІЛЬКИ список без заголовка. Для онлайн-джерел додай URL (дата звернення: ${accessDate}). НЕ використовуй "[Електронний ресурс]". Якщо назва джерела написана ВЕЛИКИМИ ЛІТЕРАМИ — переведи у формат речення (перша літера велика, решта малі, окрім власних назв та абревіатур).
 
 ${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
@@ -3131,6 +3146,23 @@ ${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
       if (srcSec) newContent[srcSec.id] = fmtResult;
     } catch (e) { console.error(e); }
 
+    // Витягує прізвище першого автора для APA/MLA цитувань
+    const extractAuthorSurname = (ref, fallbackN) => {
+      // 1. Прізвище одразу на початку: "Іванов В. І." або "Іванов, В."
+      const directMatch = ref.match(/^([А-ЯҐЄІЇA-Z][а-яґєіїa-z\u2019'\-]{2,})/);
+      if (directMatch) return directMatch[1];
+      // 2. Ініціали перед прізвищем: "В. І. Іванов" → "Іванов"
+      const initialsFirst = ref.match(/^(?:[А-ЯҐЄІЇA-Z]\.\s*){1,2}([А-ЯҐЄІЇA-Z][а-яґєіїa-z\u2019'\-]{2,})/);
+      if (initialsFirst) return initialsFirst[1];
+      // 3. Латинське прізвище: "Smith J." або "van der Berg"
+      const latinMatch = ref.match(/^([A-Z][a-z\-]{2,})/);
+      if (latinMatch) return latinMatch[1];
+      // 4. Перше слово з великої літери будь-де на початку рядка (після знаків/цифр)
+      const anyCapital = ref.match(/(?:^[\d\.\s]*|^)([А-ЯҐЄІЇA-Z][а-яґєіїa-z\u2019'\-]{2,})/);
+      if (anyCapital) return anyCapital[1];
+      return `Автор${fallbackN}`;
+    };
+
     // Будуємо карту "номер → текст посилання" з ВІДФОРМАТОВАНОГО списку (щоб мати точні номери сторінок)
     // Якщо Gemini не повернув результат — fallback на raw
     const fmtLines = fmtResult
@@ -3140,14 +3172,12 @@ ${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
     fmtLines.forEach((ref, i) => {
       const n = i + 1;
       if (isAPA) {
-        const authorMatch = ref.match(/^([А-ЯҐЄІЇA-Z][а-яґєіїa-z\-A-Za-z]+)/);
+        const author = extractAuthorSurname(ref, n);
         const yearMatch = ref.match(/[\(\.\s](\d{4})[\)\.\,\s]/);
-        const author = authorMatch?.[1] || `Автор${n}`;
         const year = yearMatch?.[1] || "б.р.";
         refCiteText[n] = `(${author}, ${year})`;
       } else if (isMLA) {
-        const authorMatch = ref.match(/^([А-ЯҐЄІЇA-Z][а-яґєіїa-z\-A-Za-z]+)/);
-        refCiteText[n] = `(${authorMatch?.[1] || `Автор${n}`})`;
+        refCiteText[n] = `(${extractAuthorSurname(ref, n)})`;
       } else {
         // ДСТУ та інші нумеровані стилі — витягуємо номер першої сторінки статті
         const articlePageMatch = ref.match(/[Сс]\.\s*(\d+)\s*[–\-—]/); // діапазон С. 56–74
