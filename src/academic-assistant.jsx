@@ -3140,6 +3140,18 @@ ${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
     try {
       fmtResult = await callGemini([{ role: "user", content: fmtPrompt }], null,
         `You are a bibliographic formatting assistant. Format references strictly in ${sourcesStyle} style only. Do not mix citation styles. Return only the formatted list, no extra text.`, 16000);
+      // Якщо порядок за появою — примусово відновлюємо оригінальну нумерацію,
+      // бо Gemini може переставити рядки незважаючи на інструкції
+      if (!isAlphabeticalOrder && fmtResult) {
+        const parsedLines = fmtResult.split("\n").filter(Boolean).map(line => {
+          const m = line.match(/^(\d+)\.\s*/);
+          return m ? { n: parseInt(m[1], 10), text: line.replace(/^\d+\.\s*/, "") } : null;
+        }).filter(Boolean);
+        if (parsedLines.length > 0) {
+          parsedLines.sort((a, b) => a.n - b.n);
+          fmtResult = parsedLines.map((item, i) => `${i + 1}. ${item.text}`).join("\n");
+        }
+      }
       setRefList(fmtResult.split("\n").filter(Boolean));
       const srcSec = sections.find(s => s.type === "sources");
       if (srcSec) newContent[srcSec.id] = fmtResult;
