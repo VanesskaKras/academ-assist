@@ -1587,6 +1587,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const { user } = useAuth();
 
   const [scrolled, setScrolled] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [stage, setStage] = useState("input");
   const [maxStageIdx, setMaxStageIdx] = useState(0);
   const [tplText, setTplText] = useState("");
@@ -3431,6 +3432,10 @@ ${secsSummary}
         button:not(:disabled):active{transform:scale(.98)}
         .sec-row:hover{background:#edeadf!important}
         textarea:focus,input:focus{outline:none;border-color:#aaa49a}
+        .sidebar-panel{transition:width .28s cubic-bezier(.4,0,.2,1),opacity .2s ease}
+        .sidebar-tab:hover{background:#2a2a1a!important}
+        .sidebar-field-row{display:grid;grid-template-columns:110px 1fr;border-bottom:1px solid #2a2a20;font-size:12px}
+        .sidebar-field-row:last-child{border-bottom:none}
       `}</style>
 
       {/* Header */}
@@ -3457,7 +3462,112 @@ ${secsSummary}
         </div>
       </div>
 
-      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "32px clamp(16px, 3vw, 48px)" }}>
+      {/* ══ LAYOUT: sidebar + main ══ */}
+      <div style={{ display: "flex", alignItems: "flex-start" }}>
+
+        {/* ══ LEFT SIDEBAR (план / джерела / готово) ══ */}
+        {["plan", "sources", "done"].includes(stage) && info && (
+          <div
+            onMouseEnter={() => setSidebarOpen(true)}
+            onMouseLeave={() => setSidebarOpen(false)}
+            style={{
+              position: "sticky",
+              top: 0,
+              height: "100vh",
+              flexShrink: 0,
+              display: "flex",
+              zIndex: 50,
+              width: sidebarOpen ? 294 : 28,
+              overflow: "hidden",
+              transition: "width .28s cubic-bezier(.4,0,.2,1)",
+            }}
+          >
+            {/* Tab — always visible */}
+            <div
+              className="sidebar-tab"
+              onClick={() => setSidebarOpen(v => !v)}
+              style={{
+                width: 28,
+                flexShrink: 0,
+                background: "#1e1e16",
+                borderRight: "1px solid #3a3a2a",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                height: "100%",
+                userSelect: "none",
+              }}
+            >
+              <span style={{
+                writingMode: "vertical-rl",
+                transform: "rotate(180deg)",
+                fontSize: 10,
+                letterSpacing: 2,
+                color: "#e8ff47",
+                textTransform: "uppercase",
+                fontFamily: "'Spectral SC', serif",
+                opacity: 0.85,
+              }}>
+                {sidebarOpen ? "◂ закрити" : "▸ дані"}
+              </span>
+            </div>
+
+            {/* Panel content */}
+            <div style={{
+              width: 266,
+              flexShrink: 0,
+              background: "#1a1a14",
+              height: "100%",
+              overflowY: "auto",
+              opacity: sidebarOpen ? 1 : 0,
+              transition: "opacity .18s ease",
+              pointerEvents: sidebarOpen ? "auto" : "none",
+            }}>
+              {/* Header */}
+              <div style={{ padding: "16px 14px 10px", borderBottom: "1px solid #2a2a20" }}>
+                <div style={{ fontFamily: "'Spectral SC', serif", fontSize: 10, letterSpacing: 3, color: "#e8ff47", marginBottom: 8 }}>ПЕРЕВІРКА</div>
+                {info.workCategory && (
+                  <span style={{ fontSize: 11, background: "#2a3a00", color: "#a8d060", padding: "3px 10px", borderRadius: 12, letterSpacing: 1 }}>
+                    {info.workCategory}
+                  </span>
+                )}
+              </div>
+
+              {/* Fields */}
+              <div style={{ borderBottom: "1px solid #2a2a20" }}>
+                {Object.entries(FIELD_LABELS).map(([k, l]) => info[k] ? (
+                  <div key={k} className="sidebar-field-row">
+                    <div style={{ padding: "8px 10px 8px 14px", color: "#777", lineHeight: 1.4 }}>{l}</div>
+                    <div style={{ padding: "8px 12px 8px 8px", color: "#ddd8cc", lineHeight: 1.4, wordBreak: "break-word" }}>{info[k]}</div>
+                  </div>
+                ) : null)}
+              </div>
+
+              {/* methodInfo chips */}
+              {methodInfo && (
+                <div style={{ padding: "12px 14px" }}>
+                  <div style={{ fontSize: 10, letterSpacing: 2, color: "#555", textTransform: "uppercase", marginBottom: 8, fontFamily: "'Spectral SC', serif" }}>Методичка</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {methodInfo.totalPages && <span style={{ fontSize: 11, background: "#1e2a10", color: "#7ab840", padding: "3px 8px", borderRadius: 8 }}>📄 {methodInfo.totalPages} стор.</span>}
+                    {methodInfo.chaptersCount && <span style={{ fontSize: 11, background: "#1e2a10", color: "#7ab840", padding: "3px 8px", borderRadius: 8 }}>📑 {methodInfo.chaptersCount} розд.</span>}
+                    {methodInfo.sourcesStyle && <span style={{ fontSize: 11, background: "#102030", color: "#6ab0e0", padding: "3px 8px", borderRadius: 8 }}>📚 {methodInfo.sourcesStyle}</span>}
+                    {methodInfo.sourcesOrder && <span style={{ fontSize: 11, background: "#102030", color: "#6ab0e0", padding: "3px 8px", borderRadius: 8 }}>{methodInfo.sourcesOrder === "alphabetical" ? "🔤 Алфавіт" : "🔢 За появою"}</span>}
+                    {methodInfo.formatting?.font && <span style={{ fontSize: 11, background: "#222218", color: "#aaa", padding: "3px 8px", borderRadius: 8 }}>🖋 {methodInfo.formatting.font} {methodInfo.formatting.fontSize}pt</span>}
+                    {methodInfo.formatting?.margins && <span style={{ fontSize: 11, background: "#222218", color: "#aaa", padding: "3px 8px", borderRadius: 8 }}>📐 Л{methodInfo.formatting.margins.left} П{methodInfo.formatting.margins.right}мм</span>}
+                    {methodInfo.citationStyle && <span style={{ fontSize: 11, background: "#2a1030", color: "#c090e0", padding: "3px 8px", borderRadius: 8 }}>🔗 {methodInfo.citationStyle}</span>}
+                    <span style={{ fontSize: 11, background: "#1e2a10", color: methodInfo.hasChapterConclusions ? "#7ab840" : "#666", padding: "3px 8px", borderRadius: 8 }}>
+                      {methodInfo.hasChapterConclusions ? "✓ Висновки до розд." : "✗ Без висновків"}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ══ MAIN CONTENT ══ */}
+        <div style={{ flex: 1, minWidth: 0, maxWidth: 1100, margin: "0 auto", padding: "32px clamp(16px, 3vw, 48px)" }}>
 
         {/* ══ STEP 1: ДАНІ ══ */}
         {stage === "input" && (
@@ -4213,7 +4323,8 @@ ${secsSummary}
           </div>
         )}
 
-      </div>
+        </div>
+      </div>{/* end flex layout wrapper */}
 
       {/* Scroll arrow */}
       <button
