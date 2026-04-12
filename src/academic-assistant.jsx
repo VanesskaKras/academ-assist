@@ -79,7 +79,7 @@ function renumberTablesAndFigures(content, displayOrder) {
 // ─────────────────────────────────────────────
 // Word export
 // ─────────────────────────────────────────────
-async function exportToDocx({ content, info, displayOrder, appendicesText, titlePage, methodInfo }) {
+async function exportToDocx({ content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo }) {
   if (!window.docx) {
     await new Promise((resolve, reject) => {
       const s = document.createElement("script");
@@ -279,14 +279,17 @@ async function exportToDocx({ content, info, displayOrder, appendicesText, title
   const children = [];
 
   // ── Сторінка 1: титульна ──
-  if (titlePage && titlePage.trim()) {
-    const titleLines = titlePage.split("\n");
-    titleLines.forEach((line, idx) => {
+  const alignMap = { left: AlignmentType.LEFT, center: AlignmentType.CENTER, right: AlignmentType.RIGHT };
+  const resolvedLines = titlePageLines?.length
+    ? titlePageLines
+    : (titlePage?.trim() ? titlePage.split("\n").map(text => ({ text, align: "center" })) : null);
+  if (resolvedLines) {
+    resolvedLines.forEach((item, idx) => {
       children.push(new Paragraph({
-        alignment: AlignmentType.CENTER,
-        spacing: { line: LINE, lineRule: "auto", before: 0, after: idx === titleLines.length - 1 ? 0 : Math.round(LINE * 0.2) },
+        alignment: alignMap[item.align] || AlignmentType.CENTER,
+        spacing: { line: LINE, lineRule: "auto", before: 0, after: idx === resolvedLines.length - 1 ? 0 : Math.round(LINE * 0.2) },
         indent: { firstLine: 0 },
-        children: [new TextRun({ text: line, font: FONT, size: SIZE, color: "000000" })],
+        children: [new TextRun({ text: item.text, font: FONT, size: SIZE, color: "000000" })],
       }));
     });
   } else {
@@ -1790,6 +1793,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [appendicesLoading, setAppendicesLoading] = useState(false);
   const [appendicesCustomPrompt, setAppendicesCustomPrompt] = useState("");
   const [titlePage, setTitlePage] = useState("");
+  const [titlePageLines, setTitlePageLines] = useState(null);
   const [showMissingSources, setShowMissingSources] = useState(false);
   const [sessionCost, setSessionCost] = useState(() => {
     try { return JSON.parse(localStorage.getItem("sessionCost")) || { claude: 0, gemini: 0 }; } catch { return { claude: 0, gemini: 0 }; }
@@ -1851,6 +1855,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
           if (d.speechText) setSpeechText(d.speechText);
           if (d.appendicesText) setAppendicesText(d.appendicesText);
           if (d.titlePage) setTitlePage(d.titlePage);
+          if (d.titlePageLines) setTitlePageLines(d.titlePageLines);
           if (d.slideJson) setSlideJson(d.slideJson);
           if (d.presentationReady) setPresentationReady(true);
           if (d.stage) { setStage(d.stage); setMaxStageIdx(Math.max(0, STAGE_KEYS.indexOf(d.stage))); }
@@ -1972,7 +1977,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   "optionalSections": ["перелік умовних позначень", "анотація іноземною мовою", "додатки"],
   "otherRequirements": "виклад від першої особи множини (ми вважаємо) або безособові конструкції",
   "recommendedSources": "Список рекомендованих джерел з методички: конкретні автори, видання, підручники, журнали. null якщо не вказано",
-  "titlePageTemplate": "МІНІСТЕРСТВО ОСВІТИ І НАУКИ УКРАЇНИ\nНазва університету\nКафедра назва\n\nКУРСОВА РОБОТА\nна тему:\n[ТЕМА]\n\nВиконав(ла): студент(ка) групи\nПрізвище Ім'я По-батькові\n\nНауковий керівник:\nПосада, ПІБ\n\nМісто – рік",
+  "titlePageTemplate": [{"text":"МІНІСТЕРСТВО ОСВІТИ І НАУКИ УКРАЇНИ","align":"center"},{"text":"Назва університету","align":"center"},{"text":"Кафедра назва","align":"center"},{"text":"","align":"center"},{"text":"КУРСОВА РОБОТА","align":"center"},{"text":"на тему:","align":"center"},{"text":"[ТЕМА]","align":"center"},{"text":"","align":"center"},{"text":"Виконав(ла): студент(ка) групи","align":"right"},{"text":"Прізвище Ім'я По-батькові","align":"right"},{"text":"","align":"center"},{"text":"Науковий керівник:","align":"right"},{"text":"Посада, ПІБ","align":"right"},{"text":"","align":"center"},{"text":"Місто – рік","align":"center"}],
   "requiredTables": null,
   "requiredFormulas": null
 }
@@ -1990,7 +1995,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
 - sourcesGrouping: якщо є правила групування джерел за мовами — вкажи
 - citationStyle: як оформляти посилання в тексті (в дужках, у виносках тощо)
 - recommendedSources: якщо в методичці є список рекомендованої літератури або конкретні автори/видання для використання — перелічи їх одним рядком через крапку з комою. null якщо таких рекомендацій немає
-- titlePageTemplate: якщо в методичці є зразок титульної сторінки — відтвори його структуру як plain text, кожен рядок з нового рядка (\n). Де має бути тема роботи — постав плейсхолдер [ТЕМА]. Якщо зразка немає — поверни null (НЕ вигадуй)
+- titlePageTemplate: якщо в методичці є зразок титульної сторінки — відтвори його структуру як масив JSON-об'єктів: [{"text":"рядок тексту","align":"center|left|right"}]. Порожній рядок між блоками — {"text":"","align":"center"}. Де має бути тема роботи — постав [ТЕМА]. Вирівнювання визнач за зразком: типово центр, але блоки "Виконав", "Науковий керівник", "Допущено" тощо — right або left залежно від зразка. Якщо зразка немає — поверни null (НЕ вигадуй)
 - formatting: всі деталі оформлення — шрифт, розміри, поля, відступи, нумерація
 - exampleTOC: шукай ВИКЛЮЧНО розділ/додаток зі словами "зразок змісту", "зразок плану", "приклад змісту", "приклад плану", "зразок оформлення змісту" — тобто явний приклад структури СТУДЕНТСЬКОЇ роботи. Просто "ЗМІСТ" на початку документа (зміст самої методички) — ІГНОРУЙ повністю. Якщо знайшов справжній зразок — скопіюй лише рядки плану (ВСТУП, РОЗДІЛ 1, 1.1, 1.2, ВИСНОВКИ тощо). Якщо такого зразка НЕ знайшов — поверни null (не вигадуй).
 - Якщо exampleTOC = null: тоді уважно проаналізуй розділ "Структура роботи" або "Структура та зміст роботи" і витягни з нього: chaptersCount (к-сть розділів), subsectionsPerChapter (к-сть підрозділів), hasChapterConclusions (чи потрібні висновки до розділів), chapterTypes (теоретичний/аналітичний/практичний тощо), otherRequirements (що має бути в кожному розділі)
@@ -2004,11 +2009,21 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
         setMethodInfo(parsed);
         if (parsed.titlePageTemplate) {
           const currentYear = new Date().getFullYear().toString();
-          const filled = parsed.titlePageTemplate
+          const fillText = (t) => t
             .replace(/\[ТЕМА\]/g, newInfo?.topic || "[ТЕМА]")
+            .replace(/\b20\d\d\b/g, currentYear)
             .replace(/\b20\d?\s*[_]+/g, currentYear);
-          setTitlePage(filled);
-          await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, methodInfo: parsed, fileLabel, titlePage: filled, stage: "parsed", status: "new" });
+          let filledLines = null;
+          let filledText = "";
+          if (Array.isArray(parsed.titlePageTemplate)) {
+            filledLines = parsed.titlePageTemplate.map(item => ({ ...item, text: fillText(item.text) }));
+            filledText = filledLines.map(item => item.text).join("\n");
+          } else {
+            filledText = fillText(parsed.titlePageTemplate);
+          }
+          setTitlePage(filledText);
+          setTitlePageLines(filledLines);
+          await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, methodInfo: parsed, fileLabel, titlePage: filledText, titlePageLines: filledLines, stage: "parsed", status: "new" });
         } else {
           await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, methodInfo: parsed, fileLabel, stage: "parsed", status: "new" });
         }
@@ -4428,7 +4443,7 @@ ${secsSummary}
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 24 }}>
               <NavBtn onClick={() => setStage("sources")}>← Джерела</NavBtn>
               <button onClick={copyAll} style={{ background: "#1a1a14", color: "#e8ff47", border: "none", borderRadius: 7, padding: "11px 30px", fontFamily: "'Spectral',serif", fontSize: 13, letterSpacing: "1.5px", cursor: "pointer" }}>Скопіювати текст</button>
-              <button disabled={docxLoading} onClick={async () => { setDocxLoading(true); try { await exportToDocx({ sections, content, info, displayOrder, appendicesText, titlePage, methodInfo }); } catch (e) { alert("Помилка: " + e.message); } setDocxLoading(false); }}
+              <button disabled={docxLoading} onClick={async () => { setDocxLoading(true); try { await exportToDocx({ sections, content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo }); } catch (e) { alert("Помилка: " + e.message); } setDocxLoading(false); }}
                 style={{ background: docxLoading ? "#aaa" : "#1a4a1a", color: docxLoading ? "#eee" : "#a8e060", border: "none", borderRadius: 7, padding: "11px 30px", fontFamily: "'Spectral',serif", fontSize: 13, letterSpacing: "1.5px", cursor: docxLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
                 {docxLoading ? <><SpinDot light />Генерую Word...</> : "⬇ Завантажити .docx"}
               </button>
