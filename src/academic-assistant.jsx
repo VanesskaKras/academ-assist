@@ -1731,7 +1731,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const { user } = useAuth();
 
   const [scrolled, setScrolled] = useState(false);
-  const [srcPanelOpen, setSrcPanelOpen] = useState(true);
+  const [headerOpen, setHeaderOpen] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [stage, setStage] = useState("input");
   const [maxStageIdx, setMaxStageIdx] = useState(0);
@@ -1814,8 +1814,10 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   useEffect(() => { contentRef.current = content; }, [content]);
   useEffect(() => {
     const onScroll = () => {
-      setScrolled(window.scrollY > 300);
-      if (window.scrollY > 150) setSrcPanelOpen(false);
+      const y = window.scrollY;
+      setScrolled(y > 300);
+      if (y > 120) setHeaderOpen(false);
+      else if (y < 10) setHeaderOpen(true);
     };
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
@@ -3587,27 +3589,49 @@ ${secsSummary}
       `}</style>
 
       {/* Header */}
-      <div style={{ background: "#1a1a14", color: "#f5f2eb", padding: "15px 32px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        {onBack && (
-          <button onClick={onBack} style={{ background: "transparent", border: "1px solid #555", color: "#aaa", borderRadius: 6, padding: "5px 14px", cursor: "pointer", fontFamily: "inherit", fontSize: 12, marginRight: 4 }}>
-            ← Замовлення
-          </button>
-        )}
-        <div style={{ fontFamily: "'Spectral SC',serif", fontSize: 19, letterSpacing: 5, color: "#e8ff47", flexShrink: 0 }}>ACADEM</div>
-        <div style={{ fontFamily: "'Spectral SC',serif", fontSize: 19, letterSpacing: 5, flexShrink: 0 }}>ASSIST</div>
-        {info?.orderNumber && <div style={{ fontSize: 11, color: "#888", whiteSpace: "nowrap", flexShrink: 0 }}>#{info.orderNumber}</div>}
-        {info?.topic && <div style={{ fontSize: 12, color: "#666", flex: 1, minWidth: 0, lineHeight: 1.4 }}>{info.topic}</div>}
-        <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0, marginLeft: "auto" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: "#888", background: "#2a2a20", borderRadius: 6, padding: "4px 10px" }}>
-            <span>Claude: <b style={{ color: "#e8ff47" }}>${sessionCost.claude.toFixed(4)}</b></span>
-            <span style={{ color: "#444" }}>|</span>
-            <span>Gemini: <b style={{ color: "#e8ff47" }}>${sessionCost.gemini.toFixed(4)}</b></span>
-            <button onClick={() => { const z = { claude: 0, gemini: 0 }; setSessionCost(z); localStorage.setItem("sessionCost", JSON.stringify(z)); }}
-              style={{ background: "transparent", border: "none", color: "#555", cursor: "pointer", fontSize: 13, lineHeight: 1, padding: "0 2px" }} title="Скинути">✕</button>
+      <div style={{ position: "sticky", top: 0, zIndex: 100, background: "#1a1a14" }}>
+        {/* Full header */}
+        {headerOpen && (
+          <div style={{ color: "#f5f2eb", padding: "15px 32px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            {onBack && (
+              <button onClick={onBack} style={{ background: "transparent", border: "1px solid #555", color: "#aaa", borderRadius: 6, padding: "5px 14px", cursor: "pointer", fontFamily: "inherit", fontSize: 12, marginRight: 4 }}>
+                ← Замовлення
+              </button>
+            )}
+            <div style={{ fontFamily: "'Spectral SC',serif", fontSize: 19, letterSpacing: 5, color: "#e8ff47", flexShrink: 0 }}>ACADEM</div>
+            <div style={{ fontFamily: "'Spectral SC',serif", fontSize: 19, letterSpacing: 5, flexShrink: 0 }}>ASSIST</div>
+            {info?.orderNumber && <div style={{ fontSize: 11, color: "#888", whiteSpace: "nowrap", flexShrink: 0 }}>#{info.orderNumber}</div>}
+            {info?.topic && <div style={{ fontSize: 12, color: "#666", flex: 1, minWidth: 0, lineHeight: 1.4 }}>{info.topic}</div>}
+            <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0, marginLeft: "auto" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: "#888", background: "#2a2a20", borderRadius: 6, padding: "4px 10px" }}>
+                <span>Claude: <b style={{ color: "#e8ff47" }}>${sessionCost.claude.toFixed(4)}</b></span>
+                <span style={{ color: "#444" }}>|</span>
+                <span>Gemini: <b style={{ color: "#e8ff47" }}>${sessionCost.gemini.toFixed(4)}</b></span>
+                <button onClick={() => { const z = { claude: 0, gemini: 0 }; setSessionCost(z); localStorage.setItem("sessionCost", JSON.stringify(z)); }}
+                  style={{ background: "transparent", border: "none", color: "#555", cursor: "pointer", fontSize: 13, lineHeight: 1, padding: "0 2px" }} title="Скинути">✕</button>
+              </div>
+              <SaveIndicator saving={saving} saved={saved} />
+              <StagePills stage={stage} maxStageIdx={maxStageIdx} onNavigate={running ? null : (s) => setStage(s === "input" && info ? "parsed" : s)} />
+            </div>
           </div>
-          <SaveIndicator saving={saving} saved={saved} />
-          <StagePills stage={stage} maxStageIdx={maxStageIdx} onNavigate={running ? null : (s) => setStage(s === "input" && info ? "parsed" : s)} />
-        </div>
+        )}
+        {/* Collapsed bar */}
+        {!headerOpen && (
+          <div
+            onClick={() => setHeaderOpen(true)}
+            style={{ padding: "6px 32px", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", borderBottom: "1px solid #2a2a20" }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontFamily: "'Spectral SC',serif", fontSize: 13, letterSpacing: 4, color: "#e8ff47" }}>ACADEM</span>
+              <span style={{ fontFamily: "'Spectral SC',serif", fontSize: 13, letterSpacing: 4, color: "#f5f2eb" }}>ASSIST</span>
+              {info?.orderNumber && <span style={{ fontSize: 11, color: "#555" }}>#{info.orderNumber}</span>}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <StagePills stage={stage} maxStageIdx={maxStageIdx} onNavigate={running ? null : (s) => { setStage(s === "input" && info ? "parsed" : s); setHeaderOpen(false); }} />
+              <span style={{ fontSize: 11, color: "#555", marginLeft: 6 }}>▼</span>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ══ LEFT SIDEBAR (fixed, план / джерела / готово) ══ */}
@@ -4091,39 +4115,16 @@ ${secsSummary}
           return (
             <div className="fade">
               <Heading>05 / Джерела</Heading>
-              <div style={{ position: "sticky", top: 0, zIndex: 10, marginBottom: 20 }}>
-                {/* Collapsed bar */}
-                {!srcPanelOpen && (
-                  <div
-                    onClick={() => setSrcPanelOpen(true)}
-                    style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "8px 16px", background: "#1a1a14", border: "1px solid #3a3a2a", borderRadius: 8, cursor: "pointer", userSelect: "none" }}
-                  >
-                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                      <span style={{ fontSize: 12, color: "#a8a89a" }}>Джерел: <strong style={{ color: "#e8ff47" }}>{sourceTotal}</strong></span>
-                      {methodInfo?.sourcesStyle && <span style={{ fontSize: 11, background: "#e4f0ff", color: "#1a5a8a", padding: "1px 8px", borderRadius: 8 }}>📋 {methodInfo.sourcesStyle}</span>}
-                      {methodInfo?.sourcesOrder && <span style={{ fontSize: 11, background: "#eef5e4", color: "#3a6010", padding: "1px 8px", borderRadius: 8 }}>{methodInfo.sourcesOrder === "alphabetical" ? "🔤 За алфавітом" : "🔢 За порядком появи"}</span>}
-                    </div>
-                    <span style={{ fontSize: 12, color: "#a8d060" }}>▼ розгорнути</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20, flexWrap: "wrap" }}>
+                <div style={{ fontSize: 13, color: "#888" }}>Загальна к-сть джерел: <strong style={{ color: "#1a1a14" }}>{sourceTotal}</strong>{methodInfo?.sourcesMinCount ? <span style={{ marginLeft: 8, fontSize: 11, color: "#8a5a1a" }}>(мін. {methodInfo.sourcesMinCount} за методичкою)</span> : null}</div>
+                {methodInfo && (methodInfo.sourcesStyle || methodInfo.sourcesOrder) && (
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {methodInfo.sourcesStyle && <span style={{ fontSize: 11, background: "#e4f0ff", color: "#1a5a8a", padding: "2px 10px", borderRadius: 10 }}>📋 {methodInfo.sourcesStyle}</span>}
+                    {methodInfo.sourcesOrder && <span style={{ fontSize: 11, background: "#eef5e4", color: "#3a6010", padding: "2px 10px", borderRadius: 10 }}>{methodInfo.sourcesOrder === "alphabetical" ? "🔤 За алфавітом" : "🔢 За порядком появи"}</span>}
                   </div>
                 )}
-                {/* Expanded panel */}
-                {srcPanelOpen && (
-                  <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", padding: "10px 16px", background: "#f5f2eb", border: "1px solid #d4cfc4", borderRadius: 8 }}>
-                    <div style={{ fontSize: 13, color: "#888" }}>Загальна к-сть джерел: <strong style={{ color: "#1a1a14" }}>{sourceTotal}</strong>{methodInfo?.sourcesMinCount ? <span style={{ marginLeft: 8, fontSize: 11, color: "#8a5a1a" }}>(мін. {methodInfo.sourcesMinCount} за методичкою)</span> : null}</div>
-                    {methodInfo && (methodInfo.sourcesStyle || methodInfo.sourcesOrder) && (
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                        {methodInfo.sourcesStyle && <span style={{ fontSize: 11, background: "#e4f0ff", color: "#1a5a8a", padding: "2px 10px", borderRadius: 10 }}>📋 {methodInfo.sourcesStyle}</span>}
-                        {methodInfo.sourcesOrder && <span style={{ fontSize: 11, background: "#eef5e4", color: "#3a6010", padding: "2px 10px", borderRadius: 10 }}>{methodInfo.sourcesOrder === "alphabetical" ? "🔤 За алфавітом" : "🔢 За порядком появи"}</span>}
-                      </div>
-                    )}
-                    <GreenBtn onClick={() => { setKwError(""); doGenKeywords(); }} loading={kwLoading} msg="Генерую ключові слова..." label={Object.keys(keywords).length > 0 ? "Оновити ключові слова" : "Генерувати ключові слова →"} />
-                    {kwError && <div style={{ fontSize: 12, color: "#8a1a1a", background: "#fff5f5", border: "1px solid #e8b0b0", borderRadius: 6, padding: "4px 10px" }}>⚠ {kwError}</div>}
-                    <button
-                      onClick={() => setSrcPanelOpen(false)}
-                      style={{ marginLeft: "auto", fontSize: 11, color: "#888", background: "none", border: "none", cursor: "pointer", padding: "2px 6px" }}
-                    >▲ згорнути</button>
-                  </div>
-                )}
+                <GreenBtn onClick={() => { setKwError(""); doGenKeywords(); }} loading={kwLoading} msg="Генерую ключові слова..." label={Object.keys(keywords).length > 0 ? "Оновити ключові слова" : "Генерувати ключові слова →"} />
+                {kwError && <div style={{ fontSize: 12, color: "#8a1a1a", background: "#fff5f5", border: "1px solid #e8b0b0", borderRadius: 6, padding: "4px 10px" }}>⚠ {kwError}</div>}
               </div>
               <div style={{ padding: "12px 16px", background: "#f0f5e8", border: "1px solid #c8dfa0", borderRadius: 8, marginBottom: 20, fontSize: 13, color: "#3a6010", lineHeight: "1.7" }}>
                 <strong>Як це працює:</strong> Вставте знайдені джерела до кожного підрозділу (кожне з нового рядка). Після заповнення натисніть <em>"Розставити всі посилання"</em>.
