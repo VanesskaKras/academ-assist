@@ -3282,6 +3282,66 @@ ${secsSummary}
       } catch (e) { console.error("Citation batch error:", e); }
     }
 
+    // ── Ренумерація для citation_order: привести номери до реального порядку появи в тексті ──
+    if (!isAPA && !isMLA && !isAlphabeticalOrder) {
+      // 1. Знаходимо реальний порядок першої появи кожного номера в тексті
+      const firstSeen = []; // масив номерів у порядку першого входження
+      const seen = new Set();
+      mainSecs.forEach(sec => {
+        const text = newContent[sec.id] || "";
+        const matches = [...text.matchAll(/\[(\d+)[\],]/g)];
+        matches.forEach(m => {
+          const n = Number(m[1]);
+          if (!seen.has(n)) { seen.add(n); firstSeen.push(n); }
+        });
+      });
+
+      // 2. Будуємо oldToNew { старий_номер: новий_номер }
+      const oldToNew = {};
+      firstSeen.forEach((oldN, idx) => { oldToNew[oldN] = idx + 1; });
+
+      // Додаємо джерела що взагалі не потрапили в текст (в кінець, зберігаючи їх відносний порядок)
+      let nextNew = firstSeen.length + 1;
+      fmtLines.forEach((_, i) => {
+        const n = i + 1;
+        if (!oldToNew[n]) { oldToNew[n] = nextNew++; }
+      });
+
+      // 3. Перевіряємо чи є взагалі зміни
+      const needsRenumber = Object.entries(oldToNew).some(([old, nw]) => Number(old) !== nw);
+      if (needsRenumber) {
+        // 4. Замінюємо в тексті (одночасно через placeholder щоб уникнути колізій)
+        mainSecs.forEach(sec => {
+          if (!newContent[sec.id]) return;
+          // Спочатку замінюємо на placeholders
+          let text = newContent[sec.id].replace(/\[(\d+)(,\s*с\.\s*\d+)?\]/g, (match, n, page) => {
+            const newN = oldToNew[Number(n)];
+            return newN ? `%%CIT${newN}${page || ""}%%` : match;
+          });
+          // Потім placeholders → фінальні посилання
+          text = text.replace(/%%CIT(\d+)(,\s*с\.\s*\d+)?%%/g, (_, n, page) => `[${n}${page || ""}]`);
+          newContent[sec.id] = text;
+        });
+
+        // 5. Переупорядковуємо список джерел
+        const newFmtLines = new Array(fmtLines.length);
+        fmtLines.forEach((line, i) => {
+          const newIdx = oldToNew[i + 1] - 1;
+          if (newIdx >= 0 && newIdx < newFmtLines.length) newFmtLines[newIdx] = line;
+        });
+        const reorderedList = newFmtLines
+          .map((line, i) => line ? `${i + 1}. ${line.replace(/^\d+\.\s*/, "")}` : null)
+          .filter(Boolean)
+          .join("\n");
+
+        // Оновлюємо секцію джерел та стан
+        const srcSec = sections.find(s => s.type === "sources");
+        if (srcSec) newContent[srcSec.id] = reorderedList;
+        setRefList(reorderedList.split("\n").filter(Boolean));
+        fmtResult = reorderedList;
+      }
+    }
+
     setContent(newContent);
     setCitInputsSnapshot(JSON.stringify(citInputs));
     await saveToFirestore({ content: newContent, citInputs, refList: fmtResult?.split("\n").filter(Boolean) || [], stage: "sources", status: "writing" });
