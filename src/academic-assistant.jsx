@@ -6,6 +6,77 @@ import {
 } from "firebase/firestore";
 
 // ─────────────────────────────────────────────
+// Перенумерація таблиць і рисунків
+// ─────────────────────────────────────────────
+function renumberTablesAndFigures(content, displayOrder) {
+  function getChapter(sec) {
+    if (!sec?.id) return null;
+    const m = sec.id.match(/^(\d+)/);
+    return m ? m[1] : null;
+  }
+  function escRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+
+  const chTableCount = {}, chFigCount = {};
+  // secRenamings: secId → [{oldRef, newRef, type}]
+  const secRenamings = {};
+
+  for (const sec of displayOrder) {
+    const txt = content[sec.id];
+    if (!txt) continue;
+    const ch = getChapter(sec);
+    if (!ch) continue;
+    chTableCount[ch] = chTableCount[ch] || 0;
+    chFigCount[ch]   = chFigCount[ch]   || 0;
+    secRenamings[sec.id] = [];
+
+    let m;
+    const tableRe = /^Таблиця\s+(\d+\.\d+)/gm;
+    while ((m = tableRe.exec(txt)) !== null) {
+      chTableCount[ch]++;
+      secRenamings[sec.id].push({ oldRef: m[1], newRef: `${ch}.${chTableCount[ch]}`, type: "table" });
+    }
+    const figRe = /^Рис\.\s+(\d+\.\d+)/gm;
+    while ((m = figRe.exec(txt)) !== null) {
+      chFigCount[ch]++;
+      secRenamings[sec.id].push({ oldRef: m[1], newRef: `${ch}.${chFigCount[ch]}`, type: "fig" });
+    }
+  }
+
+  const updated = { ...content };
+  for (const sec of displayOrder) {
+    let txt = content[sec.id];
+    if (!txt) continue;
+    const renamings = (secRenamings[sec.id] || []).filter(r => r.oldRef !== r.newRef);
+    if (!renamings.length) continue;
+
+    let tokI = 0;
+    const tokMap = new Map();
+
+    for (const { oldRef, newRef, type } of renamings) {
+      const tok = `\x00T${tokI++}\x00`;
+      tokMap.set(tok, newRef);
+      if (type === "table") {
+        // підпис (початок рядка)
+        txt = txt.replace(new RegExp(`(^Таблиця\\s+)${escRe(oldRef)}`, "m"), `$1${tok}`);
+        // inline-посилання: "Таблиці X.Y", "Таблицю X.Y" тощо
+        txt = txt.replace(new RegExp(`(Таблиц[яіюю]\\s+)${escRe(oldRef)}(?!\\d)`, "g"), `$1${tok}`);
+      } else {
+        // підпис рисунку
+        txt = txt.replace(new RegExp(`(^Рис\\.\\s+)${escRe(oldRef)}`, "m"), `$1${tok}`);
+        // inline-посилання: "Рис. X.Y", "рис. X.Y"
+        txt = txt.replace(new RegExp(`(Рис\\.\\s+)${escRe(oldRef)}(?!\\d)`, "gi"), `$1${tok}`);
+      }
+    }
+
+    for (const [tok, newRef] of tokMap) {
+      txt = txt.replaceAll(tok, newRef);
+    }
+    updated[sec.id] = txt;
+  }
+  return updated;
+}
+
+// ─────────────────────────────────────────────
 // Word export
 // ─────────────────────────────────────────────
 async function exportToDocx({ content, info, displayOrder, appendicesText, titlePage, methodInfo }) {
@@ -17,6 +88,9 @@ async function exportToDocx({ content, info, displayOrder, appendicesText, title
       document.head.appendChild(s);
     });
   }
+  // Перенумеровуємо таблиці та рисунки перед експортом
+  const numberedContent = renumberTablesAndFigures(content, displayOrder);
+
   const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel, TableOfContents, Table, TableRow, TableCell, WidthType, BorderStyle, ExternalHyperlink } = window.docx;
   const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
   const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
@@ -115,20 +189,48 @@ async function exportToDocx({ content, info, displayOrder, appendicesText, title
         continue;
       }
       if (/^Таблиця\s+\d/.test(line.trim())) {
-        result.push(new Paragraph({
-          alignment: AlignmentType.BOTH,
-          spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
-          indent: { firstLine: INDENT },
-          children: [new TextRun({ text: line.trim(), font: FONT, size: SIZE, color: "000000" })],
-        }));
+        const tf = methodInfo?.formatting?.tableFormat || "";
+        const tAlignRight = /правий|right/i.test(tf);
+        const tCenter = /по\s*центру.*назв|назв.*по\s*центру/i.test(tf);
+        const tBold = /жирн|bold/i.test(tf);
+        const tTwoLine = tAlignRight && (tCenter || tBold);
+        const tAlign = tAlignRight ? AlignmentType.RIGHT : AlignmentType.BOTH;
+        const dashIdx = line.search(/ [–\-] /);
+        if (tTwoLine && dashIdx !== -1) {
+          // Рядок 1: "Таблиця X.Y" — праворуч
+          const numPart = line.trim().substring(0, dashIdx).trim();
+          const namePart = line.trim().substring(dashIdx + 3).trim();
+          result.push(new Paragraph({
+            alignment: AlignmentType.RIGHT,
+            spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
+            indent: { firstLine: 0 },
+            children: [new TextRun({ text: numPart, font: FONT, size: SIZE, color: "000000" })],
+          }));
+          // Рядок 2: назва — по центру, жирним
+          result.push(new Paragraph({
+            alignment: AlignmentType.CENTER,
+            spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
+            indent: { firstLine: 0 },
+            children: [new TextRun({ text: namePart, font: FONT, size: SIZE, bold: true, color: "000000" })],
+          }));
+        } else {
+          result.push(new Paragraph({
+            alignment: tAlignRight ? AlignmentType.RIGHT : AlignmentType.BOTH,
+            spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
+            indent: { firstLine: tAlignRight ? 0 : INDENT },
+            children: [new TextRun({ text: line.trim(), font: FONT, size: SIZE, bold: tBold, color: "000000" })],
+          }));
+        }
         i++;
         continue;
       }
       if (/^Рис\.\s+\d/.test(line.trim())) {
+        const ff = methodInfo?.formatting?.figureFormat || "";
+        const fBold = /жирн|bold/i.test(ff);
         result.push(new Paragraph({
           alignment: AlignmentType.CENTER,
           spacing: { line: LINE, lineRule: "auto", before: 0, after: Math.round(LINE * 0.5) },
-          children: [new TextRun({ text: line.trim(), font: FONT, size: SIZE, color: "B85C00" })],
+          children: [new TextRun({ text: line.trim(), font: FONT, size: SIZE, bold: fBold, color: "B85C00" })],
         }));
         i++;
         continue;
@@ -204,7 +306,7 @@ async function exportToDocx({ content, info, displayOrder, appendicesText, title
   let firstMainSec = true;
 
   for (let i = 0; i < displayOrder.length; i++) {
-    const sec = displayOrder[i]; const txt = content[sec.id];
+    const sec = displayOrder[i]; const txt = numberedContent[sec.id];
     if (!txt) continue;
     const isMain = !["intro", "conclusions", "sources"].includes(sec.type);
     const isSubsection = isMain && /^\d+\.\d+/.test(sec.id);
@@ -214,7 +316,7 @@ async function exportToDocx({ content, info, displayOrder, appendicesText, title
     let needsPageBreak = true;
     if (firstMainSec) { needsPageBreak = true; firstMainSec = false; }
     else if (isSubsection) {
-      const prevSec = displayOrder.slice(0, i).reverse().find(s => content[s.id]);
+      const prevSec = displayOrder.slice(0, i).reverse().find(s => numberedContent[s.id]);
       const prevIsSubsection = prevSec && !["intro", "conclusions", "sources"].includes(prevSec.type) && /^\d+\.\d+/.test(prevSec.id || "");
       needsPageBreak = !prevIsSubsection || thisChapter !== prevSec?.id?.split(".")?.[0];
     }
@@ -441,19 +543,44 @@ async function exportAppendixToDocx(text, info, methodInfo) {
       continue;
     }
     if (/^Таблиця\s+\d/.test(line.trim())) {
-      children.push(new Paragraph({
-        alignment: AlignmentType.BOTH,
-        spacing: { line: LINE, lineRule: "auto", before: Math.round(LINE * 0.5), after: 0 },
-        indent: { firstLine: INDENT },
-        children: [new TextRun({ text: line.trim(), font: FONT, size: SIZE, color: "000000" })],
-      }));
+      const tf = methodInfo?.formatting?.tableFormat || "";
+      const tAlignRight = /правий|right/i.test(tf);
+      const tCenter = /по\s*центру.*назв|назв.*по\s*центру/i.test(tf);
+      const tBold = /жирн|bold/i.test(tf);
+      const tTwoLine = tAlignRight && (tCenter || tBold);
+      const dashIdx = line.search(/ [–\-] /);
+      if (tTwoLine && dashIdx !== -1) {
+        const numPart = line.trim().substring(0, dashIdx).trim();
+        const namePart = line.trim().substring(dashIdx + 3).trim();
+        children.push(new Paragraph({
+          alignment: AlignmentType.RIGHT,
+          spacing: { line: LINE, lineRule: "auto", before: Math.round(LINE * 0.5), after: 0 },
+          indent: { firstLine: 0 },
+          children: [new TextRun({ text: numPart, font: FONT, size: SIZE, color: "000000" })],
+        }));
+        children.push(new Paragraph({
+          alignment: AlignmentType.CENTER,
+          spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
+          indent: { firstLine: 0 },
+          children: [new TextRun({ text: namePart, font: FONT, size: SIZE, bold: true, color: "000000" })],
+        }));
+      } else {
+        children.push(new Paragraph({
+          alignment: tAlignRight ? AlignmentType.RIGHT : AlignmentType.BOTH,
+          spacing: { line: LINE, lineRule: "auto", before: Math.round(LINE * 0.5), after: 0 },
+          indent: { firstLine: tAlignRight ? 0 : INDENT },
+          children: [new TextRun({ text: line.trim(), font: FONT, size: SIZE, bold: tBold, color: "000000" })],
+        }));
+      }
       i++; continue;
     }
     if (/^Рис\.\s+\d/.test(line.trim())) {
+      const ff = methodInfo?.formatting?.figureFormat || "";
+      const fBold = /жирн|bold/i.test(ff);
       children.push(new Paragraph({
         alignment: AlignmentType.CENTER,
         spacing: { line: LINE, lineRule: "auto", before: 0, after: Math.round(LINE * 0.5) },
-        children: [new TextRun({ text: line.trim(), font: FONT, size: SIZE, color: "000000" })],
+        children: [new TextRun({ text: line.trim(), font: FONT, size: SIZE, bold: fBold, color: "000000" })],
       }));
       i++; continue;
     }
@@ -921,7 +1048,7 @@ function playDoneSound() {
   document.addEventListener("visibilitychange", onVisible);
 }
 
-function buildSYS(lang = "Українська") {
+function buildSYS(lang = "Українська", methodInfo = null) {
   const isEnglish = /англ|english/i.test(lang || "");
   const langLine = isEnglish
     ? "Language: Write ONLY in English. All content, headings, and text must be in English."
@@ -930,6 +1057,27 @@ function buildSYS(lang = "Українська") {
   const forbiddenWords = isEnglish
     ? "FORBIDDEN words (and derivatives): aspect, important, special, significant, key, critical, fundamental."
     : "ЗАБОРОНЕНІ СЛОВА (та всі похідні): аспект, важливий, особливий, значущий, ключовий, критичний, фундаментальний.";
+
+  const mTableFormat = methodInfo?.formatting?.tableFormat;
+  const mFigureFormat = methodInfo?.formatting?.figureFormat;
+
+  const tableRules = mTableFormat
+    ? `ТАБЛИЦІ — обов'язкові правила (відповідно до методички):
+1. Нумерація таблиць — послідовно у межах розділу: Таблиця X.Y (де X — номер розділу, Y — порядковий номер таблиці в цьому розділі).
+2. Оформлення підпису згідно методички: ${mTableFormat}. Підпис розміщуй на окремому рядку одразу перед першим рядком таблиці (|).
+3. В тексті підрозділу перед таблицею обов'язково є речення що посилається на неї, наприклад: "наведено в Таблиці X.Y", "представлено в Таблиці X.Y" тощо.`
+    : `ТАБЛИЦІ — обов'язкові правила:
+1. Перед кожною таблицею (на окремому рядку, одразу перед першим рядком |) пиши підпис: Таблиця X.Y – Назва таблиці (де X — номер розділу, Y — порядковий номер таблиці в цьому розділі, після тире назва таблиці).
+2. В тексті підрозділу перед таблицею обов'язково є речення що посилається на неї, наприклад: "наведено в Таблиці X.Y", "представлено в Таблиці X.Y", "показано в Таблиці X.Y" тощо. Без такого посилання таблиця не з'являється.`;
+
+  const figureRules = mFigureFormat
+    ? `РИСУНКИ — обов'язкові правила (відповідно до методички):
+1. Нумерація рисунків — послідовно у межах розділу: Рис. X.Y (де X — номер розділу, Y — порядковий номер рисунку в цьому розділі).
+2. Оформлення підпису згідно методички: ${mFigureFormat}. Підпис розміщуй на окремому рядку після місця рисунку.
+3. В тексті підрозділу перед плейсхолдером рисунку обов'язково є речення що посилається на нього, наприклад: "показано на Рис. X.Y", "зображено на Рис. X.Y" тощо.`
+    : `РИСУНКИ — обов'язкові правила:
+1. Якщо підрозділ потребує рисунку (схема, графік, діаграма тощо) — встав плейсхолдер на окремому рядку після місця рисунку у форматі: Рис. X.Y – Назва рисунку (де X — номер розділу, Y — порядковий номер рисунку в цьому розділі).
+2. В тексті підрозділу перед плейсхолдером рисунку обов'язково є речення що посилається на нього, наприклад: "показано на Рис. X.Y", "зображено на Рис. X.Y", "наведено на Рис. X.Y" тощо. Без такого посилання рисунок не з'являється.`;
 
   return `Ти — експерт з написання академічних робіт.
 
@@ -941,12 +1089,8 @@ ${langLine}
 ## ФОРМАТУВАННЯ (суворо)
 НЕ використовуй markdown розмітку: жодних #, ##, **, *, - на початку рядка. Пиши звичайний текст.
 ВИНЯТОК: якщо в тексті потрібна таблиця — оформлюй її виключно у форматі markdown з вертикальними рисками: перший рядок — заголовки стовпців через |, другий рядок — розділювач |---|---|, далі рядки даних через |. Не використовуй / або інші символи як роздільники стовпців.
-ТАБЛИЦІ — обов'язкові правила:
-1. Перед кожною таблицею (на окремому рядку, одразу перед першим рядком |) пиши підпис: Таблиця X.Y – Назва таблиці (де X — номер розділу, Y — порядковий номер таблиці в цьому розділі, після тире назва таблиці).
-2. В тексті підрозділу перед таблицею обов'язково є речення що посилається на неї, наприклад: "наведено в Таблиці X.Y", "представлено в Таблиці X.Y", "показано в Таблиці X.Y" тощо. Без такого посилання таблиця не з'являється.
-РИСУНКИ — обов'язкові правила:
-1. Якщо підрозділ потребує рисунку (схема, графік, діаграма тощо) — встав плейсхолдер на окремому рядку після місця рисунку у форматі: Рис. X.Y – Назва рисунку (де X — номер розділу, Y — порядковий номер рисунку в цьому розділі).
-2. В тексті підрозділу перед плейсхолдером рисунку обов'язково є речення що посилається на нього, наприклад: "показано на Рис. X.Y", "зображено на Рис. X.Y", "наведено на Рис. X.Y" тощо. Без такого посилання рисунок не з'являється.
+${tableRules}
+${figureRules}
 НЕ виділяй нічого жирним шрифтом у тексті підрозділів.
 НЕ повторюй назву підрозділу на початку тексту — одразу починай зміст.
 НЕ додавай посилання на джерела у тексті підрозділів.
@@ -1587,6 +1731,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const { user } = useAuth();
 
   const [scrolled, setScrolled] = useState(false);
+  const [srcPanelOpen, setSrcPanelOpen] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [stage, setStage] = useState("input");
   const [maxStageIdx, setMaxStageIdx] = useState(0);
@@ -1668,7 +1813,10 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const contentRef = useRef(content);
   useEffect(() => { contentRef.current = content; }, [content]);
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 300);
+    const onScroll = () => {
+      setScrolled(window.scrollY > 300);
+      if (window.scrollY > 150) setSrcPanelOpen(false);
+    };
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
@@ -2605,7 +2753,7 @@ ${prevCtx ? `КОНТЕКСТ ПОПЕРЕДНІХ ПІДРОЗДІЛІВ:\n${pr
     if (commentAnalysis?.writingHints) instruction += `\n\nПІДКАЗКИ З КОМЕНТАРЯ КЛІЄНТА (врахуй при написанні):\n${commentAnalysis.writingHints}`;
     const sectionMaxTokens = Math.min(60000, Math.max(8000, Math.round((sec.pages || 1) * 3000)));
     try {
-      const raw = await callClaude([{ role: "user", content: instruction }], ctrl.signal, buildSYS(lang), sectionMaxTokens, (s) => setLoadMsg(`Генерую: ${sec.label}... зачекайте ${s}с`));
+      const raw = await callClaude([{ role: "user", content: instruction }], ctrl.signal, buildSYS(lang, methodInfo), sectionMaxTokens, (s) => setLoadMsg(`Генерую: ${sec.label}... зачекайте ${s}с`));
       // Видаляємо довге тире на всякий випадок (модель іноді ігнорує заборону)
       const result = raw
         .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
@@ -2729,7 +2877,7 @@ ${origSnippet}${empiricalBlockRegen}${econBlockRegen}
     }
     const regenMaxTokens = Math.min(60000, Math.max(8000, Math.round((sec.pages || 1) * 3000)));
     try {
-      const raw = await callClaude([{ role: "user", content: instruction }], null, buildSYS(lang), regenMaxTokens);
+      const raw = await callClaude([{ role: "user", content: instruction }], null, buildSYS(lang, methodInfo), regenMaxTokens);
       const result = raw
         .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
         .replace(/[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF]/g, "")
@@ -2873,7 +3021,7 @@ ${customBlock || `Включи один або два додатки що лог
 Мова: ${lang}. БЕЗ markdown, зірочок, жирного. Кожен додаток починається з нового рядка: ДОДАТОК А, ДОДАТОК Б тощо.`;
 
       const raw = await callClaude(
-        [{ role: "user", content: prompt }], null, buildSYS(lang), 6000, null, MODEL
+        [{ role: "user", content: prompt }], null, buildSYS(lang, methodInfo), 6000, null, MODEL
       );
       const result = raw
         .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
@@ -3462,35 +3610,36 @@ ${secsSummary}
         </div>
       </div>
 
-      {/* ══ LAYOUT: sidebar + main ══ */}
-      <div style={{ display: "flex", alignItems: "flex-start" }}>
-
-        {/* ══ LEFT SIDEBAR (план / джерела / готово) ══ */}
-        {["plan", "sources", "done"].includes(stage) && info && (
+      {/* ══ LEFT SIDEBAR (fixed, план / джерела / готово) ══ */}
+      {["plan", "sources", "done"].includes(stage) && info && (() => {
+        const PANEL_W = 270;
+        const TAB_W = 32;
+        const totalW = sidebarOpen ? PANEL_W + TAB_W : TAB_W;
+        return (
           <div
             onMouseEnter={() => setSidebarOpen(true)}
             onMouseLeave={() => setSidebarOpen(false)}
             style={{
-              position: "sticky",
+              position: "fixed",
+              left: 0,
               top: 0,
               height: "100vh",
-              flexShrink: 0,
+              width: totalW,
               display: "flex",
-              zIndex: 50,
-              width: sidebarOpen ? 294 : 28,
-              overflow: "hidden",
+              zIndex: 200,
               transition: "width .28s cubic-bezier(.4,0,.2,1)",
+              overflow: "hidden",
+              boxShadow: sidebarOpen ? "4px 0 20px rgba(0,0,0,.35)" : "none",
             }}
           >
             {/* Tab — always visible */}
             <div
-              className="sidebar-tab"
               onClick={() => setSidebarOpen(v => !v)}
               style={{
-                width: 28,
+                width: TAB_W,
                 flexShrink: 0,
-                background: "#1e1e16",
-                borderRight: "1px solid #3a3a2a",
+                background: "#1a1a14",
+                borderRight: "2px solid #e8ff47",
                 cursor: "pointer",
                 display: "flex",
                 alignItems: "center",
@@ -3507,7 +3656,6 @@ ${secsSummary}
                 color: "#e8ff47",
                 textTransform: "uppercase",
                 fontFamily: "'Spectral SC', serif",
-                opacity: 0.85,
               }}>
                 {sidebarOpen ? "◂ закрити" : "▸ дані"}
               </span>
@@ -3515,18 +3663,15 @@ ${secsSummary}
 
             {/* Panel content */}
             <div style={{
-              width: 266,
+              width: PANEL_W,
               flexShrink: 0,
               background: "#1a1a14",
               height: "100%",
               overflowY: "auto",
-              opacity: sidebarOpen ? 1 : 0,
-              transition: "opacity .18s ease",
-              pointerEvents: sidebarOpen ? "auto" : "none",
             }}>
               {/* Header */}
-              <div style={{ padding: "16px 14px 10px", borderBottom: "1px solid #2a2a20" }}>
-                <div style={{ fontFamily: "'Spectral SC', serif", fontSize: 10, letterSpacing: 3, color: "#e8ff47", marginBottom: 8 }}>ПЕРЕВІРКА</div>
+              <div style={{ padding: "18px 14px 12px", borderBottom: "1px solid #2a2a20" }}>
+                <div style={{ fontFamily: "'Spectral SC', serif", fontSize: 10, letterSpacing: 3, color: "#e8ff47", marginBottom: 10 }}>ДАНІ ЗАМОВЛЕННЯ</div>
                 {info.workCategory && (
                   <span style={{ fontSize: 11, background: "#2a3a00", color: "#a8d060", padding: "3px 10px", borderRadius: 12, letterSpacing: 1 }}>
                     {info.workCategory}
@@ -3538,8 +3683,8 @@ ${secsSummary}
               <div style={{ borderBottom: "1px solid #2a2a20" }}>
                 {Object.entries(FIELD_LABELS).map(([k, l]) => info[k] ? (
                   <div key={k} className="sidebar-field-row">
-                    <div style={{ padding: "8px 10px 8px 14px", color: "#777", lineHeight: 1.4 }}>{l}</div>
-                    <div style={{ padding: "8px 12px 8px 8px", color: "#ddd8cc", lineHeight: 1.4, wordBreak: "break-word" }}>{info[k]}</div>
+                    <div style={{ padding: "8px 8px 8px 14px", color: "#666", lineHeight: 1.4 }}>{l}</div>
+                    <div style={{ padding: "8px 12px 8px 6px", color: "#ddd8cc", lineHeight: 1.4, wordBreak: "break-word" }}>{info[k]}</div>
                   </div>
                 ) : null)}
               </div>
@@ -3564,10 +3709,15 @@ ${secsSummary}
               )}
             </div>
           </div>
-        )}
+        );
+      })()}
 
-        {/* ══ MAIN CONTENT ══ */}
-        <div style={{ flex: 1, minWidth: 0, maxWidth: 1100, margin: "0 auto", padding: "32px clamp(16px, 3vw, 48px)" }}>
+      {/* ══ MAIN CONTENT (shifted right when sidebar present) ══ */}
+      <div style={{
+        paddingLeft: ["plan", "sources", "done"].includes(stage) && info ? (sidebarOpen ? 302 : 32) : 0,
+        transition: "padding-left .28s cubic-bezier(.4,0,.2,1)",
+      }}>
+      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "32px clamp(16px, 3vw, 48px)" }}>
 
         {/* ══ STEP 1: ДАНІ ══ */}
         {stage === "input" && (
@@ -3941,16 +4091,39 @@ ${secsSummary}
           return (
             <div className="fade">
               <Heading>05 / Джерела</Heading>
-              <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20, flexWrap: "wrap" }}>
-                <div style={{ fontSize: 13, color: "#888" }}>Загальна к-сть джерел: <strong style={{ color: "#1a1a14" }}>{sourceTotal}</strong>{methodInfo?.sourcesMinCount ? <span style={{ marginLeft: 8, fontSize: 11, color: "#8a5a1a" }}>(мін. {methodInfo.sourcesMinCount} за методичкою)</span> : null}</div>
-                {methodInfo && (methodInfo.sourcesStyle || methodInfo.sourcesOrder) && (
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {methodInfo.sourcesStyle && <span style={{ fontSize: 11, background: "#e4f0ff", color: "#1a5a8a", padding: "2px 10px", borderRadius: 10 }}>📋 {methodInfo.sourcesStyle}</span>}
-                    {methodInfo.sourcesOrder && <span style={{ fontSize: 11, background: "#eef5e4", color: "#3a6010", padding: "2px 10px", borderRadius: 10 }}>{methodInfo.sourcesOrder === "alphabetical" ? "🔤 За алфавітом" : "🔢 За порядком появи"}</span>}
+              <div style={{ position: "sticky", top: 0, zIndex: 10, marginBottom: 20 }}>
+                {/* Collapsed bar */}
+                {!srcPanelOpen && (
+                  <div
+                    onClick={() => setSrcPanelOpen(true)}
+                    style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "8px 16px", background: "#1a1a14", border: "1px solid #3a3a2a", borderRadius: 8, cursor: "pointer", userSelect: "none" }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      <span style={{ fontSize: 12, color: "#a8a89a" }}>Джерел: <strong style={{ color: "#e8ff47" }}>{sourceTotal}</strong></span>
+                      {methodInfo?.sourcesStyle && <span style={{ fontSize: 11, background: "#e4f0ff", color: "#1a5a8a", padding: "1px 8px", borderRadius: 8 }}>📋 {methodInfo.sourcesStyle}</span>}
+                      {methodInfo?.sourcesOrder && <span style={{ fontSize: 11, background: "#eef5e4", color: "#3a6010", padding: "1px 8px", borderRadius: 8 }}>{methodInfo.sourcesOrder === "alphabetical" ? "🔤 За алфавітом" : "🔢 За порядком появи"}</span>}
+                    </div>
+                    <span style={{ fontSize: 12, color: "#a8d060" }}>▼ розгорнути</span>
                   </div>
                 )}
-                <GreenBtn onClick={() => { setKwError(""); doGenKeywords(); }} loading={kwLoading} msg="Генерую ключові слова..." label={Object.keys(keywords).length > 0 ? "Оновити ключові слова" : "Генерувати ключові слова →"} />
-                {kwError && <div style={{ fontSize: 12, color: "#8a1a1a", background: "#fff5f5", border: "1px solid #e8b0b0", borderRadius: 6, padding: "4px 10px" }}>⚠ {kwError}</div>}
+                {/* Expanded panel */}
+                {srcPanelOpen && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", padding: "10px 16px", background: "#f5f2eb", border: "1px solid #d4cfc4", borderRadius: 8 }}>
+                    <div style={{ fontSize: 13, color: "#888" }}>Загальна к-сть джерел: <strong style={{ color: "#1a1a14" }}>{sourceTotal}</strong>{methodInfo?.sourcesMinCount ? <span style={{ marginLeft: 8, fontSize: 11, color: "#8a5a1a" }}>(мін. {methodInfo.sourcesMinCount} за методичкою)</span> : null}</div>
+                    {methodInfo && (methodInfo.sourcesStyle || methodInfo.sourcesOrder) && (
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        {methodInfo.sourcesStyle && <span style={{ fontSize: 11, background: "#e4f0ff", color: "#1a5a8a", padding: "2px 10px", borderRadius: 10 }}>📋 {methodInfo.sourcesStyle}</span>}
+                        {methodInfo.sourcesOrder && <span style={{ fontSize: 11, background: "#eef5e4", color: "#3a6010", padding: "2px 10px", borderRadius: 10 }}>{methodInfo.sourcesOrder === "alphabetical" ? "🔤 За алфавітом" : "🔢 За порядком появи"}</span>}
+                      </div>
+                    )}
+                    <GreenBtn onClick={() => { setKwError(""); doGenKeywords(); }} loading={kwLoading} msg="Генерую ключові слова..." label={Object.keys(keywords).length > 0 ? "Оновити ключові слова" : "Генерувати ключові слова →"} />
+                    {kwError && <div style={{ fontSize: 12, color: "#8a1a1a", background: "#fff5f5", border: "1px solid #e8b0b0", borderRadius: 6, padding: "4px 10px" }}>⚠ {kwError}</div>}
+                    <button
+                      onClick={() => setSrcPanelOpen(false)}
+                      style={{ marginLeft: "auto", fontSize: 11, color: "#888", background: "none", border: "none", cursor: "pointer", padding: "2px 6px" }}
+                    >▲ згорнути</button>
+                  </div>
+                )}
               </div>
               <div style={{ padding: "12px 16px", background: "#f0f5e8", border: "1px solid #c8dfa0", borderRadius: 8, marginBottom: 20, fontSize: 13, color: "#3a6010", lineHeight: "1.7" }}>
                 <strong>Як це працює:</strong> Вставте знайдені джерела до кожного підрозділу (кожне з нового рядка). Після заповнення натисніть <em>"Розставити всі посилання"</em>.
