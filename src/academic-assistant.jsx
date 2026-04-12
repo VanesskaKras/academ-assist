@@ -8,7 +8,7 @@ import {
 // ─────────────────────────────────────────────
 // Word export
 // ─────────────────────────────────────────────
-async function exportToDocx({ content, info, displayOrder, appendicesText, titlePage }) {
+async function exportToDocx({ content, info, displayOrder, appendicesText, titlePage, methodInfo }) {
   if (!window.docx) {
     await new Promise((resolve, reject) => {
       const s = document.createElement("script");
@@ -19,7 +19,13 @@ async function exportToDocx({ content, info, displayOrder, appendicesText, title
   }
   const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel, TableOfContents, Table, TableRow, TableCell, WidthType, BorderStyle, ExternalHyperlink } = window.docx;
   const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
-  const L = 1701, R = 851, T = 1134, B = 1134, INDENT = 709, LINE = 360;
+  const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
+  const marg = methodInfo?.formatting?.margins || {};
+  const L = mmToTwip(marg.left   || 30);
+  const R = mmToTwip(marg.right  || 15);
+  const T = mmToTwip(marg.top    || 20);
+  const B = mmToTwip(marg.bottom || 20);
+  const INDENT = 709, LINE = 360;
   const LINE_SINGLE = 240;
 
   function cleanMarkdown(line) {
@@ -300,7 +306,7 @@ async function exportToDocx({ content, info, displayOrder, appendicesText, title
 // ─────────────────────────────────────────────
 // Export plan to docx
 // ─────────────────────────────────────────────
-async function exportPlanToDocx({ sections, info }) {
+async function exportPlanToDocx({ sections, info, methodInfo }) {
   if (!window.docx) {
     await new Promise((resolve, reject) => {
       const s = document.createElement("script");
@@ -311,7 +317,12 @@ async function exportPlanToDocx({ sections, info }) {
   }
   const { Document, Packer, Paragraph, TextRun, AlignmentType, HeadingLevel } = window.docx;
   const FONT = "Times New Roman", SIZE = 28, LINE = 360, INDENT = 709;
-  const L = 1701, R = 851, T = 1134, B = 1134;
+  const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
+  const marg = methodInfo?.formatting?.margins || {};
+  const L = mmToTwip(marg.left   || 30);
+  const R = mmToTwip(marg.right  || 15);
+  const T = mmToTwip(marg.top    || 20);
+  const B = mmToTwip(marg.bottom || 20);
 
   const intro = sections.find(s => s.type === "intro");
   const concs = sections.find(s => s.type === "conclusions");
@@ -368,7 +379,7 @@ async function exportPlanToDocx({ sections, info }) {
 // ─────────────────────────────────────────────
 // Додатки (.docx)
 // ─────────────────────────────────────────────
-async function exportAppendixToDocx(text, info) {
+async function exportAppendixToDocx(text, info, methodInfo) {
   if (!window.docx) {
     await new Promise((resolve, reject) => {
       const s = document.createElement("script");
@@ -379,7 +390,13 @@ async function exportAppendixToDocx(text, info) {
   }
   const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel, Table, TableRow, TableCell, WidthType, BorderStyle } = window.docx;
   const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
-  const L = 1701, R = 851, T = 1134, B = 1134, INDENT = 709, LINE = 360;
+  const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
+  const marg = methodInfo?.formatting?.margins || {};
+  const L = mmToTwip(marg.left   || 30);
+  const R = mmToTwip(marg.right  || 15);
+  const T = mmToTwip(marg.top    || 20);
+  const B = mmToTwip(marg.bottom || 20);
+  const INDENT = 709, LINE = 360;
 
   function cleanMarkdown(line) {
     return line.replace(/^#{1,6}\s+/, "").replace(/\*\*(.+?)\*\*/g, "$1")
@@ -490,7 +507,7 @@ async function exportAppendixToDocx(text, info) {
 // ─────────────────────────────────────────────
 // Доповідь (.docx)
 // ─────────────────────────────────────────────
-async function exportSpeechToDocx(text, info) {
+async function exportSpeechToDocx(text, info, methodInfo) {
   if (!window.docx) {
     await new Promise((resolve, reject) => {
       const s = document.createElement("script");
@@ -501,7 +518,13 @@ async function exportSpeechToDocx(text, info) {
   }
   const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header } = window.docx;
   const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
-  const L = 1701, R = 851, T = 1134, B = 1134, INDENT = 709, LINE = 360;
+  const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
+  const marg = methodInfo?.formatting?.margins || {};
+  const L = mmToTwip(marg.left   || 30);
+  const R = mmToTwip(marg.right  || 15);
+  const T = mmToTwip(marg.top    || 20);
+  const B = mmToTwip(marg.bottom || 20);
+  const INDENT = 709, LINE = 360;
 
   const children = text.split("\n").map(line => {
     const raw = line.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1").trim();
@@ -1829,7 +1852,10 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
         const parsed = JSON.parse(jsonMatch?.[0] || raw.replace(/```json|```/g, "").trim());
         setMethodInfo(parsed);
         if (parsed.titlePageTemplate) {
-          const filled = parsed.titlePageTemplate.replace(/\[ТЕМА\]/g, newInfo?.topic || "[ТЕМА]");
+          const currentYear = new Date().getFullYear().toString();
+          const filled = parsed.titlePageTemplate
+            .replace(/\[ТЕМА\]/g, newInfo?.topic || "[ТЕМА]")
+            .replace(/\b20\d?\s*[_]+/g, currentYear);
           setTitlePage(filled);
           await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, methodInfo: parsed, fileLabel, titlePage: filled, stage: "parsed", status: "new" });
         } else {
@@ -3590,7 +3616,7 @@ ${secsSummary}
                       <button onClick={() => { setShowManualPlanInput(v => !v); setManualPlanText(""); }} style={{ background: showManualPlanInput ? "#3a2a00" : "transparent", border: "1px solid #888", color: "#e8c84a", borderRadius: 5, padding: "4px 12px", fontSize: 11, cursor: "pointer", fontFamily: "'Spectral',serif", letterSpacing: 1 }}>✏ Замінити</button>
                       <button
                         disabled={planDocxLoading}
-                        onClick={async () => { setPlanDocxLoading(true); try { await exportPlanToDocx({ sections, info }); } catch (e) { alert("Помилка: " + e.message); } setPlanDocxLoading(false); }}
+                        onClick={async () => { setPlanDocxLoading(true); try { await exportPlanToDocx({ sections, info, methodInfo }); } catch (e) { alert("Помилка: " + e.message); } setPlanDocxLoading(false); }}
                         style={{ background: planDocxLoading ? "#444" : "#2a3a1a", color: "#a8d060", border: "none", borderRadius: 5, padding: "4px 14px", fontSize: 11, cursor: "pointer", fontFamily: "'Spectral',serif", letterSpacing: 1, display: "inline-flex", alignItems: "center", gap: 6 }}>
                         {planDocxLoading ? <><SpinDot light />...</> : "⬇ .docx"}
                       </button>
@@ -4018,7 +4044,7 @@ ${secsSummary}
                     style={{ background: "transparent", color: "#d4d0c8", border: "1px solid #666", borderRadius: 5, padding: "5px 12px", fontFamily: "'Spectral',serif", fontSize: 11, letterSpacing: "0.5px", cursor: "pointer" }}>
                     COPY
                   </button>
-                  <button onClick={async () => { setAppendicesLoading(true); try { await exportAppendixToDocx(appendicesText, info); } catch (e) { alert("Помилка: " + e.message); } setAppendicesLoading(false); }} disabled={appendicesLoading}
+                  <button onClick={async () => { setAppendicesLoading(true); try { await exportAppendixToDocx(appendicesText, info, methodInfo); } catch (e) { alert("Помилка: " + e.message); } setAppendicesLoading(false); }} disabled={appendicesLoading}
                     style={{ background: appendicesLoading ? "#555" : "#1a4a1a", color: appendicesLoading ? "#aaa" : "#a8e060", border: "none", borderRadius: 5, padding: "5px 12px", fontFamily: "'Spectral',serif", fontSize: 11, cursor: appendicesLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
                     {appendicesLoading ? <><SpinDot light />...</> : <><svg width="13" height="13" viewBox="0 0 13 13" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ marginRight: 5 }}><path d="M6.5 1v7M6.5 8l-2.5-2.5M6.5 8l2.5-2.5" stroke="#a8e060" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /><path d="M2 11h9" stroke="#a8e060" strokeWidth="1.5" strokeLinecap="round" /></svg>.docx</>}
                   </button>
@@ -4118,7 +4144,7 @@ ${secsSummary}
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 24 }}>
               <NavBtn onClick={() => setStage("sources")}>← Джерела</NavBtn>
               <button onClick={copyAll} style={{ background: "#1a1a14", color: "#e8ff47", border: "none", borderRadius: 7, padding: "11px 30px", fontFamily: "'Spectral',serif", fontSize: 13, letterSpacing: "1.5px", cursor: "pointer" }}>Скопіювати текст</button>
-              <button disabled={docxLoading} onClick={async () => { setDocxLoading(true); try { await exportToDocx({ sections, content, info, displayOrder, appendicesText, titlePage }); } catch (e) { alert("Помилка: " + e.message); } setDocxLoading(false); }}
+              <button disabled={docxLoading} onClick={async () => { setDocxLoading(true); try { await exportToDocx({ sections, content, info, displayOrder, appendicesText, titlePage, methodInfo }); } catch (e) { alert("Помилка: " + e.message); } setDocxLoading(false); }}
                 style={{ background: docxLoading ? "#aaa" : "#1a4a1a", color: docxLoading ? "#eee" : "#a8e060", border: "none", borderRadius: 7, padding: "11px 30px", fontFamily: "'Spectral',serif", fontSize: 13, letterSpacing: "1.5px", cursor: docxLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
                 {docxLoading ? <><SpinDot light />Генерую Word...</> : "⬇ Завантажити .docx"}
               </button>
@@ -4169,7 +4195,7 @@ ${secsSummary}
                         {speechText.substring(0, 450)}...
                       </div>
                       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                        <button onClick={async () => { setSpeechLoading(true); try { await exportSpeechToDocx(speechText, info); } catch (e) { alert("Помилка: " + e.message); } setSpeechLoading(false); }} disabled={speechLoading}
+                        <button onClick={async () => { setSpeechLoading(true); try { await exportSpeechToDocx(speechText, info, methodInfo); } catch (e) { alert("Помилка: " + e.message); } setSpeechLoading(false); }} disabled={speechLoading}
                           style={{ background: speechLoading ? "#aaa" : "#1a4a1a", color: speechLoading ? "#eee" : "#a8e060", border: "none", borderRadius: 6, padding: "9px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: speechLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
                           {speechLoading ? <><SpinDot light />...</> : "⬇ Завантажити .docx"}
                         </button>
