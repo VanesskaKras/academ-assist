@@ -3037,18 +3037,29 @@ ${sectionSummaries}
     try {
       const lang = info?.language || "Українська";
       const empSecs = getEmpiricalSections(sections, info);
+      // Для психолого-педагогічних: весь емпіричний розділ з широким контекстом
+      const empChapterIds = new Set(empSecs.chapterSectionIds);
       const anchorId = empSecs.anchorId || empSecs.chapterSectionIds[0] || null;
-      const anchorCtx = anchorId && content[anchorId]
-        ? `КОНТЕКСТ ДОСЛІДЖЕННЯ:\n${content[anchorId].substring(0, 800)}`
-        : "";
+      const empChapterCtx = empSecs.chapterSectionIds.length > 0
+        ? empSecs.chapterSectionIds
+            .filter(id => content[id])
+            .map(id => `[${id}]: ${content[id].substring(0, 1800)}`)
+            .join("\n\n")
+        : anchorId && content[anchorId]
+          ? content[anchorId].substring(0, 1800)
+          : "";
+      const anchorCtx = empChapterCtx ? `КОНТЕКСТ ДОСЛІДЖЕННЯ:\n${empChapterCtx}` : "";
 
       // Збираємо контекст вже згенерованого тексту роботи
       const generatedCtx = sections
         .filter(s => content[s.id] && !["sources"].includes(s.type))
-        .map(s => `[${s.label}]\n${content[s.id].substring(0, 600)}`)
+        .map(s => {
+          const limit = empChapterIds.has(s.id) ? 1800 : 1000;
+          return `[${s.label}]\n${content[s.id].substring(0, limit)}`;
+        })
         .join("\n\n");
       const contentBlock = generatedCtx
-        ? `ТЕКСТ РОБОТИ (скорочено для контексту):\n${generatedCtx.substring(0, 3000)}`
+        ? `ТЕКСТ РОБОТИ (скорочено для контексту):\n${generatedCtx.substring(0, 8000)}`
         : "";
 
       const customBlock = appendicesCustomPrompt.trim()
