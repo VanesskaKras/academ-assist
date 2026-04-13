@@ -1788,6 +1788,8 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [regenId, setRegenId] = useState(null);
   const [regenPrompt, setRegenPrompt] = useState("");
   const [regenLoading, setRegenLoading] = useState(false);
+  const [regenAllLoading, setRegenAllLoading] = useState(false);
+  const regenAllAbortRef = useRef(null);
   const [apiError, setApiError] = useState("");
   const [speechText, setSpeechText] = useState("");
   const [speechLoading, setSpeechLoading] = useState(false);
@@ -3222,6 +3224,131 @@ ${JSON.stringify(analysis, null, 2)}
   const stopGen = () => { abortRef.current?.abort(); runningRef.current = false; setRunning(false); setPaused(true); setLoadMsg(""); };
   const resumeGen = () => { setApiError(""); setPaused(false); };
 
+  // ── Переписати всю роботу з нуля (з урахуванням вже згенерованого контексту) ──
+  const doRegenAll = async () => {
+    if (!window.confirm("Переписати всю роботу повністю з нуля? Поточний текст буде замінено новим.")) return;
+    const ctrl = new AbortController();
+    regenAllAbortRef.current = ctrl;
+    setRegenAllLoading(true);
+    setApiError("");
+
+    const d = info;
+    const lang = d?.language || "Українська";
+    const totalPages = parsePagesAvg(d?.pages);
+    const isLarge = totalPages > 40;
+    const secsToRegen = sections.filter(s => s.type !== "sources");
+    const empSecs = getEmpiricalSections(sections, d);
+    const empIdsSet = new Set(empSecs.chapterSectionIds);
+
+    const buildFullCtx = (excludeId) =>
+      sections
+        .filter(s => s.id !== excludeId && contentRef.current[s.id] && s.type !== "sources")
+        .map(s => {
+          const limit = empIdsSet.has(s.id) ? 1800 : 1000;
+          return `[${s.label}]: ${contentRef.current[s.id].substring(0, limit)}`;
+        })
+        .join("\n\n");
+
+    for (let i = 0; i < secsToRegen.length; i++) {
+      if (ctrl.signal.aborted) break;
+      const sec = secsToRegen[i];
+      setLoadMsg(`Переписую (${i + 1}/${secsToRegen.length}): ${sec.label}...`);
+
+      const fullCtx = buildFullCtx(sec.id);
+      const approxParas = Math.max(3, Math.round((sec.pages || 1) * 3.5));
+      let instruction = "";
+
+      if (sec.type === "intro") {
+        const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
+        const tasksCount = Math.min(mainSecs.length, isLarge ? 8 : 5);
+        const defaultComponents = ["актуальність теми", "мета дослідження", "завдання дослідження", "об'єкт дослідження", "предмет дослідження", "методи дослідження", "структура роботи"];
+        const allComponents = methodInfo?.introComponents?.length ? methodInfo.introComponents : defaultComponents;
+        const componentLines = allComponents.map((comp) => {
+          const label = comp.charAt(0).toUpperCase() + comp.slice(1);
+          if (/актуальн/i.test(comp)) return `${label} (2 абзаци): починається "Актуальність теми."`;
+          if (/мета/i.test(comp)) return `${label}: починається "Метою роботи є"`;
+          if (/завдання/i.test(comp)) return `${label} (${tasksCount} завдань): починається "Для досягнення мети поставлено такі завдання:" — перелік відповідно до підрозділів:\n${mainSecs.map((s, j) => `  ${j + 1}) "${s.label}"`).join("\n")}`;
+          if (/об.єкт/i.test(comp)) return `${label}: починається "Об'єктом дослідження є"`;
+          if (/предмет/i.test(comp)) return `${label}: починається "Предметом дослідження є"`;
+          if (/метод/i.test(comp)) return `${label}: починається "Для вирішення поставлених завдань використано такі методи:"`;
+          if (/структура/i.test(comp)) return `${label}: починається "Робота складається з вступу,"`;
+          return `${label}`;
+        });
+        instruction = `Напиши ВСТУП для ${d.type} на тему "${d.topic}". Галузь: ${d.subject}.
+СТРУКТУРА ВСТУПУ (суворо, кожен елемент з нового абзацу):
+${componentLines.map((l, idx) => `${idx + 1}. ${l}`).join("\n")}
+${methodInfo?.otherRequirements ? `\nВИМОГИ МЕТОДИЧКИ: ${methodInfo.otherRequirements}` : ""}
+${fullCtx ? `\nЗМІСТ РОЗДІЛІВ РОБОТИ (використай для точного формулювання вибірки, методів, результатів — все має збігатись):\n${fullCtx}` : ""}
+НЕ виділяй жирним. НЕ додавай посилань. Пиши суцільним текстом абзацами.`;
+
+      } else if (sec.type === "conclusions") {
+        const conclusionsParas = isLarge ? "10-12" : "7";
+        instruction = `Напиши ВИСНОВКИ для ${d.type} на тему "${d.topic}".
+${methodInfo?.conclusionsRequirements ? `ВИМОГИ МЕТОДИЧКИ: ${methodInfo.conclusionsRequirements}\n` : ""}
+Обсяг: ${conclusionsParas} абзаців. Перший — загальний підсумок мети і досягнутого. Далі по одному абзацу на кожен підрозділ з конкретними результатами. Останній — перспективи подальших досліджень.
+Без посилань. Без жирного. Без нумерації. Суцільними абзацами.
+${fullCtx ? `\nЗМІСТ РОЗДІЛІВ РОБОТИ:\n${fullCtx}` : ""}`;
+
+      } else if (sec.type === "chapter_conclusion") {
+        const chapNum = sec.chapterNum || sec.id.split(".")[0];
+        instruction = `Напиши "Висновки до розділу ${chapNum}" для ${d.type} на тему "${d.topic}".
+${methodInfo?.chapterConclusionRequirements ? `ВИМОГИ МЕТОДИЧКИ: ${methodInfo.chapterConclusionRequirements}` : ""}
+Обсяг: ~4-5 абзаців. Без нової інформації. Без посилань. Без жирного. Без нумерації. Суцільними абзацами.
+${fullCtx ? `\nКОНТЕКСТ РОБОТИ:\n${fullCtx}` : ""}`;
+
+      } else {
+        const typeHints = {
+          theory: "теоретичний — визначення понять, аналіз літератури, огляд наукових підходів",
+          analysis: "аналітично-практичний — аналіз даних, виявлення закономірностей, порівняння",
+          recommendations: "рекомендаційний — практичні пропозиції, шляхи вирішення, прогнози",
+        };
+        const methodReq = methodInfo?.theoryRequirements && sec.type === "theory"
+          ? methodInfo.theoryRequirements
+          : (methodInfo?.analysisRequirements && ["analysis", "recommendations"].includes(sec.type) ? methodInfo.analysisRequirements : methodInfo?.otherRequirements || "");
+        const isEmpChapter = empIdsSet.has(sec.id);
+        const empiricalBlock = isEmpChapter ? `\n\nКОНТЕКСТ: цей підрозділ є частиною емпіричного дослідження. Визнач за назвою що писати:
+- організація/методика дослідження: опиши вибірку, метод, структуру анкети. Додай: "Анкета наведена у Додатку А."
+- аналіз/результати: таблиця markdown з відсотковими показниками, аналіз, висновки
+- рекомендації: спирайся на результати попередніх підрозділів, не повторюй опис анкети` : "";
+
+        instruction = `Напиши підрозділ "${sec.label}" для ${d.type} на тему "${d.topic}". Галузь: ${d.subject}.
+Тип: ${typeHints[sec.type] || "основний"}.
+${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBlock}
+
+КОНТЕКСТ ВСІЄЇ РОБОТИ (для узгодженості вибірки, цифр, методики — дотримуйся цих даних точно):
+${fullCtx}
+
+Обсяг: ~${approxParas} абзаців (~${sec.pages} стор.).
+Не обривай текст. Завершуй підсумковим абзацом. Без посилань [1],[2]. Без жирного.
+Абзаци різняться за довжиною: чергуй короткі (2-3 речення) з довшими (5-7 речень).`;
+      }
+
+      const sectionMaxTokens = Math.min(60000, Math.max(8000, Math.round((sec.pages || 1) * 3000)));
+      try {
+        const raw = await callClaude([{ role: "user", content: instruction }], ctrl.signal, buildSYS(lang, methodInfo), sectionMaxTokens, null, MODEL);
+        const result = raw
+          .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
+          .replace(/[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF]/g, "")
+          .replace(/[„""]([^"„""]*)["""]/g, "«$1»")
+          .replace(/"([^"]*)"/g, "«$1»");
+        const newContent = { ...contentRef.current, [sec.id]: result };
+        setContent(newContent);
+        await saveToFirestore({ content: newContent });
+        await new Promise(r => setTimeout(r, 2000));
+      } catch (e) {
+        if (e.name === "AbortError") break;
+        console.error(e);
+        setApiError(e.message);
+        setLoadMsg("⚠ " + e.message);
+        break;
+      }
+    }
+
+    regenAllAbortRef.current = null;
+    setRegenAllLoading(false);
+    setLoadMsg("");
+  };
+
   // ── Ключові слова ──
   const doGenKeywords = async () => {
     setKwLoading(true);
@@ -4104,6 +4231,8 @@ ${secsSummary}
               <Heading style={{ margin: 0 }}>04 / Генерація тексту</Heading>
               {running && <button onClick={stopGen} style={{ background: "#7a1010", color: "#fff", border: "none", borderRadius: 6, padding: "6px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>⏹ Зупинити</button>}
               {!running && paused && genIdx < sections.length && <button onClick={resumeGen} style={{ background: "#0a4a0a", color: "#e8ff47", border: "none", borderRadius: 6, padding: "6px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>▶ Продовжити</button>}
+              {!running && !regenAllLoading && genIdx >= sections.length && <button onClick={doRegenAll} style={{ background: "transparent", border: "1px solid #555", color: "#ccc", borderRadius: 6, padding: "6px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>↺ Переписати всю роботу</button>}
+              {regenAllLoading && <><span style={{ fontSize: 12, color: "#888", display: "inline-flex", alignItems: "center", gap: 6 }}><SpinDot />{loadMsg}</span><button onClick={() => regenAllAbortRef.current?.abort()} style={{ background: "#7a1010", color: "#fff", border: "none", borderRadius: 6, padding: "6px 14px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>⏹ Зупинити</button></>}
             </div>
             <div style={{ marginBottom: 22 }}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 12, color: "#888" }}>
@@ -4318,7 +4447,11 @@ ${secsSummary}
         {/* ══ STEP 6: ГОТОВО ══ */}
         {stage === "done" && (
           <div className="fade">
-            <Heading>✓ Роботу завершено!</Heading>
+            <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", marginBottom: 4 }}>
+              <Heading style={{ margin: 0 }}>✓ Роботу завершено!</Heading>
+              {!regenAllLoading && <button onClick={doRegenAll} style={{ background: "transparent", border: "1px solid #555", color: "#ccc", borderRadius: 6, padding: "6px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>↺ Переписати всю роботу</button>}
+              {regenAllLoading && <><span style={{ fontSize: 12, color: "#888", display: "inline-flex", alignItems: "center", gap: 6 }}><SpinDot />{loadMsg}</span><button onClick={() => regenAllAbortRef.current?.abort()} style={{ background: "#7a1010", color: "#fff", border: "none", borderRadius: 6, padding: "6px 14px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>⏹ Зупинити</button></>}
+            </div>
             <p style={{ fontSize: 13, color: "#888", marginBottom: 24 }}>Текст згенеровано. Скопіюйте або завантажте Word-файл.</p>
 
             {/* ── ТИТУЛЬНА СТОРІНКА ── */}
