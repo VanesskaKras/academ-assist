@@ -280,9 +280,15 @@ async function exportToDocx({ content, info, displayOrder, appendicesText, title
 
   // ── Сторінка 1: титульна ──
   const alignMap = { left: AlignmentType.LEFT, center: AlignmentType.CENTER, right: AlignmentType.RIGHT };
+  const topicStr = info?.topic || "";
+  const applyTopic = (t) => {
+    let s = t.replace(/\[ТЕМА\]/g, topicStr);
+    if (topicStr) s = s.replace(/(Тема\s*[:：]\s*«\s*)([_\s]*)(\s*»)/g, `$1${topicStr}$3`);
+    return s;
+  };
   const resolvedLines = titlePageLines?.length
-    ? titlePageLines
-    : (titlePage?.trim() ? titlePage.split("\n").map(text => ({ text, align: "center" })) : null);
+    ? titlePageLines.map(item => ({ ...item, text: applyTopic(item.text) }))
+    : (titlePage?.trim() ? titlePage.split("\n").map(text => ({ text: applyTopic(text), align: "center" })) : null);
   if (resolvedLines) {
     resolvedLines.forEach((item, idx) => {
       children.push(new Paragraph({
@@ -2598,7 +2604,24 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
     const ctrl = new AbortController(); abortRef.current = ctrl;
     const d = info;
     const lang = d?.language || "Українська";
-    const prevCtx = Object.entries(contentRef.current).slice(-2).map(([k, v]) => `[${k}]: ${v.substring(0, 500)}...`).join("\n\n");
+    // Для емпіричних підрозділів — широкий контекст усього розділу (до 2000 символів)
+    const empSecsEarly = getEmpiricalSections(sections, d);
+    const isCurrentEmpChapter = empSecsEarly.chapterSectionIds.includes(sec.id);
+    const prevCtx = isCurrentEmpChapter
+      ? (() => {
+          const empIds = empSecsEarly.chapterSectionIds;
+          const empCtx = empIds
+            .filter(id => id !== sec.id && contentRef.current[id])
+            .map(id => `[${id}]: ${contentRef.current[id].substring(0, 2000)}...`)
+            .join("\n\n");
+          const nonEmpPrev = Object.entries(contentRef.current)
+            .filter(([k]) => !empIds.includes(k))
+            .slice(-1)
+            .map(([k, v]) => `[${k}]: ${v.substring(0, 500)}...`)
+            .join("\n\n");
+          return [nonEmpPrev, empCtx].filter(Boolean).join("\n\n");
+        })()
+      : Object.entries(contentRef.current).slice(-2).map(([k, v]) => `[${k}]: ${v.substring(0, 500)}...`).join("\n\n");
     const approxParas = Math.max(3, Math.round((sec.pages || 1) * 3.5));
     const planSummary = sections
       .filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type))
@@ -2651,22 +2674,37 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
         return `${label}: абзац починається з природного формулювання (НЕ повторювати мітку "${label}" двічі) — зміст відповідно до теми "${d.topic}".`;
       });
 
+      // Контекст основних розділів для вступу — щоб вибірка, методика і результати збігались
+      const introMainCtx = mainSecs
+        .map(s => contentRef.current[s.id]
+          ? `[${s.label}]: ${contentRef.current[s.id].substring(0, 600)}...`
+          : "")
+        .filter(Boolean)
+        .join("\n\n");
+
       instruction = `Напиши ВСТУП для ${d.type} на тему "${d.topic}". Галузь: ${d.subject}.
 
 СТРУКТУРА ВСТУПУ (дотримуватись суворо, кожен елемент з нового абзацу):
 
 ${componentLines.map((l, i) => `${i + 1}. ${l}`).join("\n\n")}
 ${methodInfo?.otherRequirements ? `\nВИМОГИ МЕТОДИЧКИ: ${methodInfo.otherRequirements}` : ""}${commentAnalysis?.textStructureHints ? `\nПІДКАЗКИ ЩОДО СТРУКТУРИ (з коментаря клієнта): ${commentAnalysis.textStructureHints}` : ""}
+${introMainCtx ? `\nЗМІСТ ОСНОВНИХ РОЗДІЛІВ (використай для точного формулювання методів, вибірки, об'єкта — все має збігатись з текстом роботи):\n${introMainCtx}` : ""}
 
 ВАЖЛИВО: кожен абзац починається так, як вказано вище — НЕ писати окремо мітку ("Мета.") і потім знову те саме слово ("Метою роботи..."). Назви НЕ виділяй жирним. НЕ додавай посилань. Пиши суцільним текстом абзацами.`;
 
     } else if (sec.type === "conclusions") {
       const conclusionsParas = isLarge ? "10-12" : "7";
       const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
-      // Беремо короткий контекст усіх підрозділів для висновків
-      const allCtx = mainSecs.map(s => contentRef.current[s.id]
-        ? `[${s.label}]: ${contentRef.current[s.id].substring(0, 300)}...`
-        : "").filter(Boolean).join("\n\n");
+      // Для висновків: емпіричні підрозділи передаємо з широким контекстом (1800 символів),
+      // решта — стисло (300 символів), щоб модель точно знала вибірку і методику
+      const empSecsForConcl = getEmpiricalSections(sections, d);
+      const empIdsSet = new Set(empSecsForConcl.chapterSectionIds);
+      const allCtx = mainSecs.map(s => {
+        const text = contentRef.current[s.id];
+        if (!text) return "";
+        const limit = empIdsSet.has(s.id) ? 1800 : 1000;
+        return `[${s.label}]: ${text.substring(0, limit)}...`;
+      }).filter(Boolean).join("\n\n");
 
       const conclReq = methodInfo?.conclusionsRequirements || "";
 
