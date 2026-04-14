@@ -5,1737 +5,28 @@ import {
   doc, getDoc, setDoc, updateDoc, serverTimestamp,
 } from "firebase/firestore";
 
-// ─────────────────────────────────────────────
-// Перенумерація таблиць і рисунків
-// ─────────────────────────────────────────────
-function renumberTablesAndFigures(content, displayOrder) {
-  function getChapter(sec) {
-    if (!sec?.id) return null;
-    const m = sec.id.match(/^(\d+)/);
-    return m ? m[1] : null;
-  }
-  function escRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+import { exportToDocx, exportPlanToDocx, exportAppendixToDocx, exportSpeechToDocx, renumberTablesAndFigures } from "./lib/exportDocx.js";
+import { exportToPptxFile } from "./lib/exportPptx.js";
+import { callClaude, callGemini, MODEL, MODEL_FAST } from "./lib/api.js";
+import { playDoneSound } from "./lib/audio.js";
+import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, METHODOLOGY_READING_PROMPT, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt } from "./lib/prompts.js";
+import { FIELD_LABELS, isPsychoPed, isEcon, getEmpiricalSections, getEconSections, STAGES, STAGE_KEYS, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan } from "./lib/planUtils.js";
+import { serializeForFirestore } from "./lib/firestoreUtils.js";
+import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
+import { StagePills } from "./components/StagePills.jsx";
+import { FieldBox, Heading, NavBtn, PrimaryBtn, GreenBtn, SaveIndicator } from "./components/Buttons.jsx";
+import { StructurePreview } from "./components/StructurePreview.jsx";
+import { PlanLoadingSkeleton } from "./components/PlanLoadingSkeleton.jsx";
+import { DropZone } from "./components/DropZone.jsx";
+import { PhotoDropZone } from "./components/PhotoDropZone.jsx";
+import { ClientPlanInput } from "./components/ClientPlanInput.jsx";
+import { InputStage } from "./components/stages/InputStage.jsx";
+import { ParsedStage } from "./components/stages/ParsedStage.jsx";
+import { PlanStage } from "./components/stages/PlanStage.jsx";
+import { WritingStage } from "./components/stages/WritingStage.jsx";
+import { SourcesStage } from "./components/stages/SourcesStage.jsx";
+import { DoneStage } from "./components/stages/DoneStage.jsx";
 
-  const chTableCount = {}, chFigCount = {};
-  // secRenamings: secId → [{oldRef, newRef, type}]
-  const secRenamings = {};
-
-  for (const sec of displayOrder) {
-    const txt = content[sec.id];
-    if (!txt) continue;
-    const ch = getChapter(sec);
-    if (!ch) continue;
-    chTableCount[ch] = chTableCount[ch] || 0;
-    chFigCount[ch]   = chFigCount[ch]   || 0;
-    secRenamings[sec.id] = [];
-
-    let m;
-    const tableRe = /^Таблиця\s+(\d+\.\d+)/gm;
-    while ((m = tableRe.exec(txt)) !== null) {
-      chTableCount[ch]++;
-      secRenamings[sec.id].push({ oldRef: m[1], newRef: `${ch}.${chTableCount[ch]}`, type: "table" });
-    }
-    const figRe = /^Рис\.\s+(\d+\.\d+)/gm;
-    while ((m = figRe.exec(txt)) !== null) {
-      chFigCount[ch]++;
-      secRenamings[sec.id].push({ oldRef: m[1], newRef: `${ch}.${chFigCount[ch]}`, type: "fig" });
-    }
-  }
-
-  const updated = { ...content };
-  for (const sec of displayOrder) {
-    let txt = content[sec.id];
-    if (!txt) continue;
-    const renamings = (secRenamings[sec.id] || []).filter(r => r.oldRef !== r.newRef);
-    if (!renamings.length) continue;
-
-    let tokI = 0;
-    const tokMap = new Map();
-
-    for (const { oldRef, newRef, type } of renamings) {
-      const tok = `\x00T${tokI++}\x00`;
-      tokMap.set(tok, newRef);
-      if (type === "table") {
-        // підпис (початок рядка)
-        txt = txt.replace(new RegExp(`(^Таблиця\\s+)${escRe(oldRef)}`, "m"), `$1${tok}`);
-        // inline-посилання: "Таблиці X.Y", "Таблицю X.Y" тощо
-        txt = txt.replace(new RegExp(`(Таблиц[яіюю]\\s+)${escRe(oldRef)}(?!\\d)`, "g"), `$1${tok}`);
-      } else {
-        // підпис рисунку
-        txt = txt.replace(new RegExp(`(^Рис\\.\\s+)${escRe(oldRef)}`, "m"), `$1${tok}`);
-        // inline-посилання: "Рис. X.Y", "рис. X.Y"
-        txt = txt.replace(new RegExp(`(Рис\\.\\s+)${escRe(oldRef)}(?!\\d)`, "gi"), `$1${tok}`);
-      }
-    }
-
-    for (const [tok, newRef] of tokMap) {
-      txt = txt.replaceAll(tok, newRef);
-    }
-    updated[sec.id] = txt;
-  }
-  return updated;
-}
-
-// ─────────────────────────────────────────────
-// Word export
-// ─────────────────────────────────────────────
-async function exportToDocx({ content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo }) {
-  if (!window.docx) {
-    await new Promise((resolve, reject) => {
-      const s = document.createElement("script");
-      s.src = "https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.min.js";
-      s.onload = resolve; s.onerror = reject;
-      document.head.appendChild(s);
-    });
-  }
-  // Перенумеровуємо таблиці та рисунки перед експортом
-  const numberedContent = renumberTablesAndFigures(content, displayOrder);
-
-  const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel, TableOfContents, Table, TableRow, TableCell, WidthType, BorderStyle, ExternalHyperlink } = window.docx;
-  const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
-  const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
-  const marg = methodInfo?.formatting?.margins || {};
-  const L = mmToTwip(marg.left   || 30);
-  const R = mmToTwip(marg.right  || 15);
-  const T = mmToTwip(marg.top    || 20);
-  const B = mmToTwip(marg.bottom || 20);
-  const INDENT = 709, LINE = 360;
-  const LINE_SINGLE = 240;
-
-  function cleanMarkdown(line) {
-    return line.replace(/^#{1,6}\s+/, "").replace(/\*\*(.+?)\*\*/g, "$1")
-      .replace(/\*(.+?)\*/g, "$1").replace(/^[-*]\s+/, "").replace(/^\d+\.\s+/, "").trim();
-  }
-  function isDuplicateTitle(firstLine, secLabel) {
-    if (!firstLine || !secLabel) return false;
-    const a = cleanMarkdown(firstLine).toLowerCase().replace(/\s+/g, " ").trim();
-    const b = secLabel.toLowerCase().replace(/\s+/g, " ").trim();
-    if (a === b) return true;
-    const numMatch = secLabel.match(/^(\d+\.\d+)/);
-    if (numMatch && a.startsWith(numMatch[1])) return true;
-    return false;
-  }
-  const FIG_INLINE_RE = /(?:рис(?:унок)?\.?\s*\d+(?:\.\d+)*|fig(?:ure)?\.?\s*\d+(?:\.\d+)*)/i;
-  function bodyPara(text) {
-    const hasFig = FIG_INLINE_RE.test(text || "");
-    return new Paragraph({
-      indent: { firstLine: INDENT },
-      spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
-      alignment: AlignmentType.BOTH,
-      children: [new TextRun({ text: text || "", font: FONT, size: SIZE, color: hasFig ? "B85C00" : "000000" })],
-    });
-  }
-  function heading1(text) {
-    return new Paragraph({
-      heading: HeadingLevel.HEADING_1,
-      spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
-      alignment: AlignmentType.CENTER, indent: { firstLine: 0 },
-      children: [new TextRun({ text: text.toUpperCase(), font: FONT, size: SIZE, bold: true, color: "000000" })],
-    });
-  }
-  function headingSubsection(text) {
-    return new Paragraph({
-      heading: HeadingLevel.HEADING_2,
-      spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
-      alignment: AlignmentType.LEFT, indent: { firstLine: INDENT },
-      children: [new TextRun({ text, font: FONT, size: SIZE, bold: true, color: "000000" })],
-    });
-  }
-  function makeTableDocx(lines) {
-    const border = { style: BorderStyle.SINGLE, size: 1, color: "000000" };
-    const cellBorders = { top: border, bottom: border, left: border, right: border };
-    const filteredLines = lines.filter(l => !/^\s*\|[-:| ]+\|\s*$/.test(l));
-    const rows = filteredLines.map((l, rowIndex) => {
-      const cells = l.replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.trim());
-      const isHeader = rowIndex === 0;
-      return new TableRow({
-        children: cells.map(cellText =>
-          new TableCell({
-            borders: cellBorders,
-            margins: { left: 57, right: 57, top: 57, bottom: 57 },
-            children: [new Paragraph({
-              alignment: isHeader ? AlignmentType.CENTER : AlignmentType.LEFT,
-              spacing: { line: 240, lineRule: "exact", before: 0, after: 0 },
-              children: [new TextRun({ text: cellText, font: FONT, size: 24, color: "000000", bold: isHeader })],
-            })],
-          })
-        ),
-      });
-    });
-    return new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
-      rows,
-    });
-  }
-
-  function makeBlocks(text, secLabel) {
-    if (!text) return [];
-    const result = [];
-    const lines = text.split("\n");
-    let firstContentLine = true;
-    let i = 0;
-    while (i < lines.length) {
-      const line = lines[i];
-      if (/^\s*\|/.test(line)) {
-        const tableLines = [];
-        while (i < lines.length && /^\s*\|/.test(lines[i])) {
-          tableLines.push(lines[i]);
-          i++;
-        }
-        if (tableLines.filter(l => !/^\s*\|[-:| ]+\|\s*$/.test(l)).length > 0) {
-          result.push(makeTableDocx(tableLines));
-          result.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
-        }
-        continue;
-      }
-      if (/^Таблиця\s+\d/.test(line.trim())) {
-        const tf = methodInfo?.formatting?.tableFormat || "";
-        const tAlignRight = /правий|right/i.test(tf);
-        const tCenter = /по\s*центру.*назв|назв.*по\s*центру/i.test(tf);
-        const tBold = /жирн|bold/i.test(tf);
-        const tTwoLine = tAlignRight && (tCenter || tBold);
-        const tAlign = tAlignRight ? AlignmentType.RIGHT : AlignmentType.BOTH;
-        const dashIdx = line.search(/ [–\-] /);
-        if (tTwoLine && dashIdx !== -1) {
-          // Рядок 1: "Таблиця X.Y" — праворуч
-          const numPart = line.trim().substring(0, dashIdx).trim();
-          const namePart = line.trim().substring(dashIdx + 3).trim();
-          result.push(new Paragraph({
-            alignment: AlignmentType.RIGHT,
-            spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
-            indent: { firstLine: 0 },
-            children: [new TextRun({ text: numPart, font: FONT, size: SIZE, color: "000000" })],
-          }));
-          // Рядок 2: назва — по центру, жирним
-          result.push(new Paragraph({
-            alignment: AlignmentType.CENTER,
-            spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
-            indent: { firstLine: 0 },
-            children: [new TextRun({ text: namePart, font: FONT, size: SIZE, bold: true, color: "000000" })],
-          }));
-        } else {
-          result.push(new Paragraph({
-            alignment: tAlignRight ? AlignmentType.RIGHT : AlignmentType.BOTH,
-            spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
-            indent: { firstLine: tAlignRight ? 0 : INDENT },
-            children: [new TextRun({ text: line.trim(), font: FONT, size: SIZE, bold: tBold, color: "000000" })],
-          }));
-        }
-        i++;
-        continue;
-      }
-      if (/^Рис\.\s+\d/.test(line.trim())) {
-        const ff = methodInfo?.formatting?.figureFormat || "";
-        const fBold = /жирн|bold/i.test(ff);
-        result.push(new Paragraph({
-          alignment: AlignmentType.CENTER,
-          spacing: { line: LINE, lineRule: "auto", before: 0, after: Math.round(LINE * 0.5) },
-          children: [new TextRun({ text: line.trim(), font: FONT, size: SIZE, bold: fBold, color: "B85C00" })],
-        }));
-        i++;
-        continue;
-      }
-      const raw = cleanMarkdown(line);
-      if (!raw) { i++; continue; }
-      if (firstContentLine && isDuplicateTitle(line, secLabel)) { firstContentLine = false; i++; continue; }
-      firstContentLine = false;
-      if (/^#{1,6}\s/.test(line.trim()) && raw) {
-        result.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
-        result.push(headingSubsection(raw));
-        result.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
-        i++; continue;
-      }
-      result.push(bodyPara(raw));
-      i++;
-    }
-    return result;
-  }
-
-  function sourceParaChildren(text) {
-    const URL_RE = /(https?:\/\/[^\s]+)/;
-    const parts = text.split(/(https?:\/\/[^\s]+)/);
-    return parts.map(part => {
-      if (URL_RE.test(part)) {
-        return new ExternalHyperlink({
-          link: part,
-          children: [new TextRun({ text: part, font: FONT, size: SIZE, color: "0563C1", underline: {} })],
-        });
-      }
-      return new TextRun({ text: part, font: FONT, size: SIZE, color: "000000" });
-    });
-  }
-  function sourcePara(text) {
-    const cleaned = text.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1").trim();
-    if (!cleaned) return null;
-    return new Paragraph({
-      spacing: { line: LINE, lineRule: "auto", before: 0, after: Math.round(LINE * 0.3) },
-      alignment: AlignmentType.BOTH,
-      indent: { firstLine: INDENT },
-      children: sourceParaChildren(cleaned),
-    });
-  }
-
-
-  const children = [];
-
-  // ── Сторінка 1: титульна ──
-  const alignMap = { left: AlignmentType.LEFT, center: AlignmentType.CENTER, right: AlignmentType.RIGHT };
-  const topicStr = info?.topic || "";
-  const applyTopic = (t) => {
-    let s = t.replace(/\[ТЕМА\]/g, topicStr);
-    if (topicStr) s = s.replace(/(Тема\s*[:：]\s*«\s*)([_\s]*)(\s*»)/g, `$1${topicStr}$3`);
-    return s;
-  };
-  const resolvedLines = titlePageLines?.length
-    ? titlePageLines.map(item => ({ ...item, text: applyTopic(item.text) }))
-    : (titlePage?.trim() ? titlePage.split("\n").map(text => ({ text: applyTopic(text), align: "center" })) : null);
-  if (resolvedLines) {
-    resolvedLines.forEach((item, idx) => {
-      children.push(new Paragraph({
-        alignment: alignMap[item.align] || AlignmentType.CENTER,
-        spacing: { line: LINE, lineRule: "auto", before: 0, after: idx === resolvedLines.length - 1 ? 0 : Math.round(LINE * 0.2) },
-        indent: { firstLine: 0 },
-        children: [new TextRun({ text: item.text, font: FONT, size: SIZE, color: "000000" })],
-      }));
-    });
-  } else {
-    children.push(new Paragraph({ spacing: { before: 0, after: 0, line: LINE, lineRule: "auto" }, children: [] }));
-  }
-
-  // ── Сторінка 2: ЗМІСТ (автоматичний Word TOC) ──
-  children.push(new Paragraph({
-    pageBreakBefore: true,
-    alignment: AlignmentType.CENTER,
-    spacing: { line: LINE_SINGLE, lineRule: "auto", before: 0, after: LINE_SINGLE * 2 },
-    children: [new TextRun({ text: "ЗМІСТ", font: FONT, size: SIZE, bold: true, color: "000000" })],
-  }));
-
-  // ── Сторінки 3+: основний текст ──
-  let lastChapter = null;
-  let firstMainSec = true;
-
-  for (let i = 0; i < displayOrder.length; i++) {
-    const sec = displayOrder[i]; const txt = numberedContent[sec.id];
-    if (!txt) continue;
-    const isMain = !["intro", "conclusions", "sources"].includes(sec.type);
-    const isSubsection = isMain && /^\d+\.\d+/.test(sec.id);
-    const thisChapter = isSubsection ? sec.id.split(".")[0] : null;
-
-    // Визначаємо чи потрібен page break
-    let needsPageBreak = true;
-    if (firstMainSec) { needsPageBreak = true; firstMainSec = false; }
-    else if (isSubsection) {
-      const prevSec = displayOrder.slice(0, i).reverse().find(s => numberedContent[s.id]);
-      const prevIsSubsection = prevSec && !["intro", "conclusions", "sources"].includes(prevSec.type) && /^\d+\.\d+/.test(prevSec.id || "");
-      needsPageBreak = !prevIsSubsection || thisChapter !== prevSec?.id?.split(".")?.[0];
-    }
-    if (needsPageBreak) children.push(new Paragraph({ pageBreakBefore: true, spacing: { before: 0, after: 0, line: LINE, lineRule: "auto" }, children: [] }));
-
-    if (sec.type === "sources") {
-      children.push(heading1(sec.label));
-      txt.split("\n").forEach(line => {
-        const p = sourcePara(line);
-        if (p) children.push(p);
-      });
-      continue;
-    }
-
-    if (!isSubsection) {
-      children.push(heading1(sec.label));
-    } else {
-      if (thisChapter !== lastChapter) {
-        lastChapter = thisChapter;
-        const rawTitle = sec.sectionTitle || `РОЗДІЛ ${thisChapter}`;
-        const alreadyHasPrefix = rawTitle.trim().toUpperCase().startsWith(`РОЗДІЛ ${thisChapter}`);
-        const chapterLabel = alreadyHasPrefix ? rawTitle.trim() : `РОЗДІЛ ${thisChapter}. ${rawTitle}`;
-        children.push(heading1(chapterLabel));
-      }
-      children.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
-      children.push(headingSubsection(sec.label));
-      children.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
-    }
-    children.push(...makeBlocks(txt, sec.label));
-  }
-
-  // ── ДОДАТКИ (після списку джерел) ──
-  if (appendicesText && appendicesText.trim()) {
-    children.push(new Paragraph({ pageBreakBefore: true, spacing: { before: 0, after: 0, line: LINE, lineRule: "auto" }, children: [] }));
-    // Загальний заголовок розділу
-    children.push(heading1("ДОДАТКИ"));
-    appendicesText.split("\n").forEach(line => {
-      const raw = line.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1").trim();
-      if (!raw) {
-        children.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
-        return;
-      }
-      if (/^ДОДАТОК\s+[А-ЯA-Z]/i.test(raw)) {
-        children.push(new Paragraph({
-          alignment: AlignmentType.RIGHT,
-          indent: { firstLine: 0 },
-          spacing: { line: LINE, lineRule: "auto", before: LINE, after: Math.round(LINE / 2) },
-          children: [new TextRun({ text: raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase(), font: FONT, size: SIZE, bold: false, color: "000000" })],
-        }));
-      } else {
-        children.push(new Paragraph({
-          indent: { firstLine: INDENT },
-          spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
-          alignment: AlignmentType.BOTH,
-          children: [new TextRun({ text: raw, font: FONT, size: SIZE, color: "000000" })],
-        }));
-      }
-    });
-  }
-
-  const doc = new Document({
-    features: { updateFields: true },
-    styles: {
-      default: { document: { run: { font: FONT, size: SIZE, color: "000000" }, paragraph: { spacing: { line: LINE, lineRule: "auto" } } } },
-      paragraphStyles: [
-        { id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal", run: { font: FONT, size: SIZE, bold: true, color: "000000" }, paragraph: { spacing: { line: LINE, lineRule: "auto", before: 0, after: LINE }, alignment: AlignmentType.CENTER, indent: { firstLine: 0 } } },
-        { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", run: { font: FONT, size: SIZE, bold: true, color: "000000" }, paragraph: { spacing: { line: LINE, lineRule: "auto", before: LINE, after: Math.round(LINE / 2) }, alignment: AlignmentType.LEFT, indent: { firstLine: INDENT } } },
-      ],
-    },
-    sections: [{
-      properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: T, right: R, bottom: B, left: L } }, pageNumberStart: 1, titlePage: true },
-      headers: {
-        first: new Header({ children: [] }),
-        default: new Header({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, spacing: { before: 0, after: 0 }, children: [new TextRun({ children: [PageNumber.CURRENT], font: FONT, size: SIZE_NUM, color: "000000" })] })] }),
-      },
-      children,
-    }],
-  });
-
-  const blob = await Packer.toBlob(doc);
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  const safeName = (info?.topic || "робота").replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
-  a.href = url; a.download = safeName + ".docx";
-  document.body.appendChild(a); a.click(); document.body.removeChild(a); a.href = "";
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
-}
-
-// ─────────────────────────────────────────────
-// Export plan to docx
-// ─────────────────────────────────────────────
-async function exportPlanToDocx({ sections, info, methodInfo }) {
-  if (!window.docx) {
-    await new Promise((resolve, reject) => {
-      const s = document.createElement("script");
-      s.src = "https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.min.js";
-      s.onload = resolve; s.onerror = reject;
-      document.head.appendChild(s);
-    });
-  }
-  const { Document, Packer, Paragraph, TextRun, AlignmentType, HeadingLevel } = window.docx;
-  const FONT = "Times New Roman", SIZE = 28, LINE = 360, INDENT = 709;
-  const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
-  const marg = methodInfo?.formatting?.margins || {};
-  const L = mmToTwip(marg.left   || 30);
-  const R = mmToTwip(marg.right  || 15);
-  const T = mmToTwip(marg.top    || 20);
-  const B = mmToTwip(marg.bottom || 20);
-
-  const intro = sections.find(s => s.type === "intro");
-  const concs = sections.find(s => s.type === "conclusions");
-  const srcs = sections.find(s => s.type === "sources");
-  const main = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
-  const ordered = [intro, ...main, concs, srcs].filter(Boolean);
-
-  const children = [];
-  if (info?.topic) {
-    children.push(new Paragraph({
-      alignment: AlignmentType.CENTER,
-      spacing: { line: LINE, lineRule: "auto", before: 0, after: LINE * 2 },
-      children: [new TextRun({ text: info.topic, font: FONT, size: SIZE, color: "000000" })],
-    }));
-  }
-
-  const groups = {};
-  for (const s of main) { const top = s.id.split(".")[0]; if (!groups[top]) groups[top] = []; groups[top].push(s); }
-
-  if (intro) children.push(new Paragraph({ heading: HeadingLevel.HEADING_1, spacing: { line: LINE, lineRule: "auto", before: LINE, after: Math.round(LINE / 2) }, alignment: AlignmentType.LEFT, indent: { firstLine: 0 }, children: [new TextRun({ text: "ВСТУП", font: FONT, size: SIZE, bold: true, color: "000000" })] }));
-
-  for (const [num, items] of Object.entries(groups)) {
-    const rawTitle = items[0].sectionTitle || `РОЗДІЛ ${num}`;
-    const alreadyHasPrefix = rawTitle.trim().toUpperCase().startsWith(`РОЗДІЛ ${num}`);
-    const secLabel = alreadyHasPrefix ? rawTitle.trim() : `РОЗДІЛ ${num}. ${rawTitle}`;
-    children.push(new Paragraph({ heading: HeadingLevel.HEADING_1, spacing: { line: LINE, lineRule: "auto", before: LINE, after: Math.round(LINE / 2) }, alignment: AlignmentType.LEFT, indent: { firstLine: 0 }, children: [new TextRun({ text: secLabel, font: FONT, size: SIZE, bold: true, color: "000000" })] }));
-    for (const s of items) {
-      if (/^\d+\.\d+/.test(s.id)) {
-        children.push(new Paragraph({ heading: HeadingLevel.HEADING_2, spacing: { line: LINE, lineRule: "auto", before: Math.round(LINE / 2), after: 0 }, alignment: AlignmentType.LEFT, indent: { firstLine: INDENT }, children: [new TextRun({ text: s.label, font: FONT, size: SIZE, color: "000000" })] }));
-      }
-    }
-    const chapConc = sections.find(s => s.type === "chapter_conclusion" && s.id === `${num}.conclusions`);
-    if (chapConc) {
-      children.push(new Paragraph({ heading: HeadingLevel.HEADING_2, spacing: { line: LINE, lineRule: "auto", before: Math.round(LINE / 2), after: 0 }, alignment: AlignmentType.LEFT, indent: { firstLine: INDENT }, children: [new TextRun({ text: chapConc.label, font: FONT, size: SIZE, color: "000000" })] }));
-    }
-  }
-  if (concs) children.push(new Paragraph({ heading: HeadingLevel.HEADING_1, spacing: { line: LINE, lineRule: "auto", before: LINE, after: Math.round(LINE / 2) }, alignment: AlignmentType.LEFT, indent: { firstLine: 0 }, children: [new TextRun({ text: "ВИСНОВКИ", font: FONT, size: SIZE, bold: true, color: "000000" })] }));
-  if (srcs) children.push(new Paragraph({ heading: HeadingLevel.HEADING_1, spacing: { line: LINE, lineRule: "auto", before: LINE, after: Math.round(LINE / 2) }, alignment: AlignmentType.LEFT, indent: { firstLine: 0 }, children: [new TextRun({ text: "СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ", font: FONT, size: SIZE, bold: true, color: "000000" })] }));
-
-  const doc = new Document({
-    styles: { default: { document: { run: { font: FONT, size: SIZE, color: "000000" }, paragraph: { spacing: { line: LINE, lineRule: "auto" } } } } },
-    sections: [{ properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: T, right: R, bottom: B, left: L } } }, children }],
-  });
-
-  const blob = await Packer.toBlob(doc);
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  const safeName = ("план_" + (info?.topic || "робота")).replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
-  a.href = url; a.download = safeName + ".docx";
-  document.body.appendChild(a); a.click(); document.body.removeChild(a); a.href = "";
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
-}
-
-// ─────────────────────────────────────────────
-// Додатки (.docx)
-// ─────────────────────────────────────────────
-async function exportAppendixToDocx(text, info, methodInfo) {
-  if (!window.docx) {
-    await new Promise((resolve, reject) => {
-      const s = document.createElement("script");
-      s.src = "https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.min.js";
-      s.onload = resolve; s.onerror = reject;
-      document.head.appendChild(s);
-    });
-  }
-  const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel, Table, TableRow, TableCell, WidthType, BorderStyle } = window.docx;
-  const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
-  const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
-  const marg = methodInfo?.formatting?.margins || {};
-  const L = mmToTwip(marg.left   || 30);
-  const R = mmToTwip(marg.right  || 15);
-  const T = mmToTwip(marg.top    || 20);
-  const B = mmToTwip(marg.bottom || 20);
-  const INDENT = 709, LINE = 360;
-
-  function cleanMarkdown(line) {
-    return line.replace(/^#{1,6}\s+/, "").replace(/\*\*(.+?)\*\*/g, "$1")
-      .replace(/\*(.+?)\*/g, "$1").replace(/^[-*]\s+/, "").replace(/^\d+\.\s+/, "").trim();
-  }
-  function makeTableDocx(lines) {
-    const border = { style: BorderStyle.SINGLE, size: 1, color: "000000" };
-    const cellBorders = { top: border, bottom: border, left: border, right: border };
-    const filteredLines = lines.filter(l => !/^\s*\|[-:| ]+\|\s*$/.test(l));
-    const rows = filteredLines.map((l, rowIndex) => {
-      const cells = l.replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.trim());
-      const isHeader = rowIndex === 0;
-      return new TableRow({
-        children: cells.map(cellText =>
-          new TableCell({
-            borders: cellBorders,
-            margins: { left: 57, right: 57, top: 57, bottom: 57 },
-            children: [new Paragraph({
-              alignment: isHeader ? AlignmentType.CENTER : AlignmentType.LEFT,
-              spacing: { line: 240, lineRule: "exact", before: 0, after: 0 },
-              children: [new TextRun({ text: cellText, font: FONT, size: 24, color: "000000", bold: isHeader })],
-            })],
-          })
-        ),
-      });
-    });
-    return new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows });
-  }
-
-  const children = [];
-  const lines = text.split("\n");
-  let i = 0;
-  while (i < lines.length) {
-    const line = lines[i];
-    if (/^\s*\|/.test(line)) {
-      const tableLines = [];
-      while (i < lines.length && /^\s*\|/.test(lines[i])) { tableLines.push(lines[i]); i++; }
-      if (tableLines.filter(l => !/^\s*\|[-:| ]+\|\s*$/.test(l)).length > 0) {
-        children.push(makeTableDocx(tableLines));
-        children.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
-      }
-      continue;
-    }
-    if (/^Таблиця\s+\d/.test(line.trim())) {
-      const tf = methodInfo?.formatting?.tableFormat || "";
-      const tAlignRight = /правий|right/i.test(tf);
-      const tCenter = /по\s*центру.*назв|назв.*по\s*центру/i.test(tf);
-      const tBold = /жирн|bold/i.test(tf);
-      const tTwoLine = tAlignRight && (tCenter || tBold);
-      const dashIdx = line.search(/ [–\-] /);
-      if (tTwoLine && dashIdx !== -1) {
-        const numPart = line.trim().substring(0, dashIdx).trim();
-        const namePart = line.trim().substring(dashIdx + 3).trim();
-        children.push(new Paragraph({
-          alignment: AlignmentType.RIGHT,
-          spacing: { line: LINE, lineRule: "auto", before: Math.round(LINE * 0.5), after: 0 },
-          indent: { firstLine: 0 },
-          children: [new TextRun({ text: numPart, font: FONT, size: SIZE, color: "000000" })],
-        }));
-        children.push(new Paragraph({
-          alignment: AlignmentType.CENTER,
-          spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
-          indent: { firstLine: 0 },
-          children: [new TextRun({ text: namePart, font: FONT, size: SIZE, bold: true, color: "000000" })],
-        }));
-      } else {
-        children.push(new Paragraph({
-          alignment: tAlignRight ? AlignmentType.RIGHT : AlignmentType.BOTH,
-          spacing: { line: LINE, lineRule: "auto", before: Math.round(LINE * 0.5), after: 0 },
-          indent: { firstLine: tAlignRight ? 0 : INDENT },
-          children: [new TextRun({ text: line.trim(), font: FONT, size: SIZE, bold: tBold, color: "000000" })],
-        }));
-      }
-      i++; continue;
-    }
-    if (/^Рис\.\s+\d/.test(line.trim())) {
-      const ff = methodInfo?.formatting?.figureFormat || "";
-      const fBold = /жирн|bold/i.test(ff);
-      children.push(new Paragraph({
-        alignment: AlignmentType.CENTER,
-        spacing: { line: LINE, lineRule: "auto", before: 0, after: Math.round(LINE * 0.5) },
-        children: [new TextRun({ text: line.trim(), font: FONT, size: SIZE, bold: fBold, color: "000000" })],
-      }));
-      i++; continue;
-    }
-    const raw = cleanMarkdown(line);
-    if (!raw) { i++; continue; }
-    if (/^ДОДАТОК\s+[А-ЯA-Z]/i.test(raw)) {
-      children.push(new Paragraph({
-        spacing: { line: LINE, lineRule: "auto", before: LINE, after: Math.round(LINE / 2) },
-        alignment: AlignmentType.RIGHT,
-        children: [new TextRun({ text: raw.toUpperCase(), font: FONT, size: SIZE, bold: true, color: "000000" })],
-      }));
-      i++; continue;
-    }
-    if (/^#{1,6}\s/.test(line.trim())) {
-      children.push(new Paragraph({
-        heading: HeadingLevel.HEADING_2,
-        spacing: { line: LINE, lineRule: "auto", before: LINE, after: Math.round(LINE / 2) },
-        alignment: AlignmentType.LEFT,
-        indent: { firstLine: INDENT },
-        children: [new TextRun({ text: raw, font: FONT, size: SIZE, bold: true, color: "000000" })],
-      }));
-      i++; continue;
-    }
-    children.push(new Paragraph({
-      indent: { firstLine: INDENT },
-      spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
-      alignment: AlignmentType.BOTH,
-      children: [new TextRun({ text: raw, font: FONT, size: SIZE, color: "000000" })],
-    }));
-    i++;
-  }
-
-  const doc = new Document({
-    styles: { default: { document: { run: { font: FONT, size: SIZE, color: "000000" }, paragraph: { spacing: { line: LINE, lineRule: "auto" } } } } },
-    sections: [{
-      properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: T, right: R, bottom: B, left: L } }, pageNumberStart: 1 },
-      headers: { default: new Header({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, spacing: { before: 0, after: 0 }, children: [new TextRun({ children: [PageNumber.CURRENT], font: FONT, size: SIZE_NUM, color: "000000" })] })] }) },
-      children,
-    }],
-  });
-
-  const blob = await Packer.toBlob(doc);
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  const safeName = (info?.topic || "додатки").replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
-  a.href = url; a.download = safeName + " - додатки.docx";
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
-}
-
-// ─────────────────────────────────────────────
-// Доповідь (.docx)
-// ─────────────────────────────────────────────
-async function exportSpeechToDocx(text, info, methodInfo) {
-  if (!window.docx) {
-    await new Promise((resolve, reject) => {
-      const s = document.createElement("script");
-      s.src = "https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.min.js";
-      s.onload = resolve; s.onerror = reject;
-      document.head.appendChild(s);
-    });
-  }
-  const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header } = window.docx;
-  const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
-  const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
-  const marg = methodInfo?.formatting?.margins || {};
-  const L = mmToTwip(marg.left   || 30);
-  const R = mmToTwip(marg.right  || 15);
-  const T = mmToTwip(marg.top    || 20);
-  const B = mmToTwip(marg.bottom || 20);
-  const INDENT = 709, LINE = 360;
-
-  const children = text.split("\n").map(line => {
-    const raw = line.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1").trim();
-    if (!raw) return new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] });
-    if (/^Слайд\s+\d+/i.test(raw)) {
-      return new Paragraph({
-        spacing: { line: LINE, lineRule: "auto", before: 120, after: 0 },
-        alignment: AlignmentType.LEFT,
-        children: [new TextRun({ text: raw, font: FONT, size: SIZE, bold: true, color: "000000" })],
-      });
-    }
-    return new Paragraph({
-      indent: { firstLine: INDENT },
-      spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
-      alignment: AlignmentType.BOTH,
-      children: [new TextRun({ text: raw, font: FONT, size: SIZE, color: "000000" })],
-    });
-  });
-
-  const doc = new Document({
-    styles: { default: { document: { run: { font: FONT, size: SIZE, color: "000000" }, paragraph: { spacing: { line: LINE, lineRule: "auto" } } } } },
-    sections: [{
-      properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: T, right: R, bottom: B, left: L } }, pageNumberStart: 1 },
-      headers: { default: new Header({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, spacing: { before: 0, after: 0 }, children: [new TextRun({ children: [PageNumber.CURRENT], font: FONT, size: SIZE_NUM, color: "000000" })] })] }) },
-      children,
-    }],
-  });
-
-  const blob = await Packer.toBlob(doc);
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  const safeName = (info?.topic || "доповідь").replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
-  a.href = url; a.download = safeName + " - доповідь.docx";
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
-}
-
-// ─────────────────────────────────────────────
-// Presentation export (.pptx) — v2
-// ─────────────────────────────────────────────
-async function exportToPptxFile(slideData, info) {
-  if (!window.PptxGenJS) {
-    await new Promise((resolve, reject) => {
-      const s = document.createElement("script");
-      s.src = "https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js";
-      s.onload = resolve; s.onerror = reject;
-      document.head.appendChild(s);
-    });
-  }
-
-  const pptx = new window.PptxGenJS();
-  pptx.layout = "LAYOUT_16x9";
-
-  const THEMES = {
-    midnight: { bg: "1E2761", accent: "CADCFC", light: "EEF3FF", text: "1E2761" },
-    forest: { bg: "2C5F2D", accent: "97BC62", light: "F0F7F0", text: "1A3A1B" },
-    coral: { bg: "B85042", accent: "F5C6C0", light: "FDF8F5", text: "5A1A0F" },
-    slate: { bg: "36454F", accent: "C8D8E4", light: "F5F5F5", text: "2A3540" },
-    warm: { bg: "1A1A14", accent: "D4CF80", light: "FAF8F3", text: "1A1A14" },
-  };
-
-  const detectTheme = (info) => {
-    const dir = ((info?.direction || "") + " " + (info?.subject || "")).toLowerCase();
-    if (/it|інформ|програм|комп|tech|техн|систем|цифр/.test(dir)) return "midnight";
-    if (/медицин|біол|фарм|здоров|лікар/.test(dir)) return "forest";
-    if (/право|психол|соціол|педагог|гуманіт|мов|освіт/.test(dir)) return "coral";
-    if (/економ|менедж|фінанс|облік|маркет|бізнес/.test(dir)) return "slate";
-    return "warm";
-  };
-
-  const themeName = (slideData.theme && THEMES[slideData.theme]) ? slideData.theme : detectTheme(info);
-  const T = THEMES[themeName];
-
-  const STRIP_W = 0.18;
-  const CONTENT_X = STRIP_W + 0.17;
-  const CONTENT_W = 10 - CONTENT_X - 0.15;
-  const TITLE_H = 0.9;
-
-  // ── Helper: light slide frame + title ──
-  const addTitle = (s, title) => {
-    s.background = { color: T.light };
-    s.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: STRIP_W, h: 5.625, fill: { color: T.bg }, line: { type: "none" } });
-    s.addText(title || "", {
-      x: CONTENT_X - 0.05, y: 0.06, w: 10 - CONTENT_X, h: TITLE_H,
-      fontSize: 22, bold: true, color: T.text,
-      fontFace: "Georgia", align: "center", valign: "middle",
-    });
-  };
-
-  // ── renderHero: темний повноекранний слайд (title / thanks) ──
-  const renderHero = (s, data) => {
-    s.background = { color: T.bg };
-    s.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 10, h: 0.13, fill: { color: T.accent }, line: { type: "none" } });
-    s.addShape(pptx.ShapeType.rect, { x: 0, y: 5.5, w: 10, h: 0.125, fill: { color: T.accent }, line: { type: "none" } });
-    s.addShape(pptx.ShapeType.rect, { x: 0.45, y: 1.3, w: 0.07, h: 2.7, fill: { color: T.accent }, line: { type: "none" } });
-    s.addText(data.title || info?.topic || "", {
-      x: 0.7, y: 1.2, w: 8.8, h: 2.1,
-      fontSize: 34, bold: true, color: "FFFFFF",
-      fontFace: "Georgia", align: "left", valign: "middle", wrap: true,
-    });
-    if (data.subtitle) {
-      s.addText(data.subtitle, {
-        x: 0.7, y: 3.4, w: 8.8, h: 1.2,
-        fontSize: 16, color: T.accent, fontFace: "Calibri",
-        align: "left", valign: "top", wrap: true,
-      });
-    }
-  };
-
-  // ── renderTwoColumn: текст ліво + кольоровий блок право ──
-  const renderTwoColumn = (s, data) => {
-    addTitle(s, data.title);
-    const COL_Y = TITLE_H + 0.25;
-    const COL_H = 5.625 - COL_Y - 0.25;
-    s.addText(data.left || data.content || "", {
-      x: CONTENT_X, y: COL_Y, w: 4.3, h: COL_H,
-      fontSize: 14, color: "333333", fontFace: "Calibri",
-      valign: "top", wrap: true, paraSpaceAfter: 8,
-    });
-    const RIGHT_X = CONTENT_X + 4.5;
-    const RIGHT_W = 10 - RIGHT_X - 0.15;
-    s.addShape(pptx.ShapeType.roundRect, {
-      x: RIGHT_X, y: COL_Y, w: RIGHT_W, h: COL_H,
-      fill: { color: T.bg }, line: { type: "none" }, rectRadius: 0.1,
-    });
-    if (data.right_type === "stat") {
-      s.addText(data.right_value || "", {
-        x: RIGHT_X, y: COL_Y + 0.35, w: RIGHT_W, h: 1.5,
-        fontSize: 54, bold: true, color: T.accent,
-        fontFace: "Calibri", align: "center", valign: "middle",
-      });
-      s.addText(data.right_label || "", {
-        x: RIGHT_X + 0.1, y: COL_Y + 1.95, w: RIGHT_W - 0.2, h: 0.65,
-        fontSize: 14, color: "FFFFFF", fontFace: "Calibri", align: "center", wrap: true,
-      });
-    } else {
-      s.addText(data.right || data.key_point || "", {
-        x: RIGHT_X + 0.2, y: COL_Y + 0.25, w: RIGHT_W - 0.35, h: COL_H - 0.4,
-        fontSize: 14, color: "FFFFFF", fontFace: "Calibri",
-        valign: "top", wrap: true, paraSpaceAfter: 8,
-      });
-    }
-  };
-
-  // ── renderStatCallout: 1-3 великих числа на картках ──
-  const renderStatCallout = (s, data) => {
-    addTitle(s, data.title);
-    const v = data.visual || {};
-    const stats = v.stats || (v.stat
-      ? [{ value: v.stat, label: v.stat_label || "" }, ...(v.stat2 ? [{ value: v.stat2, label: v.stat2_label || "" }] : [])]
-      : []);
-    const n = Math.min(stats.length, 3);
-    const CARD_Y = TITLE_H + 0.2;
-    const CARD_H = 2.15;
-    if (n > 0) {
-      const cardW = 2.7;
-      const totalW = n * cardW + (n - 1) * 0.2;
-      const startX = (10 - totalW) / 2;
-      stats.slice(0, 3).forEach((st, i) => {
-        const cx = startX + i * (cardW + 0.2);
-        s.addShape(pptx.ShapeType.roundRect, {
-          x: cx, y: CARD_Y, w: cardW, h: CARD_H,
-          fill: { color: T.bg }, line: { type: "none" }, rectRadius: 0.12,
-        });
-        s.addText(st.value || "", {
-          x: cx, y: CARD_Y + 0.1, w: cardW, h: 1.35,
-          fontSize: 54, bold: true, color: T.accent,
-          fontFace: "Calibri", align: "center", valign: "middle",
-        });
-        s.addText(st.label || "", {
-          x: cx + 0.1, y: CARD_Y + 1.5, w: cardW - 0.2, h: 0.55,
-          fontSize: 13, color: "FFFFFF", fontFace: "Calibri", align: "center", wrap: true,
-        });
-      });
-    }
-    if (data.content) {
-      s.addText(data.content, {
-        x: CONTENT_X, y: CARD_Y + CARD_H + 0.2, w: CONTENT_W, h: 5.625 - (CARD_Y + CARD_H + 0.2) - 0.2,
-        fontSize: 14, color: "444444", fontFace: "Calibri", wrap: true, valign: "top",
-      });
-    }
-  };
-
-  // ── renderIconList: список з іконками (goals / conclusions) ──
-  const renderIconList = (s, data) => {
-    addTitle(s, data.title);
-    const ICONS_DEFAULT = ["🎯", "📊", "🔬", "💡", "✅", "→"];
-    const rawItems = data.visual?.items || data.points || (data.content ? data.content.split("\n").filter(Boolean) : []);
-    const n = Math.min(rawItems.length, 5);
-    if (!n) return;
-    const COL_Y = TITLE_H + 0.2;
-    const availH = 5.625 - COL_Y - 0.25;
-    const itemH = availH / n;
-    const circSize = Math.min(0.52, itemH * 0.55);
-    rawItems.slice(0, 5).forEach((item, i) => {
-      const ty = COL_Y + i * itemH;
-      const icon = typeof item === "object" ? (item.icon || ICONS_DEFAULT[i % ICONS_DEFAULT.length]) : ICONS_DEFAULT[i % ICONS_DEFAULT.length];
-      const header = typeof item === "object" ? item.header : null;
-      const text = typeof item === "object" ? (item.text || item.header) : item;
-      s.addShape(pptx.ShapeType.ellipse, {
-        x: CONTENT_X, y: ty + (itemH - circSize) / 2, w: circSize, h: circSize,
-        fill: { color: T.bg }, line: { type: "none" },
-      });
-      s.addText(String(icon), {
-        x: CONTENT_X, y: ty + (itemH - circSize) / 2, w: circSize, h: circSize,
-        fontSize: 14, align: "center", valign: "middle",
-      });
-      const textX = CONTENT_X + circSize + 0.14;
-      const textW = CONTENT_W - circSize - 0.14;
-      if (header) {
-        s.addText(header, {
-          x: textX, y: ty + (itemH - circSize) / 2, w: textW, h: circSize * 0.42,
-          fontSize: 14, bold: true, color: T.text, fontFace: "Calibri", valign: "bottom",
-        });
-        s.addText(String(text), {
-          x: textX, y: ty + (itemH - circSize) / 2 + circSize * 0.42, w: textW, h: circSize * 0.58,
-          fontSize: 12, color: "555555", fontFace: "Calibri", valign: "top", wrap: true,
-        });
-      } else {
-        s.addText(String(text), {
-          x: textX, y: ty, w: textW, h: itemH,
-          fontSize: 14, color: T.text, fontFace: "Calibri", valign: "middle", wrap: true,
-        });
-      }
-    });
-  };
-
-  // ── renderHighlightBox: смугасті рядки + опціональний акцент-футер ──
-  const renderHighlightBox = (s, data) => {
-    addTitle(s, data.title);
-    const items = data.visual?.items || data.points || (data.content ? data.content.split("\n").filter(Boolean) : []);
-    const hasFooter = !!(data.accent || data.gap);
-    const footerH = 0.88;
-    const COL_Y = TITLE_H + 0.15;
-    const availH = 5.625 - COL_Y - (hasFooter ? footerH + 0.22 : 0.25);
-    const n = Math.min(items.length, 4);
-    if (n) {
-      const itemH = availH / n;
-      items.slice(0, 4).forEach((pt, i) => {
-        const ty = COL_Y + i * itemH;
-        s.addShape(pptx.ShapeType.rect, {
-          x: CONTENT_X, y: ty + 0.05, w: CONTENT_W, h: itemH - 0.1,
-          fill: { color: i % 2 === 0 ? T.light : "FFFFFF" }, line: { color: T.accent, w: 0.5 },
-        });
-        s.addShape(pptx.ShapeType.rect, {
-          x: CONTENT_X, y: ty + 0.05, w: 0.1, h: itemH - 0.1,
-          fill: { color: T.bg }, line: { type: "none" },
-        });
-        const text = typeof pt === "object" ? (pt.text || pt.header) : pt;
-        s.addText(String(text), {
-          x: CONTENT_X + 0.18, y: ty + 0.05, w: CONTENT_W - 0.22, h: itemH - 0.1,
-          fontSize: 13, color: T.text, fontFace: "Calibri", valign: "middle", wrap: true,
-        });
-      });
-    }
-    if (hasFooter) {
-      const gy = 5.625 - footerH - 0.1;
-      s.addShape(pptx.ShapeType.rect, { x: CONTENT_X, y: gy, w: CONTENT_W, h: footerH, fill: { color: T.accent }, line: { type: "none" } });
-      s.addText(String(data.accent || data.gap), {
-        x: CONTENT_X + 0.15, y: gy, w: CONTENT_W - 0.3, h: footerH,
-        fontSize: 13, bold: true, color: T.text, fontFace: "Calibri", align: "left", valign: "middle", wrap: true,
-      });
-    }
-  };
-
-  // ── renderNumberedSteps: картки-кроки 1→2→3→4 (методи / процеси) ──
-  const renderNumberedSteps = (s, data) => {
-    addTitle(s, data.title);
-    const steps = data.visual?.items || data.steps
-      || (data.points ? data.points.map((p, i) => ({ num: String(i + 1), title: "", text: p })) : []);
-    const n = Math.min(steps.length, 4);
-    if (!n) return;
-    const COL_Y = TITLE_H + 0.2;
-    const cardW = (CONTENT_W - (n - 1) * 0.15) / n;
-    const cardH = 5.625 - COL_Y - 0.25;
-    steps.slice(0, 4).forEach((st, i) => {
-      const cx = CONTENT_X + i * (cardW + 0.15);
-      if (i < n - 1) {
-        s.addShape(pptx.ShapeType.rect, {
-          x: cx + cardW + 0.01, y: COL_Y + cardH / 2 - 0.04, w: 0.13, h: 0.07,
-          fill: { color: T.accent }, line: { type: "none" },
-        });
-      }
-      s.addShape(pptx.ShapeType.rect, {
-        x: cx, y: COL_Y, w: cardW, h: cardH,
-        fill: { color: T.light }, line: { color: T.accent, w: 0.75 },
-      });
-      const cSize = 0.52;
-      s.addShape(pptx.ShapeType.ellipse, {
-        x: cx + (cardW - cSize) / 2, y: COL_Y + 0.12, w: cSize, h: cSize,
-        fill: { color: T.bg }, line: { type: "none" },
-      });
-      s.addText(st.num || String(i + 1), {
-        x: cx + (cardW - cSize) / 2, y: COL_Y + 0.12, w: cSize, h: cSize,
-        fontSize: 16, bold: true, color: "FFFFFF", fontFace: "Calibri", align: "center", valign: "middle",
-      });
-      if (st.title) {
-        s.addText(st.title, {
-          x: cx + 0.1, y: COL_Y + 0.78, w: cardW - 0.2, h: 0.55,
-          fontSize: 13, bold: true, color: T.text, fontFace: "Georgia", align: "center", valign: "middle", wrap: true,
-        });
-      }
-      const textY = COL_Y + (st.title ? 1.42 : 0.82);
-      s.addText(st.text || (typeof st === "string" ? st : ""), {
-        x: cx + 0.1, y: textY, w: cardW - 0.2, h: COL_Y + cardH - textY - 0.1,
-        fontSize: 12, color: "444444", fontFace: "Calibri", align: "left", valign: "top", wrap: true,
-      });
-    });
-  };
-
-  // ── Dispatch ──
-  for (const slide of (slideData.slides || [])) {
-    const s = pptx.addSlide();
-    switch (slide.layout) {
-      case "hero":
-      case "dark_title": renderHero(s, slide); break;
-      case "two_column": renderTwoColumn(s, slide); break;
-      case "stat_callout": renderStatCallout(s, slide); break;
-      case "icon_list":
-      case "icon_grid": renderIconList(s, slide); break;
-      case "numbered_steps":
-      case "timeline": renderNumberedSteps(s, slide); break;
-      default: renderHighlightBox(s, slide); break;
-    }
-  }
-
-  const safeName = (info?.topic || "презентація").replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
-  await pptx.writeFile({ fileName: safeName + " - презентація.pptx" });
-}
-
-// ─────────────────────────────────────────────
-// Constants
-// ─────────────────────────────────────────────
-const MODEL = "claude-sonnet-4-6";        // для генерації тексту
-const MODEL_FAST = "claude-haiku-4-5-20251001"; // для JSON-задач (аналіз, план, ключові слова)
-
-// ── Звукове сповіщення ──
-// Щоб замінити на свій звук: покладіть файл (mp3/wav/ogg) в папку /public
-// і замініть CUSTOM_SOUND_URL на шлях, наприклад "/sounds/done.mp3"
-const CUSTOM_SOUND_URL = "/sounds/hi.mp3"; // або "/sounds/done.mp3"
-
-function _playAudioNow() {
-  if (CUSTOM_SOUND_URL) {
-    try { new Audio(CUSTOM_SOUND_URL).play(); } catch { }
-    return;
-  }
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const notes = [523.25, 659.25, 783.99, 1046.5];
-    notes.forEach((freq, i) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain); gain.connect(ctx.destination);
-      osc.type = "sine";
-      osc.frequency.value = freq;
-      const t = ctx.currentTime + i * 0.15;
-      gain.gain.setValueAtTime(0, t);
-      gain.gain.linearRampToValueAtTime(0.18, t + 0.04);
-      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
-      osc.start(t); osc.stop(t + 0.35);
-    });
-  } catch { }
-}
-
-function playDoneSound() {
-  if (!document.hidden) {
-    _playAudioNow();
-    return;
-  }
-  // Вкладка прихована — показуємо браузерне сповіщення
-  const showNotification = () => {
-    try {
-      new Notification("Текст готовий!", {
-        body: "Генерація завершена. Повертайтесь до вкладки.",
-        icon: "/favicon.ico",
-        silent: false,
-      });
-    } catch { }
-  };
-  if ("Notification" in window) {
-    if (Notification.permission === "granted") {
-      showNotification();
-    } else if (Notification.permission !== "denied") {
-      Notification.requestPermission().then(p => { if (p === "granted") showNotification(); });
-    }
-  }
-  // Запасний варіант: грати звук коли користувач повернеться на вкладку
-  const onVisible = () => {
-    if (!document.hidden) {
-      document.removeEventListener("visibilitychange", onVisible);
-      _playAudioNow();
-    }
-  };
-  document.addEventListener("visibilitychange", onVisible);
-}
-
-function buildSYS(lang = "Українська", methodInfo = null) {
-  const isEnglish = /англ|english/i.test(lang || "");
-  const langLine = isEnglish
-    ? "Language: Write ONLY in English. All content, headings, and text must be in English."
-    : `Мова відповіді: ТІЛЬКИ ${lang || "українська"}. Весь текст, заголовки та зміст — цією мовою.`;
-
-  const forbiddenWords = isEnglish
-    ? "FORBIDDEN words (and derivatives): aspect, important, special, significant, key, critical, fundamental."
-    : "ЗАБОРОНЕНІ СЛОВА (та всі похідні): аспект, важливий, особливий, значущий, ключовий, критичний, фундаментальний.";
-
-  const mTableFormat = methodInfo?.formatting?.tableFormat;
-  const mFigureFormat = methodInfo?.formatting?.figureFormat;
-
-  const tableRules = mTableFormat
-    ? `ТАБЛИЦІ — обов'язкові правила (відповідно до методички):
-1. Нумерація таблиць — послідовно у межах розділу: Таблиця X.Y (де X — номер розділу, Y — порядковий номер таблиці в цьому розділі).
-2. Оформлення підпису згідно методички: ${mTableFormat}. Підпис розміщуй на окремому рядку одразу перед першим рядком таблиці (|).
-3. В тексті підрозділу перед таблицею обов'язково є речення що посилається на неї, наприклад: "наведено в Таблиці X.Y", "представлено в Таблиці X.Y" тощо.`
-    : `ТАБЛИЦІ — обов'язкові правила:
-1. Перед кожною таблицею (на окремому рядку, одразу перед першим рядком |) пиши підпис: Таблиця X.Y – Назва таблиці (де X — номер розділу, Y — порядковий номер таблиці в цьому розділі, після тире назва таблиці).
-2. В тексті підрозділу перед таблицею обов'язково є речення що посилається на неї, наприклад: "наведено в Таблиці X.Y", "представлено в Таблиці X.Y", "показано в Таблиці X.Y" тощо. Без такого посилання таблиця не з'являється.`;
-
-  const figureRules = mFigureFormat
-    ? `РИСУНКИ — обов'язкові правила (відповідно до методички):
-1. Нумерація рисунків — послідовно у межах розділу: Рис. X.Y (де X — номер розділу, Y — порядковий номер рисунку в цьому розділі).
-2. Оформлення підпису згідно методички: ${mFigureFormat}. Підпис розміщуй на окремому рядку після місця рисунку.
-3. В тексті підрозділу перед плейсхолдером рисунку обов'язково є речення що посилається на нього, наприклад: "показано на Рис. X.Y", "зображено на Рис. X.Y" тощо.`
-    : `РИСУНКИ — обов'язкові правила:
-1. Якщо підрозділ потребує рисунку (схема, графік, діаграма тощо) — встав плейсхолдер на окремому рядку після місця рисунку у форматі: Рис. X.Y – Назва рисунку (де X — номер розділу, Y — порядковий номер рисунку в цьому розділі).
-2. В тексті підрозділу перед плейсхолдером рисунку обов'язково є речення що посилається на нього, наприклад: "показано на Рис. X.Y", "зображено на Рис. X.Y", "наведено на Рис. X.Y" тощо. Без такого посилання рисунок не з'являється.`;
-
-  return `Ти — експерт з написання академічних робіт.
-
-## МОВА ТА ДЖЕРЕЛА
-${langLine}
-Джерела: тільки українські або зарубіжні. Російські та білоруські — ЗАБОРОНЕНО повністю.
-Дослідники та вчені: НЕ посилатись і НЕ згадувати російських та білоруських науковців, дослідників або теоретиків. Замість них використовувати українських, західних або інших зарубіжних вчених.
-
-## ФОРМАТУВАННЯ (суворо)
-НЕ використовуй markdown розмітку: жодних #, ##, **, *, - на початку рядка. Пиши звичайний текст.
-ВИНЯТОК: якщо в тексті потрібна таблиця — оформлюй її виключно у форматі markdown з вертикальними рисками: перший рядок — заголовки стовпців через |, другий рядок — розділювач |---|---|, далі рядки даних через |. Не використовуй / або інші символи як роздільники стовпців.
-${tableRules}
-${figureRules}
-НЕ виділяй нічого жирним шрифтом у тексті підрозділів.
-НЕ повторюй назву підрозділу на початку тексту — одразу починай зміст.
-НЕ додавай посилання на джерела у тексті підрозділів.
-КАТЕГОРИЧНО ЗАБОРОНЕНО додавати список літератури, список джерел або використаних джерел в кінці підрозділу. Жодних "Список використаних джерел:", "Джерела:", "References:" тощо.
-КАТЕГОРИЧНО ЗАБОРОНЕНО використовувати довге тире "—" (em dash). Замість нього використовуй кому або перебудуй речення. Символ "—" не повинен з'являтися в тексті ЖОДНОГО разу.
-
-## ПРАВИЛА ПУНКТУАЦІЇ (суворо)
-Крапки: ставити завжди в кінці кожного речення.
-Коми: максимум 1 кома на речення. Якщо можна обійтись без коми — обходись без неї.
-Двокрапки: використовувати ВИКЛЮЧНО у розділі "ВСТУП". У всіх інших розділах двокрапки ЗАБОРОНЕНІ.
-Тире (будь-яке: коротке, довге, em dash): КАТЕГОРИЧНО ЗАБОРОНЕНО у будь-якому вигляді.
-Крапки з комою: КАТЕГОРИЧНО ЗАБОРОНЕНО.
-
-## ЗАБОРОНЕНІ СЛОВА
-${forbiddenWords}
-
-## СТИЛЬ ПИСЬМА
-Починай кожен підрозділ із захоплюючого гачка, що одразу вводить у тему.
-Пиши короткими, чіткими реченнями. Використовуй активний стан дієслів.
-Замінюй жаргон і складні терміни на повсякденні слова. Використовуй мінімум скорочень.
-Уникай надмірно довгих речень. Розбивай довгі речення на менші шматки.
-Чергуй довжину речень для природного ритму читання.
-Чергуй довжину абзаців: короткі абзаци (3-4 речення) мають чергуватись із довшими (5-7 речень). Уникай однакового розміру абзаців поспіль. ЗАБОРОНЕНО писати абзаци з одного або двох речень.
-Додавай короткі, зрозумілі приклади для пояснення теоретичних положень.
-Використовуй неформальні сполучники: "тож", "тоді", "отже", "водночас".
-Використовуй окремі короткі фрагменти, коли це здається природним.
-Вставляй прості метафори для ясності там, де це доречно.
-Перетворюй категоричні твердження на м'які пропозиції. Вставляй короткі переходи між абзацами.
-Використовуй фразові дієслова (наприклад, "розпочати", "виявити", "розглянути").
-Зменшуй драматичну терміновість і пафос.
-Зберігай усі ключові факти недоторканими.
-Прийми теплий, розмовний але академічний тон. Текст має бути у науковому стилі.
-Зберігай оригінальну структуру підрозділу, але послаблюй формальність.
-Кожен підрозділ завершується логічно, повним реченням та підсумковою думкою. Не обривай текст.`;
-}
-
-const FIELD_LABELS = {
-  type: "Тип роботи", pages: "К-сть сторінок", topic: "Тема роботи",
-  subject: "Тематика / предмет", direction: "Галузь / напрям", uniqueness: "Унікальність",
-  language: "Мова роботи", deadline: "Дедлайн", extras: "Додаткові матеріали",
-  methodNotes: "Вимоги методички",
-};
-
-// Визначає чи є робота з психології або педагогіки
-const isPsychoPed = (info) => {
-  if (info?.workCategory === "Гуманітарне") {
-    const dir = ((info?.direction || "") + " " + (info?.subject || "")).toLowerCase();
-    return /психол|педагог/.test(dir);
-  }
-  if (info?.workCategory && info.workCategory !== "Гуманітарне") return false;
-  const dir = ((info?.direction || "") + " " + (info?.subject || "")).toLowerCase();
-  return /психол|педагог/.test(dir);
-};
-
-// Визначає чи є робота економічного спрямування
-const isEcon = (info) => {
-  if (info?.workCategory === "Економічне") return true;
-  if (info?.workCategory && info.workCategory !== "Економічне") return false;
-  const dir = ((info?.direction || "") + " " + (info?.subject || "")).toLowerCase();
-  return /економ|фінанс|менедж|облік|маркет|бізнес|бухгалт|аудит|логіст|підприємн|публічн.*управл|держ.*управл/.test(dir);
-};
-
-// Визначає підрозділи що мають отримати інструкції емпіричного дослідження
-// Варіант 2: у плані є ключові слова — всі підрозділи того розділу
-// Варіант 1: ключових слів немає — один найбільш підходящий підрозділ
-const getEmpiricalSections = (sections, info) => {
-  const empty = { anchorId: null, chapterSectionIds: [] };
-  if (!isPsychoPed(info)) return empty;
-
-  const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
-  const empiricalRe = /дослідженн|емпіричн|анкетуванн|практичн.*дослідж|вибірк|результат.*дослідж/i;
-
-  // Варіант 2: є підрозділи з ключовими словами → беремо весь їх розділ
-  const matchingChapNums = new Set(
-    mainSecs
-      .filter(s => empiricalRe.test(s.label) || empiricalRe.test(s.sectionTitle || ""))
-      .map(s => s.id.split(".")[0])
-  );
-  if (matchingChapNums.size > 0) {
-    const ids = mainSecs
-      .filter(s => matchingChapNums.has(s.id.split(".")[0]))
-      .map(s => s.id);
-    return { anchorId: null, chapterSectionIds: ids };
-  }
-
-  // Варіант 1: ключових слів немає → один найкращий підрозділ
-  const practicalSecs = mainSecs.filter(s => ["analysis", "recommendations"].includes(s.type));
-  if (!practicalSecs.length) return empty;
-  const softRe = /практичн|аналіз|результат|застосуванн/i;
-  const best = practicalSecs.find(s => softRe.test(s.label)) || practicalSecs[practicalSecs.length - 1];
-  return { anchorId: best.id, chapterSectionIds: [] };
-};
-
-// Повертає id підрозділів економічної роботи що мають містити таблиці/розрахунки
-const getEconSections = (sections, info) => {
-  if (!isEcon(info)) return [];
-  return sections
-    .filter(s => ["analysis", "recommendations"].includes(s.type))
-    .map(s => s.id);
-};
-
-const STAGES = ["Дані", "Перевірка", "План", "Написання", "Джерела", "Готово"];
-const STAGE_KEYS = ["input", "parsed", "plan", "writing", "sources", "done"];
-
-// Статуси для Firestore
-const ORDER_STATUS = {
-  input: "new",
-  parsed: "new",
-  plan: "plan_ready",
-  writing: "writing",
-  sources: "writing",
-  done: "done",
-};
-
-// ─────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────
-function parsePagesAvg(str) {
-  if (!str) return 80;
-  const nums = String(str).match(/\d+/g);
-  if (!nums) return 80;
-  if (nums.length === 1) return parseInt(nums[0]);
-  return Math.round(nums.reduce((a, b) => a + parseInt(b), 0) / nums.length);
-}
-
-function parseTemplate(text) {
-  const g = (re, fb = "") => { const m = text.match(re); return m ? m[1].trim() : fb; };
-  return {
-    orderNumber: g(/№\s*замовлення\s*[-–:]\s*(\S+)/i),
-    type: g(/Тип\s*[-–:]\s*(.+?)(?=\n|⏰|📌|✈️|⚙️|⚡|$)/i),
-    deadline: g(/Дедлайн\s*[-–:]\s*(.+?)(?=\n|⚡|📌|✈️|⚙️|$)/i),
-    direction: g(/Напрям\s*[-–:]\s*(.+?)(?=\n|📌|✈️|⚙️|$)/i),
-    subject: g(/Тематика\s*[-–:]\s*(.+?)(?=\n|✈️|⚙️|$)/i),
-    topic: g(/Тема\s*[-–:]\s*(.+?)(?=\n|Презентація|⚙️|$)/i),
-    pages: g(/К-кість стр\.\s*[-–:]\s*(.+?)(?=\n|⚙️|$)/i),
-    uniqueness: g(/Унікальність\s*[-–:]\s*(.+?)(?=\n|$)/i),
-    extras: g(/Презентація(.+?)(?=\n|⚙️|$)/i),
-    language: "Українська", methodNotes: "", sourceCount: "30-40",
-  };
-}
-
-async function callClaude(messages, signal, systemPrompt, maxTokens, onWait, model) {
-  const MAX_RETRIES = 5;
-  let delay = 12000;
-  const useStream = (maxTokens || 8000) >= 2000; // stream for large responses only
-
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    const res = await fetch("/api/claude", {
-      method: "POST", signal,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: model || MODEL,
-        max_tokens: maxTokens || 8000,
-        system: systemPrompt || buildSYS(),
-        messages,
-        ...(useStream ? { stream: true } : {}),
-      }),
-    });
-
-    if (res.status === 429) {
-      if (attempt === MAX_RETRIES) throw new Error("Rate limit: спробуйте через хвилину");
-      const waitSec = Math.ceil(delay / 1000);
-      for (let s = waitSec; s > 0; s--) {
-        if (onWait) onWait(s);
-        await new Promise(r => setTimeout(r, 1000));
-        if (signal?.aborted) throw new Error("AbortError");
-      }
-      delay = Math.min(delay * 1.5, 60000);
-      continue;
-    }
-    if (res.status === 400) {
-      let errData = {};
-      try { errData = await res.json(); } catch { }
-      const msg = errData?.error?.message || "";
-      if (msg.includes("usage limits") || msg.includes("regain access")) {
-        throw new Error("💳 Вичерпано місячний ліміт API. Поповніть баланс або підніміть ліміт на console.anthropic.com");
-      }
-      throw new Error("API 400: " + (msg || "Bad Request"));
-    }
-    if (!res.ok) {
-      const errText = await res.text().catch(() => "");
-      throw new Error("API " + res.status + " " + errText.slice(0, 200));
-    }
-
-    // --- Streaming path ---
-    if (useStream) {
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let fullText = "";
-      let buffer = "";
-      let inputTokens = 0, outputTokens = 0;
-
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (signal?.aborted) throw new Error("AbortError");
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() ?? "";
-          for (const line of lines) {
-            if (!line.startsWith("data: ")) continue;
-            const raw = line.slice(6).trim();
-            if (!raw || raw === "[DONE]") continue;
-            try {
-              const evt = JSON.parse(raw);
-              if (evt.type === "content_block_delta" && evt.delta?.type === "text_delta") {
-                fullText += evt.delta.text;
-              } else if (evt.type === "message_start" && evt.message?.usage) {
-                inputTokens = evt.message.usage.input_tokens || 0;
-              } else if (evt.type === "message_delta" && evt.usage) {
-                outputTokens = evt.usage.output_tokens || 0;
-              }
-            } catch { /* ignore malformed chunks */ }
-          }
-        }
-      } finally {
-        reader.releaseLock();
-      }
-
-      if (inputTokens || outputTokens) {
-        const PRICES = { [MODEL]: { in: 3, out: 15 }, [MODEL_FAST]: { in: 0.80, out: 4 } };
-        const p = PRICES[model || MODEL] || PRICES[MODEL];
-        const cost = (inputTokens * p.in + outputTokens * p.out) / 1_000_000;
-        window.dispatchEvent(new CustomEvent("apicost", { detail: { cost, model: model || MODEL, inTok: inputTokens, outTok: outputTokens } }));
-      }
-      return fullText;
-    }
-
-    // --- Non-streaming path (short JSON tasks) ---
-    const data = await res.json();
-    if (!data.content) {
-      console.error("Claude API unexpected response:", JSON.stringify(data).slice(0, 300));
-      throw new Error("No content in response: " + JSON.stringify(data).slice(0, 200));
-    }
-    if (data.usage) {
-      const PRICES = { [MODEL]: { in: 3, out: 15 }, [MODEL_FAST]: { in: 0.80, out: 4 } };
-      const p = PRICES[model || MODEL] || PRICES[MODEL];
-      const cost = (data.usage.input_tokens * p.in + data.usage.output_tokens * p.out) / 1_000_000;
-      window.dispatchEvent(new CustomEvent("apicost", { detail: { cost, model: model || MODEL, inTok: data.usage.input_tokens, outTok: data.usage.output_tokens } }));
-    }
-    return data.content.map(b => b.text || "").join("") || "";
-  }
-}
-
-async function callGemini(messages, signal, systemPrompt, maxTokens, onWait, model, jsonMode) {
-  const MAX_RETRIES = 5;
-  const FALLBACK_MODEL = "gemini-1.5-flash";
-  const FALLBACK_AFTER_503 = 2;
-  let delay = 12000;
-  let currentModel = model || "gemini-2.5-flash-lite";
-  let failCount503 = 0;
-
-  const toGeminiPart = (c) => {
-    if ((c.type === "document" || c.type === "image") && c.source?.type === "base64")
-      return { inlineData: { mimeType: c.source.media_type || "application/pdf", data: c.source.data } };
-    return { text: c.text || c.content || "" };
-  };
-
-  const contents = messages.map((msg, i) => {
-    if (Array.isArray(msg.content)) {
-      const parts = msg.content.map(toGeminiPart);
-      if (i === 0 && systemPrompt) {
-        const firstTextIdx = parts.findIndex(p => p.text !== undefined);
-        if (firstTextIdx >= 0) parts[firstTextIdx] = { text: systemPrompt + "\n\n" + parts[firstTextIdx].text };
-        else parts.unshift({ text: systemPrompt });
-      }
-      return { role: msg.role === "assistant" ? "model" : "user", parts };
-    }
-    return {
-      role: msg.role === "assistant" ? "model" : "user",
-      parts: [{ text: (i === 0 && systemPrompt ? systemPrompt + "\n\n" : "") + (msg.content || "") }],
-    };
-  });
-
-  const body = {
-    _model: currentModel,
-    contents,
-    generationConfig: { maxOutputTokens: maxTokens || 8000, thinkingConfig: { thinkingBudget: 0 }, ...(jsonMode ? { responseMimeType: "application/json" } : {}) },
-  };
-
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    body._model = currentModel;
-    const res = await fetch("/api/gemini", {
-      method: "POST", signal,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (res.status === 429 || res.status === 503) {
-      if (attempt === MAX_RETRIES) throw new Error(res.status === 503 ? "Gemini перевантажений, спробуйте ще раз" : "Rate limit: спробуйте через хвилину");
-      if (res.status === 503) {
-        failCount503++;
-        if (failCount503 >= FALLBACK_AFTER_503 && currentModel !== FALLBACK_MODEL) {
-          currentModel = FALLBACK_MODEL;
-          failCount503 = 0;
-          delay = 3000;
-        }
-      }
-      const waitSec = Math.ceil(delay / 1000);
-      for (let s = waitSec; s > 0; s--) {
-        if (onWait) onWait(s);
-        await new Promise(r => setTimeout(r, 1000));
-        if (signal?.aborted) { const e = new Error("AbortError"); e.name = "AbortError"; throw e; }
-      }
-      delay = Math.min(delay * 1.5, 60000);
-      continue;
-    }
-    if (!res.ok) {
-      const errText = await res.text().catch(() => "");
-      throw new Error("Gemini API " + res.status + ": " + errText.slice(0, 200));
-    }
-    const data = await res.json();
-    const candidate = data.candidates?.[0];
-    const finishReason = candidate?.finishReason;
-    if (finishReason && finishReason !== "STOP" && finishReason !== "MAX_TOKENS") {
-      throw new Error(`Gemini зупинився: ${finishReason}. ${candidate?.content ? "" : "Відповідь порожня."}`);
-    }
-    const text = candidate?.content?.parts?.filter(p => !p.thought)?.map(p => p.text || "").join("") || "";
-    if (!text) {
-      console.error("Gemini порожня відповідь. Raw:", JSON.stringify(data).slice(0, 500));
-      throw new Error("Gemini: порожня відповідь" + (finishReason ? ` (${finishReason})` : ""));
-    }
-    if (data.usageMetadata) {
-      const cost = (data.usageMetadata.promptTokenCount * 0.075 + data.usageMetadata.candidatesTokenCount * 0.30) / 1_000_000;
-      window.dispatchEvent(new CustomEvent("apicost", { detail: { cost, model: currentModel, inTok: data.usageMetadata.promptTokenCount, outTok: data.usageMetadata.candidatesTokenCount } }));
-    }
-    return text;
-  }
-}
-
-function buildPlanText(secs) {
-  const intro = secs.find(s => s.type === "intro");
-  const concs = secs.find(s => s.type === "conclusions");
-  const srcs = secs.find(s => s.type === "sources");
-  const main = secs.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
-  const lines = [];
-  if (intro) lines.push("ВСТУП\n");
-  const groups = {};
-  for (const s of main) { const top = s.id.split(".")[0]; if (!groups[top]) groups[top] = []; groups[top].push(s); }
-  for (const [num, items] of Object.entries(groups)) {
-    const rawTitle = items[0].sectionTitle || items[0].label.replace(/^\d+\.\d+\s+/, "").split(" ").slice(0, 7).join(" ").toUpperCase();
-    const alreadyHasPrefix = rawTitle.trim().toUpperCase().startsWith(`РОЗДІЛ ${num}`);
-    const secLabel = alreadyHasPrefix ? rawTitle.trim() : `РОЗДІЛ ${num}. ${rawTitle}`;
-    lines.push(secLabel);
-    for (const s of items) { if (/^\d+\.\d+/.test(s.id)) lines.push(`    ${s.label}`); }
-    const chapConc = secs.find(s => s.type === "chapter_conclusion" && s.id === `${num}.conclusions`);
-    if (chapConc) lines.push(`    ${chapConc.label}`);
-    lines.push("");
-  }
-  if (concs) lines.push("ВИСНОВКИ\n");
-  if (srcs) lines.push("СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ");
-  return lines.join("\n");
-}
-
-function buildPreviewStructure(totalPages) {
-  return [
-    { label: "ВСТУП", sub: [] },
-    { label: "РОЗДІЛ 1. Теоретичні основи дослідження", sub: ["1.1 [підрозділ 1.1]", "1.2 [підрозділ 1.2]", "1.3 [підрозділ 1.3]"] },
-    { label: "РОЗДІЛ 2. Аналітично-практична частина", sub: ["2.1 [підрозділ 2.1]", "2.2 [підрозділ 2.2]", "2.3 [підрозділ 2.3]"] },
-    ...(totalPages >= 70 ? [{ label: "РОЗДІЛ 3. Рекомендації та пропозиції", sub: ["3.1 [підрозділ 3.1]", "3.2 [підрозділ 3.2]"] }] : []),
-    { label: "ВИСНОВКИ", sub: [] },
-    { label: "СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ", sub: [] },
-  ];
-}
-
-function calcSourceDist(secs, overallPages) {
-  const mainSecs = secs.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
-  const secPagesSum = mainSecs.reduce((sum, s) => sum + (s.pages || 0), 0);
-  if (!secPagesSum) return { dist: {}, total: 0 };
-  // К-сть джерел = к-сті сторінок основного тексту роботи
-  const total = Math.max(mainSecs.length * 2, overallPages || secPagesSum);
-  const minPerSec = Math.max(1, Math.floor(total / mainSecs.length / 2));
-  const dist = {}; let assigned = 0;
-  mainSecs.forEach((s, i) => {
-    if (i === mainSecs.length - 1) { dist[s.id] = Math.max(minPerSec, total - assigned); }
-    else { const share = Math.max(minPerSec, Math.round((s.pages / secPagesSum) * total)); dist[s.id] = share; assigned += share; }
-  });
-  return { dist, total: Object.values(dist).reduce((a, b) => a + b, 0) };
-}
-
-// ─────────────────────────────────────────────
-// WorkConfig — єдина точка розрахунку параметрів роботи
-// ─────────────────────────────────────────────
-function buildWorkConfig({ info, methodInfo, commentAnalysis }) {
-  const totalPages = parsePagesAvg(info?.pages);
-
-  // introPages: методичка → textStructureHints → дефолт 2
-  let introPages = 2;
-  if (methodInfo?.introPages) {
-    introPages = methodInfo.introPages;
-  } else if (commentAnalysis?.textStructureHints) {
-    const m = commentAnalysis.textStructureHints.match(/вступ[^.\d]{0,20}(\d+)\s*стор/i);
-    if (m) introPages = parseInt(m[1]);
-  }
-
-  // conclusionsPages: методичка → textStructureHints → дефолт
-  let conclusionsPages = totalPages > 40 ? 3 : 2;
-  if (methodInfo?.conclusionsPages) {
-    conclusionsPages = methodInfo.conclusionsPages;
-  } else if (commentAnalysis?.textStructureHints) {
-    const m = commentAnalysis.textStructureHints.match(/висновк[^.\d]{0,20}(\d+)\s*стор/i);
-    if (m) conclusionsPages = parseInt(m[1]);
-  }
-
-  // sourcesMinCount: методичка → дефолт по обсягу
-  const sourcesMinCount = methodInfo?.sourcesMinCount || (totalPages >= 40 ? 40 : 20);
-
-  return {
-    totalPages,
-    introPages,
-    conclusionsPages,
-    chapConclusionPages: 1,
-    sourcesMinCount,
-    sourcesStyle: methodInfo?.sourcesStyle || "ДСТУ 8302:2015",
-    sourcesOrder: methodInfo?.sourcesOrder || "alphabetical",
-    sourcesGrouping: methodInfo?.sourcesGrouping || "",
-    citationStyle: methodInfo?.citationStyle || "(Автор, рік)",
-  };
-}
-
-// ─────────────────────────────────────────────
-// UI components
-// ─────────────────────────────────────────────
-const TA = { width: "100%", background: "#f0ece2", border: "1.5px solid #d4cfc4", borderRadius: 6, color: "#1a1a14", fontSize: 14, padding: "12px 14px", resize: "vertical", lineHeight: "1.75", fontFamily: "'Spectral',Georgia,serif" };
-const TA_WHITE = { ...TA, background: "#fff", fontSize: 13 };
-
-function SpinDot({ light }) {
-  const c = light ? "#e8ff47" : "#1a1a14";
-  return <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", border: `2px solid ${c}33`, borderTop: `2px solid ${c}`, animation: "spin .7s linear infinite", flexShrink: 0 }} />;
-}
-function Shimmer({ width = "100%", height = 13 }) {
-  return <div style={{ width, height, borderRadius: 4, background: "linear-gradient(90deg,#e8e4da 25%,#f5f2ea 50%,#e8e4da 75%)", backgroundSize: "200% 100%", animation: "shimmer 1.4s infinite" }} />;
-}
-function StagePills({ stage, maxStageIdx, onNavigate }) {
-  const cur = STAGE_KEYS.indexOf(stage);
-  const maxReached = maxStageIdx ?? cur;
-  return <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-    {STAGES.map((l, i) => {
-      const isClickable = i <= maxReached && onNavigate;
-      return (
-        <div key={i}
-          onClick={isClickable ? () => onNavigate(STAGE_KEYS[i]) : undefined}
-          style={{
-            padding: "4px 12px", borderRadius: 20, fontSize: 11, letterSpacing: "1px",
-            background: i === cur ? "#e8ff47" : i < cur ? "#1e2a00" : i <= maxReached ? "#2a3a00" : "transparent",
-            color: i === cur ? "#111" : i < cur ? "#6a9000" : i <= maxReached ? "#8aaa30" : "#555",
-            border: `1px solid ${i === cur ? "#e8ff47" : i < cur ? "#3a5000" : i <= maxReached ? "#4a6a00" : "#444"}`,
-            cursor: isClickable ? "pointer" : "default",
-          }}>
-          {i < cur ? "✓ " : i > cur && i <= maxReached ? "↩ " : ""}{l}
-        </div>
-      );
-    })}
-  </div>;
-}
-function FieldBox({ label, children }) {
-  return <div style={{ marginBottom: 16 }}>
-    <div style={{ fontSize: 11, color: "#888", letterSpacing: "2px", textTransform: "uppercase", marginBottom: 6 }}>{label}</div>
-    {children}
-  </div>;
-}
-function Heading({ children, style = {} }) {
-  return <div style={{ fontFamily: "'Spectral SC',serif", fontSize: 17, letterSpacing: 2, marginBottom: 20, ...style }}>{children}</div>;
-}
-function NavBtn({ onClick, children, disabled }) {
-  return <button onClick={onClick} disabled={disabled} style={{ background: "transparent", border: "1.5px solid #c4bfb4", color: disabled ? "#ccc" : "#777", borderRadius: 7, padding: "11px 22px", fontFamily: "'Spectral',serif", fontSize: 13, cursor: disabled ? "default" : "pointer" }}>{children}</button>;
-}
-function PrimaryBtn({ onClick, disabled, loading, msg, label }) {
-  return <button onClick={onClick} disabled={disabled || loading} style={{ background: (disabled || loading) ? "#aaa" : "#1a1a14", color: (disabled || loading) ? "#eee" : "#e8ff47", border: "none", borderRadius: 7, padding: "11px 34px", fontFamily: "'Spectral',serif", fontSize: 13, letterSpacing: "1.5px", cursor: (disabled || loading) ? "default" : "pointer" }}>
-    {loading ? <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><SpinDot light />{msg}</span> : label}
-  </button>;
-}
-function GreenBtn({ onClick, disabled, loading, msg, label }) {
-  return <button onClick={onClick} disabled={disabled || loading} style={{ background: (disabled || loading) ? "#aaa" : "#2a3a1a", color: (disabled || loading) ? "#eee" : "#a8d060", border: "none", borderRadius: 7, padding: "10px 24px", fontFamily: "'Spectral',serif", fontSize: 12, letterSpacing: "1px", cursor: (disabled || loading) ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
-    {loading ? <><SpinDot light />{msg}</> : label}
-  </button>;
-}
-
-function SaveIndicator({ saving, saved }) {
-  if (saving) return <span style={{ fontSize: 11, color: "#aaa", display: "inline-flex", alignItems: "center", gap: 5 }}><SpinDot />Збереження...</span>;
-  if (saved) return <span style={{ fontSize: 11, color: "#6a9000" }}>✓ Збережено</span>;
-  return null;
-}
-
-function StructurePreview({ totalPages }) {
-  const items = buildPreviewStructure(totalPages);
-  return <div style={{ border: "1.5px solid #d4cfc4", borderRadius: 8, overflow: "hidden", marginBottom: 18 }}>
-    <div style={{ background: "#1a1a14", color: "#e8ff47", padding: "10px 18px", fontFamily: "'Spectral SC',serif", fontSize: 11, letterSpacing: 3 }}>СТРУКТУРА (попередній перегляд)</div>
-    <div style={{ padding: "14px 18px", background: "#faf8f3" }}>
-      {items.map((item, i) => (
-        <div key={i} style={{ marginBottom: item.sub.length ? 10 : 6 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: "#1a1a14", marginBottom: 4 }}>{item.label}</div>
-          {item.sub.map((s, j) => <div key={j} style={{ fontSize: 12, color: "#888", paddingLeft: 20, marginBottom: 2 }}>{s}</div>)}
-        </div>
-      ))}
-    </div>
-  </div>;
-}
-
-function PlanLoadingSkeleton() {
-  return <div style={{ border: "1.5px solid #d4cfc4", borderRadius: 8, overflow: "hidden", marginBottom: 18 }}>
-    <div style={{ background: "#1a1a14", color: "#e8ff47", padding: "10px 18px", display: "flex", alignItems: "center", gap: 10, fontFamily: "'Spectral SC',serif", fontSize: 11, letterSpacing: 3 }}>
-      <SpinDot light /> ГЕНЕРУЮ ПЛАН...
-    </div>
-    <div style={{ padding: "18px", background: "#faf8f3", display: "flex", flexDirection: "column", gap: 11 }}>
-      <Shimmer width="55%" height={15} /><div style={{ paddingLeft: 18, display: "flex", flexDirection: "column", gap: 8 }}><Shimmer width="72%" /><Shimmer width="64%" /><Shimmer width="69%" /></div>
-      <Shimmer width="50%" height={15} /><div style={{ paddingLeft: 18, display: "flex", flexDirection: "column", gap: 8 }}><Shimmer width="68%" /><Shimmer width="58%" /></div>
-      <Shimmer width="28%" height={13} /><Shimmer width="44%" height={13} />
-    </div>
-  </div>;
-}
-
-function DropZone({ fileLabel, onFile }) {
-  const [dragging, setDragging] = useState(false);
-  const fileRef = useRef();
-  const handleDrop = useCallback(e => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files[0]; if (f) processFile(f); }, []);
-  function processFile(f) { const r = new FileReader(); r.onload = ev => onFile(f.name, ev.target.result.split(",")[1], f.type); r.readAsDataURL(f); }
-  return <>
-    <div onClick={() => fileRef.current.click()} onDrop={handleDrop} onDragOver={e => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)}
-      style={{ minHeight: 90, border: `1.5px dashed ${dragging ? "#1a1a14" : "#c4bfb4"}`, borderRadius: 6, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, cursor: "pointer", padding: 14, background: dragging ? "#e8e4d8" : "#ede9e0", transition: "all .2s" }}>
-      <div style={{ fontSize: 24 }}>{fileLabel ? "📄" : "⬆️"}</div>
-      <div style={{ fontSize: 12, color: "#888", textAlign: "center" }}>{fileLabel || "Перетягніть або клікніть для вибору PDF"}</div>
-      {fileLabel && <div style={{ fontSize: 10, color: "#aaa" }}>(клікніть щоб замінити)</div>}
-    </div>
-    <input ref={fileRef} type="file" accept=".pdf" style={{ display: "none" }} onChange={e => { const f = e.target.files[0]; if (f) processFile(f); }} />
-  </>;
-}
-
-function PhotoDropZone({ photos, onAdd, onRemove }) {
-  const fileRef = useRef();
-  const [dragging, setDragging] = useState(false);
-
-  function processFiles(files) {
-    Array.from(files).forEach(f => {
-      if (!f.type.startsWith("image/")) return;
-      const r = new FileReader();
-      r.onload = ev => onAdd({ name: f.name, b64: ev.target.result.split(",")[1], type: f.type });
-      r.readAsDataURL(f);
-    });
-  }
-
-  return (
-    <div>
-      <div
-        onClick={() => fileRef.current.click()}
-        onDrop={e => { e.preventDefault(); setDragging(false); processFiles(e.dataTransfer.files); }}
-        onDragOver={e => { e.preventDefault(); setDragging(true); }}
-        onDragLeave={() => setDragging(false)}
-        style={{ minHeight: 60, border: `1.5px dashed ${dragging ? "#1a1a14" : "#c4bfb4"}`, borderRadius: 6, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4, cursor: "pointer", padding: 10, background: dragging ? "#e8e4d8" : "#ede9e0", transition: "all .2s" }}
-      >
-        <div style={{ fontSize: 20 }}>🖼️</div>
-        <div style={{ fontSize: 12, color: "#888", textAlign: "center" }}>Перетягніть або клікніть для вибору фото</div>
-      </div>
-      <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple style={{ display: "none" }} onChange={e => { processFiles(e.target.files); e.target.value = ""; }} />
-      {photos.length > 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
-          {photos.map((p, i) => (
-            <div key={i} style={{ position: "relative", display: "inline-block" }}>
-              <img src={`data:${p.type};base64,${p.b64}`} alt={p.name} style={{ height: 56, width: 56, objectFit: "cover", borderRadius: 4, border: "1px solid #c4bfb4" }} />
-              <button onClick={() => onRemove(i)} style={{ position: "absolute", top: -6, right: -6, width: 18, height: 18, borderRadius: "50%", background: "#8a1a1a", color: "#fff", border: "none", cursor: "pointer", fontSize: 11, lineHeight: "18px", padding: 0 }}>×</button>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ClientPlanInput({ onExtracted, extracted }) {
-  const fileRef = useRef();
-  const [extracting, setExtracting] = useState(false);
-  const [dragging, setDragging] = useState(false);
-  const [previewSrc, setPreviewSrc] = useState(null);
-
-  async function handlePhoto(file) {
-    if (!file || !file.type.startsWith("image/")) return;
-    setExtracting(true);
-    try {
-      const b64 = await new Promise((res, rej) => {
-        const r = new FileReader();
-        r.onload = e => { setPreviewSrc(e.target.result); res(e.target.result.split(",")[1]); };
-        r.onerror = rej;
-        r.readAsDataURL(file);
-      });
-      const raw = await callClaude([{
-        role: "user", content: [
-          { type: "image", source: { type: "base64", media_type: file.type, data: b64 } },
-          { type: "text", text: "Extract the table of contents / plan from this image. Copy all lines exactly as they appear (chapter numbers, subsection numbers, titles). Return only the plain text of the plan, no explanations." }
-        ]
-      }], null, "Return only plain text, no markdown.", 800, null, MODEL_FAST);
-      onExtracted(raw.trim());
-    } catch (e) {
-      console.warn("plan photo extract failed:", e.message);
-    } finally {
-      setExtracting(false);
-      setDragging(false);
-    }
-  }
-
-  function onDrop(e) {
-    e.preventDefault();
-    const file = e.dataTransfer.files[0];
-    if (file) handlePhoto(file);
-  }
-
-  return <>
-    <div
-      onClick={() => !extracting && fileRef.current.click()}
-      onDrop={onDrop}
-      onDragOver={e => { e.preventDefault(); setDragging(true); }}
-      onDragLeave={() => setDragging(false)}
-      style={{ minHeight: 90, border: `1.5px dashed ${dragging ? "#5a8a30" : "#c4bfb4"}`, borderRadius: 6, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, cursor: extracting ? "wait" : "pointer", padding: 14, background: dragging ? "#e8e4d8" : "#ede9e0", transition: "all .2s" }}
-    >
-      {extracting
-        ? <><div style={{ fontSize: 22 }}>⏳</div><div style={{ fontSize: 12, color: "#888" }}>Розпізнаю план...</div></>
-        : previewSrc && extracted
-          ? <><img src={previewSrc} alt="" style={{ maxHeight: 56, maxWidth: "100%", borderRadius: 4, objectFit: "contain" }} /><div style={{ fontSize: 11, color: "#5a8a30" }}>✓ План розпізнано</div><div style={{ fontSize: 10, color: "#aaa" }}>(клікніть щоб замінити)</div></>
-          : <><div style={{ fontSize: 22 }}>📷</div><div style={{ fontSize: 12, color: "#888", textAlign: "center" }}>Перетягніть або клікніть для вибору фото плану</div></>
-      }
-    </div>
-    <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }}
-      onChange={e => { const f = e.target.files[0]; if (f) handlePhoto(f); e.target.value = ""; }} />
-  </>;
-}
-
-// ─────────────────────────────────────────────
-// Firestore helpers
-// ─────────────────────────────────────────────
-function serializeForFirestore(obj) {
-  // Firestore не приймає undefined — замінюємо на null
-  return JSON.parse(JSON.stringify(obj, (_, v) => v === undefined ? null : v));
-}
-
-// ─────────────────────────────────────────────
-// Main component
-// ─────────────────────────────────────────────
 export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const { user } = useAuth();
 
@@ -1823,6 +114,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const currentIdRef = useRef(orderId || null);
   const abortRef = useRef(null);
   const contentRef = useRef(content);
+  const savedTimerRef = useRef(null);
   useEffect(() => { contentRef.current = content; }, [content]);
   useEffect(() => {
     const onScroll = () => {
@@ -1833,6 +125,10 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     };
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  useEffect(() => {
+    return () => clearTimeout(savedTimerRef.current);
   }, []);
 
   // ── Завантаження існуючого замовлення з Firestore ──
@@ -1904,12 +200,24 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
       // merge:true — не потрібен getDoc перед записом, один запис замість двох
       await setDoc(ref, { ...data, createdAt: new Date().toISOString() }, { merge: true });
       setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
+      clearTimeout(savedTimerRef.current);
+      savedTimerRef.current = setTimeout(() => setSaved(false), 3000);
     } catch (e) { console.error("Save error:", e); }
     setSaving(false);
   };
 
-  const handleFile = (name, b64, type) => { setFileLabel(name); setFileB64(b64); setFileType(type); };
+  const handleFile = useCallback((name, b64, type) => { setFileLabel(name); setFileB64(b64); setFileType(type); }, []);
+
+  const handleNavigateMain = useCallback((s) => {
+    if (running) return;
+    setStage(s === "input" && info ? "parsed" : s);
+  }, [running, info]);
+
+  const handleNavigateHeader = useCallback((s) => {
+    if (running) return;
+    setStage(s === "input" && info ? "parsed" : s);
+    setHeaderOpen(false);
+  }, [running, info]);
 
   // ── Аналіз шаблону ──
   const doAnalyze = async () => {
@@ -1917,10 +225,10 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
 
     // КРОК 1: Аналіз шаблону замовлення (тільки текст, без PDF)
     const msgs = [];
-    msgs.push({ type: "text", text: `Проаналізуй шаблон замовлення.\n\nШАБЛОН:\n${tplText}\n${comment ? "\nКОМЕНТАР: " + comment : ""}\n\nПоверни ТІЛЬКИ JSON (без markdown):\n{"type":"","pages":"","topic":"","subject":"","direction":"","uniqueness":"","language":"Українська","deadline":"","extras":"","methodNotes":"","sourceCount":"30-40"}` });
+    msgs.push({ type: "text", text: buildTemplateAnalysisPrompt(tplText, comment) });
     let newInfo;
     try {
-      const raw = await callClaude([{ role: "user", content: msgs }], null, "Respond only with valid JSON. No markdown, no explanation.", 1000, null, MODEL_FAST);
+      const raw = await callClaude([{ role: "user", content: msgs }], null, SYS_JSON, 1000, null, MODEL_FAST);
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
       const parsed = JSON.parse(jsonMatch?.[0] || raw.replace(/```json|```/g, "").trim());
       newInfo = { ...parseTemplate(tplText), ...parsed };
@@ -1945,73 +253,10 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
       await new Promise(r => setTimeout(r, 2000)); // пауза між двома API-викликами
       const methodMsgs = [
         { type: "document", source: { type: "base64", media_type: fileType || "application/pdf", data: fileB64 } },
-        {
-          type: "text", text: `Уважно прочитай методичку повністю і витягни всю структурну та оформлювальну інформацію.
-
-Поверни ТІЛЬКИ JSON (без markdown, без коментарів):
-{
-  "totalPages": 30,
-  "introPages": null,
-  "conclusionsPages": null,
-  "chaptersCount": 2,
-  "subsectionsPerChapter": 2,
-  "hasChapterConclusions": false,
-  "chapterTypes": ["theory","analysis"],
-  "exampleTOC": "ВСТУП\nРОЗДІЛ 1. Назва\n1.1 Підрозділ\n1.2 Підрозділ\nРОЗДІЛ 2. Назва\n2.1 Підрозділ\n2.2 Підрозділ\nВИСНОВКИ\nСПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ",
-  "introComponents": ["актуальність теми", "мета дослідження", "завдання", "об'єкт", "предмет", "методи", "матеріал дослідження", "наукова новизна", "структура роботи"],
-  "theoryRequirements": "огляд літератури, теоретичні засади, закінчується висновком про необхідність дослідження",
-  "analysisRequirements": "результати власних досліджень, лінгвістичне обґрунтування",
-  "chapterConclusionRequirements": "коротка суть результатів, до 1 сторінки",
-  "conclusionsRequirements": "пронумерований список конкретних результатів, без загальних формулювань",
-  "sourcesMinCount": null,
-  "sourcesStyle": "APA",
-  "sourcesOrder": "alphabetical",
-  "sourcesGrouping": "спочатку українські, потім англійські/польські/чеські, наприкінці східною мовою",
-  "citationStyle": "(Автор, рік) або (Автор, рік, с. 25)",
-  "formatting": {
-    "font": "Times New Roman",
-    "fontSize": 14,
-    "lineSpacing": 1.5,
-    "margins": {"left": 20, "right": 10, "top": 20, "bottom": 20},
-    "indent": 1.25,
-    "pageNumbers": "правий верхній кут, арабські цифри",
-    "chapterHeading": "великими літерами, по центру, напівжирний, РОЗДІЛ 1 з нового рядка потім назва",
-    "subsectionHeading": "малі літери (перша велика), з абзацного відступу, по ширині, після номера крапка напр. 2.3.",
-    "tableFormat": "Таблиця 1.2 у правому верхньому куті, назва жирним по центру після номера",
-    "figureFormat": "Рис. 1.2 під ілюстрацією, нумерація в межах розділу",
-    "noLongDash": true
-  },
-  "requiredSections": ["титульний аркуш", "зміст", "вступ", "основна частина", "висновки", "список використаних джерел"],
-  "optionalSections": ["перелік умовних позначень", "анотація іноземною мовою", "додатки"],
-  "otherRequirements": "виклад від першої особи множини (ми вважаємо) або безособові конструкції",
-  "recommendedSources": "Список рекомендованих джерел з методички: конкретні автори, видання, підручники, журнали. null якщо не вказано",
-  "titlePageTemplate": [{"text":"МІНІСТЕРСТВО ОСВІТИ І НАУКИ УКРАЇНИ","align":"center"},{"text":"Назва університету","align":"center"},{"text":"Кафедра назва","align":"center"},{"text":"","align":"center"},{"text":"КУРСОВА РОБОТА","align":"center"},{"text":"на тему:","align":"center"},{"text":"[ТЕМА]","align":"center"},{"text":"","align":"center"},{"text":"Виконав(ла): студент(ка) групи","align":"right"},{"text":"Прізвище Ім'я По-батькові","align":"right"},{"text":"","align":"center"},{"text":"Науковий керівник:","align":"right"},{"text":"Посада, ПІБ","align":"right"},{"text":"","align":"center"},{"text":"Місто – рік","align":"center"}],
-  "requiredTables": null,
-  "requiredFormulas": null
-}
-
-Правила:
-- totalPages: загальний обсяг роботи в сторінках (число, не рахуючи додатки і список джерел)
-- introPages: обсяг вступу в сторінках (null якщо не вказано явно)
-- conclusionsPages: обсяг висновків в сторінках (null якщо не вказано явно)
-- chaptersCount: к-сть розділів (null якщо не вказано)
-- subsectionsPerChapter: порахуй к-сть підрозділів в одному розділі з exampleTOC (null якщо не вказано)
-- hasChapterConclusions: true ВИКЛЮЧНО якщо в методичці є явна пряма вимога "висновки до розділу" або "висновки до кожного розділу". Якщо немає такого тексту — завжди false
-- introComponents: точний перелік елементів вступу згідно методички
-- sourcesStyle: "APA", "ДСТУ 8302:2015", "MLA" або інший — точно як у методичці
-- sourcesOrder: "alphabetical" або "citation_order"
-- sourcesGrouping: якщо є правила групування джерел за мовами — вкажи
-- citationStyle: як оформляти посилання в тексті (в дужках, у виносках тощо)
-- recommendedSources: якщо в методичці є список рекомендованої літератури або конкретні автори/видання для використання — перелічи їх одним рядком через крапку з комою. null якщо таких рекомендацій немає
-- titlePageTemplate: якщо в методичці є зразок титульної сторінки — відтвори його структуру як масив JSON-об'єктів: [{"text":"рядок тексту","align":"center|left|right"}]. Порожній рядок між блоками — {"text":"","align":"center"}. Де має бути тема роботи — постав [ТЕМА]. Вирівнювання визнач за зразком: типово центр, але блоки "Виконав", "Науковий керівник", "Допущено" тощо — right або left залежно від зразка. Якщо зразка немає — поверни null (НЕ вигадуй)
-- formatting: всі деталі оформлення — шрифт, розміри, поля, відступи, нумерація
-- exampleTOC: шукай ВИКЛЮЧНО розділ/додаток зі словами "зразок змісту", "зразок плану", "приклад змісту", "приклад плану", "зразок оформлення змісту" — тобто явний приклад структури СТУДЕНТСЬКОЇ роботи. Просто "ЗМІСТ" на початку документа (зміст самої методички) — ІГНОРУЙ повністю. Якщо знайшов справжній зразок — скопіюй лише рядки плану (ВСТУП, РОЗДІЛ 1, 1.1, 1.2, ВИСНОВКИ тощо). Якщо такого зразка НЕ знайшов — поверни null (не вигадуй).
-- Якщо exampleTOC = null: тоді уважно проаналізуй розділ "Структура роботи" або "Структура та зміст роботи" і витягни з нього: chaptersCount (к-сть розділів), subsectionsPerChapter (к-сть підрозділів), hasChapterConclusions (чи потрібні висновки до розділів), chapterTypes (теоретичний/аналітичний/практичний тощо), otherRequirements (що має бути в кожному розділі)
-- requiredTables: шукай таблиці які СТУДЕНТ МАЄ ЗАПОВНИТИ у своїй роботі (не таблиці всередині самої методички з критеріями/шкалами). Якщо знайшов — поверни масив об'єктів: [{"name":"назва таблиці","structure":"markdown рядок заголовків таблиці з плейсхолдерами наприклад |Показник|Рік 1|Рік 2|","section":"analysis або recommendations — в якому типі розділу має з'явитись","instructions":"що саме заповнювати в цю таблицю"}]. null якщо таких таблиць немає.
-- requiredFormulas: шукай формули/розрахунки які студент має виконати у роботі. Поверни масив: [{"name":"назва показника","formula":"формула у вигляді plain text, наприклад β = Σ(kij × pi) / (m × n)","variables":"опис кожної змінної через крапку з комою","interpretation":"шкала інтерпретації результату якщо є в методичці","section":"analysis або recommendations"}]. null якщо формул немає.` }
+        { type: "text", text: METHODOLOGY_READING_PROMPT },
       ];
       try {
-        const raw = await callGemini([{ role: "user", content: methodMsgs }], null, "Respond only with valid JSON. No markdown, no comments.", 8000, (s) => setLoadMsg(`Читаю методичку... зачекайте ${s}с`), "gemini-2.5-flash-lite", true);
+        const raw = await callGemini([{ role: "user", content: methodMsgs }], null, SYS_JSON_SHORT, 8000, (s) => setLoadMsg(`Читаю методичку... зачекайте ${s}с`), "gemini-2.5-flash-lite", true);
         const jsonMatch = raw.match(/\{[\s\S]*\}/);
         const parsed = JSON.parse(jsonMatch?.[0] || raw.replace(/```json|```/g, "").trim());
         setMethodInfo(parsed);
@@ -2057,13 +302,9 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
         for (const ph of photos) {
           caContent.push({ type: "image", source: { type: "base64", media_type: ph.type, data: ph.b64 } });
         }
-        caContent.push({
-          type: "text", text: `Проаналізуй${photos.length > 0 ? " фото та" : ""} коментар клієнта до академічної роботи на тему "${newInfo?.topic || ""}". Витягни конкретні підказки для виконавця.${comment?.trim() ? `\nКОМЕНТАР КЛІЄНТА:\n${comment}` : ""}${photos.length > 0 ? `\n\nФОТО: ${photos.length} зображень.` : ""}
-
-Поверни ТІЛЬКИ JSON (без markdown):
-{"planHints":"підказки для СТРУКТУРИ ПЛАНУ: к-сть розділів, назви розділів, висновки до розділів тощо. null якщо немає","textStructureHints":"підказки для СТРУКТУРИ ТЕКСТУ: що має бути у вступі чи висновках, вимоги до обсягів розділів у сторінках, особливі акценти. null якщо немає","writingHints":"підказки для СТИЛЮ ТА ЗМІСТУ написання: термінологія, підходи, що підкреслити, на що звернути увагу. null якщо немає","sourcesHints":"підказки для ДЖЕРЕЛ ТА ОФОРМЛЕННЯ: к-сть джерел, мова джерел, стиль цитування, конкретні автори або видання. null якщо немає","photoTOC":"якщо на фото є готовий план/зміст роботи (рядки виду Chapter 1 / Розділ 1, 1.1, 1.2, Introduction тощо) — скопіюй його текст дослівно. Якщо плану на фото немає — null"}` });
+        caContent.push({ type: "text", text: buildCommentAnalysisPrompt({ topic: newInfo?.topic, comment, photoCount: photos.length }) });
         const caRaw = await callClaude([{ role: "user", content: caContent }],
-          null, "Respond only with valid JSON. No markdown.", 600, null, MODEL_FAST);
+          null, SYS_JSON_SHORT, 600, null, MODEL_FAST);
         const caMatch = caRaw.match(/\{[\s\S]*\}/);
         const caParsed = JSON.parse(caMatch?.[0] || caRaw);
         setCommentAnalysis(caParsed);
@@ -2080,54 +321,6 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   };
 
   // ── Парсинг плану клієнта ──
-  const parseClientPlan = (text, totalPages) => {
-    const normalized = text
-      .replace(/([^\n])\s+(Розділ\s)/gi, "$1\n$2")
-      .replace(/([^\n])\s+(Chapter\s)/gi, "$1\n$2")
-      .replace(/([^\n])\s+(висновк\w*)/gi, "$1\n$2")
-      .replace(/([^\n])\s+(список\s)/gi, "$1\n$2")
-      .replace(/([^\n])\s+(вступ\s|вступ$)/gi, "$1\n$2");
-    const lines = normalized.split("\n").map(l => l.trim()).filter(Boolean);
-    const chapters = []; let current = null;
-    for (const line of lines) {
-      const isChapter = /^розділ\s/i.test(line) || /^chapter\s/i.test(line) || /^\d+[\.\)]\s+[А-ЯҐЄІЇа-яґєії]/i.test(line);
-      const isSubsection = /^\d+\.\d+/.test(line) || /^[-–•]\s+/.test(line);
-      const isChapterConclusion = /^висновк[^\s]*\s+до\s+/i.test(line);
-      const isSpecial = !isChapterConclusion && /^(вступ[\s,\.!]?$|вступ\s|висновк|список|загальн|практичн|додатк|зміст)/i.test(line);
-      if (isSpecial) continue;
-      if (isChapterConclusion && current) { current.hasConclusion = true; continue; }
-      if (isChapter) { current = { title: line.trim(), subsections: [], hasConclusion: false }; chapters.push(current); }
-      else if (isSubsection && current) current.subsections.push(line.replace(/^[-–•]\s+/, "").trim());
-    }
-    if (!chapters.length) return null;
-    const mainPages = Math.round(totalPages * 0.80);
-    const pagesPerChapter = Math.max(1, Math.round(mainPages / chapters.length));
-    const introPages = 2;
-    const concPages = totalPages > 40 ? 3 : 2;
-    const sections = []; let chapNum = 0;
-    for (const ch of chapters) {
-      chapNum++;
-      const subs = ch.subsections;
-      const pagesPerSub = Math.max(1, Math.round(pagesPerChapter / Math.max(subs.length, 1)));
-      const chType = chapNum === 1 ? "theory" : chapNum === 2 ? "analysis" : "recommendations";
-      if (subs.length === 0) {
-        sections.push({ id: `${chapNum}`, label: ch.title, sectionTitle: ch.title.toUpperCase(), pages: pagesPerChapter, type: chType });
-      } else {
-        for (let i = 0; i < subs.length; i++) {
-          const hasNum = /^\d+\.\d+/.test(subs[i]);
-          sections.push({ id: `${chapNum}.${i + 1}`, label: hasNum ? subs[i] : `${chapNum}.${i + 1} ${subs[i]}`, sectionTitle: ch.title.toUpperCase(), pages: pagesPerSub, type: chType });
-        }
-      }
-      if (ch.hasConclusion) {
-        sections.push({ id: `${chapNum}.conclusions`, label: `Висновки до розділу ${chapNum}`, sectionTitle: ch.title.toUpperCase(), pages: 1, type: "chapter_conclusion", chapterNum: String(chapNum) });
-      }
-    }
-    sections.push({ id: "intro", label: "ВСТУП", pages: introPages, type: "intro" });
-    sections.push({ id: "conclusions", label: "ВИСНОВКИ", pages: concPages, type: "conclusions" });
-    sections.push({ id: "sources", label: "СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ", pages: 1, type: "sources" });
-    return sections;
-  };
-
   const buildDefaultPlan = (totalPages, lang = "Українська") => {
     const isEn = /англ|english/i.test(lang || "");
     const needThirdChapter = totalPages >= 40;
@@ -2204,7 +397,7 @@ PAGE DISTRIBUTION (total must equal ${totalPages}):
 
 Return ONLY JSON without markdown:
 {"sections":[{"id":"1.1","label":"1.1 Title","sectionTitle":"${L.chapterWord} 1. TITLE","pages":8,"type":"theory"},{"id":"intro","label":"${L.intro}","pages":2,"type":"intro"},{"id":"conclusions","label":"${L.conclusions}","pages":3,"type":"conclusions"},{"id":"sources","label":"${L.sources}","pages":2,"type":"sources"}]}`;
-        const raw = await callGemini([{ role: "user", content: photoTplPrompt }], null, "Respond only with valid JSON. No markdown.", 3000);
+        const raw = await callGemini([{ role: "user", content: photoTplPrompt }], null, SYS_JSON_SHORT, 3000);
         const jsonMatch = raw.match(/\{[\s\S]*\}/);
         const parsed = JSON.parse(jsonMatch?.[0] || raw.replace(/```json|```/g, "").trim());
         const secs = parsed.sections || parsed;
@@ -2265,7 +458,7 @@ Return ONLY JSON without markdown:
   {"id":"sources","label":"${L.sources}","pages":2,"type":"sources"}
 ]}`;
         await new Promise(r => setTimeout(r, 1000));
-        const raw = await callGemini([{ role: "user", content: templatePrompt }], null, "Respond only with valid JSON. No markdown.", 3000);
+        const raw = await callGemini([{ role: "user", content: templatePrompt }], null, SYS_JSON_SHORT, 3000);
         const jsonMatch = raw.match(/\{[\s\S]*\}/);
         const parsed = JSON.parse(jsonMatch?.[0] || raw.replace(/```json|```/g, "").trim());
         const secs = parsed.sections || parsed;
@@ -2375,7 +568,7 @@ Order: subsections grouped by chapter, then intro, conclusions, sources.`;
 
       try {
         await new Promise(r => setTimeout(r, 3000)); // пауза після аналізу методички
-        const raw = await callGemini([{ role: "user", content: planPrompt }], null, "Respond only with valid JSON. No markdown, no explanation.", 3000);
+        const raw = await callGemini([{ role: "user", content: planPrompt }], null, SYS_JSON, 3000);
         const jsonMatch = raw.match(/\{[\s\S]*\}/);
         const parsed = JSON.parse(jsonMatch?.[0] || raw.replace(/```json|```/g, "").trim());
         const secs = parsed.sections || parsed;
@@ -2410,7 +603,7 @@ Order: subsections grouped by chapter, then intro, conclusions, sources.`;
     const namingPrompt = `For ${d.type} on topic "${d.topic}" (field: ${d.subject}) create subsection titles.${commentAnalysis?.planHints ? `\nHINTS:\n${commentAnalysis.planHints}` : ""}${psychoPedNamingHint}\nFixed structure:\n${planSecs.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type)).map(s => `${s.id} [${s.sectionTitle}]`).join("\n")}\n\nReturn ONLY JSON without markdown:\n{"titles":{"1.1":"Title","1.2":"Title","2.1":"Title","2.2":"Title"}}`;
     try {
       await new Promise(r => setTimeout(r, 2000)); // пауза перед запитом
-      const raw = await callClaude([{ role: "user", content: namingPrompt }], null, "Respond only with valid JSON. No markdown, no explanation.", 1000, null, MODEL_FAST);
+      const raw = await callClaude([{ role: "user", content: namingPrompt }], null, SYS_JSON, 1000, null, MODEL_FAST);
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
       const parsed = JSON.parse(jsonMatch?.[0] || raw.replace(/```json|```/g, "").trim());
       const namedSecs = planSecs.map(s => { const name = parsed.titles?.[s.id]; return name ? { ...s, label: `${s.id} ${name}` } : s; });
@@ -2500,7 +693,7 @@ Return ONLY JSON without markdown:
 }`;
 
     try {
-      const raw = await callClaude([{ role: "user", content: prompt }], null, "Respond only with valid JSON. No markdown.", 1200, null, MODEL_FAST);
+      const raw = await callClaude([{ role: "user", content: prompt }], null, SYS_JSON_SHORT, 1200, null, MODEL_FAST);
       const match = raw.match(/\{[\s\S]*\}/);
       const parsed = JSON.parse(match?.[0] || raw);
       const subTitles = parsed.subsections || {};
@@ -2572,7 +765,7 @@ Return ONLY JSON without markdown:
 Рисунки:
 ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel})\nКонтекст: ${f.context}`).join("\n\n")}`;
     try {
-      const raw = await callClaude([{ role: "user", content: prompt }], null, "Respond only with valid JSON array. No markdown.", 2000, null, MODEL_FAST);
+      const raw = await callClaude([{ role: "user", content: prompt }], null, SYS_JSON_ARRAY, 2000, null, MODEL_FAST);
       const parsed = JSON.parse(raw.match(/\[[\s\S]*\]/)?.[0] || "[]");
       setFigureKeywords(parsed);
     } catch (e) { console.error(e); }
@@ -3141,7 +1334,7 @@ ${fullText}`;
 
       const geminiRaw = await callGemini(
         [{ role: "user", content: geminiPrompt }], null,
-        "Respond only with valid JSON. No markdown, no code blocks, no comments.", 4000,
+        SYS_JSON_SHORT, 4000,
         (s) => setPresentationMsg(`Аналізую... зачекайте ${s}с`), "gemini-2.5-flash-lite"
       );
 
@@ -3200,7 +1393,7 @@ ${JSON.stringify(analysis, null, 2)}
 
       const claudeRaw = await callClaude(
         [{ role: "user", content: claudePrompt }], null,
-        "Respond only with valid JSON. No markdown, no comments.", 5000,
+        SYS_JSON_SHORT, 5000,
         (s) => setPresentationMsg(`Генерую слайди... зачекайте ${s}с`), MODEL_FAST
       );
 
@@ -3527,7 +1720,7 @@ ${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
     });
 
     // ── Допоміжні функції ──
-    const isTableRow = p => p.includes("|") || (p.match(/\t/g) || []).length >= 2;
+    const isTableRow = p => p.includes("|") || (p.match(/\t/g) || []).length >= 2 || /^Таблиця\s+\d/.test(p.trim()) || /^Рис\.\s+\d/.test(p.trim());
     const stripCitations = text => text
       .replace(/\s*\[\d+,\s*с\.\s*\d+\]/g, "")
       .replace(/\s*\[\d+\]/g, "")
@@ -3569,7 +1762,7 @@ ${secsSummary}
 
       try {
         const raw = await callClaude([{ role: "user", content: batchPrompt }], null,
-          "Respond only with valid JSON. No markdown.", 2000, null, MODEL_FAST);
+          SYS_JSON_SHORT, 2000, null, MODEL_FAST);
         const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || raw);
         const citMap = parsed.citations || {};
 
@@ -3802,7 +1995,7 @@ ${secsSummary}
                   style={{ background: "transparent", border: "none", color: "#555", cursor: "pointer", fontSize: 13, lineHeight: 1, padding: "0 2px" }} title="Скинути">✕</button>
               </div>
               <SaveIndicator saving={saving} saved={saved} />
-              <StagePills stage={stage} maxStageIdx={maxStageIdx} onNavigate={running ? null : (s) => setStage(s === "input" && info ? "parsed" : s)} />
+              <StagePills stage={stage} maxStageIdx={maxStageIdx} onNavigate={running ? null : handleNavigateMain} />
             </div>
           </div>
         )}
@@ -3818,7 +2011,7 @@ ${secsSummary}
               {info?.orderNumber && <span style={{ fontSize: 11, color: "#555" }}>#{info.orderNumber}</span>}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <StagePills stage={stage} maxStageIdx={maxStageIdx} onNavigate={running ? null : (s) => { setStage(s === "input" && info ? "parsed" : s); setHeaderOpen(false); }} />
+              <StagePills stage={stage} maxStageIdx={maxStageIdx} onNavigate={running ? null : handleNavigateHeader} />
               <span style={{ fontSize: 11, color: "#555", marginLeft: 6 }}>▼</span>
             </div>
           </div>
@@ -3934,765 +2127,102 @@ ${secsSummary}
       }}>
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "32px clamp(16px, 3vw, 48px)" }}>
 
-        {/* ══ STEP 1: ДАНІ ══ */}
+        {/* ══ STAGES ══ */}
         {stage === "input" && (
-          <div className="fade">
-            <Heading>01 / Введіть дані замовлення</Heading>
-            <FieldBox label="Шаблон замовлення *">
-              <textarea value={tplText} onChange={e => setTplText(e.target.value)}
-                placeholder={"№ замовлення - 34455\nТип - Магістерська\n⏰Дедлайн - 06.03.2026\n⚡️Напрям - Гуманітарне\n📌Тематика - Психологія\n✈️Тема - Вплив гаджетів на когнітивну поведінку дітей\n⚙️К-кість стр. - 100-120\n⚙️Унікальність - 70-80%"}
-                style={{ ...TA, minHeight: 200 }} />
-            </FieldBox>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
-              <FieldBox label="Готовий план від клієнта (необов'язково)">
-                <textarea value={clientPlan} onChange={e => setClientPlan(e.target.value)}
-                  placeholder="Вставте план клієнта якщо є. Порожньо = план згенерується автоматично."
-                  style={{ ...TA, minHeight: 90 }} />
-              </FieldBox>
-              <FieldBox label="Або фото плану">
-                <ClientPlanInput onExtracted={setClientPlan} extracted={clientPlan} />
-              </FieldBox>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
-              <FieldBox label="Коментар">
-                <textarea value={comment} onChange={e => setComment(e.target.value)}
-                  placeholder="Додаткові побажання..." style={{ ...TA, minHeight: 90 }} />
-              </FieldBox>
-              <FieldBox label="Методичка (тільки PDF)">
-                <DropZone fileLabel={fileLabel} onFile={handleFile} />
-                {methodInfo && !fileB64 && (
-                  <div style={{ fontSize: 11, color: "#7a8a5a", marginTop: 5 }}>
-                    ✓ Методичку вже проаналізовано. Завантажте PDF знову лише якщо потрібно перепроаналізувати.
-                  </div>
-                )}
-              </FieldBox>
-            </div>
-            <FieldBox label="Фото як додатковий матеріал (необов'язково)">
-              <PhotoDropZone
-                photos={photos}
-                onAdd={p => setPhotos(prev => [...prev, p])}
-                onRemove={i => setPhotos(prev => prev.filter((_, idx) => idx !== i))}
-              />
-            </FieldBox>
-            <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-              <PrimaryBtn onClick={doAnalyze} disabled={!tplText.trim()} loading={running} msg={loadMsg} label="Аналізувати →" />
-              {info && !running && (
-                <button onClick={() => setStage("parsed")}
-                  style={{ background: "transparent", border: "1.5px solid #555", color: "#555", borderRadius: 8, padding: "11px 22px", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
-                  Продовжити без повторного аналізу →
-                </button>
-              )}
-            </div>
-          </div>
+          <InputStage
+            tplText={tplText} setTplText={setTplText}
+            clientPlan={clientPlan} setClientPlan={setClientPlan}
+            comment={comment} setComment={setComment}
+            fileLabel={fileLabel} fileB64={fileB64} methodInfo={methodInfo}
+            photos={photos} setPhotos={setPhotos} info={info}
+            running={running} loadMsg={loadMsg}
+            handleFile={handleFile} doAnalyze={doAnalyze} setStage={setStage}
+          />
         )}
-
-        {/* ══ STEP 2: ПЕРЕВІРКА ══ */}
         {stage === "parsed" && info && (
-          <div className="fade">
-            <Heading>02 / Перевірте дані</Heading>
-            <p style={{ fontSize: 13, color: "#888", marginBottom: 20 }}>Клікніть на значення щоб змінити</p>
-
-            {/* Напрям роботи */}
-            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, padding: "10px 16px", background: "#f0ece2", borderRadius: 8, border: "1.5px solid #d4cfc4" }}>
-              <div style={{ fontSize: 11, color: "#888", letterSpacing: "1px", textTransform: "uppercase", whiteSpace: "nowrap" }}>Напрям роботи</div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {["Гуманітарне", "Економічне", "Технічне", "Біологічне"].map(cat => (
-                  <button key={cat} onClick={() => setInfo(p => ({ ...p, workCategory: cat }))}
-                    style={{ padding: "5px 16px", borderRadius: 20, fontSize: 12, cursor: "pointer", fontFamily: "inherit", border: "1.5px solid", transition: "all .15s",
-                      background: info.workCategory === cat ? "#1a1a14" : "transparent",
-                      color: info.workCategory === cat ? "#e8ff47" : "#555",
-                      borderColor: info.workCategory === cat ? "#1a1a14" : "#ccc" }}>
-                    {cat}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div style={{ border: "1.5px solid #d4cfc4", borderRadius: 8, overflow: "hidden", marginBottom: 16 }}>
-              {Object.entries(FIELD_LABELS).map(([k, l], i, arr) => (
-                <div key={k} style={{ display: "grid", gridTemplateColumns: "200px 1fr", borderBottom: i < arr.length - 1 ? "1px solid #e4dfd4" : "none" }}>
-                  <div style={{ padding: "11px 16px", fontSize: 11, color: "#888", letterSpacing: "1px", textTransform: "uppercase", borderRight: "1px solid #e4dfd4", display: "flex", alignItems: "center", background: "#ede9e0" }}>{l}</div>
-                  <input value={info[k] || ""} onChange={e => setInfo(p => ({ ...p, [k]: e.target.value }))}
-                    style={{ padding: "11px 16px", background: "transparent", border: "none", fontSize: 14, color: "#1a1a14", width: "100%", fontFamily: "'Spectral',serif" }} />
-                </div>
-              ))}
-            </div>
-            {info.pages?.includes("-") && <div style={{ fontSize: 12, color: "#888", marginBottom: 16, fontStyle: "italic" }}>Діапазон "{info.pages}" → середнє: {parsePagesAvg(info.pages)} стор.</div>}
-
-            {/* Карточка методички або помилка */}
-            {!methodInfo && fileB64 && apiError && (
-              <div style={{ border: "1.5px solid #f5c6c6", borderRadius: 8, overflow: "hidden", marginBottom: 20 }}>
-                <div style={{ background: "#8a1a1a", color: "#ffd0d0", padding: "9px 16px", fontFamily: "'Spectral SC',serif", fontSize: 11, letterSpacing: 2 }}>
-                  ⚠ ПОМИЛКА АНАЛІЗУ МЕТОДИЧКИ
-                </div>
-                <div style={{ padding: "12px 16px", background: "#fff5f5", fontSize: 13, color: "#8a1a1a" }}>{apiError}</div>
-              </div>
-            )}
-            {methodInfo && (
-              <div style={{ border: "1.5px solid #c8dfa0", borderRadius: 8, overflow: "hidden", marginBottom: 20 }}>
-                <div style={{ background: "#2a3a1a", color: "#a8d060", padding: "9px 16px", fontFamily: "'Spectral SC',serif", fontSize: 11, letterSpacing: 2 }}>
-                  📋 ВИТЯГНУТО З МЕТОДИЧКИ
-                </div>
-                <div style={{ padding: "14px 18px", background: "#f5faf0", display: "flex", flexWrap: "wrap", gap: 8 }}>
-                  {methodInfo.totalPages && <span style={{ fontSize: 12, background: "#eef5e4", color: "#3a6010", padding: "3px 10px", borderRadius: 10 }}>📄 Обсяг: {methodInfo.totalPages} стор.</span>}
-                  {methodInfo.chaptersCount && <span style={{ fontSize: 12, background: "#eef5e4", color: "#3a6010", padding: "3px 10px", borderRadius: 10 }}>📑 Розділів: {methodInfo.chaptersCount}</span>}
-                  <span
-                    onClick={() => setMethodInfo(p => ({ ...p, hasChapterConclusions: !p.hasChapterConclusions }))}
-                    title="Клікніть щоб увімкнути/вимкнути"
-                    style={{ fontSize: 12, background: methodInfo.hasChapterConclusions ? "#eef5e4" : "#f0ece2", color: methodInfo.hasChapterConclusions ? "#3a6010" : "#888", padding: "3px 10px", borderRadius: 10, cursor: "pointer", userSelect: "none", border: "1px dashed " + (methodInfo.hasChapterConclusions ? "#a8d060" : "#ccc") }}
-                  >
-                    {methodInfo.hasChapterConclusions ? "✓ Висновки до розділів" : "✗ Без висновків до розділів"}
-                  </span>
-                  {methodInfo.sourcesStyle && <span style={{ fontSize: 12, background: "#e4f0ff", color: "#1a5a8a", padding: "3px 10px", borderRadius: 10 }}>📚 Стиль: {methodInfo.sourcesStyle}</span>}
-                  {methodInfo.sourcesOrder && <span style={{ fontSize: 12, background: "#e4f0ff", color: "#1a5a8a", padding: "3px 10px", borderRadius: 10 }}>{methodInfo.sourcesOrder === "alphabetical" ? "🔤 За алфавітом" : "🔢 За появою"}</span>}
-                  {methodInfo.formatting?.font && <span style={{ fontSize: 12, background: "#f0ece2", color: "#555", padding: "3px 10px", borderRadius: 10 }}>🖋 {methodInfo.formatting.font} {methodInfo.formatting.fontSize}pt</span>}
-                  {methodInfo.formatting?.margins && <span style={{ fontSize: 12, background: "#f0ece2", color: "#555", padding: "3px 10px", borderRadius: 10 }}>📐 Поля: Л{methodInfo.formatting.margins.left}мм П{methodInfo.formatting.margins.right}мм</span>}
-                  {methodInfo.citationStyle && <span style={{ fontSize: 12, background: "#f5e4ff", color: "#8a1a8a", padding: "3px 10px", borderRadius: 10 }}>🔗 {methodInfo.citationStyle}</span>}
-                </div>
-                {methodInfo.exampleTOC && (
-                  <div style={{ padding: "10px 18px", background: "#f0faf0", borderTop: "1px solid #c8dfa0" }}>
-                    <div style={{ fontSize: 11, color: "#888", letterSpacing: 1, textTransform: "uppercase", marginBottom: 6 }}>Зразок змісту з методички:</div>
-                    <pre style={{ fontSize: 12, color: "#3a6010", whiteSpace: "pre-wrap", fontFamily: "'Spectral',serif", lineHeight: 1.8, margin: 0 }}>{methodInfo.exampleTOC}</pre>
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-              <NavBtn onClick={() => setStage("input")}>← Назад</NavBtn>
-              {sections.length > 0 && <NavBtn onClick={() => setStage("plan")}>Вперед (збережений план) →</NavBtn>}
-              <PrimaryBtn onClick={doGenPlan} label={sections.length > 0 ? "Перегенерувати план →" : "Генерувати план →"} />
-            </div>
-          </div>
+          <ParsedStage
+            info={info} setInfo={setInfo}
+            methodInfo={methodInfo} setMethodInfo={setMethodInfo}
+            fileB64={fileB64} apiError={apiError} sections={sections}
+            doGenPlan={doGenPlan} setStage={setStage}
+          />
         )}
-
-        {/* ══ STEP 3: ПЛАН ══ */}
         {stage === "plan" && (
-          <div className="fade">
-            <Heading>03 / План роботи</Heading>
-            {planLoading ? (
-              <>{clientPlan ? (
-                <div style={{ border: "1.5px solid #d4cfc4", borderRadius: 8, overflow: "hidden", marginBottom: 18 }}>
-                  <div style={{ background: "#1a1a14", color: "#e8ff47", padding: "10px 18px", fontFamily: "'Spectral SC',serif", fontSize: 11, letterSpacing: 3 }}>ПЛАН КЛІЄНТА (обробляється...)</div>
-                  <div style={{ padding: "14px 18px", background: "#faf8f3" }}><pre style={{ fontFamily: "'Spectral',serif", fontSize: 13, color: "#888", whiteSpace: "pre-wrap", lineHeight: 1.8 }}>{clientPlan}</pre></div>
-                </div>
-              ) : null}
-                <PlanLoadingSkeleton /></>
-            ) : sections.length > 0 ? (
-              <>
-                <p style={{ fontSize: 13, color: "#888", marginBottom: 16 }}>Відредагуйте назви та к-сть сторінок. Після затвердження плану — починайте написання.</p>
-
-                {/* Plan text block */}
-                <div style={{ background: "#1a1a14", color: "#f5f2eb", borderRadius: 8, padding: 20, marginBottom: 18 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-                    <div style={{ fontFamily: "'Spectral SC'", fontSize: 11, color: "#e8ff47", letterSpacing: 3 }}>ПЛАН ДЛЯ КОПІЮВАННЯ</div>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button onClick={() => navigator.clipboard.writeText(planDisplay)} style={{ background: "transparent", border: "1px solid #555", color: "#aaa", borderRadius: 5, padding: "4px 12px", fontSize: 11, cursor: "pointer", fontFamily: "'Spectral',serif", letterSpacing: 1 }}>COPY</button>
-                      <button onClick={() => { setShowManualPlanInput(v => !v); setManualPlanText(""); }} style={{ background: showManualPlanInput ? "#3a2a00" : "transparent", border: "1px solid #888", color: "#e8c84a", borderRadius: 5, padding: "4px 12px", fontSize: 11, cursor: "pointer", fontFamily: "'Spectral',serif", letterSpacing: 1 }}>✏ Замінити</button>
-                      <button
-                        disabled={planDocxLoading}
-                        onClick={async () => { setPlanDocxLoading(true); try { await exportPlanToDocx({ sections, info, methodInfo }); } catch (e) { alert("Помилка: " + e.message); } setPlanDocxLoading(false); }}
-                        style={{ background: planDocxLoading ? "#444" : "#2a3a1a", color: "#a8d060", border: "none", borderRadius: 5, padding: "4px 14px", fontSize: 11, cursor: "pointer", fontFamily: "'Spectral',serif", letterSpacing: 1, display: "inline-flex", alignItems: "center", gap: 6 }}>
-                        {planDocxLoading ? <><SpinDot light />...</> : "⬇ .docx"}
-                      </button>
-                    </div>
-                  </div>
-                  <pre style={{ fontFamily: "'Spectral',serif", fontSize: 13, lineHeight: "2.1", whiteSpace: "pre-wrap", color: "#e0ddd4", margin: 0 }}>{planDisplay}</pre>
-                </div>
-
-                {showManualPlanInput && (
-                  <div style={{ background: "#1e1c0e", border: "1.5px solid #e8c84a", borderRadius: 8, padding: 16, marginBottom: 18 }}>
-                    <div style={{ fontFamily: "'Spectral SC'", fontSize: 11, color: "#e8c84a", letterSpacing: 3, marginBottom: 10 }}>ВСТАВИТИ НОВИЙ ПЛАН</div>
-                    <textarea
-                      value={manualPlanText}
-                      onChange={e => setManualPlanText(e.target.value)}
-                      placeholder={"РОЗДІЛ 1. Назва розділу\n    1.1 Назва підрозділу\n    1.2 Назва підрозділу\nРОЗДІЛ 2. Назва розділу\n    2.1 Назва підрозділу\n    ..."}
-                      style={{ width: "100%", minHeight: 180, background: "#141410", color: "#e0ddd4", border: "1px solid #555", borderRadius: 6, padding: "10px 12px", fontFamily: "'Spectral',serif", fontSize: 13, lineHeight: 1.8, resize: "vertical", boxSizing: "border-box" }}
-                    />
-                    <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                      <button
-                        onClick={() => {
-                          const parsed = parseClientPlan(manualPlanText.trim(), totalPagesNum);
-                          if (!parsed || !parsed.length) { alert("Не вдалося розпізнати план. Перевірте формат."); return; }
-                          const withPrompts = parsed.map(s => ({ ...s, prompts: s.type === "sources" ? 0 : Math.max(1, Math.ceil((s.pages || 3) / 3)) }));
-                          setSections(withPrompts);
-                          setPlanDisplay(buildPlanText(withPrompts));
-                          const { dist, total } = calcSourceDist(withPrompts);
-                          setSourceDist(dist); setSourceTotal(total);
-                          setShowManualPlanInput(false);
-                          setManualPlanText("");
-                        }}
-                        style={{ background: "#2a3a1a", color: "#a8d060", border: "none", borderRadius: 6, padding: "7px 20px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer", letterSpacing: 1 }}
-                      >Застосувати</button>
-                      <button
-                        onClick={() => { setShowManualPlanInput(false); setManualPlanText(""); }}
-                        style={{ background: "transparent", border: "1px solid #555", color: "#aaa", borderRadius: 6, padding: "7px 16px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}
-                      >Скасувати</button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Sections table */}
-                <div style={{ fontSize: 12, color: "#888", marginBottom: 10, padding: "8px 12px", background: "#f0ece2", borderRadius: 6, lineHeight: "1.6" }}>
-                  ✏️ Редагуй назви та сторінки прямо в таблиці. Кнопка <strong>+</strong> — додати підрозділ, <strong>✕</strong> — видалити.
-                </div>
-                <div style={{ border: "1.5px solid #d4cfc4", borderRadius: 8, overflow: "hidden", marginBottom: 22 }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "36px 1fr 70px 54px 36px", background: "#1a1a14", color: "#e8ff47", padding: "9px 14px", fontSize: 11, letterSpacing: "1.5px", textTransform: "uppercase" }}>
-                    <div>#</div><div>Підрозділ</div><div style={{ textAlign: "center" }}>Стор.</div><div style={{ textAlign: "center" }}>Промти</div><div />
-                  </div>
-                  {(() => {
-                    let lastChapterTitle = null;
-                    let rowNum = 0;
-                    const rows = [];
-                    sections.forEach((s, i) => {
-                      const isSpecial = ["intro", "conclusions", "sources"].includes(s.type);
-                      const isChapterConclusion = s.type === "chapter_conclusion";
-                      const isMainSub = !isSpecial && !isChapterConclusion && s.sectionTitle;
-                      if (isMainSub && s.sectionTitle !== lastChapterTitle) {
-                        lastChapterTitle = s.sectionTitle;
-                        rows.push(
-                          <div key={`chhead-${s.sectionTitle}`} style={{ display: "grid", gridTemplateColumns: "36px 1fr 70px 54px 36px", borderBottom: "1px solid #e4dfd4", background: "#ddd8c8", alignItems: "center" }}>
-                            <div style={{ padding: "8px 10px" }} />
-                            <div style={{ padding: "8px 8px", fontSize: 12, fontWeight: "bold", color: "#1a1a14", letterSpacing: "0.5px", gridColumn: "2 / 6", textTransform: "uppercase" }}>{s.sectionTitle}</div>
-                          </div>
-                        );
-                      }
-                      rowNum++;
-                      rows.push(
-                        <div key={s.id} className="sec-row" style={{ display: "grid", gridTemplateColumns: "36px 1fr 70px 54px 36px", borderBottom: i < sections.length - 1 ? "1px solid #e4dfd4" : "none", background: isSpecial ? "#ede9e0" : rowNum % 2 === 0 ? "#f5f2eb" : "#f0ece2", alignItems: "center", transition: "background .15s" }}>
-                          <div style={{ padding: "9px 10px", fontSize: 12, color: "#bbb" }}>{rowNum}</div>
-                          <input value={s.label} onChange={e => { const val = e.target.value; setSections(p => { const next = p.map((x, j) => j === i ? { ...x, label: val } : x); setPlanDisplay(buildPlanText(next)); return next; }); }} style={{ background: "transparent", border: "none", fontSize: 13, padding: "9px 8px", color: isSpecial ? "#888" : "#1a1a14", fontStyle: isSpecial ? "italic" : "normal", width: "100%", fontFamily: "'Spectral',serif" }} />
-                          <input type="number" min="1" value={s.pages} onChange={e => { const v = parseInt(e.target.value) || 1; setSections(p => { const next = p.map((x, j) => j === i ? { ...x, pages: v, prompts: x.type === "sources" ? 0 : Math.max(1, Math.ceil(v / 3)) } : x); setPlanDisplay(buildPlanText(next)); const { dist, total } = calcSourceDist(next); setSourceDist(dist); setSourceTotal(total); return next; }); }} style={{ background: "transparent", border: "none", fontSize: 13, padding: "9px 4px", color: "#1a1a14", textAlign: "center", width: "100%", fontFamily: "'Spectral',serif" }} />
-                          <div style={{ textAlign: "center", fontSize: 12, color: "#888", padding: "9px" }}>{s.type === "sources" ? "—" : s.prompts}</div>
-                          <div style={{ display: "flex", justifyContent: "center" }}>
-                            <button onClick={() => setSections(p => { const next = p.filter((_, j) => j !== i); setPlanDisplay(buildPlanText(next)); const { dist, total } = calcSourceDist(next); setSourceDist(dist); setSourceTotal(total); return next; })} style={{ background: "transparent", border: "none", color: "#bbb", fontSize: 15, cursor: "pointer", padding: "2px 4px", borderRadius: 4 }} onMouseEnter={e => e.currentTarget.style.color = "#c03030"} onMouseLeave={e => e.currentTarget.style.color = "#bbb"}>✕</button>
-                          </div>
-                        </div>
-                      );
-                    });
-                    return rows;
-                  })()}
-                  <div style={{ padding: "10px 14px", background: "#f5f2eb", borderTop: "1px solid #e4dfd4", display: "flex", gap: 8 }}>
-                    <button onClick={() => {
-                      const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
-                      const lastId = mainSecs.length ? mainSecs[mainSecs.length - 1].id : "1.0";
-                      const [ch, sub] = lastId.split(".").map(Number);
-                      const newId = `${ch}.${(sub || 0) + 1}`;
-                      const newSec = { id: newId, label: `${newId} Новий підрозділ`, sectionTitle: mainSecs[mainSecs.length - 1]?.sectionTitle || "", pages: Math.max(1, Math.round(totalPagesNum * 0.1)), prompts: 1, type: mainSecs[mainSecs.length - 1]?.type || "theory" };
-                      setSections(p => { const introIdx = p.findIndex(s => s.type === "intro"); const next = introIdx >= 0 ? [...p.slice(0, introIdx), newSec, ...p.slice(introIdx)] : [...p, newSec]; setPlanDisplay(buildPlanText(next)); return next; });
-                    }} style={{ background: "transparent", border: "1.5px dashed #bbb4a0", color: "#888", borderRadius: 6, padding: "7px 20px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer", flex: 1, letterSpacing: "1px" }}
-                      onMouseEnter={e => { e.currentTarget.style.borderColor = "#1a1a14"; e.currentTarget.style.color = "#1a1a14"; }}
-                      onMouseLeave={e => { e.currentTarget.style.borderColor = "#bbb4a0"; e.currentTarget.style.color = "#888"; }}>
-                      + Підрозділ
-                    </button>
-                    <button onClick={addNewChapter} style={{ background: "transparent", border: "1.5px dashed #8ab060", color: "#6a9030", borderRadius: 6, padding: "7px 20px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer", flex: 1, letterSpacing: "1px" }}
-                      onMouseEnter={e => { e.currentTarget.style.borderColor = "#3a6010"; e.currentTarget.style.color = "#3a6010"; }}
-                      onMouseLeave={e => { e.currentTarget.style.borderColor = "#8ab060"; e.currentTarget.style.color = "#6a9030"; }}>
-                      + Розділ
-                    </button>
-                    <button onClick={recalcPages} style={{ background: "transparent", border: "1.5px dashed #a0a0a0", color: "#888", borderRadius: 6, padding: "7px 14px", fontFamily: "'Spectral',serif", fontSize: 11, cursor: "pointer", letterSpacing: "0.5px", whiteSpace: "nowrap" }}
-                      onMouseEnter={e => { e.currentTarget.style.borderColor = "#555"; e.currentTarget.style.color = "#555"; }}
-                      onMouseLeave={e => { e.currentTarget.style.borderColor = "#a0a0a0"; e.currentTarget.style.color = "#888"; }}>
-                      ⟳ стор.
-                    </button>
-                  </div>
-                </div>
-
-
-                {sections.some(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type) && /\[|\bновий\b/i.test(s.label)) && (
-                  <div style={{ marginBottom: 14 }}>
-                    <GreenBtn
-                      onClick={doNamePlaceholders}
-                      loading={namingLoading}
-                      msg="Генерую назви..."
-                      label="✨ Придумати назви для заглушок"
-                    />
-                  </div>
-                )}
-                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                  <NavBtn onClick={() => setStage("parsed")}>← Назад</NavBtn>
-                  {Object.keys(content).length > 0 && <NavBtn onClick={() => setStage("writing")}>Вперед (до написання) →</NavBtn>}
-                  <PrimaryBtn onClick={startGen} label={Object.keys(content).length > 0 ? "Почати заново →" : "Розпочати написання →"} />
-                </div>
-              </>
-            ) : (
-              <div style={{ color: "#888", fontSize: 14 }}>
-                Помилка генерації.{" "}
-                <button onClick={doGenPlan} style={{ background: "none", border: "none", color: "#1a1a14", textDecoration: "underline", cursor: "pointer", fontSize: 14, fontFamily: "inherit" }}>Спробувати ще раз</button>
-              </div>
-            )}
-          </div>
+          <PlanStage
+            sections={sections} setSections={setSections}
+            planDisplay={planDisplay} setPlanDisplay={setPlanDisplay}
+            planLoading={planLoading} clientPlan={clientPlan}
+            showManualPlanInput={showManualPlanInput} setShowManualPlanInput={setShowManualPlanInput}
+            manualPlanText={manualPlanText} setManualPlanText={setManualPlanText}
+            planDocxLoading={planDocxLoading} setPlanDocxLoading={setPlanDocxLoading}
+            namingLoading={namingLoading} totalPagesNum={totalPagesNum}
+            info={info} methodInfo={methodInfo} content={content}
+            doGenPlan={doGenPlan} doNamePlaceholders={doNamePlaceholders}
+            startGen={startGen} setStage={setStage}
+            setSourceDist={setSourceDist} setSourceTotal={setSourceTotal}
+            addNewChapter={addNewChapter} recalcPages={recalcPages}
+          />
         )}
-
-        {/* ══ STEP 4: НАПИСАННЯ ══ */}
         {stage === "writing" && (
-          <div className="fade">
-            <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 10, flexWrap: "wrap" }}>
-              <Heading style={{ margin: 0 }}>04 / Генерація тексту</Heading>
-              {running && <button onClick={stopGen} style={{ background: "#7a1010", color: "#fff", border: "none", borderRadius: 6, padding: "6px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>⏹ Зупинити</button>}
-              {!running && paused && genIdx < sections.length && <button onClick={resumeGen} style={{ background: "#0a4a0a", color: "#e8ff47", border: "none", borderRadius: 6, padding: "6px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>▶ Продовжити</button>}
-              {!running && !regenAllLoading && genIdx >= sections.length && <button onClick={doRegenAll} style={{ background: "transparent", border: "1px solid #555", color: "#ccc", borderRadius: 6, padding: "6px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>↺ Переписати всю роботу</button>}
-              {regenAllLoading && <><span style={{ fontSize: 12, color: "#888", display: "inline-flex", alignItems: "center", gap: 6 }}><SpinDot />{loadMsg}</span><button onClick={() => regenAllAbortRef.current?.abort()} style={{ background: "#7a1010", color: "#fff", border: "none", borderRadius: 6, padding: "6px 14px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>⏹ Зупинити</button></>}
-            </div>
-            <div style={{ marginBottom: 22 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 12, color: "#888" }}>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>{running && <SpinDot />}{running ? loadMsg : Object.keys(content).length + " / " + sections.length + " блоків готово"}</span>
-                <span style={{ fontWeight: 600, color: "#1a1a14" }}>{progress}%</span>
-              </div>
-              <div style={{ height: 3, background: "#d4cfc4", borderRadius: 2 }}>
-                <div style={{ height: "100%", width: progress + "%", background: "#1a1a14", borderRadius: 2, transition: "width .6s ease" }} />
-              </div>
-            </div>
-
-            {apiError && paused && (
-              <div style={{ background: apiError.includes("💳") ? "#1a0a00" : "#1a0000", border: `1.5px solid ${apiError.includes("💳") ? "#8a4a00" : "#8a1a1a"}`, borderRadius: 8, padding: "14px 18px", marginBottom: 18, fontSize: 13, color: apiError.includes("💳") ? "#f0a060" : "#f08080", lineHeight: 1.6 }}>
-                <div style={{ fontWeight: 600, marginBottom: 6 }}>{apiError.includes("💳") ? "💳 Закінчився баланс API" : "⚠ Помилка генерації"}</div>
-                <div>{apiError}</div>
-                {apiError.includes("💳") && <div style={{ marginTop: 8, fontSize: 12, color: "#c08040" }}>Поповніть баланс на console.anthropic.com, після чого натисніть "Продовжити".</div>}
-                <button onClick={() => setApiError("")} style={{ marginTop: 10, background: "transparent", border: "1px solid #555", color: "#888", borderRadius: 5, padding: "3px 12px", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>✕ Закрити</button>
-              </div>
-            )}
-
-            {displayOrder.map(sec => {
-              const txt = content[sec.id];
-              const isGen = running && sections[genIdx]?.id === sec.id;
-              const isRegen = regenId === sec.id;
-              return (
-                <div key={sec.id} style={{ border: "1.5px solid " + (txt ? "#aaa49a" : isGen ? "#1a1a14" : "#ddd9d0"), borderRadius: 8, marginBottom: 10, overflow: "hidden", transition: "border-color .3s" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 16px", background: txt ? "#1a1a14" : "#f0ece2", borderBottom: txt ? "1px solid #2a2a20" : "none" }}>
-                    <div style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, background: txt ? "#e8ff47" : isGen ? "#555" : "#ccc", animation: isGen ? "pl 1.2s ease-in-out infinite" : "none" }} />
-                    <div style={{ flex: 1, fontSize: 13, fontWeight: 600, color: txt ? "#f5f2eb" : "#1a1a14" }}>{sec.label}</div>
-                    <div style={{ fontSize: 11, color: txt ? "#666" : "#aaa", marginRight: 4 }}>{sec.pages} стор.</div>
-                    {txt && <>
-                      <button onClick={() => navigator.clipboard.writeText(txt)} style={{ background: "transparent", border: "1px solid #555", color: "#999", borderRadius: 5, padding: "3px 10px", fontSize: 10, cursor: "pointer", fontFamily: "'Spectral',serif", letterSpacing: 1 }}>COPY</button>
-                      {!["sources"].includes(sec.type) && (
-                        <button onClick={() => setRegenId(isRegen ? null : sec.id)} style={{ background: isRegen ? "#e8ff47" : "transparent", color: isRegen ? "#111" : "#aaa", border: "1px solid " + (isRegen ? "#e8ff47" : "#555"), borderRadius: 5, padding: "3px 10px", fontSize: 10, cursor: "pointer", fontFamily: "'Spectral',serif" }}>✏️ Переписати</button>
-                      )}
-                    </>}
-                  </div>
-
-                  {/* Regen panel */}
-                  {isRegen && (
-                    <div style={{ padding: "12px 16px", background: "#1a1a14", borderBottom: "1px solid #2a2a20" }}>
-                      <div style={{ fontSize: 11, color: "#888", marginBottom: 6, letterSpacing: 1 }}>ДОДАТКОВІ ВИМОГИ (необов'язково):</div>
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <input value={regenPrompt} onChange={e => setRegenPrompt(e.target.value)}
-                          placeholder="Наприклад: більше прикладів, акцент на практичну частину..."
-                          style={{ flex: 1, background: "#2a2a20", border: "1px solid #444", borderRadius: 5, color: "#f5f2eb", fontSize: 12, padding: "7px 10px", fontFamily: "'Spectral',serif" }} />
-                        <button onClick={() => doRegenSection(sec)} disabled={regenLoading} style={{ background: regenLoading ? "#444" : "#e8ff47", color: "#111", border: "none", borderRadius: 5, padding: "7px 18px", fontSize: 12, cursor: regenLoading ? "default" : "pointer", fontFamily: "'Spectral',serif", display: "inline-flex", alignItems: "center", gap: 6 }}>
-                          {regenLoading ? <><SpinDot />Генерую...</> : "Переписати →"}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {txt && <div style={{ padding: "16px 20px", fontSize: 13, lineHeight: "1.85", color: "#2a2a1e", whiteSpace: "pre-wrap", maxHeight: 360, overflowY: "auto", background: "#faf8f3" }}>{txt}</div>}
-                  {isGen && !txt && <div style={{ padding: "14px 20px", fontSize: 13, color: "#888", display: "flex", alignItems: "center", gap: 8, background: "#faf8f3" }}><SpinDot />Генерується...</div>}
-                </div>
-              );
-            })}
-
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 24 }}>
-              <NavBtn onClick={() => setStage("plan")} disabled={running}>← План</NavBtn>
-              {!running && progress === 100 && <PrimaryBtn onClick={() => setStage("sources")} label="Перейти до джерел →" />}
-            </div>
-          </div>
+          <WritingStage
+            running={running} paused={paused}
+            regenId={regenId} setRegenId={setRegenId}
+            regenPrompt={regenPrompt} setRegenPrompt={setRegenPrompt}
+            regenLoading={regenLoading} regenAllLoading={regenAllLoading}
+            loadMsg={loadMsg} apiError={apiError} setApiError={setApiError}
+            progress={progress} displayOrder={displayOrder}
+            sections={sections} genIdx={genIdx} content={content}
+            regenAllAbortRef={regenAllAbortRef}
+            stopGen={stopGen} resumeGen={resumeGen} doRegenAll={doRegenAll}
+            doRegenSection={doRegenSection} setStage={setStage}
+          />
         )}
-
-        {/* ══ STEP 5: ДЖЕРЕЛА ══ */}
-        {stage === "sources" && (() => {
-          const { allRefs } = globalRefData;
-          let runningIdx = 0;
-          const missingSections = mainSections.filter(s => !(citInputs[s.id] || "").trim());
-          const visibleSections = showMissingSources ? missingSections : mainSections;
-          return (
-            <div className="fade">
-              <Heading>05 / Джерела</Heading>
-              <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20, flexWrap: "wrap" }}>
-                <div style={{ fontSize: 13, color: "#888" }}>Загальна к-сть джерел: <strong style={{ color: "#1a1a14" }}>{sourceTotal}</strong>{methodInfo?.sourcesMinCount ? <span style={{ marginLeft: 8, fontSize: 11, color: "#8a5a1a" }}>(мін. {methodInfo.sourcesMinCount} за методичкою)</span> : null}</div>
-                {methodInfo && (methodInfo.sourcesStyle || methodInfo.sourcesOrder) && (
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {methodInfo.sourcesStyle && <span style={{ fontSize: 11, background: "#e4f0ff", color: "#1a5a8a", padding: "2px 10px", borderRadius: 10 }}>📋 {methodInfo.sourcesStyle}</span>}
-                    {methodInfo.sourcesOrder && <span style={{ fontSize: 11, background: "#eef5e4", color: "#3a6010", padding: "2px 10px", borderRadius: 10 }}>{methodInfo.sourcesOrder === "alphabetical" ? "🔤 За алфавітом" : "🔢 За порядком появи"}</span>}
-                  </div>
-                )}
-                <GreenBtn onClick={() => { setKwError(""); doGenKeywords(); }} loading={kwLoading} msg="Генерую ключові слова..." label={Object.keys(keywords).length > 0 ? "Оновити ключові слова" : "Генерувати ключові слова →"} />
-                {kwError && <div style={{ fontSize: 12, color: "#8a1a1a", background: "#fff5f5", border: "1px solid #e8b0b0", borderRadius: 6, padding: "4px 10px" }}>⚠ {kwError}</div>}
-              </div>
-              <div style={{ padding: "12px 16px", background: "#f0f5e8", border: "1px solid #c8dfa0", borderRadius: 8, marginBottom: 20, fontSize: 13, color: "#3a6010", lineHeight: "1.7" }}>
-                <strong>Як це працює:</strong> Вставте знайдені джерела до кожного підрозділу (кожне з нового рядка). Після заповнення натисніть <em>"Розставити всі посилання"</em>.
-                <div style={{ marginTop: 8 }}>
-                  <a
-                    href={`https://scholar.google.com/scholar?hl=uk&as_sdt=0%2C5&as_ylo=2021&q=${encodeURIComponent(info?.topic || "")}&btnG=`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "#1a5a8a", textDecoration: "none", background: "#e4f0ff", padding: "4px 12px", borderRadius: 6, border: "1px solid #b0d0f0" }}
-                  >
-                    🎓 Шукати джерела на Google Scholar →
-                  </a>
-                </div>
-              </div>
-              {(methodInfo?.recommendedSources || commentAnalysis?.sourcesHints) && (
-                <div style={{ padding: "12px 16px", background: "#fff8e8", border: "1px solid #e8d48a", borderRadius: 8, marginBottom: 20, fontSize: 13, color: "#5a3a00", lineHeight: "1.7" }}>
-                  <div style={{ fontWeight: 600, marginBottom: 6 }}>Рекомендації щодо джерел:</div>
-                  {methodInfo?.recommendedSources && (
-                    <div style={{ marginBottom: commentAnalysis?.sourcesHints ? 8 : 0 }}>
-                      <span style={{ fontSize: 11, color: "#8a6010", textTransform: "uppercase", letterSpacing: "0.5px" }}>З методички: </span>
-                      {methodInfo.recommendedSources}
-                    </div>
-                  )}
-                  {commentAnalysis?.sourcesHints && (
-                    <div>
-                      <span style={{ fontSize: 11, color: "#8a6010", textTransform: "uppercase", letterSpacing: "0.5px" }}>Від клієнта: </span>
-                      {commentAnalysis.sourcesHints}
-                    </div>
-                  )}
-                </div>
-              )}
-              {allRefs.length > 0 && (
-                <div style={{ border: "1.5px solid #d4cfc4", borderRadius: 8, overflow: "hidden", marginBottom: 20 }}>
-                  <div style={{ background: "#2a3a1a", color: "#a8d060", padding: "9px 16px", fontFamily: "'Spectral SC',serif", fontSize: 11, letterSpacing: 2 }}>ПОПЕРЕДНІЙ СПИСОК ДЖЕРЕЛ ({allRefs.length} позицій)</div>
-                  <div style={{ padding: "12px 16px", background: "#faf8f3", maxHeight: 180, overflowY: "auto" }}>
-                    {allRefs.map((r, i) => (
-                      <div key={i} style={{ fontSize: 12, color: "#444", marginBottom: 4, lineHeight: "1.5" }}>
-                        <span style={{ color: "#e8ff47", background: "#1a1a14", padding: "1px 6px", borderRadius: 4, marginRight: 8, fontSize: 11 }}>{i + 1}</span>{r}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {visibleSections.map(sec => {
-                const secRefs = (citInputs[sec.id] || "").split("\n").map(l => l.trim()).filter(Boolean);
-                const startIdx = runningIdx + 1; runningIdx += secRefs.length;
-                const hasSources = secRefs.length > 0;
-                return (
-                  <div key={sec.id} style={{ border: `1.5px solid ${hasSources ? "#d4cfc4" : "#e8a050"}`, borderRadius: 8, overflow: "hidden", marginBottom: 14 }}>
-                    <div style={{ background: "#1a1a14", padding: "11px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <span style={{ width: 8, height: 8, borderRadius: "50%", background: hasSources ? "#5ad060" : "#e8a050", flexShrink: 0, display: "inline-block" }} />
-                        <span style={{ fontSize: 13, fontWeight: 600, color: "#f5f2eb" }}>{sec.label}</span>
-                      </div>
-                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                        {secRefs.length > 0 && <div style={{ fontSize: 11, color: "#888" }}>джерела [{startIdx}–{startIdx + secRefs.length - 1}]</div>}
-                        <div style={{ fontSize: 12, color: "#e8ff47", background: "#2a2a1a", padding: "2px 10px", borderRadius: 10 }}>потрібно: {sourceDist[sec.id] || "?"} дж.</div>
-                      </div>
-                    </div>
-                    <div style={{ padding: "14px 18px", background: "#faf8f3" }}>
-                      {Array.isArray(keywords[sec.id]) && keywords[sec.id].length > 0 && (
-                        <div style={{ marginBottom: 10 }}>
-                          <div style={{ fontSize: 11, color: "#888", letterSpacing: "1px", textTransform: "uppercase", marginBottom: 5 }}>Шукайте за фразами:</div>
-                          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                            {keywords[sec.id].map((kw, ki) => <span key={ki} onClick={() => navigator.clipboard.writeText(kw)} title="Клікни щоб скопіювати" style={{ fontSize: 11, background: "#eef5e4", color: "#3a6010", padding: "2px 9px", borderRadius: 10, border: "1px solid #c8dfa0", cursor: "pointer", userSelect: "none" }}>{kw}</span>)}
-                          </div>
-                        </div>
-                      )}
-                      <div style={{ fontSize: 11, color: "#888", letterSpacing: "1px", textTransform: "uppercase", marginBottom: 5 }}>Вставте джерела (кожне з нового рядка):</div>
-                      <textarea value={citInputs[sec.id] || ""}
-                        onChange={e => { setCitInputs(p => ({ ...p, [sec.id]: e.target.value })); e.target.style.height = "auto"; e.target.style.height = e.target.scrollHeight + "px"; }}
-                        onFocus={e => { e.target.style.height = "auto"; e.target.style.height = e.target.scrollHeight + "px"; }}
-                        onPaste={e => {
-                          e.preventDefault();
-                          const pasted = e.clipboardData.getData("text");
-                          const el = e.target;
-                          const start = el.selectionStart;
-                          const end = el.selectionEnd;
-                          const prev = citInputs[sec.id] || "";
-                          const next = prev.slice(0, start) + pasted + "\n" + prev.slice(end);
-                          setCitInputs(p => ({ ...p, [sec.id]: next }));
-                          requestAnimationFrame(() => {
-                            el.style.height = "auto";
-                            el.style.height = el.scrollHeight + "px";
-                            const pos = start + pasted.length + 1;
-                            el.setSelectionRange(pos, pos);
-                          });
-                        }}
-                        placeholder={"Петренко В.І. Психологія навчання. Київ: Наука, 2020. 245 с.\nSmirnova O. Child development. Oxford: OUP, 2019."}
-                        style={{ ...TA_WHITE, minHeight: 80, overflow: "hidden", resize: "none" }} />
-                      {secRefs.length > 0 && <div style={{ fontSize: 11, color: "#5a8a2a", marginTop: 4 }}>✓ {secRefs.length} джерело(а) введено → [{startIdx}–{startIdx + secRefs.length - 1}]</div>}
-                    </div>
-                  </div>
-                );
-              })}
-              <div style={{ padding: "16px 18px", background: "#f0f5e8", border: "1.5px solid #c8dfa0", borderRadius: 8, marginBottom: 16 }}>
-                <div style={{ fontSize: 13, color: "#3a6010", marginBottom: 12 }}>
-                  Всього введено: <strong>{allRefs.length}</strong> з {sourceTotal} рекомендованих.
-                </div>
-                {(() => {
-                  const alreadyDone = refList.length > 0 && citInputsSnapshot !== null;
-                  const sourcesChanged = alreadyDone && JSON.stringify(citInputs) !== citInputsSnapshot;
-                  if (!alreadyDone) return <GreenBtn onClick={doAddAllCitations} disabled={allRefs.length === 0} loading={allCitLoading} msg="Обробляю підрозділи..." label="Розставити всі посилання та сформувати список літератури →" />;
-                  if (sourcesChanged) return <GreenBtn onClick={doAddAllCitations} disabled={allRefs.length === 0} loading={allCitLoading} msg="Обробляю підрозділи..." label="Джерела змінились — перерозставити посилання →" />;
-                  return null;
-                })()}
-              </div>
-              {refList.length > 0 && (
-                <div style={{ border: "1.5px solid #2a3a1a", borderRadius: 8, overflow: "hidden", marginBottom: 16 }}>
-                  <div style={{ background: "#2a3a1a", color: "#a8d060", padding: "9px 16px", fontFamily: "'Spectral SC',serif", fontSize: 11, letterSpacing: 2, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span>СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ ({methodInfo?.sourcesStyle || "ДСТУ 8302:2015"})</span>
-                    <button onClick={() => navigator.clipboard.writeText(refList.join("\n"))} style={{ background: "transparent", border: "1px solid #5a7a3a", color: "#a8d060", borderRadius: 5, padding: "3px 10px", fontSize: 10, cursor: "pointer", fontFamily: "'Spectral',serif" }}>COPY</button>
-                  </div>
-                  <div style={{ padding: "14px 18px", background: "#faf8f3", maxHeight: 300, overflowY: "auto" }}>
-                    {refList.map((r, i) => <div key={i} style={{ fontSize: 13, color: "#2a2a1e", marginBottom: 6, lineHeight: "1.7" }}>{r}</div>)}
-                  </div>
-                </div>
-              )}
-              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 8 }}>
-                <NavBtn onClick={() => setStage("writing")}>← До тексту</NavBtn>
-                <PrimaryBtn onClick={async () => { await saveToFirestore({ stage: "done", status: "done", content, citInputs, refList }); setStage("done"); }} label="Завершити роботу →" />
-              </div>
-            </div>
-          );
-        })()}
-
-        {/* ══ STEP 6: ГОТОВО ══ */}
+        {stage === "sources" && (
+          <SourcesStage
+            mainSections={mainSections}
+            citInputs={citInputs} setCitInputs={setCitInputs}
+            sourceDist={sourceDist} sourceTotal={sourceTotal}
+            keywords={keywords} kwLoading={kwLoading}
+            kwError={kwError} setKwError={setKwError}
+            methodInfo={methodInfo} commentAnalysis={commentAnalysis}
+            allRefs={globalRefData.allRefs} refList={refList}
+            showMissingSources={showMissingSources}
+            citInputsSnapshot={citInputsSnapshot} allCitLoading={allCitLoading}
+            info={info} doGenKeywords={doGenKeywords}
+            doAddAllCitations={doAddAllCitations}
+            onFinish={async () => { await saveToFirestore({ stage: "done", status: "done", content, citInputs, refList }); setStage("done"); }}
+            setStage={setStage}
+          />
+        )}
         {stage === "done" && (
-          <div className="fade">
-            <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", marginBottom: 4 }}>
-              <Heading style={{ margin: 0 }}>✓ Роботу завершено!</Heading>
-              {!regenAllLoading && <button onClick={doRegenAll} style={{ background: "transparent", border: "1px solid #555", color: "#ccc", borderRadius: 6, padding: "6px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>↺ Переписати всю роботу</button>}
-              {regenAllLoading && <><span style={{ fontSize: 12, color: "#888", display: "inline-flex", alignItems: "center", gap: 6 }}><SpinDot />{loadMsg}</span><button onClick={() => regenAllAbortRef.current?.abort()} style={{ background: "#7a1010", color: "#fff", border: "none", borderRadius: 6, padding: "6px 14px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>⏹ Зупинити</button></>}
-            </div>
-            <p style={{ fontSize: 13, color: "#888", marginBottom: 24 }}>Текст згенеровано. Скопіюйте або завантажте Word-файл.</p>
-
-            {/* ── ТИТУЛЬНА СТОРІНКА ── */}
-            <div style={{ border: "1.5px solid #aaa49a", borderRadius: 8, marginBottom: 10, overflow: "hidden" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 16px", background: "#1a1a14", borderBottom: "1px solid #2a2a20" }}>
-                <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#e8ff47", flexShrink: 0 }} />
-                <div style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "#f5f2eb" }}>ТИТУЛЬНА СТОРІНКА</div>
-                {titlePage && <button onClick={() => navigator.clipboard.writeText(titlePage)} style={{ background: "transparent", border: "1px solid #555", color: "#999", borderRadius: 5, padding: "3px 10px", fontSize: 10, cursor: "pointer", fontFamily: "'Spectral',serif", letterSpacing: 1 }}>COPY</button>}
-              </div>
-              <div style={{ padding: "14px 18px", background: "#faf8f3" }}>
-                {titlePage ? (
-                  <textarea
-                    value={titlePage}
-                    onChange={e => { setTitlePage(e.target.value); e.target.style.height = "auto"; e.target.style.height = e.target.scrollHeight + "px"; }}
-                    onBlur={e => saveToFirestore({ titlePage: e.target.value })}
-                    onFocus={e => { e.target.style.height = "auto"; e.target.style.height = e.target.scrollHeight + "px"; }}
-                    style={{ width: "100%", minHeight: 200, fontSize: 13, lineHeight: "1.85", color: "#2a2a1e", background: "#f5f2ea", borderRadius: 6, padding: "12px 14px", border: "1px solid #d4cfc4", fontFamily: "'Spectral',serif", resize: "vertical", boxSizing: "border-box", overflow: "hidden" }}
-                  />
-                ) : (
-                  <div style={{ fontSize: 12, color: "#888", lineHeight: 1.6 }}>
-                    Шаблон титульної сторінки не знайдено в методичці. Введіть текст вручну:
-                    <textarea
-                      value={titlePage}
-                      onChange={e => setTitlePage(e.target.value)}
-                      onBlur={e => saveToFirestore({ titlePage: e.target.value })}
-                      placeholder={"МІНІСТЕРСТВО ОСВІТИ І НАУКИ УКРАЇНИ\nНазва університету\n\nКУРСОВА РОБОТА\nна тему:\n" + (info?.topic || "[ТЕМА]")}
-                      style={{ width: "100%", minHeight: 160, fontSize: 13, lineHeight: "1.85", color: "#2a2a1e", background: "#f5f2ea", borderRadius: 6, padding: "12px 14px", border: "1px solid #d4cfc4", fontFamily: "'Spectral',serif", resize: "vertical", boxSizing: "border-box", marginTop: 8 }}
-                    />
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {displayOrder.map(sec => {
-              const txt = content[sec.id];
-              if (!txt) return null;
-              const isRegen = regenId === sec.id;
-              return (
-                <div key={sec.id} style={{ border: "1.5px solid #aaa49a", borderRadius: 8, marginBottom: 10, overflow: "hidden" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 16px", background: "#1a1a14", borderBottom: "1px solid #2a2a20" }}>
-                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#e8ff47", flexShrink: 0 }} />
-                    <div style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "#f5f2eb" }}>{sec.label}</div>
-                    <button onClick={() => navigator.clipboard.writeText(txt)} style={{ background: "transparent", border: "1px solid #555", color: "#999", borderRadius: 5, padding: "3px 10px", fontSize: 10, cursor: "pointer", fontFamily: "'Spectral',serif", letterSpacing: 1 }}>COPY</button>
-                    {!["sources"].includes(sec.type) && (
-                      <button onClick={() => setRegenId(isRegen ? null : sec.id)} style={{ background: isRegen ? "#e8ff47" : "transparent", color: isRegen ? "#111" : "#aaa", border: "1px solid " + (isRegen ? "#e8ff47" : "#555"), borderRadius: 5, padding: "3px 10px", fontSize: 10, cursor: "pointer", fontFamily: "'Spectral',serif" }}>✏️ Переписати</button>
-                    )}
-                  </div>
-                  {isRegen && (
-                    <div style={{ padding: "12px 16px", background: "#1a1a14", borderBottom: "1px solid #2a2a20" }}>
-                      <div style={{ fontSize: 11, color: "#888", marginBottom: 6, letterSpacing: 1 }}>ДОДАТКОВІ ВИМОГИ:</div>
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <input value={regenPrompt} onChange={e => setRegenPrompt(e.target.value)} placeholder="Наприклад: більше прикладів, змінити акцент..." style={{ flex: 1, background: "#2a2a20", border: "1px solid #444", borderRadius: 5, color: "#f5f2eb", fontSize: 12, padding: "7px 10px", fontFamily: "'Spectral',serif" }} />
-                        <button onClick={() => doRegenSection(sec)} disabled={regenLoading} style={{ background: regenLoading ? "#444" : "#e8ff47", color: "#111", border: "none", borderRadius: 5, padding: "7px 18px", fontSize: 12, cursor: regenLoading ? "default" : "pointer", fontFamily: "'Spectral',serif", display: "inline-flex", alignItems: "center", gap: 6 }}>
-                          {regenLoading ? <><SpinDot />Генерую...</> : "Переписати →"}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                  <div style={{ padding: "16px 20px", fontSize: 13, lineHeight: "1.85", color: "#2a2a1e", whiteSpace: "pre-wrap", maxHeight: 280, overflowY: "auto", background: "#faf8f3" }}>{txt}</div>
-                </div>
-              );
-            })}
-
-            {/* ══ ДОДАТКИ ══ */}
-            <div style={{ marginTop: 24, border: "1.5px solid #d4cfc4", borderRadius: 8, overflow: "hidden" }}>
-              <div style={{ background: "#1a1a14", color: "#e8ff47", padding: "11px 18px", fontFamily: "'Spectral SC',serif", fontSize: 11, letterSpacing: 2, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <span>ДОДАТКИ</span>
-                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  {isPsychoPed(info) && <span style={{ fontSize: 10, color: "#888", letterSpacing: 1, marginRight: 8 }}>Додаток А: Анкета дослідження</span>}
-                  <button onClick={() => navigator.clipboard.writeText(appendicesText)}
-                    style={{ background: "transparent", color: "#d4d0c8", border: "1px solid #666", borderRadius: 5, padding: "5px 12px", fontFamily: "'Spectral',serif", fontSize: 11, letterSpacing: "0.5px", cursor: "pointer" }}>
-                    COPY
-                  </button>
-                  <button onClick={async () => { setAppendicesLoading(true); try { await exportAppendixToDocx(appendicesText, info, methodInfo); } catch (e) { alert("Помилка: " + e.message); } setAppendicesLoading(false); }} disabled={appendicesLoading}
-                    style={{ background: appendicesLoading ? "#555" : "#1a4a1a", color: appendicesLoading ? "#aaa" : "#a8e060", border: "none", borderRadius: 5, padding: "5px 12px", fontFamily: "'Spectral',serif", fontSize: 11, cursor: appendicesLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
-                    {appendicesLoading ? <><SpinDot light />...</> : <><svg width="13" height="13" viewBox="0 0 13 13" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ marginRight: 5 }}><path d="M6.5 1v7M6.5 8l-2.5-2.5M6.5 8l2.5-2.5" stroke="#a8e060" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /><path d="M2 11h9" stroke="#a8e060" strokeWidth="1.5" strokeLinecap="round" /></svg>.docx</>}
-                  </button>
-                  <button onClick={() => { setAppendicesText(""); saveToFirestore({ appendicesText: "" }); }}
-                    style={{ background: "transparent", border: "1px solid #555", color: "#aaa", borderRadius: 5, padding: "5px 10px", fontFamily: "'Spectral',serif", fontSize: 11, cursor: "pointer" }}>
-                    Очистити
-                  </button>
-                  <button onClick={doGenAppendices} disabled={appendicesLoading}
-                    style={{ background: "transparent", border: "1px solid #555", color: "#ccc", borderRadius: 5, padding: "5px 10px", fontFamily: "'Spectral',serif", fontSize: 11, cursor: appendicesLoading ? "default" : "pointer" }}>
-                    Переробити
-                  </button>
-                </div>
-              </div>
-              <div style={{ padding: "16px 18px", background: "#faf8f3" }}>
-                {!appendicesText ? (
-                  <div>
-                    <div style={{ fontSize: 12, color: "#888", marginBottom: 12, lineHeight: 1.6 }}>
-                      {isPsychoPed(info)
-                        ? "Анкета яка використовувалась у дослідженні. Генерується на основі теми та змісту роботи."
-                        : "Додайте матеріали для додатків або згенеруйте автоматично."}
-                    </div>
-                    <textarea
-                      value={appendicesCustomPrompt}
-                      onChange={e => setAppendicesCustomPrompt(e.target.value)}
-                      placeholder="Ваші інструкції для додатків (необов'язково). Наприклад: «Зроби додаток з порівняльною таблицею методів» або «Додай зразок анкети і схему дослідження»."
-                      style={{ width: "100%", minHeight: 72, fontSize: 12, lineHeight: "1.7", color: "#2a2a1e", background: "#f5f2ea", borderRadius: 6, padding: "10px 14px", border: "1px solid #d4cfc4", fontFamily: "'Spectral',serif", resize: "vertical", boxSizing: "border-box", marginBottom: 10 }}
-                    />
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      <button onClick={doGenAppendices} disabled={appendicesLoading}
-                        style={{ background: appendicesLoading ? "#aaa" : "#1a1a14", color: appendicesLoading ? "#eee" : "#e8ff47", border: "none", borderRadius: 6, padding: "9px 20px", fontFamily: "'Spectral',serif", fontSize: 12, letterSpacing: "1px", cursor: appendicesLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
-                        {appendicesLoading ? <><SpinDot light />Генерую...</> : "Генерувати →"}
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div>
-                    <textarea
-                      value={appendicesText}
-                      onChange={e => setAppendicesText(e.target.value)}
-                      style={{ width: "100%", minHeight: 220, fontSize: 12, lineHeight: "1.85", color: "#2a2a1e", background: "#f5f2ea", borderRadius: 6, padding: "12px 14px", border: "1px solid #d4cfc4", fontFamily: "'Spectral',serif", resize: "vertical", boxSizing: "border-box" }}
-                    />
-                    <textarea
-                      value={appendicesCustomPrompt}
-                      onChange={e => setAppendicesCustomPrompt(e.target.value)}
-                      placeholder="Інструкції для переробки (необов'язково)..."
-                      style={{ width: "100%", minHeight: 56, fontSize: 12, lineHeight: "1.7", color: "#2a2a1e", background: "#f5f2ea", borderRadius: 6, padding: "10px 14px", border: "1px solid #d4cfc4", fontFamily: "'Spectral',serif", resize: "vertical", boxSizing: "border-box", marginTop: 8 }}
-                    />
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* ── Рисунки ── */}
-            <div style={{ marginTop: 20, border: "1.5px solid #e8c84a", borderRadius: 8, overflow: "hidden" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", background: "#fff8e8", cursor: "pointer" }} onClick={() => setFigPanelOpen(p => !p)}>
-                <span style={{ fontWeight: 600, fontSize: 13, color: "#7a5000", fontFamily: "'Spectral',serif" }}>Рисунки у роботі</span>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }} onClick={e => e.stopPropagation()}>
-                  <button onClick={doScanAndGenFigures} disabled={figKwLoading} style={{ fontSize: 11, background: "transparent", border: "1px solid #c8a030", borderRadius: 5, padding: "3px 10px", cursor: figKwLoading ? "default" : "pointer", color: "#7a5000", fontFamily: "'Spectral',serif" }}>
-                    {figKwLoading ? "Оновлюю..." : "↻ Оновити"}
-                  </button>
-                  <span style={{ fontSize: 11, color: "#b08020", fontFamily: "'Spectral',serif" }} onClick={e => { e.stopPropagation(); setFigPanelOpen(p => !p); }}>{figPanelOpen ? "▲ згорнути" : "▼ розгорнути"}</span>
-                </div>
-              </div>
-              {figPanelOpen && (
-                <div style={{ padding: "12px 16px", background: "#fffdf5" }}>
-                  {figKwLoading ? (
-                    <div style={{ fontSize: 13, color: "#888" }}>Оновлюю рисунки...</div>
-                  ) : Object.values(figureRefs).every(a => a.length === 0) ? (
-                    <div style={{ fontSize: 13, color: "#888", fontStyle: "italic" }}>Рисунків у роботі не виявлено</div>
-                  ) : (
-                    <>
-                      {sections.flatMap(sec => (figureRefs[sec.id] || []).map(f => ({ ...f, secLabel: sec.label }))).map((f, i) => {
-                        const kw = figureKeywords.find(k => k.label?.toLowerCase() === f.label?.toLowerCase());
-                        return (
-                          <div key={i} style={{ fontSize: 12, color: "#5a3a00", marginBottom: 10, lineHeight: "1.6", paddingLeft: 10, borderLeft: "3px solid #e8c84a" }}>
-                            <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
-                              <span style={{ fontWeight: 600 }}>{f.label}</span>
-                              <span style={{ color: "#888", fontSize: 11 }}>{f.secLabel}</span>
-                            </div>
-                            {kw ? (
-                              <>
-                                <div style={{ color: "#3a6010", fontSize: 11, marginTop: 2 }}>{kw.name}</div>
-                                <div style={{ color: "#1a5a8a", fontSize: 11, marginTop: 2 }}>Пошук: <span style={{ fontStyle: "italic" }}>{kw.keywords}</span></div>
-                              </>
-                            ) : (
-                              <div style={{ color: "#7a5a20", marginTop: 2 }}>...{f.context}...</div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 24 }}>
-              <NavBtn onClick={() => setStage("sources")}>← Джерела</NavBtn>
-              <button onClick={copyAll} style={{ background: "#1a1a14", color: "#e8ff47", border: "none", borderRadius: 7, padding: "11px 30px", fontFamily: "'Spectral',serif", fontSize: 13, letterSpacing: "1.5px", cursor: "pointer" }}>Скопіювати текст</button>
-              <button disabled={docxLoading} onClick={async () => { setDocxLoading(true); try { await exportToDocx({ sections, content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo }); } catch (e) { alert("Помилка: " + e.message); } setDocxLoading(false); }}
-                style={{ background: docxLoading ? "#aaa" : "#1a4a1a", color: docxLoading ? "#eee" : "#a8e060", border: "none", borderRadius: 7, padding: "11px 30px", fontFamily: "'Spectral',serif", fontSize: 13, letterSpacing: "1.5px", cursor: docxLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
-                {docxLoading ? <><SpinDot light />Генерую Word...</> : "⬇ Завантажити .docx"}
-              </button>
-              <button onClick={resetAll} style={{ background: "transparent", border: "1.5px solid #c4bfb4", color: "#777", borderRadius: 7, padding: "11px 22px", fontFamily: "'Spectral',serif", fontSize: 13, cursor: "pointer" }}>Нове замовлення</button>
-            </div>
-
-            {/* ── Додаткові матеріали ── */}
-            <div style={{ marginTop: 32, borderTop: "1.5px solid #d4cfc4", paddingTop: 24 }}>
-              <div style={{ fontSize: 11, color: "#888", letterSpacing: "2px", textTransform: "uppercase", marginBottom: 16 }}>Додаткові матеріали</div>
-              <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-
-                {/* Презентація */}
-                <div style={{ flex: 1, minWidth: 220, border: "1.5px solid #d4cfc4", borderRadius: 8, padding: "16px 18px" }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Презентація (.pptx)</div>
-                  <div style={{ fontSize: 12, color: "#888", marginBottom: 14 }}>13 слайдів для захисту з дизайном</div>
-                  <button
-                    onClick={generatePresentation}
-                    disabled={presentationLoading}
-                    style={{ background: presentationLoading ? "#aaa" : "#1a1a14", color: presentationLoading ? "#eee" : "#e8ff47", border: "none", borderRadius: 6, padding: "9px 20px", fontFamily: "'Spectral',serif", fontSize: 12, letterSpacing: "1px", cursor: presentationLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
-                    {presentationLoading
-                      ? <><SpinDot light />{presentationMsg || "Генерую..."}</>
-                      : presentationReady ? "Генерувати знову" : "Генерувати"}
-                  </button>
-                  {presentationReady && !presentationLoading && (
-                    <div style={{ marginTop: 10, fontSize: 12, color: "#2a6a2a", display: "flex", alignItems: "center", gap: 6 }}>
-                      <span style={{ fontSize: 14 }}>✓</span> Файл завантажено
-                    </div>
-                  )}
-                  {!presentationReady && !presentationLoading && (
-                    <div style={{ marginTop: 10, fontSize: 11, color: "#aaa", lineHeight: 1.5 }}>
-                      Gemini аналізує текст, Claude генерує слайди
-                    </div>
-                  )}
-                </div>
-
-                {/* Доповідь */}
-                <div style={{ flex: 1, minWidth: 220, border: "1.5px solid #d4cfc4", borderRadius: 8, padding: "16px 18px" }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Доповідь (.docx)</div>
-                  <div style={{ fontSize: 12, color: "#888", marginBottom: 14 }}>Текст виступу на захист (5-7 хвилин)</div>
-                  {!speechText ? (
-                    <button onClick={generateSpeech} disabled={speechLoading}
-                      style={{ background: speechLoading ? "#aaa" : "#1a1a14", color: speechLoading ? "#eee" : "#e8ff47", border: "none", borderRadius: 6, padding: "9px 20px", fontFamily: "'Spectral',serif", fontSize: 12, letterSpacing: "1px", cursor: speechLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
-                      {speechLoading ? <><SpinDot light />Генерую...</> : "Генерувати"}
-                    </button>
-                  ) : (
-                    <div>
-                      <div style={{ fontSize: 12, lineHeight: "1.8", color: "#444", maxHeight: 150, overflowY: "auto", background: "#f5f2ea", borderRadius: 6, padding: "10px 12px", marginBottom: 10, whiteSpace: "pre-wrap" }}>
-                        {speechText.substring(0, 450)}...
-                      </div>
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                        <button onClick={async () => { setSpeechLoading(true); try { await exportSpeechToDocx(speechText, info, methodInfo); } catch (e) { alert("Помилка: " + e.message); } setSpeechLoading(false); }} disabled={speechLoading}
-                          style={{ background: speechLoading ? "#aaa" : "#1a4a1a", color: speechLoading ? "#eee" : "#a8e060", border: "none", borderRadius: 6, padding: "9px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: speechLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
-                          {speechLoading ? <><SpinDot light />...</> : "⬇ Завантажити .docx"}
-                        </button>
-                        <button onClick={() => setSpeechText("")}
-                          style={{ background: "transparent", border: "1.5px solid #d4cfc4", color: "#888", borderRadius: 6, padding: "9px 14px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>
-                          Переробити
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-              </div>
-            </div>
-          </div>
+          <DoneStage
+            content={content} displayOrder={displayOrder}
+            titlePage={titlePage} setTitlePage={setTitlePage} titlePageLines={titlePageLines}
+            regenId={regenId} setRegenId={setRegenId}
+            regenPrompt={regenPrompt} setRegenPrompt={setRegenPrompt}
+            regenLoading={regenLoading} regenAllLoading={regenAllLoading}
+            loadMsg={loadMsg}
+            appendicesText={appendicesText} setAppendicesText={setAppendicesText}
+            appendicesLoading={appendicesLoading} setAppendicesLoading={setAppendicesLoading}
+            appendicesCustomPrompt={appendicesCustomPrompt} setAppendicesCustomPrompt={setAppendicesCustomPrompt}
+            speechText={speechText} setSpeechText={setSpeechText}
+            speechLoading={speechLoading} setSpeechLoading={setSpeechLoading}
+            presentationLoading={presentationLoading} presentationMsg={presentationMsg}
+            presentationReady={presentationReady}
+            docxLoading={docxLoading} setDocxLoading={setDocxLoading}
+            figureRefs={figureRefs} figureKeywords={figureKeywords}
+            figKwLoading={figKwLoading} figPanelOpen={figPanelOpen} setFigPanelOpen={setFigPanelOpen}
+            sections={sections} info={info} methodInfo={methodInfo}
+            doRegenSection={doRegenSection} doRegenAll={doRegenAll}
+            regenAllAbortRef={regenAllAbortRef}
+            doGenAppendices={doGenAppendices} saveToFirestore={saveToFirestore}
+            copyAll={copyAll} resetAll={resetAll}
+            generatePresentation={generatePresentation} generateSpeech={generateSpeech}
+            doScanAndGenFigures={doScanAndGenFigures} setStage={setStage}
+          />
         )}
+
+        
 
         </div>
       </div>{/* end flex layout wrapper */}

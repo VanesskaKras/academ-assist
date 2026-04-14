@@ -2,11 +2,14 @@ import { useState, useRef, useEffect } from "react";
 import { db } from "./firebase";
 import { useAuth } from "./AuthContext";
 import { doc, getDoc, setDoc } from "firebase/firestore";
-import {
-  MODEL, MODEL_FAST, buildSYS, callClaude, serializeForFirestore, parsePagesAvg,
-  exportSimpleDocx, TA, TA_WHITE, SpinDot, Shimmer, FieldBox, Heading,
-  NavBtn, PrimaryBtn, GreenBtn, SaveIndicator, DropZone, SHARED_STYLES, playDoneSound,
-} from "./shared.jsx";
+import { MODEL, MODEL_FAST, callClaude } from "./lib/api.js";
+import { buildSYS } from "./lib/prompts.js";
+import { serializeForFirestore } from "./lib/firestoreUtils.js";
+import { playDoneSound } from "./lib/audio.js";
+import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
+import { FieldBox, Heading, NavBtn, PrimaryBtn, GreenBtn, SaveIndicator } from "./components/Buttons.jsx";
+import { DropZone } from "./components/DropZone.jsx";
+import { parsePagesAvg, exportSimpleDocx, TA, TA_WHITE, SHARED_STYLES } from "./shared.jsx";
 
 // ─────────────────────────────────────────────
 // Конфіг типів робіт

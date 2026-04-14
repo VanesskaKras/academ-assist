@@ -1,0 +1,86 @@
+import { FIELD_LABELS, parsePagesAvg } from "../../lib/planUtils.js";
+import { Heading, NavBtn, PrimaryBtn } from "../Buttons.jsx";
+
+export function ParsedStage({
+  info, setInfo, methodInfo, setMethodInfo, fileB64, apiError, sections,
+  doGenPlan, setStage,
+}) {
+  return (
+    <div className="fade">
+      <Heading>02 / Перевірте дані</Heading>
+      <p style={{ fontSize: 13, color: "#888", marginBottom: 20 }}>Клікніть на значення щоб змінити</p>
+
+      {/* Напрям роботи */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, padding: "10px 16px", background: "#f0ece2", borderRadius: 8, border: "1.5px solid #d4cfc4" }}>
+        <div style={{ fontSize: 11, color: "#888", letterSpacing: "1px", textTransform: "uppercase", whiteSpace: "nowrap" }}>Напрям роботи</div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {["Гуманітарне", "Економічне", "Технічне", "Біологічне"].map(cat => (
+            <button key={cat} onClick={() => setInfo(p => ({ ...p, workCategory: cat }))}
+              style={{ padding: "5px 16px", borderRadius: 20, fontSize: 12, cursor: "pointer", fontFamily: "inherit", border: "1.5px solid", transition: "all .15s",
+                background: info.workCategory === cat ? "#1a1a14" : "transparent",
+                color: info.workCategory === cat ? "#e8ff47" : "#555",
+                borderColor: info.workCategory === cat ? "#1a1a14" : "#ccc" }}>
+              {cat}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ border: "1.5px solid #d4cfc4", borderRadius: 8, overflow: "hidden", marginBottom: 16 }}>
+        {Object.entries(FIELD_LABELS).map(([k, l], i, arr) => (
+          <div key={k} style={{ display: "grid", gridTemplateColumns: "200px 1fr", borderBottom: i < arr.length - 1 ? "1px solid #e4dfd4" : "none" }}>
+            <div style={{ padding: "11px 16px", fontSize: 11, color: "#888", letterSpacing: "1px", textTransform: "uppercase", borderRight: "1px solid #e4dfd4", display: "flex", alignItems: "center", background: "#ede9e0" }}>{l}</div>
+            <input value={info[k] || ""} onChange={e => setInfo(p => ({ ...p, [k]: e.target.value }))}
+              style={{ padding: "11px 16px", background: "transparent", border: "none", fontSize: 14, color: "#1a1a14", width: "100%", fontFamily: "'Spectral',serif" }} />
+          </div>
+        ))}
+      </div>
+      {info.pages?.includes("-") && <div style={{ fontSize: 12, color: "#888", marginBottom: 16, fontStyle: "italic" }}>Діапазон "{info.pages}" → середнє: {parsePagesAvg(info.pages)} стор.</div>}
+
+      {/* Карточка методички або помилка */}
+      {!methodInfo && fileB64 && apiError && (
+        <div style={{ border: "1.5px solid #f5c6c6", borderRadius: 8, overflow: "hidden", marginBottom: 20 }}>
+          <div style={{ background: "#8a1a1a", color: "#ffd0d0", padding: "9px 16px", fontFamily: "'Spectral SC',serif", fontSize: 11, letterSpacing: 2 }}>
+            ⚠ ПОМИЛКА АНАЛІЗУ МЕТОДИЧКИ
+          </div>
+          <div style={{ padding: "12px 16px", background: "#fff5f5", fontSize: 13, color: "#8a1a1a" }}>{apiError}</div>
+        </div>
+      )}
+      {methodInfo && (
+        <div style={{ border: "1.5px solid #c8dfa0", borderRadius: 8, overflow: "hidden", marginBottom: 20 }}>
+          <div style={{ background: "#2a3a1a", color: "#a8d060", padding: "9px 16px", fontFamily: "'Spectral SC',serif", fontSize: 11, letterSpacing: 2 }}>
+            📋 ВИТЯГНУТО З МЕТОДИЧКИ
+          </div>
+          <div style={{ padding: "14px 18px", background: "#f5faf0", display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {methodInfo.totalPages && <span style={{ fontSize: 12, background: "#eef5e4", color: "#3a6010", padding: "3px 10px", borderRadius: 10 }}>📄 Обсяг: {methodInfo.totalPages} стор.</span>}
+            {methodInfo.chaptersCount && <span style={{ fontSize: 12, background: "#eef5e4", color: "#3a6010", padding: "3px 10px", borderRadius: 10 }}>📑 Розділів: {methodInfo.chaptersCount}</span>}
+            <span
+              onClick={() => setMethodInfo(p => ({ ...p, hasChapterConclusions: !p.hasChapterConclusions }))}
+              title="Клікніть щоб увімкнути/вимкнути"
+              style={{ fontSize: 12, background: methodInfo.hasChapterConclusions ? "#eef5e4" : "#f0ece2", color: methodInfo.hasChapterConclusions ? "#3a6010" : "#888", padding: "3px 10px", borderRadius: 10, cursor: "pointer", userSelect: "none", border: "1px dashed " + (methodInfo.hasChapterConclusions ? "#a8d060" : "#ccc") }}
+            >
+              {methodInfo.hasChapterConclusions ? "✓ Висновки до розділів" : "✗ Без висновків до розділів"}
+            </span>
+            {methodInfo.sourcesStyle && <span style={{ fontSize: 12, background: "#e4f0ff", color: "#1a5a8a", padding: "3px 10px", borderRadius: 10 }}>📚 Стиль: {methodInfo.sourcesStyle}</span>}
+            {methodInfo.sourcesOrder && <span style={{ fontSize: 12, background: "#e4f0ff", color: "#1a5a8a", padding: "3px 10px", borderRadius: 10 }}>{methodInfo.sourcesOrder === "alphabetical" ? "🔤 За алфавітом" : "🔢 За появою"}</span>}
+            {methodInfo.formatting?.font && <span style={{ fontSize: 12, background: "#f0ece2", color: "#555", padding: "3px 10px", borderRadius: 10 }}>🖋 {methodInfo.formatting.font} {methodInfo.formatting.fontSize}pt</span>}
+            {methodInfo.formatting?.margins && <span style={{ fontSize: 12, background: "#f0ece2", color: "#555", padding: "3px 10px", borderRadius: 10 }}>📐 Поля: Л{methodInfo.formatting.margins.left}мм П{methodInfo.formatting.margins.right}мм</span>}
+            {methodInfo.citationStyle && <span style={{ fontSize: 12, background: "#f5e4ff", color: "#8a1a8a", padding: "3px 10px", borderRadius: 10 }}>🔗 {methodInfo.citationStyle}</span>}
+          </div>
+          {methodInfo.exampleTOC && (
+            <div style={{ padding: "10px 18px", background: "#f0faf0", borderTop: "1px solid #c8dfa0" }}>
+              <div style={{ fontSize: 11, color: "#888", letterSpacing: 1, textTransform: "uppercase", marginBottom: 6 }}>Зразок змісту з методички:</div>
+              <pre style={{ fontSize: 12, color: "#3a6010", whiteSpace: "pre-wrap", fontFamily: "'Spectral',serif", lineHeight: 1.8, margin: 0 }}>{methodInfo.exampleTOC}</pre>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        <NavBtn onClick={() => setStage("input")}>← Назад</NavBtn>
+        {sections.length > 0 && <NavBtn onClick={() => setStage("plan")}>Вперед (збережений план) →</NavBtn>}
+        <PrimaryBtn onClick={doGenPlan} label={sections.length > 0 ? "Перегенерувати план →" : "Генерувати план →"} />
+      </div>
+    </div>
+  );
+}
