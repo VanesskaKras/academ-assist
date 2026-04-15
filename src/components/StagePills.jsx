@@ -1,15 +1,17 @@
 import { memo } from "react";
 import { STAGES, STAGE_KEYS } from "../lib/planUtils.js";
 
-export const StagePills = memo(function StagePills({ stage, maxStageIdx, onNavigate }) {
-  const cur = STAGE_KEYS.indexOf(stage);
+export const StagePills = memo(function StagePills({ stage, maxStageIdx, onNavigate, stages, stageKeys }) {
+  const activeStages = stages || STAGES;
+  const activeKeys   = stageKeys || STAGE_KEYS;
+  const cur = activeKeys.indexOf(stage);
   const maxReached = maxStageIdx ?? cur;
   return <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-    {STAGES.map((l, i) => {
+    {activeStages.map((l, i) => {
       const isClickable = i <= maxReached && onNavigate;
       return (
         <div key={i}
-          onClick={isClickable ? () => onNavigate(STAGE_KEYS[i]) : undefined}
+          onClick={isClickable ? () => onNavigate(activeKeys[i]) : undefined}
           style={{
             padding: "4px 12px", borderRadius: 20, fontSize: 11, letterSpacing: "1px",
             background: i === cur ? "#e8ff47" : i < cur ? "#1e2a00" : i <= maxReached ? "#2a3a00" : "transparent",

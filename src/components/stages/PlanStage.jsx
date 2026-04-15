@@ -9,7 +9,7 @@ export function PlanStage({
   showManualPlanInput, setShowManualPlanInput, manualPlanText, setManualPlanText,
   planDocxLoading, setPlanDocxLoading, namingLoading, totalPagesNum,
   info, methodInfo, content, doGenPlan, doNamePlaceholders, startGen, setStage,
-  setSourceDist, setSourceTotal, addNewChapter, recalcPages,
+  setSourceDist, setSourceTotal, addNewChapter, recalcPages, workflowMode,
 }) {
   return (
     <div className="fade">
@@ -154,8 +154,40 @@ export function PlanStage({
           )}
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
             <NavBtn onClick={() => setStage("parsed")}>← Назад</NavBtn>
-            {Object.keys(content).length > 0 && <NavBtn onClick={() => setStage("writing")}>Вперед (до написання) →</NavBtn>}
-            <PrimaryBtn onClick={startGen} label={Object.keys(content).length > 0 ? "Почати заново →" : "Розпочати написання →"} />
+            {Object.keys(content).length > 0 && (
+              <NavBtn onClick={() => setStage(workflowMode === "sources-first" ? "sources" : "writing")}>
+                Вперед (продовжити) →
+              </NavBtn>
+            )}
+          </div>
+
+          {/* Вибір режиму */}
+          <div style={{ marginTop: 16, padding: "16px 18px", background: "#f0f5e8", border: "1.5px solid #c8dfa0", borderRadius: 8 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#2a4010", marginBottom: 12 }}>Оберіть порядок роботи:</div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button
+                onClick={() => startGen("sources-first")}
+                style={{
+                  flex: 1, minWidth: 200, padding: "12px 16px", borderRadius: 8, cursor: "pointer",
+                  fontFamily: "'Spectral',serif", fontSize: 13, textAlign: "left", lineHeight: 1.5,
+                  background: "#2a3a1a", color: "#e8ff47", border: "2px solid #5a9a1a",
+                }}
+              >
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>Спочатку джерела →</div>
+                <div style={{ fontSize: 11, color: "#a8d060", opacity: 0.9 }}>Знайдіть джерела, потім AI пише текст спираючись на них і вставляє [1][2] одразу</div>
+              </button>
+              <button
+                onClick={() => startGen("text-first")}
+                style={{
+                  flex: 1, minWidth: 200, padding: "12px 16px", borderRadius: 8, cursor: "pointer",
+                  fontFamily: "'Spectral',serif", fontSize: 13, textAlign: "left", lineHeight: 1.5,
+                  background: "#1a1a14", color: "#f5f2eb", border: "2px solid #555",
+                }}
+              >
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>Спочатку текст →</div>
+                <div style={{ fontSize: 11, color: "#aaa", opacity: 0.9 }}>AI генерує текст без посилань, потім ви додаєте джерела і розставляєте їх окремо</div>
+              </button>
+            </div>
           </div>
         </>
       ) : (

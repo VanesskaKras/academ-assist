@@ -10,7 +10,7 @@ import { exportToPptxFile } from "./lib/exportPptx.js";
 import { callClaude, callGemini, MODEL, MODEL_FAST } from "./lib/api.js";
 import { playDoneSound } from "./lib/audio.js";
 import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, METHODOLOGY_READING_PROMPT, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt } from "./lib/prompts.js";
-import { FIELD_LABELS, isPsychoPed, isEcon, getEmpiricalSections, getEconSections, STAGES, STAGE_KEYS, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan } from "./lib/planUtils.js";
+import { FIELD_LABELS, isPsychoPed, isEcon, getEmpiricalSections, getEconSections, STAGES_TEXT_FIRST, STAGE_KEYS_TEXT_FIRST, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { searchSourcesForSection } from "./lib/sourcesSearch.js";
 import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
@@ -36,6 +36,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [stage, setStage] = useState("input");
   const [maxStageIdx, setMaxStageIdx] = useState(0);
+  const [workflowMode, setWorkflowMode] = useState("text-first"); // "text-first" | "sources-first"
   const [tplText, setTplText] = useState("");
   const [comment, setComment] = useState("");
   const [clientPlan, setClientPlan] = useState("");
@@ -166,7 +167,11 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
           if (d.titlePageLines) setTitlePageLines(d.titlePageLines);
           if (d.slideJson) setSlideJson(d.slideJson);
           if (d.presentationReady) setPresentationReady(true);
-          if (d.stage) { setStage(d.stage); setMaxStageIdx(Math.max(0, STAGE_KEYS.indexOf(d.stage))); }
+          if (d.workflowMode) setWorkflowMode(d.workflowMode);
+          if (d.stage) {
+            const keys = d.workflowMode === "sources-first" ? STAGE_KEYS_SOURCES_FIRST : STAGE_KEYS_TEXT_FIRST;
+            setStage(d.stage); setMaxStageIdx(Math.max(0, keys.indexOf(d.stage)));
+          }
           if (d.genIdx !== undefined) setGenIdx(d.genIdx);
         }
       } catch (e) { console.error("Load error:", e); }
@@ -175,11 +180,15 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     load();
   }, [orderId, user]);
 
+  // Активні стейджі залежно від режиму
+  const activeStageKeys = workflowMode === "sources-first" ? STAGE_KEYS_SOURCES_FIRST : STAGE_KEYS_TEXT_FIRST;
+  const activeStages    = workflowMode === "sources-first" ? STAGES_SOURCES_FIRST    : STAGES_TEXT_FIRST;
+
   // Оновлюємо maxStageIdx коли просуваємось вперед
   useEffect(() => {
-    const idx = STAGE_KEYS.indexOf(stage);
+    const idx = activeStageKeys.indexOf(stage);
     if (idx >= 0) setMaxStageIdx(prev => Math.max(prev, idx));
-  }, [stage]);
+  }, [stage, workflowMode]);
 
   // ── Збереження в Firestore ──
   const saveToFirestore = async (patch) => {
@@ -681,10 +690,16 @@ Return ONLY JSON without markdown:
     setNamingLoading(false);
   };
 
-  const startGen = () => {
+  const startGen = (mode) => {
+    const newMode = mode || workflowMode;
+    setWorkflowMode(newMode);
     const ORDER = ["theory", "analysis", "recommendations", "chapter_conclusion", "intro", "conclusions", "sources"];
     setSections(prev => [...prev].sort((a, b) => ORDER.indexOf(a.type) - ORDER.indexOf(b.type)));
-    setContent({}); setGenIdx(0); setPaused(false); setStage("writing");
+    setContent({}); setGenIdx(0); setPaused(false);
+    // sources-first: спочатку збираємо джерела, потім пишемо
+    const nextStage = newMode === "sources-first" ? "sources" : "writing";
+    setStage(nextStage);
+    saveToFirestore({ workflowMode: newMode, stage: nextStage, status: "writing" });
   };
 
   // ── Виявлення рисунків у тексті ──
@@ -744,7 +759,17 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
   useEffect(() => {
     if (stage !== "writing" || paused) return;
     if (runningRef.current) return;
-    if (genIdx >= sections.length) { playDoneSound(); setStage("done"); saveToFirestore({ stage: "done", status: "done", content, citInputs }); return; }
+    if (genIdx >= sections.length) {
+      playDoneSound();
+      if (workflowMode === "sources-first") {
+        // Джерела вже зібрані — одразу до Done
+        setStage("done"); saveToFirestore({ stage: "done", status: "done", content, citInputs });
+      } else {
+        // text-first: після написання — до Sources для розстановки посилань
+        setStage("sources"); saveToFirestore({ stage: "sources", status: "writing", content, citInputs });
+      }
+      return;
+    }
     const sec = sections[genIdx];
     if (contentRef.current[sec.id] !== undefined) { setGenIdx(g => g + 1); return; }
     if (sec.type === "sources") {
@@ -949,15 +974,25 @@ ${chapCtx ? "ЗМІСТ ПІДРОЗДІЛІВ РОЗДІЛУ:\n" + chapCtx : ""
 6. В тексті додай: "Анкета наведена у Додатку А."`;
       }
 
+      // sources-first: додаємо джерела як контекст для генерації
+      const secSourceLines = workflowMode === "sources-first"
+        ? (citInputs[sec.id] || "").split("\n").map(l => l.trim()).filter(Boolean)
+        : [];
+      const sourcesBlock = secSourceLines.length > 0
+        ? `\nДЖЕРЕЛА ДЛЯ ЦЬОГО ПІДРОЗДІЛУ (${secSourceLines.length} шт.) — спирайся на них при написанні, вставляй посилання [N] після відповідних тверджень:\n${secSourceLines.map((s, i) => `[${i + 1}] ${s}`).join("\n")}\n`
+        : "";
+      const citNote = secSourceLines.length > 0
+        ? "Вставляй [N] у текст одразу після тверджень що спираються на джерело (де N — номер зі списку вище)."
+        : "Без посилань [1],[2].";
+
       instruction = `Напиши підрозділ "${sec.label}" для ${d.type} на тему "${d.topic}". Галузь: ${d.subject}.
 Тип підрозділу: ${typeHints[sec.type] || "основний"}.
-${methodReq ? `ВИМОГИ МЕТОДИЧКИ ДО ЦЬОГО РОЗДІЛУ: ${methodReq}` : ""}${empiricalBlock}${econBlock}
-
+${methodReq ? `ВИМОГИ МЕТОДИЧКИ ДО ЦЬОГО РОЗДІЛУ: ${methodReq}` : ""}${empiricalBlock}${econBlock}${sourcesBlock}
 ПЛАН РОБОТИ (для розуміння структури та уникнення повторів):
 ${planSummary}
 
 ${prevCtx ? `КОНТЕКСТ ПОПЕРЕДНІХ ПІДРОЗДІЛІВ:\n${prevCtx}\n` : ""}Обсяг: ~${approxParas} абзаців (~${sec.pages} стор.).
-Не обривай текст. Завершуй підсумковим абзацом. Без посилань [1],[2]. Без жирного.
+Не обривай текст. Завершуй підсумковим абзацом. ${citNote} Без жирного.
 Абзаци мають різнитись за довжиною: чергуй короткі (2-3 речення) з довшими (5-7 речень).`;
     }
     if (commentAnalysis?.writingHints) instruction += `\n\nПІДКАЗКИ З КОМЕНТАРЯ КЛІЄНТА (врахуй при написанні):\n${commentAnalysis.writingHints}`;
@@ -1978,7 +2013,7 @@ ${secsSummary}
                   style={{ background: "transparent", border: "none", color: "#555", cursor: "pointer", fontSize: 13, lineHeight: 1, padding: "0 2px" }} title="Скинути">✕</button>
               </div>
               <SaveIndicator saving={saving} saved={saved} />
-              <StagePills stage={stage} maxStageIdx={maxStageIdx} onNavigate={running ? null : handleNavigateMain} />
+              <StagePills stage={stage} maxStageIdx={maxStageIdx} onNavigate={running ? null : handleNavigateMain} stages={activeStages} stageKeys={activeStageKeys} />
             </div>
           </div>
         )}
@@ -1994,7 +2029,7 @@ ${secsSummary}
               {info?.orderNumber && <span style={{ fontSize: 11, color: "#555" }}>#{info.orderNumber}</span>}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <StagePills stage={stage} maxStageIdx={maxStageIdx} onNavigate={running ? null : handleNavigateHeader} />
+              <StagePills stage={stage} maxStageIdx={maxStageIdx} onNavigate={running ? null : handleNavigateHeader} stages={activeStages} stageKeys={activeStageKeys} />
               <span style={{ fontSize: 11, color: "#555", marginLeft: 6 }}>▼</span>
             </div>
           </div>
@@ -2141,7 +2176,7 @@ ${secsSummary}
             namingLoading={namingLoading} totalPagesNum={totalPagesNum}
             info={info} methodInfo={methodInfo} content={content}
             doGenPlan={doGenPlan} doNamePlaceholders={doNamePlaceholders}
-            startGen={startGen} setStage={setStage}
+            startGen={startGen} setStage={setStage} workflowMode={workflowMode}
             setSourceDist={setSourceDist} setSourceTotal={setSourceTotal}
             addNewChapter={addNewChapter} recalcPages={recalcPages}
           />
@@ -2157,7 +2192,7 @@ ${secsSummary}
             sections={sections} genIdx={genIdx} content={content}
             regenAllAbortRef={regenAllAbortRef}
             stopGen={stopGen} resumeGen={resumeGen} doRegenAll={doRegenAll}
-            doRegenSection={doRegenSection} setStage={setStage}
+            doRegenSection={doRegenSection} setStage={setStage} workflowMode={workflowMode}
           />
         )}
         {stage === "sources" && (
@@ -2178,7 +2213,8 @@ ${secsSummary}
             doSearchSources={doSearchSources}
             doAddAllCitations={doAddAllCitations}
             onFinish={async () => { await saveToFirestore({ stage: "done", status: "done", content, citInputs, refList }); setStage("done"); }}
-            setStage={setStage}
+            onProceedToWriting={() => setStage("writing")}
+            setStage={setStage} workflowMode={workflowMode}
           />
         )}
         {stage === "done" && (

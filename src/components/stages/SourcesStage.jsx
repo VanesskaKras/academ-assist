@@ -66,7 +66,7 @@ export function SourcesStage({
   keywords, kwLoading, kwError, setKwError, methodInfo, commentAnalysis,
   allRefs, refList, showMissingSources, citInputsSnapshot, allCitLoading, info,
   suggestedSources, sourcesSearchLoading, sourcesSearchError, doSearchSources,
-  doGenKeywords, doAddAllCitations, onFinish, setStage,
+  doGenKeywords, doAddAllCitations, onFinish, onProceedToWriting, setStage, workflowMode,
 }) {
   // { secId: paper[] } — зберігаємо повні об'єкти, не тільки ID
   const [selectedSugg, setSelectedSugg] = useState({});
@@ -133,7 +133,7 @@ export function SourcesStage({
 
   return (
     <div className="fade">
-      <Heading>05 / Джерела</Heading>
+      <Heading>{workflowMode === "sources-first" ? "04 / Джерела" : "05 / Джерела"}</Heading>
 
       {/* ── Заголовок: статистика + кнопка генерації ── */}
       <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20, flexWrap: "wrap" }}>
@@ -443,8 +443,13 @@ export function SourcesStage({
       )}
 
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 8 }}>
-        <NavBtn onClick={() => setStage("writing")}>← До тексту</NavBtn>
-        <PrimaryBtn onClick={onFinish} label="Завершити роботу →" />
+        <NavBtn onClick={() => setStage(workflowMode === "sources-first" ? "plan" : "writing")}>
+          {workflowMode === "sources-first" ? "← До плану" : "← До тексту"}
+        </NavBtn>
+        {workflowMode === "sources-first"
+          ? <PrimaryBtn onClick={onProceedToWriting} label="Далі → Генерація тексту" />
+          : <PrimaryBtn onClick={onFinish} label="Завершити роботу →" />
+        }
       </div>
     </div>
   );

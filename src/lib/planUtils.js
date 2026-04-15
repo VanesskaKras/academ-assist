@@ -61,8 +61,15 @@ export const getEconSections = (sections, info) => {
     .map(s => s.id);
 };
 
-export const STAGES = ["Дані", "Перевірка", "План", "Написання", "Джерела", "Готово"];
-export const STAGE_KEYS = ["input", "parsed", "plan", "writing", "sources", "done"];
+export const STAGES_TEXT_FIRST   = ["Дані", "Перевірка", "План", "Написання", "Джерела", "Готово"];
+export const STAGE_KEYS_TEXT_FIRST   = ["input", "parsed", "plan", "writing", "sources", "done"];
+
+export const STAGES_SOURCES_FIRST = ["Дані", "Перевірка", "План", "Джерела", "Написання", "Готово"];
+export const STAGE_KEYS_SOURCES_FIRST = ["input", "parsed", "plan", "sources", "writing", "done"];
+
+// Сумісність зі старим кодом (дефолт — text-first)
+export const STAGES     = STAGES_TEXT_FIRST;
+export const STAGE_KEYS = STAGE_KEYS_TEXT_FIRST;
 
 // Статуси для Firestore
 export const ORDER_STATUS = {
