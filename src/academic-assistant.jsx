@@ -99,6 +99,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [suggestedSources, setSuggestedSources] = useState({});
   const [sourcesSearchLoading, setSourcesSearchLoading] = useState({});
   const [sourcesSearchError, setSourcesSearchError] = useState({});
+  const [searchPageCount, setSearchPageCount] = useState({}); // лічильник натискань "оновити" на секцію
   const [sessionCost, setSessionCost] = useState(() => {
     try { return JSON.parse(localStorage.getItem("sessionCost")) || { claude: 0, gemini: 0 }; } catch { return { claude: 0, gemini: 0 }; }
   });
@@ -189,6 +190,17 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     const idx = activeStageKeys.indexOf(stage);
     if (idx >= 0) setMaxStageIdx(prev => Math.max(prev, idx));
   }, [stage, workflowMode]);
+
+  // ── Авто-збереження citInputs на стейджі джерел ──
+  const citSaveTimer = useRef(null);
+  useEffect(() => {
+    if (stage !== "sources") return;
+    clearTimeout(citSaveTimer.current);
+    citSaveTimer.current = setTimeout(() => {
+      saveToFirestore({ citInputs });
+    }, 1500);
+    return () => clearTimeout(citSaveTimer.current);
+  }, [citInputs]); // eslint-disable-line
 
   // ── Збереження в Firestore ──
   const saveToFirestore = async (patch) => {
@@ -1539,13 +1551,18 @@ ${fullCtx}
 
   // ── Автоматичний пошук джерел ──
   const doSearchSources = async (secId, kwList, sectionLabel = '') => {
+    setSuggestedSources(prev => ({ ...prev, [secId]: [] })); // очищаємо перед пошуком
     setSourcesSearchLoading(prev => ({ ...prev, [secId]: true }));
     setSourcesSearchError(prev => ({ ...prev, [secId]: null }));
+    // Інкрементуємо лічильник → різні сторінки результатів при повторному пошуку
+    const nextCount = (searchPageCount[secId] || 0) + 1;
+    setSearchPageCount(prev => ({ ...prev, [secId]: nextCount }));
+    const page = ((nextCount - 1) % 3) + 1; // циклічно: 1 → 2 → 3 → 1 → ...
     try {
       const ukKw = (kwList || []).filter(k => /[іїєґІЇЄҐа-яА-Я]/.test(k));
       const enKw = (kwList || []).filter(k => !/[а-яА-ЯіїєґІЇЄҐ]/.test(k));
       const needed = sourceDist[secId] || 4;
-      const results = await searchSourcesForSection(ukKw, enKw, needed, sectionLabel, info?.topic || '');
+      const results = await searchSourcesForSection(ukKw, enKw, needed, sectionLabel, info?.topic || '', page);
       setSuggestedSources(prev => ({ ...prev, [secId]: results }));
     } catch (e) {
       console.error('Source search error:', e.message);

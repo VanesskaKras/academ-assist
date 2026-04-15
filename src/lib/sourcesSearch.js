@@ -79,8 +79,8 @@ function scoreRelevance(titleLower, keywords) {
 const OA_BASE = 'https://api.openalex.org/works';
 const OA_FIELDS = 'title,authorships,publication_year,primary_location,doi,language,id,biblio';
 
-async function openAlexSearch(query, filterStr, limit) {
-  const url = `${OA_BASE}?search=${encodeURIComponent(query)}&filter=${filterStr}&per_page=${limit}&select=${OA_FIELDS}`;
+async function openAlexSearch(query, filterStr, limit, page = 1) {
+  const url = `${OA_BASE}?search=${encodeURIComponent(query)}&filter=${filterStr}&per_page=${limit}&page=${page}&select=${OA_FIELDS}`;
   const r = await fetch(url, { cache: 'no-store' });
   if (!r.ok) return [];
   const d = await r.json();
@@ -88,8 +88,8 @@ async function openAlexSearch(query, filterStr, limit) {
 }
 
 // Пошук тільки по заголовках — набагато точніший
-async function openAlexTitleSearch(query, filterStr, limit) {
-  const url = `${OA_BASE}?filter=title.search:${encodeURIComponent(query)},${filterStr}&per_page=${limit}&select=${OA_FIELDS}`;
+async function openAlexTitleSearch(query, filterStr, limit, page = 1) {
+  const url = `${OA_BASE}?filter=title.search:${encodeURIComponent(query)},${filterStr}&per_page=${limit}&page=${page}&select=${OA_FIELDS}`;
   const r = await fetch(url, { cache: 'no-store' });
   if (!r.ok) return [];
   const d = await r.json();
@@ -177,7 +177,7 @@ async function fetchEnglishViaBackend(enKeywords, limit) {
  * @param {string}   sectionTitle — назва підрозділу
  * @param {string}   topic        — загальна тема роботи
  */
-export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4, _sectionTitle = '', _topic = '') {
+export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4, _sectionTitle = '', _topic = '', page = 1) {
   const target = needed + 4;
   const maxForeign = Math.max(1, Math.round(needed * 0.1));
   const fetchLimit = target + 8;
@@ -188,8 +188,11 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
   // ── Крок 2: будуємо запити ──
   // Основний: ядро теми (напр. "емпатія")
   // Широкий: перша ключова фраза (напр. "емпатія сутність")
+  // При page>1 використовуємо інші ключові слова щоб отримати різні результати
   const titleQuery = coreTerm;
-  const broadQuery = ukKeywords.slice(0, 2).join(' ').trim();
+  const broadQuery = page === 1
+    ? ukKeywords.slice(0, 2).join(' ').trim()
+    : ukKeywords.slice(1, 3).join(' ').trim() || ukKeywords.slice(0, 2).join(' ').trim();
   const enQuery = enKeywords.slice(0, 3).join(' ').trim();
 
   const yr = 'publication_year:>2019';
@@ -197,11 +200,11 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
   // ── Крок 3: паралельні запити ──
   const [r1, r2, r3, r4] = await Promise.allSettled([
     // title.search з ядром + мова:uk — найточніший
-    titleQuery ? openAlexTitleSearch(titleQuery, `language:uk,${yr}`, fetchLimit) : Promise.resolve([]),
+    titleQuery ? openAlexTitleSearch(titleQuery, `language:uk,${yr}`, fetchLimit, page) : Promise.resolve([]),
     // title.search з ядром без фільтру мови (кирилицю відберемо нижче)
-    titleQuery ? openAlexTitleSearch(titleQuery, yr, fetchLimit) : Promise.resolve([]),
+    titleQuery ? openAlexTitleSearch(titleQuery, yr, fetchLimit, page) : Promise.resolve([]),
     // Широкий пошук по всіх полях — як резерв
-    broadQuery ? openAlexSearch(broadQuery, `language:uk,${yr}`, fetchLimit) : Promise.resolve([]),
+    broadQuery ? openAlexSearch(broadQuery, `language:uk,${yr}`, fetchLimit, page) : Promise.resolve([]),
     // CrossRef — добре покриває укр. журнали
     (titleQuery || broadQuery) ? fetchCrossRefUkrainian(titleQuery || broadQuery, fetchLimit) : Promise.resolve([]),
   ]);
