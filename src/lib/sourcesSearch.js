@@ -81,7 +81,7 @@ const OA_FIELDS = 'title,authorships,publication_year,primary_location,doi,langu
 
 async function openAlexSearch(query, filterStr, limit) {
   const url = `${OA_BASE}?search=${encodeURIComponent(query)}&filter=${filterStr}&per_page=${limit}&select=${OA_FIELDS}`;
-  const r = await fetch(url);
+  const r = await fetch(url, { cache: 'no-store' });
   if (!r.ok) return [];
   const d = await r.json();
   return (d.results || []).filter(p => p.title && !isBlocked(p));
@@ -90,7 +90,7 @@ async function openAlexSearch(query, filterStr, limit) {
 // Пошук тільки по заголовках — набагато точніший
 async function openAlexTitleSearch(query, filterStr, limit) {
   const url = `${OA_BASE}?filter=title.search:${encodeURIComponent(query)},${filterStr}&per_page=${limit}&select=${OA_FIELDS}`;
-  const r = await fetch(url);
+  const r = await fetch(url, { cache: 'no-store' });
   if (!r.ok) return [];
   const d = await r.json();
   return (d.results || []).filter(p => p.title && !isBlocked(p));
@@ -119,6 +119,7 @@ function mapOpenAlex(p, forceLang) {
 async function fetchCrossRefUkrainian(query, limit) {
   const url = `https://api.crossref.org/works?query=${encodeURIComponent(query)}&filter=from-pub-date:2020&rows=${Math.min(limit * 2, 20)}`;
   const r = await fetch(url, {
+    cache: 'no-store',
     headers: { 'User-Agent': 'AcademAssist/1.0 (mailto:support@academ-assist.vercel.app)' },
   });
   if (!r.ok) return [];
