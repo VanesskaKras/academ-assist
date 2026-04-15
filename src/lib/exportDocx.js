@@ -196,7 +196,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
             alignment: AlignmentType.CENTER,
             spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
             indent: { firstLine: 0 },
-            children: [new TextRun({ text: namePart, font: FONT, size: SIZE, bold: true, color: "000000" })],
+            children: [new TextRun({ text: namePart, font: FONT, size: SIZE, color: "000000" })],
           }));
         } else {
           result.push(new Paragraph({

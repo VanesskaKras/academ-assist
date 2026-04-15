@@ -12,6 +12,7 @@ import { playDoneSound } from "./lib/audio.js";
 import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, METHODOLOGY_READING_PROMPT, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt } from "./lib/prompts.js";
 import { FIELD_LABELS, isPsychoPed, isEcon, getEmpiricalSections, getEconSections, STAGES, STAGE_KEYS, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
+import { searchSourcesForSection } from "./lib/sourcesSearch.js";
 import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
 import { StagePills } from "./components/StagePills.jsx";
 import { FieldBox, Heading, NavBtn, PrimaryBtn, GreenBtn, SaveIndicator } from "./components/Buttons.jsx";
@@ -94,6 +95,9 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [titlePage, setTitlePage] = useState("");
   const [titlePageLines, setTitlePageLines] = useState(null);
   const [showMissingSources, setShowMissingSources] = useState(false);
+  const [suggestedSources, setSuggestedSources] = useState({});
+  const [sourcesSearchLoading, setSourcesSearchLoading] = useState({});
+  const [sourcesSearchError, setSourcesSearchError] = useState({});
   const [sessionCost, setSessionCost] = useState(() => {
     try { return JSON.parse(localStorage.getItem("sessionCost")) || { claude: 0, gemini: 0 }; } catch { return { claude: 0, gemini: 0 }; }
   });
@@ -359,7 +363,14 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
       : { intro: "ВСТУП", conclusions: "ВИСНОВКИ", sources: "СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ", chapConclLabel: (n) => `Висновки до розділу ${n}`, chapterWord: "РОЗДІЛ", subsWord: "підрозділ" };
 
     const finalizeSections = async (secs) => {
-      const withPrompts = secs.map(s => ({ ...s, prompts: s.type === "sources" ? 0 : Math.max(1, Math.ceil((s.pages || 1) / 3)) }));
+      const withPrompts = secs.map(s => {
+        // Якщо підрозділ не має номера на початку label — додаємо з id
+        let label = s.label;
+        if (s.id && /^\d+\.\d+$/.test(s.id) && !label.startsWith(s.id)) {
+          label = `${s.id} ${label}`;
+        }
+        return { ...s, label, prompts: s.type === "sources" ? 0 : Math.max(1, Math.ceil((s.pages || 1) / 3)) };
+      });
       setSections(withPrompts); setPlanDisplay(buildPlanText(withPrompts));
       const { dist, total } = calcSourceDist(withPrompts, parsePagesAvg(d?.pages));
       setSourceDist(dist); setSourceTotal(total);
@@ -475,73 +486,21 @@ Return ONLY JSON without markdown:
       const chTypes = methodInfo.chapterTypes?.length ? methodInfo.chapterTypes : ["theory", "analysis", "recommendations"].slice(0, chapCount);
       const chapConclP = hasConcl ? chapCount : 0;
 
-      // Парсимо кількість підрозділів PER CHAPTER з exampleTOC (JS, не AI)
-      const parseSubsPerChapter = (toc) => {
-        if (!toc) return null;
-        const lines = toc.split('\n').map(l => l.trim()).filter(Boolean);
-        const chapters = [];
-        let cur = null;
-        for (const line of lines) {
-          if (/^(вступ|висновки|список|додатки)/i.test(line)) continue;
-          const isChHead = /^(розділ|chapter|section)/i.test(line) || /^\d+\.\s+[^\d]/.test(line);
-          const isNumSub = /^\d+\.\d+/.test(line);
-          if (isChHead) { cur = { subs: 0 }; chapters.push(cur); }
-          else if (isNumSub && cur) cur.subs++;
-        }
-        return chapters.length ? chapters : null;
-      };
-
-      const subsPerChap = methodInfo.exampleTOC ? parseSubsPerChapter(methodInfo.exampleTOC) : null;
-      const totalSubsCount = subsPerChap ? subsPerChap.reduce((s, c) => s + c.subs, 0) : (chapCount * (methodInfo.subsectionsPerChapter || 3));
+      const subsPerChapter = methodInfo.subsectionsPerChapter || 3;
+      const totalSubsCount = chapCount * subsPerChapter;
       const pagesPerSub = Math.max(3, Math.round((totalPages - introP - conclP - chapConclP) / totalSubsCount));
 
-      // Якщо є зразок плану з методички — використовуємо його як шаблон структури
-      // Будуємо явний перелік структури по розділах (JS вже порахував)
-      const chapterStructureHint = subsPerChap
-        ? subsPerChap.map((ch, i) => `- Розділ ${i + 1}: ${ch.subs} підрозділ${ch.subs === 1 ? " (може бути без номера, як проєктний модуль)" : "и"}`).join('\n')
-        : null;
-
-      const planPrompt = methodInfo.exampleTOC
-        ? `Create a plan for ${d.type} on topic: "${d.topic}". Field: ${d.subject}. Pages: ${totalPages}.
-Language of work: ${d.language || "Ukrainian"} — all labels and titles must be in this language.
-${commentAnalysis?.planHints ? `\nCLIENT HINTS:\n${commentAnalysis.planHints}\n` : ""}
-STRUCTURE (fixed, from methodical guide — do NOT change subsection counts):
-${chapterStructureHint || `- ${chapCount} chapters`}
-- Chapter conclusions: ${hasConcl ? "YES" : "NO"}
-
-EXAMPLE TOC FROM GUIDE (do NOT copy titles, structure already counted above):
-${methodInfo.exampleTOC}
-${methodInfo.otherRequirements ? `\nGUIDE REQUIREMENTS:\n${methodInfo.otherRequirements}` : ""}
-
-PAGE DISTRIBUTION (must sum to exactly ${totalPages}):
-- ${L.intro}: ${introP} p.
-- ${L.conclusions}: ${conclP} p.
-- Chapter conclusions: 1 p. each (if present)
-- Each subsection: ~${pagesPerSub} p. (total: ${totalSubsCount})
-
-Allowed type values: "theory" | "analysis" | "recommendations" | "chapter_conclusion" | "intro" | "conclusions" | "sources"
-Chapter conclusion id format: "1.conclusions", "2.conclusions", "3.conclusions"
-
-Return ONLY JSON without markdown:
-{"sections":[
-  {"id":"1.1","label":"1.1 Section title","sectionTitle":"${L.chapterWord} 1. CHAPTER TITLE","pages":8,"type":"theory"},
-  {"id":"1.conclusions","label":"${L.chapConclLabel(1)}","sectionTitle":"${L.chapterWord} 1. CHAPTER TITLE","pages":1,"type":"chapter_conclusion"},
-  {"id":"2.1","label":"2.1 Section title","sectionTitle":"${L.chapterWord} 2. CHAPTER TITLE","pages":8,"type":"analysis"},
-  {"id":"2.conclusions","label":"${L.chapConclLabel(2)}","sectionTitle":"${L.chapterWord} 2. CHAPTER TITLE","pages":1,"type":"chapter_conclusion"},
-  {"id":"intro","label":"${L.intro}","pages":3,"type":"intro"},
-  {"id":"conclusions","label":"${L.conclusions}","pages":3,"type":"conclusions"},
-  {"id":"sources","label":"${L.sources}","pages":2,"type":"sources"}
-]}
-Order: subsections grouped by chapter (with chapter_conclusion after last subsection of each chapter), then intro, conclusions, sources.`
-        : `Create a plan for ${d.type} on topic: "${d.topic}". Field: ${d.subject}. Pages: ${totalPages}.
+      const planPrompt = `Create a plan for ${d.type} on topic: "${d.topic}". Field: ${d.subject}. Pages: ${totalPages}.
 Language of work: ${d.language || "Ukrainian"} — all labels and titles must be in this language.
 ${commentAnalysis?.planHints ? `\nCLIENT HINTS:\n${commentAnalysis.planHints}\n` : ""}
 GUIDE REQUIREMENTS:
 - Chapters: ${chapCount}
-- Subsections per chapter: ${Math.round(totalSubsCount / chapCount)}
+- Subsections per chapter: ${subsPerChapter}
 - Chapter conclusions: ${hasConcl ? "YES — add after last subsection of each chapter" : "NO — do not add"}
 - Chapter types: ${chTypes.join(", ")}
 ${methodInfo.otherRequirements ? `- Other requirements: ${methodInfo.otherRequirements}` : ""}
+${methodInfo.exampleTOC ? `\nFORMATTING EXAMPLE FROM GUIDE (headings style only — do NOT copy titles or use as structure):
+${methodInfo.exampleTOC}` : ""}
 
 PAGE DISTRIBUTION (must sum to exactly ${totalPages}):
 - ${L.intro}: ${introP} p.
@@ -551,6 +510,7 @@ ${hasConcl ? `- Chapter conclusions: 1 p. each (${chapCount} total)` : ""}
 
 Allowed type values: "theory" | "analysis" | "recommendations" | "chapter_conclusion" | "intro" | "conclusions" | "sources"
 Chapter conclusion id format: "1.conclusions", "2.conclusions" etc.
+IMPORTANT: every subsection label MUST start with its numeric id (e.g. "1.1 ", "1.2 ", "2.3 "). Never omit the number prefix.
 
 Return ONLY JSON without markdown:
 {"sections":[
@@ -1542,6 +1502,23 @@ ${fullCtx}
     setLoadMsg("");
   };
 
+  // ── Автоматичний пошук джерел ──
+  const doSearchSources = async (secId, kwList, sectionLabel = '') => {
+    setSourcesSearchLoading(prev => ({ ...prev, [secId]: true }));
+    setSourcesSearchError(prev => ({ ...prev, [secId]: null }));
+    try {
+      const ukKw = (kwList || []).filter(k => /[іїєґІЇЄҐа-яА-Я]/.test(k));
+      const enKw = (kwList || []).filter(k => !/[а-яА-ЯіїєґІЇЄҐ]/.test(k));
+      const needed = sourceDist[secId] || 4;
+      const results = await searchSourcesForSection(ukKw, enKw, needed, sectionLabel, info?.topic || '');
+      setSuggestedSources(prev => ({ ...prev, [secId]: results }));
+    } catch (e) {
+      console.error('Source search error:', e.message);
+      setSourcesSearchError(prev => ({ ...prev, [secId]: e.message }));
+    }
+    setSourcesSearchLoading(prev => ({ ...prev, [secId]: false }));
+  };
+
   // ── Ключові слова ──
   const doGenKeywords = async () => {
     setKwLoading(true);
@@ -1580,6 +1557,12 @@ ${fullCtx}
         })
       );
       setKeywords(kwNorm);
+      // Шукаємо джерела по черзі — один підрозділ за одним (видно прогрес)
+      for (const s of mainSecs) {
+        const normalKey = s.id.match(/^(\d+\.\d+)/)?.[1] || s.id;
+        const kwList = kwNorm[normalKey] || kwNorm[s.id] || [];
+        if (kwList.length) await doSearchSources(s.id, kwList, s.label || '');
+      }
     } catch (e) { console.error(e); setKwError(e.message); }
     setKwLoading(false);
   };
@@ -2189,6 +2172,10 @@ ${secsSummary}
             showMissingSources={showMissingSources}
             citInputsSnapshot={citInputsSnapshot} allCitLoading={allCitLoading}
             info={info} doGenKeywords={doGenKeywords}
+            suggestedSources={suggestedSources}
+            sourcesSearchLoading={sourcesSearchLoading}
+            sourcesSearchError={sourcesSearchError}
+            doSearchSources={doSearchSources}
             doAddAllCitations={doAddAllCitations}
             onFinish={async () => { await saveToFirestore({ stage: "done", status: "done", content, citInputs, refList }); setStage("done"); }}
             setStage={setStage}
