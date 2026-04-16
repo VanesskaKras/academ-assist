@@ -712,12 +712,10 @@ Return ONLY JSON without markdown:
     const ORDER = ["theory", "analysis", "recommendations", "chapter_conclusion", "intro", "conclusions", "sources"];
     setSections(prev => [...prev].sort((a, b) => ORDER.indexOf(a.type) - ORDER.indexOf(b.type)));
     setContent({}); setGenIdx(0); setPaused(false); writingDoneRef.current = false;
-    // Генеруємо додатки перед текстом (якщо ще не згенеровані)
-    if (!appendicesText) await doGenAppendices();
-    // sources-first: спочатку збираємо джерела, потім пишемо
-    const nextStage = newMode === "sources-first" ? "sources" : "writing";
-    setStage(nextStage);
-    saveToFirestore({ workflowMode: newMode, stage: nextStage, status: "writing" });
+    // Генеруємо додатки у фоні (не блокуємо перехід)
+    if (!appendicesText) doGenAppendices();
+    setStage("writing");
+    saveToFirestore({ workflowMode: newMode, stage: "writing", status: "writing" });
   };
 
   // ── Виявлення рисунків у тексті ──
@@ -1731,12 +1729,13 @@ ${fullCtx}
     const fmtPrompt = `${styleRules}
 ${sourcesOrder} ${sourcesGrouping}
 Збережи номери. Поверни ТІЛЬКИ список без заголовка. Для онлайн-джерел додай URL (дата звернення: ${accessDate}). НЕ використовуй "[Електронний ресурс]". Якщо назва джерела написана ВЕЛИКИМИ ЛІТЕРАМИ — переведи у формат речення (перша літера велика, решта малі, окрім власних назв та абревіатур).
+КРИТИЧНО: НЕ перекладай, НЕ транслітеруй і НЕ змінюй прізвища авторів та назви джерел — зберігай їх точно як є в оригіналі. Лише розставляй розділові знаки та порядок елементів за вимогами стилю.
 
 ${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
     let fmtResult;
     try {
       fmtResult = await callGemini([{ role: "user", content: fmtPrompt }], null,
-        `You are a bibliographic formatting assistant. Format references strictly in ${sourcesStyle} style only. Do not mix citation styles. Return only the formatted list, no extra text.`, 16000);
+        `You are a bibliographic formatting assistant. Format references strictly in ${sourcesStyle} style only. Do not mix citation styles. Preserve all author names and titles exactly as given — do not translate or transliterate. Return only the formatted list, no extra text.`, 16000);
       setRefList(fmtResult.split("\n").filter(Boolean));
       const srcSec = sections.find(s => s.type === "sources");
       if (srcSec) newContent[srcSec.id] = fmtResult;
@@ -1754,7 +1753,8 @@ ${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
         // Шукаємо перше "реальне" прізвище (3+ літер) — пропускаємо ініціали типу "Л."
         const surnameMatch = ref.match(/(?:^|[\s,&])([А-ЯҐЄІЇа-яґєіїA-Za-z]{3,})/);
         const yearMatch = ref.match(/[\(\.\s](\d{4})[\)\.\,\s]/);
-        const author = surnameMatch?.[1] || `Автор${n}`;
+        const rawAuthor = surnameMatch?.[1] || `Автор${n}`;
+        const author = rawAuthor.charAt(0).toUpperCase() + rawAuthor.slice(1).toLowerCase();
         const year = yearMatch?.[1] || "б.р.";
         refCiteText[n] = `(${author}, ${year})`;
       } else if (isMLA) {
@@ -2054,13 +2054,14 @@ ${secsSummary}
     const fmtPrompt = `${styleRules}
 ${sourcesOrder} ${sourcesGrouping}
 Збережи номери. Поверни ТІЛЬКИ список без заголовка. Для онлайн-джерел додай URL (дата звернення: ${accessDate}). НЕ використовуй "[Електронний ресурс]". Якщо назва джерела написана ВЕЛИКИМИ ЛІТЕРАМИ — переведи у формат речення (перша літера велика, решта малі, окрім власних назв та абревіатур).
+КРИТИЧНО: НЕ перекладай, НЕ транслітеруй і НЕ змінюй прізвища авторів та назви джерел — зберігай їх точно як є в оригіналі. Лише розставляй розділові знаки та порядок елементів за вимогами стилю.
 
 ${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
 
     let fmtResult;
     try {
       fmtResult = await callGemini([{ role: "user", content: fmtPrompt }], null,
-        `You are a bibliographic formatting assistant. Format references strictly in ${sourcesStyle} style only. Do not mix citation styles. Return only the formatted list, no extra text.`, 16000);
+        `You are a bibliographic formatting assistant. Format references strictly in ${sourcesStyle} style only. Do not mix citation styles. Preserve all author names and titles exactly as given — do not translate or transliterate. Return only the formatted list, no extra text.`, 16000);
     } catch (e) { console.error("remap fmt error:", e); }
 
     const fmtLines = fmtResult
@@ -2074,7 +2075,8 @@ ${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
       if (isAPA) {
         const surnameMatch = ref.match(/(?:^|[\s,&])([А-ЯҐЄІЇа-яґєіїA-Za-z]{3,})/);
         const yearMatch = ref.match(/[\(\.\s](\d{4})[\)\.\,\s]/);
-        const author = surnameMatch?.[1] || `Автор${n}`;
+        const rawAuthor = surnameMatch?.[1] || `Автор${n}`;
+        const author = rawAuthor.charAt(0).toUpperCase() + rawAuthor.slice(1).toLowerCase();
         refCiteText[n] = `(${author}, ${yearMatch?.[1] || "б.р."})`;
       } else if (isMLA) {
         const surnameMatch = ref.match(/(?:^|[\s,&])([А-ЯҐЄІЇа-яґєіїA-Za-z]{3,})/);
