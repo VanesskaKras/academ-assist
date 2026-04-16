@@ -714,8 +714,9 @@ Return ONLY JSON without markdown:
     setContent({}); setGenIdx(0); setPaused(false); writingDoneRef.current = false;
     // Генеруємо додатки у фоні (не блокуємо перехід)
     if (!appendicesText) doGenAppendices();
-    setStage("writing");
-    saveToFirestore({ workflowMode: newMode, stage: "writing", status: "writing" });
+    const nextStage = newMode === "sources-first" ? "sources" : "writing";
+    setStage(nextStage);
+    saveToFirestore({ workflowMode: newMode, stage: nextStage, status: "writing" });
   };
 
   // ── Виявлення рисунків у тексті ──
