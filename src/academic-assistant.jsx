@@ -77,12 +77,14 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [dbLoading, setDbLoading] = useState(false);
+  const [remapLoading, setRemapLoading] = useState(false);
   // For regenerating a single section
   const [regenId, setRegenId] = useState(null);
   const [regenPrompt, setRegenPrompt] = useState("");
   const [regenLoading, setRegenLoading] = useState(false);
   const [regenAllLoading, setRegenAllLoading] = useState(false);
   const regenAllAbortRef = useRef(null);
+  const writingDoneRef = useRef(false);
   const [apiError, setApiError] = useState("");
   const [speechText, setSpeechText] = useState("");
   const [speechLoading, setSpeechLoading] = useState(false);
@@ -99,6 +101,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [suggestedSources, setSuggestedSources] = useState({});
   const [sourcesSearchLoading, setSourcesSearchLoading] = useState({});
   const [sourcesSearchError, setSourcesSearchError] = useState({});
+  const [abstractsMap, setAbstractsMap] = useState({}); // { citationString: abstractSnippet }
   const [searchPageCount, setSearchPageCount] = useState({}); // лічильник натискань "оновити" на секцію
   const [sessionCost, setSessionCost] = useState(() => {
     try { return JSON.parse(localStorage.getItem("sessionCost")) || { claude: 0, gemini: 0 }; } catch { return { claude: 0, gemini: 0 }; }
@@ -161,6 +164,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
           if (d.commentAnalysis) setCommentAnalysis(d.commentAnalysis);
           if (d.content) setContent(d.content);
           if (d.citInputs) setCitInputs(d.citInputs);
+          if (d.abstractsMap) setAbstractsMap(d.abstractsMap);
           if (d.refList) setRefList(d.refList);
           if (d.speechText) setSpeechText(d.speechText);
           if (d.appendicesText) setAppendicesText(d.appendicesText);
@@ -197,7 +201,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     if (stage !== "sources") return;
     clearTimeout(citSaveTimer.current);
     citSaveTimer.current = setTimeout(() => {
-      saveToFirestore({ citInputs });
+      saveToFirestore({ citInputs, abstractsMap });
     }, 1500);
     return () => clearTimeout(citSaveTimer.current);
   }, [citInputs]); // eslint-disable-line
@@ -702,12 +706,14 @@ Return ONLY JSON without markdown:
     setNamingLoading(false);
   };
 
-  const startGen = (mode) => {
+  const startGen = async (mode) => {
     const newMode = mode || workflowMode;
     setWorkflowMode(newMode);
     const ORDER = ["theory", "analysis", "recommendations", "chapter_conclusion", "intro", "conclusions", "sources"];
     setSections(prev => [...prev].sort((a, b) => ORDER.indexOf(a.type) - ORDER.indexOf(b.type)));
-    setContent({}); setGenIdx(0); setPaused(false);
+    setContent({}); setGenIdx(0); setPaused(false); writingDoneRef.current = false;
+    // Генеруємо додатки перед текстом (якщо ще не згенеровані)
+    if (!appendicesText) await doGenAppendices();
     // sources-first: спочатку збираємо джерела, потім пишемо
     const nextStage = newMode === "sources-first" ? "sources" : "writing";
     setStage(nextStage);
@@ -772,13 +778,15 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
     if (stage !== "writing" || paused) return;
     if (runningRef.current) return;
     if (genIdx >= sections.length) {
-      playDoneSound();
-      if (workflowMode === "sources-first") {
-        // Джерела вже зібрані — одразу до Done
-        setStage("done"); saveToFirestore({ stage: "done", status: "done", content, citInputs });
-      } else {
-        // text-first: після написання — до Sources для розстановки посилань
-        setStage("sources"); saveToFirestore({ stage: "sources", status: "writing", content, citInputs });
+      if (!writingDoneRef.current) {
+        writingDoneRef.current = true;
+        playDoneSound();
+        if (workflowMode === "sources-first") {
+          // Джерела зібрані, текст написаний — чекаємо на remapCitations
+          saveToFirestore({ stage: "writing", status: "writing", content, citInputs });
+        } else {
+          setStage("sources"); saveToFirestore({ stage: "sources", status: "writing", content, citInputs });
+        }
       }
       return;
     }
@@ -965,23 +973,27 @@ ${chapCtx ? "ЗМІСТ ПІДРОЗДІЛІВ РОЗДІЛУ:\n" + chapCtx : ""
         econBlock = `${formulasBlock}${tablesBlock}${genericEcon}`;
       }
 
+      const appendixBlock = appendicesText
+        ? `\nДОДАТОК А (вже згенерований — спирайся на нього точно):\n${appendicesText.substring(0, 3000)}\n`
+        : "";
+
       if (isEmpChapter) {
         empiricalBlock = `
 
 КОНТЕКСТ (психолого-педагогічне емпіричне дослідження):
-Цей підрозділ є частиною емпіричного дослідження. Визнач за назвою підрозділу що саме писати:
-- якщо підрозділ про організацію або методику дослідження: опиши вибірку (20-30 респондентів: вік, категорія, умови відбору), метод анкетування, мету та структуру анкети, принцип проведення. Додай речення: "Анкета наведена у Додатку А."
-- якщо підрозділ про аналіз або результати: подай результати у вигляді таблиці markdown (|---|---| формат) з відсотковими показниками по запитаннях або категоріях, проаналізуй дані, зроби висновки
+${appendixBlock}Цей підрозділ є частиною емпіричного дослідження. Визнач за назвою підрозділу що саме писати:
+- якщо підрозділ про організацію або методику дослідження: опиши вибірку (20-30 респондентів: вік, категорія, умови відбору), метод анкетування, мету та кількість запитань точно як в Додатку А, принцип проведення. Додай речення: "Анкета наведена у Додатку А."
+- якщо підрозділ про аналіз або результати: подай результати у вигляді таблиці markdown (|---|---| формат) з відсотковими показниками по запитаннях з Додатку А, проаналізуй дані, зроби висновки
 - якщо підрозділ про рекомендації або практичні висновки: спирайся на результати анкетування вже описані в попередніх підрозділах, не повторюй опис анкети та вибірки`;
       } else if (isEmpAnchor) {
         empiricalBlock = `
 
 ОБОВ'ЯЗКОВО для цього підрозділу (психолого-педагогічне дослідження):
-Цей підрозділ має містити емпіричне дослідження:
+${appendixBlock}Цей підрозділ має містити емпіричне дослідження що відповідає Додатку А:
 1. Вибірка: 25-30 респондентів (вік, категорія, умови відбору).
-2. Метод: анкетування. Мета анкети, структура (кількість і типи запитань, блоки).
+2. Метод: анкетування. Мета анкети, кількість запитань — точно як в Додатку А.
 3. Принцип проведення: умови та порядок анкетування.
-4. Результати: таблиця markdown (|---|---| формат) з відсотковими показниками.
+4. Результати: таблиця markdown (|---|---| формат) з відсотковими показниками по запитаннях з Додатку А.
 5. Аналіз: інтерпретація результатів таблиці, зв'язок із темою.
 6. В тексті додай: "Анкета наведена у Додатку А."`;
       }
@@ -991,10 +1003,13 @@ ${chapCtx ? "ЗМІСТ ПІДРОЗДІЛІВ РОЗДІЛУ:\n" + chapCtx : ""
         ? (citInputs[sec.id] || "").split("\n").map(l => l.trim()).filter(Boolean)
         : [];
       const sourcesBlock = secSourceLines.length > 0
-        ? `\nДЖЕРЕЛА ДЛЯ ЦЬОГО ПІДРОЗДІЛУ (${secSourceLines.length} шт.) — спирайся на них при написанні, вставляй посилання [N] після відповідних тверджень:\n${secSourceLines.map((s, i) => `[${i + 1}] ${s}`).join("\n")}\n`
+        ? `\nДЖЕРЕЛА ДЛЯ ЦЬОГО ПІДРОЗДІЛУ (${secSourceLines.length} шт.) — спирайся на них при написанні, вставляй посилання [N] після відповідних тверджень:\n${secSourceLines.map((s, i) => {
+            const snippet = abstractsMap[s];
+            return snippet ? `[${i + 1}] ${s}\n    Зміст: ${snippet}` : `[${i + 1}] ${s}`;
+          }).join("\n")}\n`
         : "";
       const citNote = secSourceLines.length > 0
-        ? "Вставляй [N] у текст одразу після тверджень що спираються на джерело (де N — номер зі списку вище)."
+        ? "Вставляй [N] у текст одразу після тверджень що спираються на джерело (де N — номер зі списку вище). ЗАБОРОНЕНО вигадувати імена авторів перед цитатою — не пиши 'Іванов А. стверджує...'. Використовуй безособові конструкції: 'у дослідженні зазначається [N]', 'науковці вказують [N]', 'встановлено [N]' тощо."
         : "Без посилань [1],[2].";
 
       instruction = `Напиши підрозділ "${sec.label}" для ${d.type} на тему "${d.topic}". Галузь: ${d.subject}.
@@ -1238,54 +1253,52 @@ ${sectionSummaries}
     setAppendicesLoading(true);
     try {
       const lang = info?.language || "Українська";
-      const empSecs = getEmpiricalSections(sections, info);
-      // Для психолого-педагогічних: весь емпіричний розділ з широким контекстом
-      const empChapterIds = new Set(empSecs.chapterSectionIds);
-      const anchorId = empSecs.anchorId || empSecs.chapterSectionIds[0] || null;
-      const empChapterCtx = empSecs.chapterSectionIds.length > 0
-        ? empSecs.chapterSectionIds
-            .filter(id => content[id])
-            .map(id => `[${id}]: ${content[id].substring(0, 1800)}`)
-            .join("\n\n")
-        : anchorId && content[anchorId]
-          ? content[anchorId].substring(0, 1800)
-          : "";
-      const anchorCtx = empChapterCtx ? `КОНТЕКСТ ДОСЛІДЖЕННЯ:\n${empChapterCtx}` : "";
 
-      // Збираємо контекст вже згенерованого тексту роботи
-      const generatedCtx = sections
-        .filter(s => content[s.id] && !["sources"].includes(s.type))
-        .map(s => {
-          const limit = empChapterIds.has(s.id) ? 1800 : 1000;
-          return `[${s.label}]\n${content[s.id].substring(0, limit)}`;
-        })
-        .join("\n\n");
-      const contentBlock = generatedCtx
-        ? `ТЕКСТ РОБОТИ (скорочено для контексту):\n${generatedCtx.substring(0, 8000)}`
+      // План підрозділів для контексту (текст ще може бути не згенерований)
+      const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
+      const planBlock = mainSecs.length
+        ? `СТРУКТУРА РОБОТИ:\n${mainSecs.map(s => `- ${s.label} (${s.type})`).join("\n")}`
+        : "";
+
+      const methodBlock = methodInfo?.theoryRequirements || methodInfo?.analysisRequirements || methodInfo?.otherRequirements
+        ? `ВИМОГИ МЕТОДИЧКИ: ${[methodInfo.theoryRequirements, methodInfo.analysisRequirements, methodInfo.otherRequirements].filter(Boolean).join(". ")}`
+        : "";
+
+      const clientBlock = commentAnalysis?.writingHints
+        ? `ПОБАЖАННЯ КЛІЄНТА: ${commentAnalysis.writingHints}`
         : "";
 
       const customBlock = appendicesCustomPrompt.trim()
-        ? `\nДОДАТКОВІ ІНСТРУКЦІЇ КОРИСТУВАЧА:\n${appendicesCustomPrompt.trim()}`
+        ? `\nДОДАТКОВІ ІНСТРУКЦІЇ: ${appendicesCustomPrompt.trim()}`
         : "";
 
-      const prompt = isPsychoPed(info) && !appendicesCustomPrompt.trim()
+      const empSecs = getEmpiricalSections(sections, info);
+      const hasEmpChapter = empSecs.chapterSectionIds.length > 0 || empSecs.anchorId;
+
+      const prompt = (isPsychoPed(info) || hasEmpChapter) && !appendicesCustomPrompt.trim()
         ? `Згенеруй Додаток А для ${info?.type || "наукової роботи"} на тему "${info?.topic}". Галузь: ${info?.subject}.
+${planBlock}
+${methodBlock}
+${clientBlock}
 
-Додаток А містить анкету яка використовувалась для емпіричного дослідження.
-${anchorCtx}
+Додаток А містить анкету для емпіричного дослідження відповідно до теми роботи.
+Визнач об'єкт дослідження з теми (хто респонденти: учні, студенти, педагоги, батьки тощо).
+Визнач що саме досліджується (рівень сформованості, ставлення, знання, мотивація тощо).
 
-Вимоги:
+Вимоги до анкети:
 - Перший рядок: ДОДАТОК А
-- Другий рядок: назва анкети відповідно до теми
+- Другий рядок: назва анкети відповідно до теми та об'єкту дослідження
 - Звернення до респондента та інструкція (2-3 речення)
 - 12-15 запитань закритого типу з варіантами відповідей: а), б), в), г)
-- Запитання охоплюють різні аспекти теми дослідження
+- Запитання логічно охоплюють різні аспекти теми — структура анкети має відповідати підрозділам розділу 2
 - В кінці: "Дякуємо за участь у дослідженні!"
 - Мова: ${lang}
 - БЕЗ markdown, зірочок, жирного. Звичайний текст.`
         : `Згенеруй розділ "Додатки" для ${info?.type || "наукової роботи"} на тему "${info?.topic}". Галузь: ${info?.subject || ""}.
-${contentBlock}
-${customBlock || `Включи один або два додатки що логічно доповнюють роботу (таблиці, схеми, зразки документів тощо).`}
+${planBlock}
+${methodBlock}
+${clientBlock}
+${customBlock || `Включи один або два додатки що логічно доповнюють роботу відповідно до теми та структури (таблиці, схеми, зразки документів тощо).`}
 Мова: ${lang}. БЕЗ markdown, зірочок, жирного. Кожен додаток починається з нового рядка: ДОДАТОК А, ДОДАТОК Б тощо.`;
 
       const raw = await callClaude(
@@ -1562,7 +1575,8 @@ ${fullCtx}
       const ukKw = (kwList || []).filter(k => /[іїєґІЇЄҐа-яА-Я]/.test(k));
       const enKw = (kwList || []).filter(k => !/[а-яА-ЯіїєґІЇЄҐ]/.test(k));
       const needed = sourceDist[secId] || 4;
-      const results = await searchSourcesForSection(ukKw, enKw, needed, sectionLabel, info?.topic || '', page);
+      const topicCtx = [info?.topic, info?.direction, info?.subject].filter(Boolean).join(' ');
+      const results = await searchSourcesForSection(ukKw, enKw, needed, sectionLabel, topicCtx, page);
       setSuggestedSources(prev => ({ ...prev, [secId]: results }));
     } catch (e) {
       console.error('Source search error:', e.message);
@@ -1581,7 +1595,8 @@ ${fullCtx}
         : "";
       return `### ${s.label} (потрібно ${sourceDist[s.id] || 3} джерела)${txt}`;
     }).join("\n\n");
-    const prompt = `Проаналізуй текст підрозділів академічної роботи на тему "${info?.topic}" і для кожного підрозділу визнач пошукові ключові слова для Google Scholar, Scopus, eLibrary Ukraine. Ключові слова мають відображати конкретні терміни, концепції та підходи з тексту — не загальні назви розділів.\n\nПІДРОЗДІЛИ:\n${secBlocks}\n\nПоверни JSON об'єкт: {"keywords":{"1.1":["фраза укр","english phrase"],...}}`;
+    const domainCtx = [info?.direction, info?.subject].filter(Boolean).join(', ');
+    const prompt = `Проаналізуй текст підрозділів академічної роботи на тему "${info?.topic}"${domainCtx ? ` (галузь: ${domainCtx})` : ''} і для кожного підрозділу визнач пошукові ключові слова для Google Scholar, Scopus, eLibrary Ukraine.\n\nВИМОГИ ДО КЛЮЧОВИХ СЛІВ:\n- Кожна фраза ОБОВ'ЯЗКОВО включає галузевий контекст (напр. "моделі інтерактивного навчання", НЕ просто "моделі").\n- Фрази мають відображати конкретні терміни та концепції підрозділу, а НЕ загальні структурні слова (не "аналіз", "методи", "форми" — тільки в поєднанні зі специфічним терміном).\n- Уникай загальних фраз без прив'язки до галузі/теми.\n\nПІДРОЗДІЛИ:\n${secBlocks}\n\nПоверни JSON об'єкт: {"keywords":{"1.1":["фраза укр","english phrase"],...}}`;
     try {
       const res = await fetch("/api/gemini", {
         method: "POST",
@@ -1736,14 +1751,15 @@ ${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
     fmtLines.forEach((ref, i) => {
       const n = i + 1;
       if (isAPA) {
-        const authorMatch = ref.match(/^([А-ЯҐЄІЇA-Z][а-яґєіїa-z\-A-Za-z]+)/);
+        // Шукаємо перше "реальне" прізвище (3+ літер) — пропускаємо ініціали типу "Л."
+        const surnameMatch = ref.match(/(?:^|[\s,&])([А-ЯҐЄІЇа-яґєіїA-Za-z]{3,})/);
         const yearMatch = ref.match(/[\(\.\s](\d{4})[\)\.\,\s]/);
-        const author = authorMatch?.[1] || `Автор${n}`;
+        const author = surnameMatch?.[1] || `Автор${n}`;
         const year = yearMatch?.[1] || "б.р.";
         refCiteText[n] = `(${author}, ${year})`;
       } else if (isMLA) {
-        const authorMatch = ref.match(/^([А-ЯҐЄІЇA-Z][а-яґєіїa-z\-A-Za-z]+)/);
-        refCiteText[n] = `(${authorMatch?.[1] || `Автор${n}`})`;
+        const surnameMatch = ref.match(/(?:^|[\s,&])([А-ЯҐЄІЇа-яґєіїA-Za-z]{3,})/);
+        refCiteText[n] = `(${surnameMatch?.[1] || `Автор${n}`})`;
       } else {
         // ДСТУ та інші нумеровані стилі — витягуємо номер першої сторінки статті
         const articlePageMatch = ref.match(/[Сс]\.\s*(\d+)\s*[–\-—]/); // діапазон С. 56–74
@@ -1942,6 +1958,205 @@ ${secsSummary}
     setCitInputsSnapshot(JSON.stringify(citInputs));
     await saveToFirestore({ content: newContent, citInputs, refList: fmtResult?.split("\n").filter(Boolean) || [], stage: "sources", status: "writing" });
     setAllCitLoading(false);
+  };
+
+  // ── sources-first: ремаппінг локальних [N] → глобальні номери + форматування списку ──
+  const doRemapCitations = async () => {
+    setRemapLoading(true);
+    const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
+    const sourcesStyle = methodInfo?.sourcesStyle || "ДСТУ 8302:2015";
+    const isAPA = /APA/i.test(sourcesStyle);
+    const isMLA = /MLA/i.test(sourcesStyle);
+    const isDstu = /ДСТУ/i.test(sourcesStyle);
+    const isAlphabeticalOrder = methodInfo?.sourcesOrder === "alphabetical";
+
+    // ── 1. Локальна карта: secId → { localN: sourceText } ──
+    const secLocalSources = {};
+    mainSecs.forEach(sec => {
+      const lines = (citInputs[sec.id] || "").split("\n").map(l => l.trim()).filter(Boolean);
+      secLocalSources[sec.id] = {};
+      lines.forEach((line, i) => { secLocalSources[sec.id][i + 1] = line; });
+    });
+
+    // ── 2. Глобальна дедуплікація (та сама логіка що в buildGlobalRefList) ──
+    const normalize = str => str.toLowerCase()
+      .replace(/\s*(url\s*:|https?:\/\/\S+|\(дата звернення[^)]*\))/gi, "")
+      .replace(/\s+/g, " ").replace(/[.,;:]/g, "").trim();
+
+    const rawRefs = [], seenRefs = new Map();
+    mainSecs.forEach(sec => {
+      Object.values(secLocalSources[sec.id]).forEach(text => {
+        const key = normalize(text);
+        const hasUrl = /https?:\/\/\S+/i.test(text);
+        if (!seenRefs.has(key)) {
+          rawRefs.push(text); seenRefs.set(key, rawRefs.length - 1);
+        } else if (hasUrl && !/https?:\/\/\S+/i.test(rawRefs[seenRefs.get(key)])) {
+          rawRefs[seenRefs.get(key)] = text;
+        }
+      });
+    });
+
+    // ── 3. Алфавітне сортування якщо потрібно ──
+    let allRefs, indexMap;
+    if (isAlphabeticalOrder) {
+      const langGroup = s => /^[А-ЯҐЄІЇа-яґєії]/i.test(s) ? 0 : 1;
+      const sorted = [...rawRefs].sort((a, b) => {
+        const ga = langGroup(a), gb = langGroup(b);
+        if (ga !== gb) return ga - gb;
+        return a.localeCompare(b, ga === 0 ? "uk" : "en");
+      });
+      indexMap = rawRefs.map(r => sorted.indexOf(r) + 1);
+      allRefs = sorted;
+    } else {
+      allRefs = rawRefs;
+      indexMap = rawRefs.map((_, i) => i + 1);
+    }
+
+    // ── 4. Маппінг localN → globalN для кожного підрозділу ──
+    const secLocalToGlobal = {};
+    mainSecs.forEach(sec => {
+      secLocalToGlobal[sec.id] = {};
+      Object.entries(secLocalSources[sec.id]).forEach(([localN, text]) => {
+        const rawIdx = seenRefs.get(normalize(text));
+        if (rawIdx !== undefined) secLocalToGlobal[sec.id][Number(localN)] = indexMap[rawIdx];
+      });
+    });
+
+    // ── 5. Форматування списку через Gemini (той самий промпт що в doAddAllCitations) ──
+    const today = new Date();
+    const accessDate = `${String(today.getDate()).padStart(2, "0")}.${String(today.getMonth() + 1).padStart(2, "0")}.${today.getFullYear()}`;
+    const sourcesOrder = (isAlphabeticalOrder || isDstu) ? "Список відсортований за алфавітом." : "Список у порядку першої появи у тексті.";
+    const defaultGrouping = "спочатку законодавчі акти (закони, кодекси, постанови, накази тощо) за хронологією або номером; потім книги та журнальні статті кирилицею (українські та інші кириличні) за алфавітом; потім українські електронні джерела (сайти, онлайн-матеріали кирилицею) за алфавітом; наприкінці іноземні джерела (латиниця) за алфавітом";
+    const sourcesGrouping = methodInfo?.sourcesGrouping
+      ? `Групування: ${methodInfo.sourcesGrouping}.`
+      : (isDstu || isAlphabeticalOrder) ? `Групування за ДСТУ 8302:2015: ${defaultGrouping}.` : "";
+    const styleRules = /APA/i.test(sourcesStyle)
+      ? `СТИЛЬ: APA 7th edition. СУВОРО дотримуйся APA — НЕ змішуй з ДСТУ чи іншими стилями.
+Правила APA:
+- Книга: Прізвище, І. І. (рік). Назва книги курсивом. Видавець.
+- Стаття: Прізвище, І. І. (рік). Назва статті. Назва журналу курсивом, том(номер), сторінки. https://doi.org/...
+- Розділ у збірнику: Прізвище, І. І. (рік). Назва розділу. В І. І. Редактор (Ред.), Назва збірника (сс. xx–xx). Видавець.
+- Онлайн-ресурс: Прізвище, І. І. (рік). Назва. Назва сайту. URL
+- НЕ використовуй двокрапку між містом і видавцем (це ДСТУ, не APA).
+- НЕ пиши "Київ:" або "Oxford:" перед видавцем (APA не вказує місто для більшості джерел після 7-го вид.).
+- НЕ додавай "Вип.", "Т.", "С." у журнальних статтях — використовуй том і сторінки у форматі APA.`
+      : isDstu
+        ? `СТИЛЬ: ДСТУ 8302:2015. СУВОРО дотримуйся ДСТУ — НЕ змішуй з APA чи іншими стилями.
+Правила ДСТУ 8302:2015:
+- Книга: Прізвище І. І. Назва книги. Місто : Видавець, рік. Кількість с.
+- Стаття: Прізвище І. І. Назва статті. Назва журналу. рік. № номер. С. xx–xx.
+- Онлайн: Прізвище І. І. Назва. URL: адреса (дата звернення: ${accessDate}).
+- Ініціали пишуться ПІСЛЯ прізвища без ком між прізвищем та ініціалами.
+- Між містом і видавцем — пробіл двокрапка пробіл ( : ).
+- ПОРЯДОК ГРУП: 1) законодавчі акти (за хронологією/номером); 2) книги та статті кирилицею за алфавітом; 3) українські електронні джерела за алфавітом; 4) іноземні джерела латиницею за алфавітом.`
+        : `СТИЛЬ: ${sourcesStyle}. Точно дотримуйся цього стилю.`;
+
+    const fmtPrompt = `${styleRules}
+${sourcesOrder} ${sourcesGrouping}
+Збережи номери. Поверни ТІЛЬКИ список без заголовка. Для онлайн-джерел додай URL (дата звернення: ${accessDate}). НЕ використовуй "[Електронний ресурс]". Якщо назва джерела написана ВЕЛИКИМИ ЛІТЕРАМИ — переведи у формат речення (перша літера велика, решта малі, окрім власних назв та абревіатур).
+
+${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
+
+    let fmtResult;
+    try {
+      fmtResult = await callGemini([{ role: "user", content: fmtPrompt }], null,
+        `You are a bibliographic formatting assistant. Format references strictly in ${sourcesStyle} style only. Do not mix citation styles. Return only the formatted list, no extra text.`, 16000);
+    } catch (e) { console.error("remap fmt error:", e); }
+
+    const fmtLines = fmtResult
+      ? fmtResult.split("\n").filter(Boolean).map(l => l.replace(/^\d+\.\s*/, ""))
+      : allRefs;
+
+    // ── 6. Формат inline-посилань по стилю ──
+    const refCiteText = {};
+    fmtLines.forEach((ref, i) => {
+      const n = i + 1;
+      if (isAPA) {
+        const surnameMatch = ref.match(/(?:^|[\s,&])([А-ЯҐЄІЇа-яґєіїA-Za-z]{3,})/);
+        const yearMatch = ref.match(/[\(\.\s](\d{4})[\)\.\,\s]/);
+        const author = surnameMatch?.[1] || `Автор${n}`;
+        refCiteText[n] = `(${author}, ${yearMatch?.[1] || "б.р."})`;
+      } else if (isMLA) {
+        const surnameMatch = ref.match(/(?:^|[\s,&])([А-ЯҐЄІЇа-яґєіїA-Za-z]{3,})/);
+        refCiteText[n] = `(${surnameMatch?.[1] || `Автор${n}`})`;
+      } else {
+        // ДСТУ: [N, с. PAGE] або [N]
+        const articlePageMatch = ref.match(/[Сс]\.\s*(\d+)\s*[–\-—]/);
+        const singlePageMatch = !articlePageMatch && ref.match(/[Сс]\.\s*(\d+)(?!\d*\s*с\.)/);
+        const engPageMatch = ref.match(/pp?\.\s*(\d+)/i);
+        const startPage = articlePageMatch?.[1] || singlePageMatch?.[1] || engPageMatch?.[1];
+        refCiteText[n] = startPage ? `[${n}, с. ${startPage}]` : `[${n}]`;
+      }
+    });
+
+    // ── 7. Заміна в тексті: [localN] / [localN, с. X] → %%CITglobalN%% → фінал ──
+    const newContent = { ...content };
+    mainSecs.forEach(sec => {
+      if (!newContent[sec.id]) return;
+      const mapping = secLocalToGlobal[sec.id];
+      if (!mapping || !Object.keys(mapping).length) return;
+      // Крок A: локальні номери → placeholders (max 2 рази на підрозділ для кожного джерела)
+      const citCount = {};
+      let text = newContent[sec.id].replace(/\[(\d+)(?:,\s*с\.\s*\d+)?\]/g, (match, localN) => {
+        const globalN = mapping[Number(localN)];
+        if (!globalN) return match;
+        citCount[globalN] = (citCount[globalN] || 0) + 1;
+        return citCount[globalN] <= 2 ? `%%CIT${globalN}%%` : "";
+      });
+      // Крок B: placeholders → фінальний формат
+      text = text.replace(/%%CIT(\d+)%%/g, (_, n) => refCiteText[Number(n)] || `[${n}]`);
+      newContent[sec.id] = text;
+    });
+
+    // ── 8. Ренумерація для порядку за появою (не APA/MLA, не алфавітний) ──
+    if (!isAPA && !isMLA && !isAlphabeticalOrder) {
+      const firstSeen = [], seen = new Set();
+      mainSecs.forEach(sec => {
+        const text = newContent[sec.id] || "";
+        [...text.matchAll(/\[(\d+)[\],]/g)].forEach(m => {
+          const n = Number(m[1]);
+          if (!seen.has(n)) { seen.add(n); firstSeen.push(n); }
+        });
+      });
+      const oldToNew = {};
+      firstSeen.forEach((oldN, idx) => { oldToNew[oldN] = idx + 1; });
+      let nextNew = firstSeen.length + 1;
+      fmtLines.forEach((_, i) => { const n = i + 1; if (!oldToNew[n]) oldToNew[n] = nextNew++; });
+
+      if (Object.entries(oldToNew).some(([old, nw]) => Number(old) !== nw)) {
+        mainSecs.forEach(sec => {
+          if (!newContent[sec.id]) return;
+          let text = newContent[sec.id].replace(/\[(\d+)(,\s*с\.\s*\d+)?\]/g, (match, n, page) => {
+            const newN = oldToNew[Number(n)];
+            return newN ? `%%CIT${newN}${page || ""}%%` : match;
+          });
+          text = text.replace(/%%CIT(\d+)(,\s*с\.\s*\d+)?%%/g, (_, n, page) => `[${n}${page || ""}]`);
+          newContent[sec.id] = text;
+        });
+
+        const newFmtLines = new Array(fmtLines.length);
+        fmtLines.forEach((line, i) => {
+          const newIdx = oldToNew[i + 1] - 1;
+          if (newIdx >= 0 && newIdx < newFmtLines.length) newFmtLines[newIdx] = line;
+        });
+        fmtResult = newFmtLines
+          .map((line, i) => line ? `${i + 1}. ${line.replace(/^\d+\.\s*/, "")}` : null)
+          .filter(Boolean).join("\n");
+      }
+    }
+
+    // ── 9. Оновлення секції "Список літератури" і стану ──
+    const srcSec = sections.find(s => s.type === "sources");
+    if (srcSec && fmtResult) newContent[srcSec.id] = fmtResult;
+    const newRefList = (fmtResult || allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n"))
+      .split("\n").filter(Boolean);
+
+    setRefList(newRefList);
+    setContent(newContent);
+    setCitInputsSnapshot(JSON.stringify(citInputs));
+    await saveToFirestore({ content: newContent, citInputs, refList: newRefList, stage: "done", status: "done" });
+    setRemapLoading(false);
+    setStage("done");
   };
 
   const copyAll = () => {
@@ -2210,6 +2425,7 @@ ${secsSummary}
             regenAllAbortRef={regenAllAbortRef}
             stopGen={stopGen} resumeGen={resumeGen} doRegenAll={doRegenAll}
             doRegenSection={doRegenSection} setStage={setStage} workflowMode={workflowMode}
+            doRemapCitations={doRemapCitations} remapLoading={remapLoading}
           />
         )}
         {stage === "sources" && (
@@ -2229,7 +2445,8 @@ ${secsSummary}
             sourcesSearchError={sourcesSearchError}
             doSearchSources={doSearchSources}
             doAddAllCitations={doAddAllCitations}
-            onFinish={async () => { await saveToFirestore({ stage: "done", status: "done", content, citInputs, refList }); setStage("done"); }}
+            onAddAbstracts={(entries) => setAbstractsMap(prev => ({ ...prev, ...entries }))}
+            onFinish={async () => { await saveToFirestore({ stage: "done", status: "done", content, citInputs, abstractsMap, refList }); setStage("done"); }}
             onProceedToWriting={() => setStage("writing")}
             setStage={setStage} workflowMode={workflowMode}
           />

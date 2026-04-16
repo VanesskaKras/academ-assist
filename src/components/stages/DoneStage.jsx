@@ -110,24 +110,8 @@ export function DoneStage({
         </div>
         <div style={{ padding: "16px 18px", background: "#faf8f3" }}>
           {!appendicesText ? (
-            <div>
-              <div style={{ fontSize: 12, color: "#888", marginBottom: 12, lineHeight: 1.6 }}>
-                {isPsychoPed(info)
-                  ? "Анкета яка використовувалась у дослідженні. Генерується на основі теми та змісту роботи."
-                  : "Додайте матеріали для додатків або згенеруйте автоматично."}
-              </div>
-              <textarea
-                value={appendicesCustomPrompt}
-                onChange={e => setAppendicesCustomPrompt(e.target.value)}
-                placeholder="Ваші інструкції для додатків (необов'язково). Наприклад: «Зроби додаток з порівняльною таблицею методів» або «Додай зразок анкети і схему дослідження»."
-                style={{ width: "100%", minHeight: 72, fontSize: 12, lineHeight: "1.7", color: "#2a2a1e", background: "#f5f2ea", borderRadius: 6, padding: "10px 14px", border: "1px solid #d4cfc4", fontFamily: "'Spectral',serif", resize: "vertical", boxSizing: "border-box", marginBottom: 10 }}
-              />
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button onClick={doGenAppendices} disabled={appendicesLoading}
-                  style={{ background: appendicesLoading ? "#aaa" : "#1a1a14", color: appendicesLoading ? "#eee" : "#e8ff47", border: "none", borderRadius: 6, padding: "9px 20px", fontFamily: "'Spectral',serif", fontSize: 12, letterSpacing: "1px", cursor: appendicesLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
-                  {appendicesLoading ? <><SpinDot light />Генерую...</> : "Генерувати →"}
-                </button>
-              </div>
+            <div style={{ fontSize: 12, color: "#888", lineHeight: 1.6, display: "inline-flex", alignItems: "center", gap: 8 }}>
+              {appendicesLoading ? <><SpinDot />Генерую додатки...</> : "Додатки генеруються автоматично перед початком тексту."}
             </div>
           ) : (
             <div>

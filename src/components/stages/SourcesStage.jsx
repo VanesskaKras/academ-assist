@@ -66,7 +66,7 @@ export function SourcesStage({
   keywords, kwLoading, kwError, setKwError, methodInfo, commentAnalysis,
   allRefs, refList, showMissingSources, citInputsSnapshot, allCitLoading, info,
   suggestedSources, sourcesSearchLoading, sourcesSearchError, doSearchSources,
-  doGenKeywords, doAddAllCitations, onFinish, onProceedToWriting, setStage, workflowMode,
+  doGenKeywords, doAddAllCitations, onAddAbstracts, onFinish, onProceedToWriting, setStage, workflowMode,
 }) {
   // { secId: paper[] } — зберігаємо повні об'єкти, не тільки ID
   const [selectedSugg, setSelectedSugg] = useState({});
@@ -115,6 +115,15 @@ export function SourcesStage({
 
     const newLines = papers.map(paperToCitation).filter(Boolean);
     if (!newLines.length) return;
+
+    // Зберігаємо abstract snippets для промпту генерації тексту
+    if (onAddAbstracts) {
+      const entries = {};
+      papers.forEach((p, i) => {
+        if (p.abstract && newLines[i]) entries[newLines[i]] = p.abstract;
+      });
+      if (Object.keys(entries).length) onAddAbstracts(entries);
+    }
 
     // Використовуємо prev щоб уникнути stale closure
     setCitInputs(prev => {
