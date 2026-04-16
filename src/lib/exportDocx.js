@@ -112,6 +112,14 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
       children: [new TextRun({ text: text || "", font: FONT, size: SIZE, color: hasFig ? "B85C00" : "000000" })],
     });
   }
+  function listPara(text) {
+    return new Paragraph({
+      indent: { left: INDENT, hanging: 360 },
+      spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
+      alignment: AlignmentType.BOTH,
+      children: [new TextRun({ text, font: FONT, size: SIZE, color: "000000" })],
+    });
+  }
   function heading1(text) {
     return new Paragraph({
       heading: HeadingLevel.HEADING_1,
@@ -220,6 +228,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
         i++;
         continue;
       }
+      const isHyphenList = /^[-*]\s+/.test(line.trim());
       const raw = cleanMarkdown(line);
       if (!raw) { i++; continue; }
       if (firstContentLine && isDuplicateTitle(line, secLabel)) { firstContentLine = false; i++; continue; }
@@ -228,6 +237,11 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
         result.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
         result.push(headingSubsection(raw));
         result.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
+        i++; continue;
+      }
+      if (/^[–—]\s/.test(raw) || isHyphenList) {
+        const listText = /^[–—]\s/.test(raw) ? raw : `– ${raw}`;
+        result.push(listPara(listText));
         i++; continue;
       }
       result.push(bodyPara(raw));
@@ -313,6 +327,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
 
     if (sec.type === "sources") {
       children.push(heading1(sec.label));
+      children.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
       txt.split("\n").forEach(line => {
         const p = sourcePara(line);
         if (p) children.push(p);
@@ -322,6 +337,9 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
 
     if (!isSubsection) {
       children.push(heading1(sec.label));
+      if (sec.type === "intro" || sec.type === "conclusions") {
+        children.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
+      }
     } else {
       if (thisChapter !== lastChapter) {
         lastChapter = thisChapter;

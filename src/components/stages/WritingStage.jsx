@@ -1,11 +1,12 @@
 import { SpinDot } from "../SpinDot.jsx";
-import { Heading, NavBtn, PrimaryBtn } from "../Buttons.jsx";
+import { Heading, NavBtn, PrimaryBtn, GreenBtn } from "../Buttons.jsx";
 
 export function WritingStage({
   running, paused, regenId, setRegenId, regenPrompt, setRegenPrompt,
   regenLoading, regenAllLoading, loadMsg, apiError, setApiError, progress,
   displayOrder, sections, genIdx, content, regenAllAbortRef,
   stopGen, resumeGen, doRegenAll, doRegenSection, setStage, workflowMode,
+  doRemapCitations, remapLoading,
 }) {
   return (
     <div className="fade">
@@ -80,7 +81,7 @@ export function WritingStage({
         </NavBtn>
         {!running && progress === 100 && (
           workflowMode === "sources-first"
-            ? <PrimaryBtn onClick={() => setStage("done")} label="Завершити роботу →" />
+            ? <GreenBtn onClick={doRemapCitations} loading={remapLoading} msg="Формую список літератури..." label="Сформувати список літератури та посилання →" />
             : <PrimaryBtn onClick={() => setStage("sources")} label="Перейти до джерел →" />
         )}
       </div>
