@@ -906,7 +906,7 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
 СТРУКТУРА ВСТУПУ (дотримуватись суворо, кожен елемент з нового абзацу):
 
 ${componentLines.map((l, i) => `${i + 1}. ${l}`).join("\n\n")}
-${methodInfo?.otherRequirements ? `\nВИМОГИ МЕТОДИЧКИ: ${methodInfo.otherRequirements}` : ""}${commentAnalysis?.textStructureHints ? `\nПІДКАЗКИ ЩОДО СТРУКТУРИ (з коментаря клієнта): ${commentAnalysis.textStructureHints}` : ""}
+${methodInfo?.otherRequirements ? `\nВИМОГИ МЕТОДИЧКИ: ${methodInfo.otherRequirements}` : ""}${commentAnalysis?.textStructureHints ? `\nВИМОГИ КЛІЄНТА ДО СТРУКТУРИ (ОБОВ'ЯЗКОВО): ${commentAnalysis.textStructureHints}` : ""}
 ${introMainCtx ? `\nЗМІСТ ОСНОВНИХ РОЗДІЛІВ (використай для точного формулювання методів, вибірки, об'єкта — все має збігатись з текстом роботи):\n${introMainCtx}` : ""}
 
 ВАЖЛИВО: кожен абзац починається так, як вказано вище — НЕ писати окремо мітку ("Мета.") і потім знову те саме слово ("Метою роботи..."). Назви НЕ виділяй жирним. НЕ додавай посилань. Пиши суцільним текстом абзацами.`;
@@ -928,7 +928,7 @@ ${introMainCtx ? `\nЗМІСТ ОСНОВНИХ РОЗДІЛІВ (викорис
       const conclReq = methodInfo?.conclusionsRequirements || "";
 
       instruction = `Напиши ВИСНОВКИ для ${d.type} на тему "${d.topic}".
-${conclReq ? `ВИМОГИ МЕТОДИЧКИ: ${conclReq}\n` : ""}${commentAnalysis?.textStructureHints ? `ПІДКАЗКИ ЩОДО СТРУКТУРИ (з коментаря клієнта): ${commentAnalysis.textStructureHints}\n` : ""}
+${conclReq ? `ВИМОГИ МЕТОДИЧКИ: ${conclReq}\n` : ""}${commentAnalysis?.textStructureHints ? `ВИМОГИ КЛІЄНТА ДО СТРУКТУРИ (ОБОВ'ЯЗКОВО): ${commentAnalysis.textStructureHints}\n` : ""}
 ПРАВИЛА:
 - Обсяг: ${conclusionsParas} абзаців
 - Кожен абзац = один конкретний результат або висновок дослідження
@@ -996,12 +996,24 @@ ${chapCtx ? "ЗМІСТ ПІДРОЗДІЛІВ РОЗДІЛУ:\n" + chapCtx : ""
         ? `\nДОДАТОК А (вже згенерований — спирайся на нього точно):\n${appendicesText.substring(0, 3000)}\n`
         : "";
 
+      const empCommentHints = commentAnalysis?.empiricalHints;
+      const empSampleLine = empCommentHints
+        ? `ВИМОГА КЛІЄНТА: ${empCommentHints}`
+        : methodInfo?.otherRequirements && /учасник|респондент|вибірк|осіб/i.test(methodInfo.otherRequirements)
+          ? `ВИМОГА МЕТОДИЧКИ: ${methodInfo.otherRequirements}`
+          : "20-30 респондентів: вік, категорія, умови відбору";
+      const empAnchorSample = empCommentHints
+        ? `ВИМОГА КЛІЄНТА: ${empCommentHints}`
+        : methodInfo?.otherRequirements && /учасник|респондент|вибірк|осіб/i.test(methodInfo.otherRequirements)
+          ? `ВИМОГА МЕТОДИЧКИ: ${methodInfo.otherRequirements}`
+          : "25-30 респондентів (вік, категорія, умови відбору)";
+
       if (isEmpChapter) {
         empiricalBlock = `
 
 КОНТЕКСТ (психолого-педагогічне емпіричне дослідження):
 ${appendixBlock}Цей підрозділ є частиною емпіричного дослідження. Визнач за назвою підрозділу що саме писати:
-- якщо підрозділ про організацію або методику дослідження: опиши вибірку (20-30 респондентів: вік, категорія, умови відбору), метод анкетування, мету та кількість запитань точно як в Додатку А, принцип проведення. Додай речення: "Анкета наведена у Додатку А."
+- якщо підрозділ про організацію або методику дослідження: опиши вибірку (${empSampleLine}), метод анкетування, мету та кількість запитань точно як в Додатку А, принцип проведення. Додай речення: "Анкета наведена у Додатку А."
 - якщо підрозділ про аналіз або результати: подай результати у вигляді таблиці markdown (|---|---| формат) з відсотковими показниками по запитаннях з Додатку А, проаналізуй дані, зроби висновки
 - якщо підрозділ про рекомендації або практичні висновки: спирайся на результати анкетування вже описані в попередніх підрозділах, не повторюй опис анкети та вибірки`;
       } else if (isEmpAnchor) {
@@ -1009,7 +1021,7 @@ ${appendixBlock}Цей підрозділ є частиною емпірично
 
 ОБОВ'ЯЗКОВО для цього підрозділу (психолого-педагогічне дослідження):
 ${appendixBlock}Цей підрозділ має містити емпіричне дослідження що відповідає Додатку А:
-1. Вибірка: 25-30 респондентів (вік, категорія, умови відбору).
+1. Вибірка: ${empAnchorSample}.
 2. Метод: анкетування. Мета анкети, кількість запитань — точно як в Додатку А.
 3. Принцип проведення: умови та порядок анкетування.
 4. Результати: таблиця markdown (|---|---| формат) з відсотковими показниками по запитаннях з Додатку А.
@@ -1041,7 +1053,11 @@ ${prevCtx ? `КОНТЕКСТ ПОПЕРЕДНІХ ПІДРОЗДІЛІВ:\n${pr
 Не обривай текст. Завершуй підсумковим абзацом. ${citNote} Без жирного.
 Абзаци мають різнитись за довжиною: чергуй короткі (2-3 речення) з довшими (5-7 речень).`;
     }
-    if (commentAnalysis?.writingHints) instruction += `\n\nПІДКАЗКИ З КОМЕНТАРЯ КЛІЄНТА (врахуй при написанні):\n${commentAnalysis.writingHints}`;
+    const clientWritingReqs = [
+      commentAnalysis?.writingHints,
+      commentAnalysis?.textStructureHints,
+    ].filter(Boolean).join("\n");
+    if (clientWritingReqs) instruction += `\n\nВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО виконати при написанні):\n${clientWritingReqs}`;
     const sectionMaxTokens = Math.min(60000, Math.max(8000, Math.round((sec.pages || 1) * 3000)));
     try {
       const raw = await callClaude([{ role: "user", content: instruction }], ctrl.signal, buildSYS(lang, methodInfo), sectionMaxTokens, (s) => setLoadMsg(`Генерую: ${sec.label}... зачекайте ${s}с`));
@@ -1150,20 +1166,31 @@ ${allCtx ? `\nЗМІСТ ПІДРОЗДІЛІВ:\n${allCtx}` : ""}${customInstru
         econBlockRegen = `${formulasBlock}${tablesBlock}${genericEcon}`;
       }
 
+      const empCommentHintsRegen = commentAnalysis?.empiricalHints;
+      const empSampleRegen = empCommentHintsRegen
+        ? `ВИМОГА КЛІЄНТА: ${empCommentHintsRegen}`
+        : methodInfo?.otherRequirements && /учасник|респондент|вибірк|осіб/i.test(methodInfo.otherRequirements)
+          ? `ВИМОГА МЕТОДИЧКИ: ${methodInfo.otherRequirements}`
+          : "20-30 осіб";
+
       if (isEmpChapterRegen) {
         empiricalBlockRegen = `
 
 КОНТЕКСТ (психолого-педагогічне емпіричне дослідження):
-Визнач за назвою підрозділу що писати: організація/методика → вибірка 20-30 осіб + анкетування + "Анкета у Додатку А"; аналіз/результати → таблиці markdown + інтерпретація; рекомендації → на основі результатів без повтору опису анкети.`;
+Визнач за назвою підрозділу що писати: організація/методика → вибірка ${empSampleRegen} + анкетування + "Анкета у Додатку А"; аналіз/результати → таблиці markdown + інтерпретація; рекомендації → на основі результатів без повтору опису анкети.`;
       } else if (isEmpAnchorRegen) {
         empiricalBlockRegen = `
 
-ОБОВ'ЯЗКОВО: вибірка 25-30 осіб, метод анкетування, принцип проведення, таблиця результатів markdown, аналіз, "Анкета у Додатку А."`;
+ОБОВ'ЯЗКОВО: вибірка ${empSampleRegen}, метод анкетування, принцип проведення, таблиця результатів markdown, аналіз, "Анкета у Додатку А."`;
       }
 
+      const clientReqsRegen = [
+        commentAnalysis?.writingHints,
+        commentAnalysis?.textStructureHints,
+      ].filter(Boolean).join("\n");
       instruction = `Перепиши підрозділ "${sec.label}" для ${d.type} на тему "${d.topic}". Галузь: ${d.subject}.
 ${origSnippet}${empiricalBlockRegen}${econBlockRegen}
-Обсяг: ~${approxParas} абзаців (~${sec.pages} стор.).
+${clientReqsRegen ? `ВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО виконати):\n${clientReqsRegen}\n` : ""}Обсяг: ~${approxParas} абзаців (~${sec.pages} стор.).
 Не обривай текст. Завершуй підсумковим абзацом. Без посилань. Без жирного.${customInstructions}`;
     }
     const regenMaxTokens = Math.min(60000, Math.max(8000, Math.round((sec.pages || 1) * 3000)));
@@ -1294,11 +1321,32 @@ ${sectionSummaries}
       const empSecs = getEmpiricalSections(sections, info);
       const hasEmpChapter = empSecs.chapterSectionIds.length > 0 || empSecs.anchorId;
 
+      const empHintsForApp = commentAnalysis?.empiricalHints || "";
+      const needTwoQuestionnaires = /2\s*(дослідження|анкет|методик)|дві\s*(анкет|методик)|два\s*дослідження/i.test(empHintsForApp);
+      const empClientBlock = empHintsForApp ? `ВИМОГА КЛІЄНТА: ${empHintsForApp}\n` : "";
+
       const prompt = (isPsychoPed(info) || hasEmpChapter) && !appendicesCustomPrompt.trim()
-        ? `Згенеруй Додаток А для ${info?.type || "наукової роботи"} на тему "${info?.topic}". Галузь: ${info?.subject}.
+        ? needTwoQuestionnaires
+          ? `Згенеруй Додаток А та Додаток Б для ${info?.type || "наукової роботи"} на тему "${info?.topic}". Галузь: ${info?.subject}.
 ${planBlock}
 ${methodBlock}
-${clientBlock}
+${empClientBlock}${clientBlock}
+
+Кожен додаток — окрема анкета для одного з двох емпіричних досліджень.
+Визнач об'єкт дослідження з теми (хто респонденти: учні, студенти, педагоги, батьки тощо).
+
+Вимоги до кожної анкети:
+- ДОДАТОК А / ДОДАТОК Б (перший рядок кожного додатку)
+- Назва анкети відповідно до теми та аспекту дослідження
+- Звернення до респондента та інструкція (2-3 речення)
+- 12-15 запитань закритого типу з варіантами відповідей: а), б), в), г)
+- В кінці: "Дякуємо за участь у дослідженні!"
+- Мова: ${lang}
+- БЕЗ markdown, зірочок, жирного. Звичайний текст. Кожен додаток починається з нового рядка.`
+          : `Згенеруй Додаток А для ${info?.type || "наукової роботи"} на тему "${info?.topic}". Галузь: ${info?.subject}.
+${planBlock}
+${methodBlock}
+${empClientBlock}${clientBlock}
 
 Додаток А містить анкету для емпіричного дослідження відповідно до теми роботи.
 Визнач об'єкт дослідження з теми (хто респонденти: учні, студенти, педагоги, батьки тощо).
