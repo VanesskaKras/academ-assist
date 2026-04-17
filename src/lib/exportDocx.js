@@ -278,9 +278,12 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
 
   const alignMap = { left: AlignmentType.LEFT, center: AlignmentType.CENTER, right: AlignmentType.RIGHT };
   const topicStr = info?.topic || "";
+  const currentYear = new Date().getFullYear().toString();
   const applyTopic = (t) => {
-    let s = t.replace(/\[ТЕМА\]/g, topicStr);
+    let s = topicStr ? t.replace(/\[ТЕМА\]/g, topicStr) : t;
     if (topicStr) s = s.replace(/(Тема\s*[:：]\s*«\s*)([_\s]*)(\s*»)/g, `$1${topicStr}$3`);
+    s = s.replace(/\[РІК\]/g, currentYear).replace(/\[ДАТА\]/g, currentYear);
+    s = s.replace(/\b20\d{2}\b/g, currentYear);
     return s;
   };
   const resolvedLines = titlePageLines?.length
