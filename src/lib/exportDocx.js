@@ -281,7 +281,11 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
   const currentYear = new Date().getFullYear().toString();
   const applyTopic = (t) => {
     let s = topicStr ? t.replace(/\[ТЕМА\]/g, topicStr) : t;
-    if (topicStr) s = s.replace(/(Тема\s*[:：]\s*«\s*)([_\s]*)(\s*»)/g, `$1${topicStr}$3`);
+    if (topicStr) {
+      s = s.replace(/(Тема\s*[:：]\s*«\s*)([_\s]*)(\s*»)/g, `$1${topicStr}$3`);
+      s = s.replace(/\(найменування\s+теми\)/gi, topicStr);
+      s = s.replace(/\(назва\s+теми\)/gi, topicStr);
+    }
     s = s.replace(/\[РІК\]/g, currentYear).replace(/\[ДАТА\]/g, currentYear);
     s = s.replace(/\b20\d{2}\b/g, currentYear);
     return s;
@@ -372,7 +376,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
           alignment: AlignmentType.RIGHT,
           indent: { firstLine: 0 },
           spacing: { line: LINE, lineRule: "auto", before: LINE, after: Math.round(LINE / 2) },
-          children: [new TextRun({ text: raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase(), font: FONT, size: SIZE, bold: false, color: "000000" })],
+          children: [new TextRun({ text: raw.toUpperCase(), font: FONT, size: SIZE, bold: false, color: "000000" })],
         }));
       } else {
         children.push(new Paragraph({
@@ -544,6 +548,7 @@ export async function exportAppendixToDocx(text, info, methodInfo) {
   const children = [];
   const lines = text.split("\n");
   let i = 0;
+  let isQuestionnaire = false;
   while (i < lines.length) {
     const line = lines[i];
     if (/^\s*\|/.test(line)) {
@@ -600,6 +605,11 @@ export async function exportAppendixToDocx(text, info, methodInfo) {
     const raw = cleanMarkdown(line);
     if (!raw) { i++; continue; }
     if (/^ДОДАТОК\s+[А-ЯA-Z]/i.test(raw)) {
+      // Peek at upcoming lines to detect questionnaire
+      let peekIdx = i + 1;
+      while (peekIdx < lines.length && !lines[peekIdx].trim()) peekIdx++;
+      const nextNonEmpty = (lines[peekIdx] || "").replace(/^#{1,6}\s+/, "").replace(/\*\*(.+?)\*\*/g, "$1").trim();
+      isQuestionnaire = /анкет|опитувальник/i.test(nextNonEmpty);
       children.push(new Paragraph({
         spacing: { line: LINE, lineRule: "auto", before: LINE, after: Math.round(LINE / 2) },
         alignment: AlignmentType.RIGHT,
@@ -618,9 +628,9 @@ export async function exportAppendixToDocx(text, info, methodInfo) {
       i++; continue;
     }
     children.push(new Paragraph({
-      indent: { firstLine: INDENT },
+      indent: { firstLine: isQuestionnaire ? 0 : INDENT },
       spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
-      alignment: AlignmentType.BOTH,
+      alignment: isQuestionnaire ? AlignmentType.LEFT : AlignmentType.BOTH,
       children: [new TextRun({ text: raw, font: FONT, size: SIZE, color: "000000" })],
     }));
     i++;

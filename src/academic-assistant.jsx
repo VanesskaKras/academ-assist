@@ -292,14 +292,33 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
         setMethodInfo(parsed);
         if (parsed.titlePageTemplate) {
           const currentYear = new Date().getFullYear().toString();
-          const fillText = (t) => t
-            .replace(/\[ТЕМА\]/g, newInfo?.topic || "[ТЕМА]")
-            .replace(/\b20\d\d\b/g, currentYear)
-            .replace(/\b20\d?\s*[_]+/g, currentYear);
+          const topic = newInfo?.topic || "";
+          const fillText = (t) => {
+            let s = t;
+            if (topic) {
+              s = s.replace(/\[ТЕМА\]/g, topic);
+              s = s.replace(/\(найменування\s+теми\)/gi, topic);
+              s = s.replace(/\(назва\s+теми\)/gi, topic);
+            }
+            s = s.replace(/\[РІК\]/g, currentYear).replace(/\[ДАТА\]/g, currentYear);
+            s = s.replace(/\b20\d\d\b/g, currentYear);
+            s = s.replace(/\b20\d?\s*[_]+/g, currentYear);
+            return s;
+          };
           let filledLines = null;
           let filledText = "";
           if (Array.isArray(parsed.titlePageTemplate)) {
             filledLines = parsed.titlePageTemplate.map(item => ({ ...item, text: fillText(item.text) }));
+            // Merge split-year lines: "Місто – 202" + "6" → "Місто – 2026"
+            filledLines = filledLines.reduce((acc, item) => {
+              const prev = acc[acc.length - 1];
+              if (prev && /–\s*\d{1,3}$/.test(prev.text) && /^\d{1,2}$/.test(item.text.trim())) {
+                acc[acc.length - 1] = { ...prev, text: prev.text + item.text.trim() };
+              } else {
+                acc.push(item);
+              }
+              return acc;
+            }, []);
             filledText = filledLines.map(item => item.text).join("\n");
           } else {
             filledText = fillText(parsed.titlePageTemplate);
@@ -1773,7 +1792,7 @@ ${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
     let fmtResult;
     try {
       fmtResult = await callGemini([{ role: "user", content: fmtPrompt }], null,
-        `You are a bibliographic formatting assistant. Format references strictly in ${sourcesStyle} style only. Do not mix citation styles. Do not translate or transliterate author names or titles. You MUST reorder name components per style rules (e.g. APA requires Last, F. — invert any First Last names). Convert ALL-CAPS titles to sentence case. Return only the formatted list, no extra text.`, 16000);
+        `Ти — асистент з бібліографічного форматування. Форматуй джерела строго за стилем ${sourcesStyle}. Не змішуй стилі цитування. Не перекладай і не транслітеруй прізвища авторів та назви джерел — зберігай мову оригіналу (українські джерела — українською, англійські — англійською). Перестав компоненти імені відповідно до вимог стилю (для APA: "Ім'я Прізвище" → "Прізвище, І."). Назви повністю ВЕЛИКИМИ ЛІТЕРАМИ переводь у sentence case. Повертай тільки відформатований список, без зайвого тексту.`, 16000);
       setRefList(fmtResult.split("\n").filter(Boolean));
       const srcSec = sections.find(s => s.type === "sources");
       if (srcSec) newContent[srcSec.id] = fmtResult;
@@ -2105,7 +2124,7 @@ ${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
     let fmtResult;
     try {
       fmtResult = await callGemini([{ role: "user", content: fmtPrompt }], null,
-        `You are a bibliographic formatting assistant. Format references strictly in ${sourcesStyle} style only. Do not mix citation styles. Do not translate or transliterate author names or titles. You MUST reorder name components per style rules (e.g. APA requires Last, F. — invert any First Last names). Convert ALL-CAPS titles to sentence case. Return only the formatted list, no extra text.`, 16000);
+        `Ти — асистент з бібліографічного форматування. Форматуй джерела строго за стилем ${sourcesStyle}. Не змішуй стилі цитування. Не перекладай і не транслітеруй прізвища авторів та назви джерел — зберігай мову оригіналу (українські джерела — українською, англійські — англійською). Перестав компоненти імені відповідно до вимог стилю (для APA: "Ім'я Прізвище" → "Прізвище, І."). Назви повністю ВЕЛИКИМИ ЛІТЕРАМИ переводь у sentence case. Повертай тільки відформатований список, без зайвого тексту.`, 16000);
     } catch (e) { console.error("remap fmt error:", e); }
 
     const fmtLines = fmtResult
