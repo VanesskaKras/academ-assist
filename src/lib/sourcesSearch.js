@@ -245,59 +245,61 @@ async function fetchEnglishViaBackend(enKeywords, limit) {
  * @param {string}   sectionTitle — назва підрозділу
  * @param {string}   topic        — тема + напрям роботи
  */
-export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4, sectionTitle = '', topic = '', page = 1, semKeywords = []) {
+export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4, sectionTitle = '', topic = '', page = 1, semKeywords = [], anchors = []) {
   const target = 15;
   const maxForeign = 3;
   const fetchLimit = target + 8;
-  // Об'єднуємо AI-фрази + семантичні ключові слова з контексту
   const allUkKeywords = [...new Set([...ukKeywords, ...semKeywords])];
-
-  // ── Крок 1: coreTerm — 3 ключових слова з назви підрозділу + теми ──
   const coreTerm = buildCoreTerm(sectionTitle, topic);
 
-  // ── Крок 2: будуємо запити ──
   const specificity = (phrase) =>
     phrase.toLowerCase().split(/\s+/).filter(w => w.length > 4 && !STOP_WORDS.has(w)).length;
   const sortedPhrases = [...allUkKeywords].sort((a, b) => specificity(b) - specificity(a));
-  const phraseQueries = page === 1 ? sortedPhrases.slice(0, 2).filter(Boolean) : [];
-
-  // broadQuery: ротуємо по 2 ключові слова між сторінками
-  const kwOffset = (page - 1) % Math.max(1, allUkKeywords.length - 1);
-  const broadQuery = allUkKeywords.slice(kwOffset, kwOffset + 2).join(' ').trim()
-    || allUkKeywords.slice(0, 2).join(' ').trim();
 
   const enQuery = enKeywords.slice(0, 3).join(' ').trim();
   const yr = 'publication_year:>2019';
 
-  // ── Крок 3: паралельні запити ──
-  // r1/r2: coreTerm (3 слова теми) title.search + page
-  // r3: broadQuery (AI-фрази) full-text + page
-  // r4: CrossRef (пагінація не підтримується)
-  // r5/r6: phrase title.search тільки на page=1
-  const [r1, r2, r3, r4, r5, r6] = await Promise.allSettled([
-    coreTerm ? openAlexTitleSearch(coreTerm, `language:uk,${yr}`, fetchLimit, page) : Promise.resolve([]),
-    coreTerm ? openAlexTitleSearch(coreTerm, yr, fetchLimit, page) : Promise.resolve([]),
-    broadQuery ? openAlexSearch(broadQuery, `language:uk,${yr}`, fetchLimit, page) : Promise.resolve([]),
-    (coreTerm || broadQuery) ? fetchCrossRefUkrainian(coreTerm || broadQuery, fetchLimit) : Promise.resolve([]),
-    phraseQueries[0] ? openAlexTitleSearch(phraseQueries[0], `language:uk,${yr}`, fetchLimit, 1) : Promise.resolve([]),
-    phraseQueries[1] ? openAlexTitleSearch(phraseQueries[1], `language:uk,${yr}`, fetchLimit, 1) : Promise.resolve([]),
-  ]);
+  // ── Парні сторінки = anchor mode (full-text), непарні = thesis mode (title.search) ──
+  const useAnchorMode = page % 2 === 0;
 
-  const fromTitleUk  = r1.status === 'fulfilled' ? r1.value.map(p => mapOpenAlex(p, 'uk')) : [];
-  const fromTitleAll = r2.status === 'fulfilled'
-    ? r2.value.filter(p => hasCyrillic(p.title || '')).map(p => mapOpenAlex(p, 'uk'))
+  let queries;
+  if (!useAnchorMode) {
+    // Thesis mode: фрази "якір теми + теза підрозділу" → title.search по 4 фразах
+    const pq = sortedPhrases.slice(0, 4).filter(Boolean);
+    queries = [
+      pq[0] ? openAlexTitleSearch(pq[0], `language:uk,${yr}`, fetchLimit, 1) : Promise.resolve([]),
+      pq[1] ? openAlexTitleSearch(pq[1], `language:uk,${yr}`, fetchLimit, 1) : Promise.resolve([]),
+      pq[2] ? openAlexTitleSearch(pq[2], `language:uk,${yr}`, fetchLimit, 1) : Promise.resolve([]),
+      coreTerm ? fetchCrossRefUkrainian(coreTerm, fetchLimit) : Promise.resolve([]),
+      pq[3] ? openAlexTitleSearch(pq[3], `language:uk,${yr}`, fetchLimit, 1) : Promise.resolve([]),
+      pq[0] ? openAlexSearch(pq[0], `language:uk,${yr}`, fetchLimit, 1) : Promise.resolve([]),
+    ];
+  } else {
+    // Anchor mode: Gemini-якорі у називному відмінку → full-text search
+    const aq = anchors.filter(Boolean);
+    const a1 = aq[0] || coreTerm;
+    const a2 = aq[1] || sortedPhrases[0] || '';
+    const a3 = aq[2] || sortedPhrases[1] || '';
+    queries = [
+      a1 ? openAlexSearch(a1, `language:uk,${yr}`, fetchLimit, 1) : Promise.resolve([]),
+      a2 ? openAlexSearch(a2, `language:uk,${yr}`, fetchLimit, 1) : Promise.resolve([]),
+      a1 ? openAlexSearch(a1, yr, fetchLimit, 1) : Promise.resolve([]),
+      a1 ? fetchCrossRefUkrainian(a1, fetchLimit) : Promise.resolve([]),
+      a3 ? openAlexSearch(a3, `language:uk,${yr}`, fetchLimit, 1) : Promise.resolve([]),
+      a2 ? openAlexSearch(a2, yr, fetchLimit, 1) : Promise.resolve([]),
+    ];
+  }
+
+  const [r1, r2, r3, r4, r5, r6] = await Promise.allSettled(queries);
+
+  const mapUk = (r) => r.status === 'fulfilled'
+    ? r.value.filter(p => hasCyrillic(p.title || '')).map(p => mapOpenAlex(p, 'uk'))
     : [];
-  const fromBroad    = r3.status === 'fulfilled' ? r3.value.map(p => mapOpenAlex(p, 'uk')) : [];
-  const fromCR       = r4.status === 'fulfilled' ? r4.value : [];
-  const fromPhrase1  = r5.status === 'fulfilled' ? r5.value.map(p => mapOpenAlex(p, 'uk')) : [];
-  const fromPhrase2  = r6.status === 'fulfilled' ? r6.value.map(p => mapOpenAlex(p, 'uk')) : [];
+  const fromR1 = r1.status === 'fulfilled' ? r1.value.map(p => mapOpenAlex(p, 'uk')) : [];
+  const fromCR = r4.status === 'fulfilled' ? r4.value : [];
 
-  // ── Крок 4: дедуп ──
-  // page=1: phrase results першими (найрелевантніші), далі title.search
-  // page>1: title.search першими (бо phrases порожні), далі broad
-  const mergeOrder = page === 1
-    ? [...fromPhrase1, ...fromPhrase2, ...fromTitleUk, ...fromTitleAll, ...fromBroad, ...fromCR]
-    : [...fromTitleUk, ...fromTitleAll, ...fromBroad, ...fromCR];
+  // ── Дедуп ──
+  const mergeOrder = [...fromR1, ...mapUk(r2), ...mapUk(r3), ...fromCR, ...mapUk(r5), ...mapUk(r6)];
   const seen = new Set();
   const allUk = [];
   for (const p of mergeOrder) {

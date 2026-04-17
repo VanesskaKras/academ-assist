@@ -59,6 +59,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [sourceDist, setSourceDist] = useState({});
   const [sourceTotal, setSourceTotal] = useState(0);
   const [keywords, setKeywords] = useState({});
+  const [searchAnchors, setSearchAnchors] = useState({});
   const [kwLoading, setKwLoading] = useState(false);
   const [kwError, setKwError] = useState("");
   const [citInputs, setCitInputs] = useState({});
@@ -1578,7 +1579,8 @@ ${fullCtx}
       const commentHints = [commentAnalysis?.planHints, commentAnalysis?.writingHints].filter(Boolean).join(' ');
       const methodReq = [methodInfo?.otherRequirements, methodInfo?.theoryRequirements, methodInfo?.analysisRequirements].filter(Boolean).join(' ');
       const semKw = buildSemanticKeywords(sectionLabel, info?.topic || '', info?.direction || '', info?.subject || '', commentHints, methodReq);
-      const results = await searchSourcesForSection(ukKw, enKw, needed, sectionLabel, topicCtx, page, semKw);
+      const secAnchors = searchAnchors[secId] || [];
+      const results = await searchSourcesForSection(ukKw, enKw, needed, sectionLabel, topicCtx, page, semKw, secAnchors);
       setSuggestedSources(prev => ({ ...prev, [secId]: results }));
     } catch (e) {
       console.error('Source search error:', e.message);
@@ -1602,21 +1604,23 @@ ${fullCtx}
     const methodCtx = [methodInfo?.otherRequirements, methodInfo?.theoryRequirements, methodInfo?.analysisRequirements].filter(Boolean).join(' ').slice(0, 400);
     const prompt = `Ти допомагаєш знайти наукові джерела для академічної роботи на тему "${info?.topic}"${domainCtx ? ` (галузь: ${domainCtx})` : ''}.
 
-ЗАВДАННЯ — для кожного підрозділу виконай два кроки:
+ЗАВДАННЯ — для кожного підрозділу:
 
-КРОК 1. Тезисно розпиши, про що би ти писав у цьому підрозділі — конкретні аспекти, поняття, підходи (5–7 тез). Це внутрішній крок, не виводь його у відповідь.
+КРОК 1. Розпиши тезисно, про що би ти писав у цьому підрозділі — 5–7 конкретних тез (3–6 слів кожна). Це внутрішній крок, не виводь у відповідь.
 
-КРОК 2. Для кожної тези склади пошуковий запит: "[головне ключове слово теми] + [конкретний аспект з тези]". Наприклад, якщо тема "інтерактивні технології виховання" і теза — "відмінність від традиційних методів", то запит: "інтерактивні технології виховання відмінність від традиційних методів".
+КРОК 2. Для кожної тези склади пошуковий запит: [2–3 ключових слова теми] + [теза].
+Приклад: тема "інтерактивні технологій виховання", теза "відмінність від традиційних методів" → "інтерактивні технологій виховання відмінність традиційних методів".
+Вимоги: кожна фраза = якір теми + конкретний аспект. НЕ загальні слова без контексту теми.
+5–7 фраз на підрозділ: переважно українською, 2–3 англійською.
 
-ВИМОГИ до фраз:
-- Кожна фраза = головне ключове слово теми + конкретний аспект підрозділу.
-- НЕ загальні слова ("методи", "підходи", "аналіз") без контексту теми.
-- 5–7 фраз на підрозділ: переважно українською, 2–3 англійською.${commentCtx ? `\nПОБАЖАННЯ КЛІЄНТА: ${commentCtx}` : ''}${methodCtx ? `\nВИМОГИ МЕТОДИЧКИ: ${methodCtx}` : ''}
+КРОК 3. Згенеруй 2–3 короткі "якірні фрази" для full-text пошуку в наукових базах.
+Це 2–4 слова у НАЗИВНОМУ ВІДМІНКУ що характеризують підрозділ.
+Приклад: ["інтерактивні технологій виховання", "педагогічна взаємодія виховання"]${commentCtx ? `\nПОБАЖАННЯ КЛІЄНТА: ${commentCtx}` : ''}${methodCtx ? `\nВИМОГИ МЕТОДИЧКИ: ${methodCtx}` : ''}
 
 ПІДРОЗДІЛИ:
 ${secBlocks}
 
-Поверни JSON об'єкт: {"keywords":{"1.1":["фраза укр","english phrase"],...}}`;
+Поверни JSON: {"keywords":{"1.1":["фраза укр","english phrase",...],...},"searchAnchors":{"1.1":["якір 1","якір 2"],...}}`;
     try {
       const res = await fetch("/api/gemini", {
         method: "POST",
@@ -1624,7 +1628,7 @@ ${secBlocks}
         body: JSON.stringify({
           _model: "gemini-2.5-flash-lite",
           contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: { maxOutputTokens: 3000, responseMimeType: "application/json", thinkingConfig: { thinkingBudget: 0 } },
+          generationConfig: { maxOutputTokens: 4000, responseMimeType: "application/json" },
         }),
       });
       const data = await res.json();
@@ -1632,6 +1636,14 @@ ${secBlocks}
       const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
       const parsed = JSON.parse(raw);
       const kwRaw = parsed.keywords || {};
+      const anchorsRaw = parsed.searchAnchors || {};
+      const anchorsNorm = Object.fromEntries(
+        Object.entries(anchorsRaw).map(([k, v]) => {
+          const key = k.match(/^(\d+\.\d+)/)?.[1] || k;
+          return [key, Array.isArray(v) ? v.map(String).filter(Boolean) : []];
+        })
+      );
+      setSearchAnchors(anchorsNorm);
       const flattenKw = (v) => {
         if (Array.isArray(v)) return v.map(item => typeof item === "object" && item !== null ? Object.values(item).join(" ") : String(item)).filter(Boolean);
         if (typeof v === "object" && v !== null) return Object.values(v).flatMap(flattenKw);
