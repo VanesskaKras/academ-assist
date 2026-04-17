@@ -1716,7 +1716,9 @@ ${fullCtx}
 - Онлайн-ресурс: Прізвище, І. І. (рік). Назва. Назва сайту. URL
 - НЕ використовуй двокрапку між містом і видавцем (це ДСТУ, не APA).
 - НЕ пиши "Київ:" або "Oxford:" перед видавцем (APA не вказує місто для більшості джерел після 7-го вид.).
-- НЕ додавай "Вип.", "Т.", "С." у журнальних статтях — використовуй том і сторінки у форматі APA.`
+- НЕ додавай "Вип.", "Т.", "С." у журнальних статтях — використовуй том і сторінки у форматі APA.
+- ОБОВ'ЯЗКОВО: якщо автор вказаний як "Ім'я Прізвище" (ім'я першим) — переставляй у "Прізвище, І." (прізвище першим, ім'я скорочується до ініціалу). Це вимога APA, не зміна імені.
+- Назви джерел у форматі APA: перша літера великий, решта малі (sentence case), окрім власних назв та абревіатур. Якщо назва написана ВЕЛИКИМИ ЛІТЕРАМИ — обов'язково переводь у sentence case.`
       : isDstu
         ? `СТИЛЬ: ДСТУ 8302:2015. СУВОРО дотримуйся ДСТУ — НЕ змішуй з APA чи іншими стилями.
 Правила ДСТУ 8302:2015:
@@ -1729,14 +1731,14 @@ ${fullCtx}
         : `СТИЛЬ: ${sourcesStyle}. Точно дотримуйся цього стилю.`;
     const fmtPrompt = `${styleRules}
 ${sourcesOrder} ${sourcesGrouping}
-Збережи номери. Поверни ТІЛЬКИ список без заголовка. Для онлайн-джерел додай URL (дата звернення: ${accessDate}). НЕ використовуй "[Електронний ресурс]". Якщо назва джерела написана ВЕЛИКИМИ ЛІТЕРАМИ — переведи у формат речення (перша літера велика, решта малі, окрім власних назв та абревіатур).
-КРИТИЧНО: НЕ перекладай, НЕ транслітеруй і НЕ змінюй прізвища авторів та назви джерел — зберігай їх точно як є в оригіналі. Лише розставляй розділові знаки та порядок елементів за вимогами стилю.
+Збережи номери. Поверни ТІЛЬКИ список без заголовка. Для онлайн-джерел додай URL (дата звернення: ${accessDate}). НЕ використовуй "[Електронний ресурс]".
+КРИТИЧНО: НЕ перекладай і НЕ транслітеруй прізвища авторів та назви джерел. Самі слова зберігай точно — але порядок елементів (прізвище перед ім'ям, ініціали, розділові знаки) виправляй відповідно до вимог стилю. Переведення ВЕЛИКИХ ЛІТЕР у sentence case — дозволено і обов'язково.
 
 ${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
     let fmtResult;
     try {
       fmtResult = await callGemini([{ role: "user", content: fmtPrompt }], null,
-        `You are a bibliographic formatting assistant. Format references strictly in ${sourcesStyle} style only. Do not mix citation styles. Preserve all author names and titles exactly as given — do not translate or transliterate. Return only the formatted list, no extra text.`, 16000);
+        `You are a bibliographic formatting assistant. Format references strictly in ${sourcesStyle} style only. Do not mix citation styles. Do not translate or transliterate author names or titles. You MUST reorder name components per style rules (e.g. APA requires Last, F. — invert any First Last names). Convert ALL-CAPS titles to sentence case. Return only the formatted list, no extra text.`, 16000);
       setRefList(fmtResult.split("\n").filter(Boolean));
       const srcSec = sections.find(s => s.type === "sources");
       if (srcSec) newContent[srcSec.id] = fmtResult;
@@ -2040,7 +2042,10 @@ ${secsSummary}
 - Онлайн-ресурс: Прізвище, І. І. (рік). Назва. Назва сайту. URL
 - НЕ використовуй двокрапку між містом і видавцем (це ДСТУ, не APA).
 - НЕ пиши "Київ:" або "Oxford:" перед видавцем (APA не вказує місто для більшості джерел після 7-го вид.).
-- НЕ додавай "Вип.", "Т.", "С." у журнальних статтях — використовуй том і сторінки у форматі APA.`
+- НЕ додавай "Вип.", "Т.", "С." у журнальних статтях — використовуй том і сторінки у форматі APA.
+- ОБОВ'ЯЗКОВО: якщо автор вказаний як "Ім'я Прізвище" (ім'я першим) — переставляй у "Прізвище, І." (прізвище першим, ім'я скорочується до ініціалу). Це вимога APA, не зміна імені.
+  Українські імена (перші слова, що НЕ є прізвищами): Олеся, Оксана, Тетяна, Наталія, Наталя, Марія, Ірина, Олена, Світлана, Валентина, Людмила, Галина, Ніна, Лариса, Юлія, Анна, Катерина, Вікторія, Андрій, Олег, Микола, Василь, Іван, Петро, Сергій, Олексій, Михайло, Дмитро, Юрій, Владислав, Богдан, Роман, Тарас, Євген. Якщо джерело починається з такого слова — це ім'я, і наступне слово є прізвищем; переставляй: "Олеся Коваль" → "Коваль, О."; "Тетяна Петренко" → "Петренко, Т."
+- Назви джерел: sentence case (перша літера велика, решта малі, окрім власних назв та абревіатур). Якщо назва написана ВЕЛИКИМИ ЛІТЕРАМИ — обов'язково переводь у sentence case.`
       : isDstu
         ? `СТИЛЬ: ДСТУ 8302:2015. СУВОРО дотримуйся ДСТУ — НЕ змішуй з APA чи іншими стилями.
 Правила ДСТУ 8302:2015:
@@ -2054,15 +2059,15 @@ ${secsSummary}
 
     const fmtPrompt = `${styleRules}
 ${sourcesOrder} ${sourcesGrouping}
-Збережи номери. Поверни ТІЛЬКИ список без заголовка. Для онлайн-джерел додай URL (дата звернення: ${accessDate}). НЕ використовуй "[Електронний ресурс]". Якщо назва джерела написана ВЕЛИКИМИ ЛІТЕРАМИ — переведи у формат речення (перша літера велика, решта малі, окрім власних назв та абревіатур).
-КРИТИЧНО: НЕ перекладай, НЕ транслітеруй і НЕ змінюй прізвища авторів та назви джерел — зберігай їх точно як є в оригіналі. Лише розставляй розділові знаки та порядок елементів за вимогами стилю.
+Збережи номери. Поверни ТІЛЬКИ список без заголовка. Для онлайн-джерел додай URL (дата звернення: ${accessDate}). НЕ використовуй "[Електронний ресурс]".
+КРИТИЧНО: НЕ перекладай і НЕ транслітеруй прізвища авторів та назви джерел. Самі слова зберігай точно — але порядок елементів (прізвище перед ім'ям, ініціали, розділові знаки) виправляй відповідно до вимог стилю. Переведення ВЕЛИКИХ ЛІТЕР у sentence case — дозволено і обов'язково.
 
 ${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
 
     let fmtResult;
     try {
       fmtResult = await callGemini([{ role: "user", content: fmtPrompt }], null,
-        `You are a bibliographic formatting assistant. Format references strictly in ${sourcesStyle} style only. Do not mix citation styles. Preserve all author names and titles exactly as given — do not translate or transliterate. Return only the formatted list, no extra text.`, 16000);
+        `You are a bibliographic formatting assistant. Format references strictly in ${sourcesStyle} style only. Do not mix citation styles. Do not translate or transliterate author names or titles. You MUST reorder name components per style rules (e.g. APA requires Last, F. — invert any First Last names). Convert ALL-CAPS titles to sentence case. Return only the formatted list, no extra text.`, 16000);
     } catch (e) { console.error("remap fmt error:", e); }
 
     const fmtLines = fmtResult
@@ -2074,14 +2079,19 @@ ${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
     fmtLines.forEach((ref, i) => {
       const n = i + 1;
       if (isAPA) {
-        const surnameMatch = ref.match(/(?:^|[\s,&])([А-ЯҐЄІЇа-яґєіїA-Za-z]{3,})/);
+        const commaIdx = ref.indexOf(',');
+        const rawAuthor = commaIdx > 0
+          ? ref.substring(0, commaIdx).trim()
+          : ref.match(/^([А-ЯҐЄІЇа-яґєіїA-Za-z][а-яґєіїa-z''ʼ-]+)/)?.[1] || `Автор${n}`;
         const yearMatch = ref.match(/[\(\.\s](\d{4})[\)\.\,\s]/);
-        const rawAuthor = surnameMatch?.[1] || `Автор${n}`;
         const author = rawAuthor.charAt(0).toUpperCase() + rawAuthor.slice(1).toLowerCase();
         refCiteText[n] = `(${author}, ${yearMatch?.[1] || "б.р."})`;
       } else if (isMLA) {
-        const surnameMatch = ref.match(/(?:^|[\s,&])([А-ЯҐЄІЇа-яґєіїA-Za-z]{3,})/);
-        refCiteText[n] = `(${surnameMatch?.[1] || `Автор${n}`})`;
+        const commaIdx = ref.indexOf(',');
+        const rawSurname = commaIdx > 0
+          ? ref.substring(0, commaIdx).trim()
+          : ref.match(/^([А-ЯҐЄІЇа-яґєіїA-Za-z][а-яґєіїa-z''ʼ-]+)/)?.[1];
+        refCiteText[n] = `(${rawSurname || `Автор${n}`})`;
       } else {
         // ДСТУ: [N, с. PAGE] або [N]
         const articlePageMatch = ref.match(/[Сс]\.\s*(\d+)\s*[–\-—]/);
