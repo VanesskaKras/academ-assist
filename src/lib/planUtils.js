@@ -230,7 +230,7 @@ export function buildWorkConfig({ info, methodInfo, commentAnalysis }) {
     conclusionsPages,
     chapConclusionPages: 1,
     sourcesMinCount,
-    sourcesStyle: methodInfo?.sourcesStyle || "ДСТУ 8302:2015",
+    sourcesStyle: methodInfo?.sourcesStyle || (/APA/i.test((methodInfo?.otherRequirements || "") + " " + (methodInfo?.citationStyle || "")) ? "APA" : /MLA/i.test((methodInfo?.otherRequirements || "") + " " + (methodInfo?.citationStyle || "")) ? "MLA" : "ДСТУ 8302:2015"),
     sourcesOrder: methodInfo?.sourcesOrder || "alphabetical",
     sourcesGrouping: methodInfo?.sourcesGrouping || "",
     citationStyle: methodInfo?.citationStyle || "(Автор, рік)",

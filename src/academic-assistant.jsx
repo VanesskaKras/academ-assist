@@ -1692,7 +1692,9 @@ ${fullCtx}
     const newContent = { ...content };
 
     // ── Визначаємо формат посилань за стилем ──
-    const sourcesStyle = methodInfo?.sourcesStyle || "ДСТУ 8302:2015";
+    const _extraText = (methodInfo?.otherRequirements || "") + " " + (methodInfo?.citationStyle || "");
+    const sourcesStyle = methodInfo?.sourcesStyle
+      || (/APA/i.test(_extraText) ? "APA" : /MLA/i.test(_extraText) ? "MLA" : "ДСТУ 8302:2015");
     const isAPA = /APA/i.test(sourcesStyle);
     const isMLA = /MLA/i.test(sourcesStyle);
 
@@ -1967,7 +1969,9 @@ ${secsSummary}
   const doRemapCitations = async () => {
     setRemapLoading(true);
     const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
-    const sourcesStyle = methodInfo?.sourcesStyle || "ДСТУ 8302:2015";
+    const _extraText2 = (methodInfo?.otherRequirements || "") + " " + (methodInfo?.citationStyle || "");
+    const sourcesStyle = methodInfo?.sourcesStyle
+      || (/APA/i.test(_extraText2) ? "APA" : /MLA/i.test(_extraText2) ? "MLA" : "ДСТУ 8302:2015");
     const isAPA = /APA/i.test(sourcesStyle);
     const isMLA = /MLA/i.test(sourcesStyle);
     const isDstu = /ДСТУ/i.test(sourcesStyle);
