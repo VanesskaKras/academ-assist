@@ -12,7 +12,7 @@ import { playDoneSound } from "./lib/audio.js";
 import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, METHODOLOGY_READING_PROMPT, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt } from "./lib/prompts.js";
 import { FIELD_LABELS, isPsychoPed, isEcon, getEmpiricalSections, getEconSections, STAGES_TEXT_FIRST, STAGE_KEYS_TEXT_FIRST, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
-import { searchSourcesForSection } from "./lib/sourcesSearch.js";
+import { searchSourcesForSection, buildSemanticKeywords } from "./lib/sourcesSearch.js";
 import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
 import { StagePills } from "./components/StagePills.jsx";
 import { FieldBox, Heading, NavBtn, PrimaryBtn, GreenBtn, SaveIndicator } from "./components/Buttons.jsx";
@@ -1575,7 +1575,10 @@ ${fullCtx}
       const enKw = (kwList || []).filter(k => !/[а-яА-ЯіїєґІЇЄҐ]/.test(k));
       const needed = sourceDist[secId] || 4;
       const topicCtx = [info?.topic, info?.direction, info?.subject].filter(Boolean).join(' ');
-      const results = await searchSourcesForSection(ukKw, enKw, needed, sectionLabel, topicCtx, page);
+      const commentHints = [commentAnalysis?.planHints, commentAnalysis?.writingHints].filter(Boolean).join(' ');
+      const methodReq = [methodInfo?.otherRequirements, methodInfo?.theoryRequirements, methodInfo?.analysisRequirements].filter(Boolean).join(' ');
+      const semKw = buildSemanticKeywords(sectionLabel, info?.topic || '', info?.direction || '', info?.subject || '', commentHints, methodReq);
+      const results = await searchSourcesForSection(ukKw, enKw, needed, sectionLabel, topicCtx, page, semKw);
       setSuggestedSources(prev => ({ ...prev, [secId]: results }));
     } catch (e) {
       console.error('Source search error:', e.message);
@@ -1595,7 +1598,21 @@ ${fullCtx}
       return `### ${s.label} (потрібно ${sourceDist[s.id] || 3} джерела)${txt}`;
     }).join("\n\n");
     const domainCtx = [info?.direction, info?.subject].filter(Boolean).join(', ');
-    const prompt = `Проаналізуй текст підрозділів академічної роботи на тему "${info?.topic}"${domainCtx ? ` (галузь: ${domainCtx})` : ''} і для кожного підрозділу визнач пошукові ключові слова для Google Scholar, Scopus, eLibrary Ukraine.\n\nВИМОГИ ДО КЛЮЧОВИХ СЛІВ:\n- Кожна фраза ОБОВ'ЯЗКОВО включає галузевий контекст (напр. "моделі інтерактивного навчання", НЕ просто "моделі").\n- Фрази мають відображати конкретні терміни та концепції підрозділу, а НЕ загальні структурні слова (не "аналіз", "методи", "форми" — тільки в поєднанні зі специфічним терміном).\n- Уникай загальних фраз без прив'язки до галузі/теми.\n\nПІДРОЗДІЛИ:\n${secBlocks}\n\nПоверни JSON об'єкт: {"keywords":{"1.1":["фраза укр","english phrase"],...}}`;
+    const commentCtx = [commentAnalysis?.planHints, commentAnalysis?.writingHints].filter(Boolean).join(' ').slice(0, 400);
+    const methodCtx = [methodInfo?.otherRequirements, methodInfo?.theoryRequirements, methodInfo?.analysisRequirements].filter(Boolean).join(' ').slice(0, 400);
+    const prompt = `Проаналізуй підрозділи академічної роботи на тему "${info?.topic}"${domainCtx ? ` (галузь: ${domainCtx})` : ''}.
+
+Для кожного підрозділу визнач теми, аспекти та поняття, які варто в ньому розкрити — спираючись на зміст підрозділу, методичні вимоги та тему роботи.
+
+ВИМОГИ:
+- Кожна фраза ОБОВ'ЯЗКОВО включає галузевий контекст (напр. "методи інтерактивного навчання", НЕ просто "методи").
+- Фрази відображають конкретні теми та поняття підрозділу, НЕ загальні структурні слова.
+- 5–7 фраз на підрозділ: переважно українською, 2–3 англійською.${commentCtx ? `\nПОБАЖАННЯ КЛІЄНТА: ${commentCtx}` : ''}${methodCtx ? `\nВИМОГИ МЕТОДИЧКИ: ${methodCtx}` : ''}
+
+ПІДРОЗДІЛИ:
+${secBlocks}
+
+Поверни JSON об'єкт: {"keywords":{"1.1":["фраза укр","english phrase"],...}}`;
     try {
       const res = await fetch("/api/gemini", {
         method: "POST",
@@ -2084,18 +2101,26 @@ ${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
     fmtLines.forEach((ref, i) => {
       const n = i + 1;
       if (isAPA) {
+        // Знаходимо перше "реальне" слово (3+ літер) — пропускаємо ініціали типу "О."
+        // Якщо перед першою комою одне слово без пробілу — це прізвище в APA форматі
         const commaIdx = ref.indexOf(',');
-        const rawAuthor = commaIdx > 0
-          ? ref.substring(0, commaIdx).trim()
-          : ref.match(/^([А-ЯҐЄІЇа-яґєіїA-Za-z][а-яґєіїa-z''ʼ-]+)/)?.[1] || `Автор${n}`;
+        const beforeComma = commaIdx > 0 ? ref.substring(0, commaIdx).trim() : "";
+        let rawAuthor;
+        if (beforeComma && !beforeComma.includes(" ") && beforeComma.length >= 3) {
+          rawAuthor = beforeComma;
+        } else {
+          const surnameMatch = ref.match(/(?:^|[\s,&])([А-ЯҐЄІЇа-яґєіїA-Za-z]{3,})/);
+          rawAuthor = surnameMatch?.[1] || `Автор${n}`;
+        }
         const yearMatch = ref.match(/[\(\.\s](\d{4})[\)\.\,\s]/);
         const author = rawAuthor.charAt(0).toUpperCase() + rawAuthor.slice(1).toLowerCase();
         refCiteText[n] = `(${author}, ${yearMatch?.[1] || "б.р."})`;
       } else if (isMLA) {
         const commaIdx = ref.indexOf(',');
-        const rawSurname = commaIdx > 0
-          ? ref.substring(0, commaIdx).trim()
-          : ref.match(/^([А-ЯҐЄІЇа-яґєіїA-Za-z][а-яґєіїa-z''ʼ-]+)/)?.[1];
+        const beforeComma = commaIdx > 0 ? ref.substring(0, commaIdx).trim() : "";
+        const rawSurname = (beforeComma && !beforeComma.includes(" "))
+          ? beforeComma
+          : ref.match(/(?:^|[\s,])([А-ЯҐЄІЇа-яґєіїA-Za-z]{3,})/)?.[1];
         refCiteText[n] = `(${rawSurname || `Автор${n}`})`;
       } else {
         // ДСТУ: [N, с. PAGE] або [N]
@@ -2121,7 +2146,7 @@ ${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
         citCount[globalN] = (citCount[globalN] || 0) + 1;
         return citCount[globalN] <= 2 ? `%%CIT${globalN}%%` : "";
       });
-      // Крок B: placeholders → фінальний формат
+      // Крок B: placeholders → фінальний формат (для APA: (Прізвище, рік), для ДСТУ: [N])
       text = text.replace(/%%CIT(\d+)%%/g, (_, n) => refCiteText[Number(n)] || `[${n}]`);
       newContent[sec.id] = text;
     });

@@ -126,6 +126,37 @@ function snippetAbstract(text) {
   return words.length > 100 ? words.slice(0, 100).join(' ') + '...' : snippet;
 }
 
+/**
+ * Будує семантичні ключові слова з контексту роботи (не від AI).
+ * Витягує значущі слова з назви підрозділу, теми, галузі та коментарів,
+ * складає 2–3 пошукові комбінації.
+ */
+export function buildSemanticKeywords(sectionLabel = '', topic = '', direction = '', subject = '', commentHints = '', methodReq = '') {
+  const freq = {};
+  const addWords = (text, weight) => {
+    if (!text) return;
+    text.toLowerCase()
+      .split(/[\s,.:;()–—\-/'"«»]+/)
+      .filter(w => w.length > 4 && !STOP_WORDS.has(w))
+      .forEach(w => { freq[w] = (freq[w] || 0) + weight; });
+  };
+  addWords(sectionLabel, 4);
+  addWords(topic, 3);
+  addWords(direction, 3);
+  addWords(subject, 2);
+  addWords(commentHints.slice(0, 300), 1);
+  addWords(methodReq.slice(0, 300), 1);
+
+  const topWords = Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([w]) => w);
+  if (topWords.length < 2) return [];
+
+  const queries = [];
+  if (topWords.length >= 2) queries.push(topWords.slice(0, 3).join(' '));
+  if (topWords.length >= 4) queries.push(topWords.slice(2, 5).join(' '));
+  if (topWords.length >= 6) queries.push([topWords[0], topWords[4], topWords[5]].join(' '));
+  return queries;
+}
+
 // ── OpenAlex ──
 const OA_BASE = 'https://api.openalex.org/works';
 const OA_FIELDS = 'title,authorships,publication_year,primary_location,doi,language,id,biblio,abstract_inverted_index';
@@ -230,30 +261,26 @@ async function fetchEnglishViaBackend(enKeywords, limit) {
  * @param {string}   sectionTitle — назва підрозділу
  * @param {string}   topic        — тема + напрям роботи
  */
-export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4, sectionTitle = '', topic = '', page = 1) {
-  const target = needed + 4;
-  const maxForeign = Math.max(1, Math.round(needed * 0.1));
+export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4, sectionTitle = '', topic = '', page = 1, semKeywords = []) {
+  const target = 15;
+  const maxForeign = 3;
   const fetchLimit = target + 8;
+  // Об'єднуємо AI-фрази + семантичні ключові слова з контексту
+  const allUkKeywords = [...new Set([...ukKeywords, ...semKeywords])];
 
   // ── Крок 1: два найспецифічніших терміни теми (B+C) ──
-  const { coreTerm } = findTopTerms(ukKeywords, sectionTitle);
+  const { coreTerm } = findTopTerms(allUkKeywords, sectionTitle);
 
   // ── Крок 2: будуємо запити ──
-  // coreTerm  → одне слово для title.search + пагінація (багато результатів, добре циклиться)
-  // domainTerm → друге слово, використовується в domainBoost
-  // phraseQueries → повні фрази (тільки на page=1, як бонус для релевантності)
-  // broadQuery → повнотекстовий пошук з ротацією ключових слів між сторінками
-
-  // Фрази тільки на першій сторінці — довгі фрази на page>1 повертають 0 з OpenAlex
   const specificity = (phrase) =>
     phrase.toLowerCase().split(/\s+/).filter(w => w.length > 4 && !STOP_WORDS.has(w)).length;
-  const sortedPhrases = [...ukKeywords].sort((a, b) => specificity(b) - specificity(a));
+  const sortedPhrases = [...allUkKeywords].sort((a, b) => specificity(b) - specificity(a));
   const phraseQueries = page === 1 ? sortedPhrases.slice(0, 2).filter(Boolean) : [];
 
-  // broadQuery: ротуємо по 2 ключові слова (0+1 → 1+2 → 2+3 → ...) + циклимо page
-  const kwOffset = (page - 1) % Math.max(1, ukKeywords.length - 1);
-  const broadQuery = ukKeywords.slice(kwOffset, kwOffset + 2).join(' ').trim()
-    || ukKeywords.slice(0, 2).join(' ').trim();
+  // broadQuery: ротуємо по 2 ключові слова між сторінками
+  const kwOffset = (page - 1) % Math.max(1, allUkKeywords.length - 1);
+  const broadQuery = allUkKeywords.slice(kwOffset, kwOffset + 2).join(' ').trim()
+    || allUkKeywords.slice(0, 2).join(' ').trim();
 
   const enQuery = enKeywords.slice(0, 3).join(' ').trim();
   const yr = 'publication_year:>2019';
@@ -296,18 +323,10 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
     allUk.push(p);
   }
 
-  // ── Крок 5: жорсткий фільтр за coreTerm ──
-  // Якщо є ядро — вимагаємо його присутності в заголовку результату
-  // Якщо після фільтру залишилось мало — повертаємо все (краще щось)
-  const hardFiltered = coreTerm
-    ? allUk.filter(p => p.title.toLowerCase().includes(coreTerm))
-    : allUk;
-  const ukPool = hardFiltered.length >= needed ? hardFiltered : allUk;
-
-  // ── Крок 6: скоринг + domainBoost (E) ──
-  const withScore = ukPool.map(p => ({
+  // ── Крок 5: скоринг + domainBoost (E) ──
+  const withScore = allUk.map(p => ({
     ...p,
-    _score: scoreRelevance(p.title.toLowerCase(), ukKeywords),
+    _score: scoreRelevance(p.title.toLowerCase(), allUkKeywords),
   })).sort((a, b) => b._score - a._score);
   const boosted = domainBoost(withScore, sectionTitle, topic);
 
