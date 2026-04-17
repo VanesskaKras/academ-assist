@@ -41,35 +41,19 @@ function hasCyrillic(text = '') {
 }
 
 /**
- * Знаходить два найбільш специфічних терміни теми (B+C):
- * - coreTerm  — найчастіше специфічне слово з ключових фраз
- * - domainTerm — другий за частотою специфічний термін
- * Слова з назви підрозділу дають додаткову вагу → тема виграє перед загальним.
- *
- * Напр.: ["моделі виховання", "інтерактивні методи педагогіки"]  +  sectionTitle "виховна діяльність"
- *   → { coreTerm: "виховання", domainTerm: "інтерактивні" }  (а не "моделі")
+ * Будує coreTerm з назви підрозділу + теми роботи:
+ * бере перші 3 значущих слова (без стоп-слів) — зберігає повний контекст теми.
+ * Напр.: sectionTitle "Інтерактивні технологій у вихованні дітей"
+ *   → coreTerm = "інтерактивних технологій вихованні"
  */
-function findTopTerms(keywords, sectionTitle = '') {
-  const freq = {};
-  for (const kw of keywords) {
-    const words = kw.toLowerCase()
-      .split(/[\s,.:;()–—\-/]+/)
-      .filter(w => w.length > 4 && !STOP_WORDS.has(w));
-    for (const w of words) freq[w] = (freq[w] || 0) + 2;
-  }
-  // Слова з назви підрозділу — вага +1 (якоремо найспецифічніший термін)
-  if (sectionTitle) {
-    const tw = sectionTitle.toLowerCase()
-      .split(/[\s,.:;()–—\-/]+/)
-      .filter(w => w.length > 5 && !STOP_WORDS.has(w));
-    for (const w of tw) freq[w] = (freq[w] || 0) + 1;
-  }
-  if (!Object.keys(freq).length) return { coreTerm: '', domainTerm: '' };
-  const sorted = Object.entries(freq).sort((a, b) => b[1] - a[1]);
-  return {
-    coreTerm: sorted[0]?.[0] || '',
-    domainTerm: sorted[1]?.[0] || '',
-  };
+function buildCoreTerm(sectionTitle = '', topic = '') {
+  const extract = (text) => text.toLowerCase()
+    .split(/[\s,.:;()–—\-/'"«»]+/)
+    .filter(w => w.length > 4 && !STOP_WORDS.has(w));
+  const seen = new Set();
+  const words = [...extract(sectionTitle), ...extract(topic)]
+    .filter(w => seen.has(w) ? false : seen.add(w));
+  return words.slice(0, 3).join(' ');
 }
 
 /**
@@ -268,8 +252,8 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
   // Об'єднуємо AI-фрази + семантичні ключові слова з контексту
   const allUkKeywords = [...new Set([...ukKeywords, ...semKeywords])];
 
-  // ── Крок 1: два найспецифічніших терміни теми (B+C) ──
-  const { coreTerm } = findTopTerms(allUkKeywords, sectionTitle);
+  // ── Крок 1: coreTerm — 3 ключових слова з назви підрозділу + теми ──
+  const coreTerm = buildCoreTerm(sectionTitle, topic);
 
   // ── Крок 2: будуємо запити ──
   const specificity = (phrase) =>
@@ -286,10 +270,10 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
   const yr = 'publication_year:>2019';
 
   // ── Крок 3: паралельні запити ──
-  // r1/r2: coreTerm title.search + page → циклиться (одне слово = багато сторінок)
-  // r3: broadQuery full-text + page → різні keywords та page кожного разу
+  // r1/r2: coreTerm (3 слова теми) title.search + page
+  // r3: broadQuery (AI-фрази) full-text + page
   // r4: CrossRef (пагінація не підтримується)
-  // r5/r6: phrase title.search тільки на page=1 (надто специфічні для page>1)
+  // r5/r6: phrase title.search тільки на page=1
   const [r1, r2, r3, r4, r5, r6] = await Promise.allSettled([
     coreTerm ? openAlexTitleSearch(coreTerm, `language:uk,${yr}`, fetchLimit, page) : Promise.resolve([]),
     coreTerm ? openAlexTitleSearch(coreTerm, yr, fetchLimit, page) : Promise.resolve([]),
