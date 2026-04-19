@@ -240,7 +240,10 @@ export function SourcesStage({
         const secRefs = (citInputs[sec.id] || "").split("\n").map(l => l.trim()).filter(Boolean);
         const startIdx = runningIdx + 1; runningIdx += secRefs.length;
         const hasSources = secRefs.length > 0;
-        const suggestions = suggestedSources[sec.id] || [];
+        const alreadyAdded = (citInputs[sec.id] || '').toLowerCase();
+        const suggestions = (suggestedSources[sec.id] || []).filter(p =>
+          !alreadyAdded.includes((p.title || '').toLowerCase().slice(0, 60))
+        );
         const isSearching = sourcesSearchLoading[sec.id] || false;
         const searchErr = sourcesSearchError?.[sec.id] || null;
         const isOpen = suggOpen[sec.id] ?? (suggestions.length > 0);
