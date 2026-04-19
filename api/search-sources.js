@@ -41,6 +41,9 @@ async function searchSemanticScholar(query, limit) {
       doi: p.externalIds?.DOI || '',
       lang: 'en',
       source: 'ss',
+      url: p.externalIds?.DOI
+        ? `https://doi.org/${p.externalIds.DOI}`
+        : `https://www.semanticscholar.org/paper/${p.paperId}`,
     }));
 }
 

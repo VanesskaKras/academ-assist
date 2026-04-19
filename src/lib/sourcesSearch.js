@@ -168,6 +168,10 @@ function mapOpenAlex(p, forceLang) {
   const lp = p.biblio?.last_page;
   const pages = fp ? (lp && lp !== fp ? `${fp}–${lp}` : fp) : '';
   const abstract = snippetAbstract(decodeAbstract(p.abstract_inverted_index));
+  const doi = p.doi ? p.doi.replace('https://doi.org/', '') : '';
+  const url = p.primary_location?.landing_page_url
+    || (doi ? `https://doi.org/${doi}` : '')
+    || (p.id?.startsWith('https://') ? p.id : '');
   return {
     id: p.id || p.doi || String(Math.random()),
     title: p.title || '',
@@ -175,11 +179,12 @@ function mapOpenAlex(p, forceLang) {
       .map(a => a.author?.display_name || '').filter(Boolean),
     year: p.publication_year || '',
     venue: p.primary_location?.source?.display_name || '',
-    doi: p.doi ? p.doi.replace('https://doi.org/', '') : '',
+    doi,
     pages,
     lang,
     source: 'openalex',
     abstract,
+    url,
   };
 }
 
@@ -210,6 +215,7 @@ async function fetchCrossRefUkrainian(query, limit) {
       pages: p.page ? p.page.replace('-', '–') : '',
       lang: 'uk',
       source: 'crossref',
+      url: p.DOI ? `https://doi.org/${p.DOI}` : '',
     }));
 }
 

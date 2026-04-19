@@ -56,6 +56,17 @@ function SourceCard({ paper, checked, onToggle }) {
             {paper.venue}{paper.pages ? ` · С. ${paper.pages}` : ''}
           </div>
         )}
+        {paper.url && (
+          <a
+            href={paper.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={e => e.stopPropagation()}
+            style={{ display: 'inline-block', marginTop: 4, fontSize: 11, color: '#1a5a8a', textDecoration: 'none' }}
+          >
+            🔗 Відкрити джерело →
+          </a>
+        )}
       </div>
     </label>
   );
