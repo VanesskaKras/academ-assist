@@ -815,8 +815,13 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
       setContent(p => ({ ...p, [sec.id]: "[Додайте джерела на кроці «Джерела»]" }));
       setGenIdx(g => g + 1); return;
     }
+    // Емпіричні підрозділи потребують готового Додатку А — чекаємо якщо він ще генерується
+    if (appendicesLoading && !appendicesText && info) {
+      const empSecs = getEmpiricalSections(sections, info);
+      if (empSecs.chapterSectionIds.includes(sec.id) || sec.id === empSecs.anchorId) return;
+    }
     runSection(sec);
-  }, [stage, genIdx, paused, sections]);
+  }, [stage, genIdx, paused, sections, appendicesText, appendicesLoading]);
 
   const runSection = async (sec) => {
     runningRef.current = true; setRunning(true); setLoadMsg("Генерую: " + sec.label + "...");
