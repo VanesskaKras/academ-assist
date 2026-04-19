@@ -11,8 +11,10 @@ function paperToCitation(paper) {
   const pages = paper.pages
     ? ` ${paper.lang === 'en' ? 'P.' : 'С.'} ${paper.pages}.`
     : '';
-  const doi = paper.doi ? ` DOI: ${paper.doi}` : '';
-  return `${authors}. ${paper.title}.${venue} ${paper.year}.${pages}${doi}`.replace(/\.\s*\./g, '.').replace(/\s{2,}/g, ' ').trim();
+  const urlPart = paper.doi
+    ? ` https://doi.org/${paper.doi}`
+    : paper.url ? ` ${paper.url}` : '';
+  return `${authors}. ${paper.title}.${venue} ${paper.year}.${pages}${urlPart}`.replace(/\.\s*\./g, '.').replace(/\s{2,}/g, ' ').trim();
 }
 
 // ── Картка одного знайденого джерела ──
