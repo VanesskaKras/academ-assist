@@ -11,9 +11,9 @@ function paperToCitation(paper) {
   const pages = paper.pages
     ? ` ${paper.lang === 'en' ? 'P.' : 'С.'} ${paper.pages}.`
     : '';
-  const urlPart = paper.doi
-    ? ` https://doi.org/${paper.doi}`
-    : paper.url ? ` ${paper.url}` : '';
+  const urlPart = paper.url
+    ? ` ${paper.url}`
+    : paper.doi ? ` https://doi.org/${paper.doi}` : '';
   return `${authors}. ${paper.title}.${venue} ${paper.year}.${pages}${urlPart}`.replace(/\.\s*\./g, '.').replace(/\s{2,}/g, ' ').trim();
 }
 
