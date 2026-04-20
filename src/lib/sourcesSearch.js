@@ -265,34 +265,35 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
   const enQuery = enKeywords.slice(0, 3).join(' ').trim();
   const yr = 'publication_year:>2019';
 
-  // ── Парні сторінки = anchor mode (full-text), непарні = thesis mode (title.search) ──
-  const useAnchorMode = page % 2 === 0;
+  // page 1,3,5... = повнотекстовий пошук; page 2,4,6... = title.search
+  // фраза визначається індексом: floor((page-1)/2), циклічно по sortedPhrases
+  const phraseIdx = sortedPhrases.length
+    ? Math.floor((page - 1) / 2) % sortedPhrases.length
+    : 0;
+  const isTitleSearch = page % 2 === 0;
+  const mainPhrase = sortedPhrases[phraseIdx] || coreTerm;
+  const nextPhrase = sortedPhrases[phraseIdx + 1] || sortedPhrases[0] || coreTerm;
 
   let queries;
-  if (!useAnchorMode) {
-    // Thesis mode: фрази "якір теми + теза підрозділу" → title.search по 4 фразах
-    const pq = sortedPhrases.slice(0, 4).filter(Boolean);
+  if (isTitleSearch) {
+    // Точний пошук: title.search по поточній фразі + CrossRef
     queries = [
-      pq[0] ? openAlexTitleSearch(pq[0], `language:uk,${yr}`, fetchLimit, 1) : Promise.resolve([]),
-      pq[1] ? openAlexTitleSearch(pq[1], `language:uk,${yr}`, fetchLimit, 1) : Promise.resolve([]),
-      pq[2] ? openAlexTitleSearch(pq[2], `language:uk,${yr}`, fetchLimit, 1) : Promise.resolve([]),
-      coreTerm ? fetchCrossRefUkrainian(coreTerm, fetchLimit) : Promise.resolve([]),
-      pq[3] ? openAlexTitleSearch(pq[3], `language:uk,${yr}`, fetchLimit, 1) : Promise.resolve([]),
-      pq[0] ? openAlexSearch(pq[0], `language:uk,${yr}`, fetchLimit, 1) : Promise.resolve([]),
+      openAlexTitleSearch(mainPhrase, `language:uk,${yr}`, fetchLimit, 1),
+      fetchCrossRefUkrainian(mainPhrase, fetchLimit),
+      coreTerm !== mainPhrase ? openAlexTitleSearch(coreTerm, `language:uk,${yr}`, fetchLimit, 1) : Promise.resolve([]),
+      nextPhrase !== mainPhrase ? openAlexTitleSearch(nextPhrase, `language:uk,${yr}`, fetchLimit, 1) : Promise.resolve([]),
+      Promise.resolve([]),
+      Promise.resolve([]),
     ];
   } else {
-    // Anchor mode: Gemini-якорі у називному відмінку → full-text search
-    const aq = anchors.filter(Boolean);
-    const a1 = aq[0] || coreTerm;
-    const a2 = aq[1] || sortedPhrases[0] || '';
-    const a3 = aq[2] || sortedPhrases[1] || '';
+    // Повнотекстовий пошук по поточній фразі + CrossRef
     queries = [
-      a1 ? openAlexSearch(a1, `language:uk,${yr}`, fetchLimit, 1) : Promise.resolve([]),
-      a2 ? openAlexSearch(a2, `language:uk,${yr}`, fetchLimit, 1) : Promise.resolve([]),
-      a1 ? openAlexSearch(a1, yr, fetchLimit, 1) : Promise.resolve([]),
-      a1 ? fetchCrossRefUkrainian(a1, fetchLimit) : Promise.resolve([]),
-      a3 ? openAlexSearch(a3, `language:uk,${yr}`, fetchLimit, 1) : Promise.resolve([]),
-      a2 ? openAlexSearch(a2, yr, fetchLimit, 1) : Promise.resolve([]),
+      openAlexSearch(mainPhrase, `language:uk,${yr}`, fetchLimit, 1),
+      fetchCrossRefUkrainian(mainPhrase, fetchLimit),
+      openAlexSearch(mainPhrase, yr, fetchLimit, 1),
+      coreTerm !== mainPhrase ? openAlexSearch(coreTerm, `language:uk,${yr}`, fetchLimit, 1) : Promise.resolve([]),
+      nextPhrase !== mainPhrase ? openAlexSearch(nextPhrase, `language:uk,${yr}`, fetchLimit, 1) : Promise.resolve([]),
+      Promise.resolve([]),
     ];
   }
 

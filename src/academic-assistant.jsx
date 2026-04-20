@@ -828,24 +828,21 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
     const ctrl = new AbortController(); abortRef.current = ctrl;
     const d = info;
     const lang = d?.language || "Українська";
-    // Для емпіричних підрозділів — широкий контекст усього розділу (до 2000 символів)
-    const empSecsEarly = getEmpiricalSections(sections, d);
-    const isCurrentEmpChapter = empSecsEarly.chapterSectionIds.includes(sec.id);
-    const prevCtx = isCurrentEmpChapter
-      ? (() => {
-          const empIds = empSecsEarly.chapterSectionIds;
-          const empCtx = empIds
-            .filter(id => id !== sec.id && contentRef.current[id])
-            .map(id => `[${id}]: ${contentRef.current[id].substring(0, 2000)}...`)
-            .join("\n\n");
-          const nonEmpPrev = Object.entries(contentRef.current)
-            .filter(([k]) => !empIds.includes(k))
-            .slice(-1)
-            .map(([k, v]) => `[${k}]: ${v.substring(0, 500)}...`)
-            .join("\n\n");
-          return [nonEmpPrev, empCtx].filter(Boolean).join("\n\n");
-        })()
-      : Object.entries(contentRef.current).slice(-2).map(([k, v]) => `[${k}]: ${v.substring(0, 500)}...`).join("\n\n");
+
+    // Будуємо повний multi-turn контекст як у Claude.ai
+    const buildMessages = (instruction) => {
+      const prevEntries = Object.entries(contentRef.current).filter(([k]) => k !== sec.id);
+      if (!prevEntries.length) return [{ role: "user", content: instruction }];
+      const contextText = prevEntries.map(([k, v]) => {
+        const s = sections.find(x => x.id === k);
+        return `=== ${s?.label || k} ===\n${v}`;
+      }).join("\n\n---\n\n");
+      return [
+        { role: "user", content: "Ось вже написані частини цієї роботи:" },
+        { role: "assistant", content: contextText },
+        { role: "user", content: instruction },
+      ];
+    };
     const approxParas = Math.max(3, Math.round((sec.pages || 1) * 3.5));
     const planSummary = sections
       .filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type))
@@ -898,38 +895,17 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
         return `${label}: абзац починається з природного формулювання (НЕ повторювати мітку "${label}" двічі) — зміст відповідно до теми "${d.topic}".`;
       });
 
-      // Контекст основних розділів для вступу — щоб вибірка, методика і результати збігались
-      const introMainCtx = mainSecs
-        .map(s => contentRef.current[s.id]
-          ? `[${s.label}]: ${contentRef.current[s.id].substring(0, 600)}...`
-          : "")
-        .filter(Boolean)
-        .join("\n\n");
-
       instruction = `Напиши ВСТУП для ${d.type} на тему "${d.topic}". Галузь: ${d.subject}.
 
 СТРУКТУРА ВСТУПУ (дотримуватись суворо, кожен елемент з нового абзацу):
 
 ${componentLines.map((l, i) => `${i + 1}. ${l}`).join("\n\n")}
 ${methodInfo?.otherRequirements ? `\nВИМОГИ МЕТОДИЧКИ: ${methodInfo.otherRequirements}` : ""}${commentAnalysis?.textStructureHints ? `\nВИМОГИ КЛІЄНТА ДО СТРУКТУРИ (ОБОВ'ЯЗКОВО): ${commentAnalysis.textStructureHints}` : ""}
-${introMainCtx ? `\nЗМІСТ ОСНОВНИХ РОЗДІЛІВ (використай для точного формулювання методів, вибірки, об'єкта — все має збігатись з текстом роботи):\n${introMainCtx}` : ""}
 
-ВАЖЛИВО: кожен абзац починається так, як вказано вище — НЕ писати окремо мітку ("Мета.") і потім знову те саме слово ("Метою роботи..."). Назви НЕ виділяй жирним. НЕ додавай посилань. Пиши суцільним текстом абзацами.`;
+ВАЖЛИВО: використай вже написані розділи роботи (є в контексті) для точного формулювання методів, вибірки, об'єкта — все має збігатись з текстом роботи. Кожен абзац починається так, як вказано вище — НЕ писати окремо мітку ("Мета.") і потім знову те саме слово ("Метою роботи..."). Назви НЕ виділяй жирним. НЕ додавай посилань. Пиши суцільним текстом абзацами.`;
 
     } else if (sec.type === "conclusions") {
       const conclusionsParas = isLarge ? "10-12" : "7";
-      const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
-      // Для висновків: емпіричні підрозділи передаємо з широким контекстом (1800 символів),
-      // решта — стисло (300 символів), щоб модель точно знала вибірку і методику
-      const empSecsForConcl = getEmpiricalSections(sections, d);
-      const empIdsSet = new Set(empSecsForConcl.chapterSectionIds);
-      const allCtx = mainSecs.map(s => {
-        const text = contentRef.current[s.id];
-        if (!text) return "";
-        const limit = empIdsSet.has(s.id) ? 1800 : 1000;
-        return `[${s.label}]: ${text.substring(0, limit)}...`;
-      }).filter(Boolean).join("\n\n");
-
       const conclReq = methodInfo?.conclusionsRequirements || "";
 
       instruction = `Напиши ВИСНОВКИ для ${d.type} на тему "${d.topic}".
@@ -943,20 +919,16 @@ ${conclReq ? `ВИМОГИ МЕТОДИЧКИ: ${conclReq}\n` : ""}${commentAnal
 - НЕ повторювати те що сказано у вступі, НЕ вводити нову інформацію
 - Без посилань. Без жирного. Без нумерації. Пиши суцільними абзацами, не використовуй жодних списків.
 
-ЗМІСТ ПІДРОЗДІЛІВ (для формулювання конкретних висновків):
-${allCtx || planSummary}`;
+Спирайся на весь написаний текст роботи (є в контексті) — формулюй конкретні висновки на основі реального змісту підрозділів.`;
 
     } else if (sec.type === "chapter_conclusion") {
-      // Беремо підрозділи цього розділу і їх тексти для контексту
       const chapNum = sec.chapterNum || sec.id.split(".")[0];
-      const chapSubs = sections.filter(s => s.id.split(".")[0] === chapNum && s.type !== "chapter_conclusion");
-      const chapCtx = chapSubs.map(s => contentRef.current[s.id] ? `[${s.label}]: ${contentRef.current[s.id].substring(0, 400)}...` : "").filter(Boolean).join("\n\n");
       const chapConclReq = methodInfo?.chapterConclusionRequirements || "стисло підсумуй основні думки підрозділів, кожен абзац = один підрозділ";
       instruction = `Напиши "Висновки до розділу ${chapNum}" для ${d.type} на тему "${d.topic}".
 ${methodInfo?.chapterConclusionRequirements ? `ВИМОГИ МЕТОДИЧКИ: ${methodInfo.chapterConclusionRequirements}` : ""}
 Обсяг: 1 сторінка (~4-5 абзаців). ${chapConclReq}.
 Без нової інформації. Без посилань. Без жирного. Без нумерації. Пиши суцільними абзацами.
-${chapCtx ? "ЗМІСТ ПІДРОЗДІЛІВ РОЗДІЛУ:\n" + chapCtx : ""}`;
+Спирайся на повний текст підрозділів розділу ${chapNum} (є в контексті).`;
     } else {
       // Вимоги з методички для цього типу підрозділу
       const methodReqMap = {
@@ -1054,7 +1026,7 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ ДО ЦЬОГО РОЗДІЛУ: $
 ПЛАН РОБОТИ (для розуміння структури та уникнення повторів):
 ${planSummary}
 
-${prevCtx ? `КОНТЕКСТ ПОПЕРЕДНІХ ПІДРОЗДІЛІВ:\n${prevCtx}\n` : ""}Обсяг: ~${approxParas} абзаців (~${sec.pages} стор.).
+Обсяг: ~${approxParas} абзаців (~${sec.pages} стор.).
 Не обривай текст. Завершуй підсумковим абзацом. ${citNote} Без жирного.
 Абзаци мають різнитись за довжиною: чергуй короткі (2-3 речення) з довшими (5-7 речень).`;
     }
@@ -1065,7 +1037,7 @@ ${prevCtx ? `КОНТЕКСТ ПОПЕРЕДНІХ ПІДРОЗДІЛІВ:\n${pr
     if (clientWritingReqs) instruction += `\n\nВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО виконати при написанні):\n${clientWritingReqs}`;
     const sectionMaxTokens = Math.min(60000, Math.max(8000, Math.round((sec.pages || 1) * 3000)));
     try {
-      const raw = await callClaude([{ role: "user", content: instruction }], ctrl.signal, buildSYS(lang, methodInfo), sectionMaxTokens, (s) => setLoadMsg(`Генерую: ${sec.label}... зачекайте ${s}с`));
+      const raw = await callClaude(buildMessages(instruction), ctrl.signal, buildSYS(lang, methodInfo), sectionMaxTokens, (s) => setLoadMsg(`Генерую: ${sec.label}... зачекайте ${s}с`));
       // Видаляємо довге тире на всякий випадок (модель іноді ігнорує заборону)
       const result = raw
         .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
@@ -1099,7 +1071,26 @@ ${prevCtx ? `КОНТЕКСТ ПОПЕРЕДНІХ ПІДРОЗДІЛІВ:\n${pr
     const approxParas = Math.max(3, Math.round((sec.pages || 1) * 3.5));
     const customInstructions = regenPrompt ? `\nДОДАТКОВІ ВИМОГИ: ${regenPrompt}` : "";
     const originalText = contentRef.current[sec.id] || "";
-    const origSnippet = originalText ? `ОРИГІНАЛЬНИЙ ТЕКСТ (збережи структуру, покращ стиль):\n${originalText.substring(0, 800)}...\n` : "";
+
+    // Будуємо multi-turn: всі інші секції як контекст + оригінал поточної
+    const buildRegenMessages = (instruction) => {
+      const otherEntries = Object.entries(contentRef.current).filter(([k]) => k !== sec.id);
+      const msgs = [];
+      if (otherEntries.length) {
+        const contextText = otherEntries.map(([k, v]) => {
+          const s = sections.find(x => x.id === k);
+          return `=== ${s?.label || k} ===\n${v}`;
+        }).join("\n\n---\n\n");
+        msgs.push({ role: "user", content: "Ось вже написані частини цієї роботи:" });
+        msgs.push({ role: "assistant", content: contextText });
+      }
+      if (originalText) {
+        msgs.push({ role: "user", content: `Ось поточний варіант підрозділу "${sec.label}" — він потребує переписування:` });
+        msgs.push({ role: "assistant", content: originalText });
+      }
+      msgs.push({ role: "user", content: instruction });
+      return msgs;
+    };
 
     let instruction = "";
     const totalPages = parsePagesAvg(d?.pages);
@@ -1123,26 +1114,22 @@ ${prevCtx ? `КОНТЕКСТ ПОПЕРЕДНІХ ПІДРОЗДІЛІВ:\n${pr
       });
 
       instruction = `Перепиши ВСТУП для ${d.type} на тему "${d.topic}". Галузь: ${d.subject}.
-${origSnippet}
+
 СТРУКТУРА ВСТУПУ (суворо дотримуватись):
 
 ${componentLines.map((l, i) => `${i + 1}. ${l}`).join("\n")}
 ${methodInfo?.otherRequirements ? `\nВИМОГИ МЕТОДИЧКИ: ${methodInfo.otherRequirements}` : ""}
-ВАЖЛИВО: кожен абзац починається так, як вказано вище — НЕ писати окремо мітку ("Мета.") і потім знову те саме слово ("Метою роботи..."). Назви НЕ виділяй жирним. Без посилань. Без нумерації у тексті.${customInstructions}`;
+ВАЖЛИВО: використай написані розділи роботи (є в контексті) для точного формулювання методів, вибірки, об'єкта. Кожен абзац починається так, як вказано вище. Назви НЕ виділяй жирним. Без посилань. Без нумерації у тексті.${customInstructions}`;
 
     } else if (sec.type === "conclusions") {
       const conclusionsParas = isLarge ? "10-12" : "7";
-      const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
-      const allCtx = mainSecs.map(s => contentRef.current[s.id]
-        ? `[${s.label}]: ${contentRef.current[s.id].substring(0, 300)}...` : "").filter(Boolean).join("\n\n");
 
       instruction = `Перепиши ВИСНОВКИ для ${d.type} на тему "${d.topic}".
-${origSnippet}
 ${methodInfo?.conclusionsRequirements ? `ВИМОГИ МЕТОДИЧКИ: ${methodInfo.conclusionsRequirements}\n` : ""}
 Обсяг: ${conclusionsParas} абзаців. Кожен абзац = один конкретний результат.
 Перший — загальний підсумок. Далі по одному на кожен підрозділ. Останній — перспективи.
 НЕ повторювати вступ. НЕ вводити нове. Без посилань. Без жирного. Без нумерації.
-${allCtx ? `\nЗМІСТ ПІДРОЗДІЛІВ:\n${allCtx}` : ""}${customInstructions}`;
+Спирайся на весь написаний текст роботи (є в контексті).${customInstructions}`;
     } else {
       const empSecsRegen = getEmpiricalSections(sections, d);
       const isEmpChapterRegen = empSecsRegen.chapterSectionIds.includes(sec.id);
@@ -1194,13 +1181,13 @@ ${allCtx ? `\nЗМІСТ ПІДРОЗДІЛІВ:\n${allCtx}` : ""}${customInstru
         commentAnalysis?.textStructureHints,
       ].filter(Boolean).join("\n");
       instruction = `Перепиши підрозділ "${sec.label}" для ${d.type} на тему "${d.topic}". Галузь: ${d.subject}.
-${origSnippet}${empiricalBlockRegen}${econBlockRegen}
+${empiricalBlockRegen}${econBlockRegen}
 ${clientReqsRegen ? `ВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО виконати):\n${clientReqsRegen}\n` : ""}Обсяг: ~${approxParas} абзаців (~${sec.pages} стор.).
 Не обривай текст. Завершуй підсумковим абзацом. Без посилань. Без жирного.${customInstructions}`;
     }
     const regenMaxTokens = Math.min(60000, Math.max(8000, Math.round((sec.pages || 1) * 3000)));
     try {
-      const raw = await callClaude([{ role: "user", content: instruction }], null, buildSYS(lang, methodInfo), regenMaxTokens);
+      const raw = await callClaude(buildRegenMessages(instruction), null, buildSYS(lang, methodInfo), regenMaxTokens);
       const result = raw
         .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
         .replace(/[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF]/g, "")
@@ -1525,21 +1512,28 @@ ${JSON.stringify(analysis, null, 2)}
     const empSecs = getEmpiricalSections(sections, d);
     const empIdsSet = new Set(empSecs.chapterSectionIds);
 
-    const buildFullCtx = (excludeId) =>
-      sections
+    // Будуємо multi-turn повідомлення для doRegenAll
+    const buildRegenAllMessages = (excludeId, instruction) => {
+      const otherEntries = sections
         .filter(s => s.id !== excludeId && contentRef.current[s.id] && s.type !== "sources")
-        .map(s => {
-          const limit = empIdsSet.has(s.id) ? 1800 : 1000;
-          return `[${s.label}]: ${contentRef.current[s.id].substring(0, limit)}`;
-        })
-        .join("\n\n");
+        .map(s => [s.id, contentRef.current[s.id]]);
+      if (!otherEntries.length) return [{ role: "user", content: instruction }];
+      const contextText = otherEntries.map(([k, v]) => {
+        const s = sections.find(x => x.id === k);
+        return `=== ${s?.label || k} ===\n${v}`;
+      }).join("\n\n---\n\n");
+      return [
+        { role: "user", content: "Ось вже написані частини цієї роботи:" },
+        { role: "assistant", content: contextText },
+        { role: "user", content: instruction },
+      ];
+    };
 
     for (let i = 0; i < secsToRegen.length; i++) {
       if (ctrl.signal.aborted) break;
       const sec = secsToRegen[i];
       setLoadMsg(`Переписую (${i + 1}/${secsToRegen.length}): ${sec.label}...`);
 
-      const fullCtx = buildFullCtx(sec.id);
       const approxParas = Math.max(3, Math.round((sec.pages || 1) * 3.5));
       let instruction = "";
 
@@ -1563,7 +1557,7 @@ ${JSON.stringify(analysis, null, 2)}
 СТРУКТУРА ВСТУПУ (суворо, кожен елемент з нового абзацу):
 ${componentLines.map((l, idx) => `${idx + 1}. ${l}`).join("\n")}
 ${methodInfo?.otherRequirements ? `\nВИМОГИ МЕТОДИЧКИ: ${methodInfo.otherRequirements}` : ""}
-${fullCtx ? `\nЗМІСТ РОЗДІЛІВ РОБОТИ (використай для точного формулювання вибірки, методів, результатів — все має збігатись):\n${fullCtx}` : ""}
+Використай написані розділи роботи (є в контексті) для точного формулювання вибірки, методів, результатів — все має збігатись.
 НЕ виділяй жирним. НЕ додавай посилань. Пиши суцільним текстом абзацами.`;
 
       } else if (sec.type === "conclusions") {
@@ -1572,14 +1566,14 @@ ${fullCtx ? `\nЗМІСТ РОЗДІЛІВ РОБОТИ (використай д
 ${methodInfo?.conclusionsRequirements ? `ВИМОГИ МЕТОДИЧКИ: ${methodInfo.conclusionsRequirements}\n` : ""}
 Обсяг: ${conclusionsParas} абзаців. Перший — загальний підсумок мети і досягнутого. Далі по одному абзацу на кожен підрозділ з конкретними результатами. Останній — перспективи подальших досліджень.
 Без посилань. Без жирного. Без нумерації. Суцільними абзацами.
-${fullCtx ? `\nЗМІСТ РОЗДІЛІВ РОБОТИ:\n${fullCtx}` : ""}`;
+Спирайся на весь написаний текст роботи (є в контексті).`;
 
       } else if (sec.type === "chapter_conclusion") {
         const chapNum = sec.chapterNum || sec.id.split(".")[0];
         instruction = `Напиши "Висновки до розділу ${chapNum}" для ${d.type} на тему "${d.topic}".
 ${methodInfo?.chapterConclusionRequirements ? `ВИМОГИ МЕТОДИЧКИ: ${methodInfo.chapterConclusionRequirements}` : ""}
 Обсяг: ~4-5 абзаців. Без нової інформації. Без посилань. Без жирного. Без нумерації. Суцільними абзацами.
-${fullCtx ? `\nКОНТЕКСТ РОБОТИ:\n${fullCtx}` : ""}`;
+Спирайся на повний текст підрозділів розділу ${chapNum} (є в контексті).`;
 
       } else {
         const typeHints = {
@@ -1600,9 +1594,6 @@ ${fullCtx ? `\nКОНТЕКСТ РОБОТИ:\n${fullCtx}` : ""}`;
 Тип: ${typeHints[sec.type] || "основний"}.
 ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBlock}
 
-КОНТЕКСТ ВСІЄЇ РОБОТИ (для узгодженості вибірки, цифр, методики — дотримуйся цих даних точно):
-${fullCtx}
-
 Обсяг: ~${approxParas} абзаців (~${sec.pages} стор.).
 Не обривай текст. Завершуй підсумковим абзацом. Без посилань [1],[2]. Без жирного.
 Абзаци різняться за довжиною: чергуй короткі (2-3 речення) з довшими (5-7 речень).`;
@@ -1610,7 +1601,7 @@ ${fullCtx}
 
       const sectionMaxTokens = Math.min(60000, Math.max(8000, Math.round((sec.pages || 1) * 3000)));
       try {
-        const raw = await callClaude([{ role: "user", content: instruction }], ctrl.signal, buildSYS(lang, methodInfo), sectionMaxTokens, null, MODEL);
+        const raw = await callClaude(buildRegenAllMessages(sec.id, instruction), ctrl.signal, buildSYS(lang, methodInfo), sectionMaxTokens, null, MODEL);
         const result = raw
           .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
           .replace(/[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF]/g, "")
@@ -1636,13 +1627,14 @@ ${fullCtx}
 
   // ── Автоматичний пошук джерел ──
   const doSearchSources = async (secId, kwList, sectionLabel = '') => {
-    setSuggestedSources(prev => ({ ...prev, [secId]: [] })); // очищаємо перед пошуком
+    const isFirstSearch = (searchPageCount[secId] || 0) === 0;
+    if (isFirstSearch) setSuggestedSources(prev => ({ ...prev, [secId]: [] }));
     setSourcesSearchLoading(prev => ({ ...prev, [secId]: true }));
     setSourcesSearchError(prev => ({ ...prev, [secId]: null }));
-    // Інкрементуємо лічильник → різні сторінки результатів при повторному пошуку
     const nextCount = (searchPageCount[secId] || 0) + 1;
     setSearchPageCount(prev => ({ ...prev, [secId]: nextCount }));
-    const page = ((nextCount - 1) % 3) + 1; // циклічно: 1 → 2 → 3 → 1 → ...
+    // непарна = повнотекстовий по фразі[floor((page-1)/2)], парна = title.search по тій самій фразі
+    const page = nextCount;
     try {
       const ukKw = (kwList || []).filter(k => /[іїєґІЇЄҐа-яА-Я]/.test(k));
       const enKw = (kwList || []).filter(k => !/[а-яА-ЯіїєґІЇЄҐ]/.test(k));
@@ -1653,7 +1645,13 @@ ${fullCtx}
       const semKw = buildSemanticKeywords(sectionLabel, info?.topic || '', info?.direction || '', info?.subject || '', commentHints, methodReq);
       const secAnchors = searchAnchors[secId] || [];
       const results = await searchSourcesForSection(ukKw, enKw, needed, sectionLabel, topicCtx, page, semKw, secAnchors);
-      setSuggestedSources(prev => ({ ...prev, [secId]: results }));
+      // Накопичуємо: нові джерела додаються до вже знайдених (без дублів)
+      setSuggestedSources(prev => {
+        const existing = isFirstSearch ? [] : (prev[secId] || []);
+        const existingKeys = new Set(existing.map(p => (p.title || '').toLowerCase().slice(0, 60)));
+        const newOnes = results.filter(p => !existingKeys.has((p.title || '').toLowerCase().slice(0, 60)));
+        return { ...prev, [secId]: [...existing, ...newOnes] };
+      });
     } catch (e) {
       console.error('Source search error:', e.message);
       setSourcesSearchError(prev => ({ ...prev, [secId]: e.message }));
