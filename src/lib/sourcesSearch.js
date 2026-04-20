@@ -265,34 +265,31 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
   const enQuery = enKeywords.slice(0, 3).join(' ').trim();
   const yr = 'publication_year:>2019';
 
-  // page 1,3,5... = повнотекстовий пошук; page 2,4,6... = title.search
-  // фраза визначається індексом: floor((page-1)/2), циклічно по sortedPhrases
-  const phraseIdx = sortedPhrases.length
-    ? Math.floor((page - 1) / 2) % sortedPhrases.length
-    : 0;
-  const isTitleSearch = page % 2 === 0;
+  // Кожне оновлення = нова фраза. Після всіх фраз — наступна сторінка OpenAlex + title.search
+  const totalPhrases = Math.max(sortedPhrases.length, 1);
+  const phraseIdx = (page - 1) % totalPhrases;
+  const oaPage = Math.floor((page - 1) / totalPhrases) + 1;
+  const isTitleSearch = oaPage % 2 === 0;
   const mainPhrase = sortedPhrases[phraseIdx] || coreTerm;
-  const nextPhrase = sortedPhrases[phraseIdx + 1] || sortedPhrases[0] || coreTerm;
+  const nextPhrase = sortedPhrases[(phraseIdx + 1) % totalPhrases] || coreTerm;
 
   let queries;
   if (isTitleSearch) {
-    // Точний пошук: title.search по поточній фразі + CrossRef
     queries = [
-      openAlexTitleSearch(mainPhrase, `language:uk,${yr}`, fetchLimit, 1),
+      openAlexTitleSearch(mainPhrase, `language:uk,${yr}`, fetchLimit, oaPage),
       fetchCrossRefUkrainian(mainPhrase, fetchLimit),
-      coreTerm !== mainPhrase ? openAlexTitleSearch(coreTerm, `language:uk,${yr}`, fetchLimit, 1) : Promise.resolve([]),
-      nextPhrase !== mainPhrase ? openAlexTitleSearch(nextPhrase, `language:uk,${yr}`, fetchLimit, 1) : Promise.resolve([]),
+      openAlexTitleSearch(nextPhrase, `language:uk,${yr}`, fetchLimit, oaPage),
+      coreTerm !== mainPhrase ? openAlexTitleSearch(coreTerm, `language:uk,${yr}`, fetchLimit, oaPage) : Promise.resolve([]),
       Promise.resolve([]),
       Promise.resolve([]),
     ];
   } else {
-    // Повнотекстовий пошук по поточній фразі + CrossRef
     queries = [
-      openAlexSearch(mainPhrase, `language:uk,${yr}`, fetchLimit, 1),
+      openAlexSearch(mainPhrase, `language:uk,${yr}`, fetchLimit, oaPage),
       fetchCrossRefUkrainian(mainPhrase, fetchLimit),
-      openAlexSearch(mainPhrase, yr, fetchLimit, 1),
-      coreTerm !== mainPhrase ? openAlexSearch(coreTerm, `language:uk,${yr}`, fetchLimit, 1) : Promise.resolve([]),
-      nextPhrase !== mainPhrase ? openAlexSearch(nextPhrase, `language:uk,${yr}`, fetchLimit, 1) : Promise.resolve([]),
+      openAlexSearch(mainPhrase, yr, fetchLimit, oaPage),
+      openAlexSearch(nextPhrase, `language:uk,${yr}`, fetchLimit, oaPage),
+      coreTerm !== mainPhrase ? openAlexSearch(coreTerm, `language:uk,${yr}`, fetchLimit, oaPage) : Promise.resolve([]),
       Promise.resolve([]),
     ];
   }
