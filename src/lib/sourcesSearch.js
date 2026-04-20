@@ -91,6 +91,41 @@ function scoreRelevance(titleLower, keywords) {
   return score;
 }
 
+// ── Витягує сторінки з суфікса DOI: ...-191-199 → "191–199" ──
+function extractPagesFromDoi(doi = '') {
+  const m = doi.match(/-(\d{2,4})-(\d{2,4})$/);
+  if (!m) return '';
+  const first = parseInt(m[1], 10);
+  const last = parseInt(m[2], 10);
+  if (last <= first || last - first > 200) return '';
+  return `${m[1]}–${m[2]}`;
+}
+
+/**
+ * Отримує авторів і сторінки з CrossRef за DOI.
+ * Використовується коли пошук повернув запис без авторів.
+ */
+export async function lookupDoiMetadata(doi) {
+  if (!doi) return null;
+  try {
+    const r = await fetch(`https://api.crossref.org/works/${encodeURIComponent(doi)}`, {
+      headers: { 'User-Agent': 'AcademAssist/1.0 (mailto:support@academ-assist.vercel.app)' },
+    });
+    if (!r.ok) return null;
+    const d = await r.json();
+    const p = d.message;
+    if (!p) return null;
+    const authors = (p.author || []).slice(0, 3)
+      .map(a => [a.family, a.given?.[0]].filter(Boolean).join(' ')).filter(Boolean);
+    const pages = p.page
+      ? p.page.replace('-', '–')
+      : extractPagesFromDoi(doi);
+    return { authors, pages };
+  } catch {
+    return null;
+  }
+}
+
 // ── Декодування abstract_inverted_index OpenAlex → plain text ──
 function decodeAbstract(inv) {
   if (!inv || typeof inv !== 'object') return '';
@@ -166,7 +201,7 @@ function mapOpenAlex(p, forceLang) {
   const lang = forceLang || (p.language === 'uk' || hasCyrillic(p.title) ? 'uk' : 'en');
   const fp = p.biblio?.first_page;
   const lp = p.biblio?.last_page;
-  const pages = fp ? (lp && lp !== fp ? `${fp}–${lp}` : fp) : '';
+  const pages = fp ? (lp && lp !== fp ? `${fp}–${lp}` : fp) : extractPagesFromDoi(doi);
   const abstract = snippetAbstract(decodeAbstract(p.abstract_inverted_index));
   const doi = p.doi ? p.doi.replace('https://doi.org/', '') : '';
   const url = p.primary_location?.landing_page_url
@@ -212,7 +247,7 @@ async function fetchCrossRefUkrainian(query, limit) {
         || ''),
       venue: p['container-title']?.[0] || '',
       doi: p.DOI || '',
-      pages: p.page ? p.page.replace('-', '–') : '',
+      pages: p.page ? p.page.replace('-', '–') : extractPagesFromDoi(p.DOI || ''),
       lang: 'uk',
       source: 'crossref',
       url: p.DOI ? `https://doi.org/${p.DOI}` : '',

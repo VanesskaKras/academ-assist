@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { lookupDoiMetadata } from "../../lib/sourcesSearch.js";
 import { TA_WHITE } from "../../shared.jsx";
 import { Heading, NavBtn, PrimaryBtn, GreenBtn } from "../Buttons.jsx";
 import { SpinDot } from "../SpinDot.jsx";
@@ -40,7 +41,8 @@ function SourceCard({ paper, checked, onToggle }) {
       />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 11, fontWeight: 600, color: '#3a6010' }}>{authLine}</span>
+          <span style={{ fontSize: 11, fontWeight: 600, color: authorsList.length ? '#3a6010' : '#8a6010' }}>{authLine}</span>
+          {!authorsList.length && paper.doi && <span style={{ fontSize: 10, color: '#8a6010', fontStyle: 'italic' }}>↗ буде уточнено по DOI</span>}
           {paper.year && <span style={{ fontSize: 11, color: '#888' }}>{paper.year}</span>}
           <span style={{
             fontSize: 10, padding: '1px 6px', borderRadius: 8,
@@ -115,15 +117,27 @@ export function SourcesStage({
     setSelectedSugg(prev => ({ ...prev, [secId]: [] }));
   };
 
-  const handleAddSelected = (secId) => {
+  const handleAddSelected = async (secId) => {
     const allSelected = selectedSugg[secId] || [];
     if (!allSelected.length) return;
+
+    // Збагачуємо записи без авторів через CrossRef по DOI
+    const enriched = await Promise.all(allSelected.map(async p => {
+      if ((p.authors?.length) || !p.doi) return p;
+      const meta = await lookupDoiMetadata(p.doi);
+      if (!meta) return p;
+      return {
+        ...p,
+        ...(meta.authors?.length ? { authors: meta.authors } : {}),
+        ...(meta.pages && !p.pages ? { pages: meta.pages } : {}),
+      };
+    }));
 
     // Обмежуємо зарубіжні до 10%
     const needed = sourceDist[secId] || 4;
     const maxForeign = Math.max(1, Math.round(needed * 0.1));
-    const ukPapers = allSelected.filter(p => p.lang === 'uk');
-    const enPapers = allSelected.filter(p => p.lang !== 'uk').slice(0, maxForeign);
+    const ukPapers = enriched.filter(p => p.lang === 'uk');
+    const enPapers = enriched.filter(p => p.lang !== 'uk').slice(0, maxForeign);
     const papers = [...ukPapers, ...enPapers];
 
     const newLines = papers.map(paperToCitation).filter(Boolean);

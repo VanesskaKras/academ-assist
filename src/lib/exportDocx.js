@@ -253,14 +253,17 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
   function sourceParaChildren(text) {
     const URL_RE = /(https?:\/\/[^\s]+)/;
     const parts = text.split(/(https?:\/\/[^\s]+)/);
-    return parts.map(part => {
+    return parts.flatMap(part => {
       if (URL_RE.test(part)) {
-        return new ExternalHyperlink({
-          link: part,
-          children: [new TextRun({ text: part, font: FONT, size: SIZE, color: "0563C1", underline: {} })],
+        const cleanUrl = part.replace(/[.,;:!?)]+$/, '');
+        const tail = part.slice(cleanUrl.length);
+        const link = new ExternalHyperlink({
+          link: cleanUrl,
+          children: [new TextRun({ text: cleanUrl, font: FONT, size: SIZE, color: "0563C1", underline: {} })],
         });
+        return tail ? [link, new TextRun({ text: tail, font: FONT, size: SIZE, color: "000000" })] : [link];
       }
-      return new TextRun({ text: part, font: FONT, size: SIZE, color: "000000" });
+      return [new TextRun({ text: part, font: FONT, size: SIZE, color: "000000" })];
     });
   }
   function sourcePara(text) {
