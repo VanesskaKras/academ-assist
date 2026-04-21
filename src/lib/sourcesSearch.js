@@ -288,21 +288,26 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
     phrase.toLowerCase().split(/\s+/).filter(w => w.length > 4 && !STOP_WORDS.has(w)).length;
   const sortedPhrases = [...allUkKeywords].sort((a, b) => specificity(b) - specificity(a));
 
-  const p0 = sortedPhrases[0] || coreTerm;
-  const p1 = sortedPhrases[1] || p0;
-  const p2 = sortedPhrases[2] || p0;
+  // Кожне оновлення (page++) зсуває набір фраз на 3 позиції → реально різні запити
+  const total = Math.max(sortedPhrases.length, 1);
+  const i0 = ((page - 1) * 3) % total;
+  const p0 = sortedPhrases[i0] || coreTerm;
+  const p1 = sortedPhrases[(i0 + 1) % total] || p0;
+  const p2 = sortedPhrases[(i0 + 2) % total] || p0;
+  // OpenAlex page міняється повільніше: новий цикл після того як пройшли всі фрази
+  const oaPage = Math.floor(((page - 1) * 3) / total) + 1;
   const enQ = enKeywords[0] || '';
 
   const [r1, r2, r3, r4, r5, r6, r7, r8, r9] = await Promise.allSettled([
-    openAlexSearch(p0, `language:uk,${yr}`, fetchLimit, page),              // r1: full-text uk, p0, стор.page
+    openAlexSearch(p0, `language:uk,${yr}`, fetchLimit, oaPage),            // r1: full-text uk, p0
     fetchCrossRefUkrainian(p0, fetchLimit),                                  // r2: CrossRef uk, p0 (вже готово)
-    openAlexTitleSearch(p1, ['language:uk', yr], fetchLimit, page),          // r3: title uk, p1, стор.page
-    openAlexSearch(p2, `language:uk,${yr}`, fetchLimit, page),               // r4: full-text uk, p2, стор.page
-    openAlexTitleSearch(coreTerm, ['language:uk', yr], fetchLimit, page),    // r5: title uk, coreTerm, стор.page
-    openAlexSearch(p0, `language:uk,${yr}`, fetchLimit, page2),              // r6: full-text uk, p0, стор.page+1
-    openAlexTitleSearch(p1, ['language:uk', yr], fetchLimit, page2),         // r7: title uk, p1, стор.page+1
+    openAlexTitleSearch(p1, ['language:uk', yr], fetchLimit, oaPage),        // r3: title uk, p1
+    openAlexSearch(p2, `language:uk,${yr}`, fetchLimit, oaPage),             // r4: full-text uk, p2
+    openAlexTitleSearch(coreTerm, ['language:uk', yr], fetchLimit, oaPage),  // r5: title uk, coreTerm
+    openAlexSearch(p1, `language:uk,${yr}`, fetchLimit, oaPage),             // r6: full-text uk, p1
+    openAlexTitleSearch(p2, ['language:uk', yr], fetchLimit, oaPage),        // r7: title uk, p2
     enQ ? fetchCrossRefUkrainian(enQ, fetchLimit) : Promise.resolve([]),     // r8: CrossRef з англ. запитом
-    openAlexSearch(p1, yr, fetchLimit, page),                                // r9: full-text будь-яка мова, p1
+    openAlexSearch(p0, yr, fetchLimit, oaPage),                              // r9: full-text будь-яка мова, p0
   ]);
 
   // OpenAlex → mapOpenAlex; CrossRef (r2, r8) вже у потрібному форматі
