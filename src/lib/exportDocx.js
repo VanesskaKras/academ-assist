@@ -298,11 +298,13 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     : (titlePage?.trim() ? titlePage.split("\n").map(text => ({ text: applyTopic(text), align: "center" })) : null);
   if (resolvedLines) {
     resolvedLines.forEach((item, idx) => {
+      const itemSize = item.fontSize ? item.fontSize * 2 : SIZE;
+      const spaceBefore = item.spaceBefore != null ? item.spaceBefore : 0;
       children.push(new Paragraph({
         alignment: alignMap[item.align] || AlignmentType.CENTER,
-        spacing: { line: LINE, lineRule: "auto", before: 0, after: idx === resolvedLines.length - 1 ? 0 : Math.round(LINE * 0.2) },
+        spacing: { line: LINE, lineRule: "auto", before: spaceBefore, after: 0 },
         indent: { firstLine: 0 },
-        children: [new TextRun({ text: item.text, font: FONT, size: SIZE, color: "000000" })],
+        children: [new TextRun({ text: item.text, font: FONT, size: itemSize, bold: !!item.bold, color: "000000" })],
       }));
     });
   } else {
