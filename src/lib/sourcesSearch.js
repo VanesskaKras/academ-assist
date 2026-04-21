@@ -277,7 +277,7 @@ async function fetchEnglishViaBackend(enKeywords, limit) {
 // r2, r8      — CrossRef (вже відформатовано fetchCrossRefUkrainian) → без маппінгу
 export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4, sectionTitle = '', topic = '', page = 1, semKeywords = [], anchors = []) {
   const target = 25;
-  const maxForeign = 3;
+
   const fetchLimit = 15;
   const allUkKeywords = [...new Set([...ukKeywords, ...semKeywords])];
   const coreTerm = buildCoreTerm(sectionTitle, topic);
