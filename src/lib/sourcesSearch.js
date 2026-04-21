@@ -201,9 +201,9 @@ function mapOpenAlex(p, forceLang) {
   const lang = forceLang || (p.language === 'uk' || hasCyrillic(p.title) ? 'uk' : 'en');
   const fp = p.biblio?.first_page;
   const lp = p.biblio?.last_page;
+  const doi = p.doi ? p.doi.replace('https://doi.org/', '') : '';
   const pages = fp ? (lp && lp !== fp ? `${fp}–${lp}` : fp) : extractPagesFromDoi(doi);
   const abstract = snippetAbstract(decodeAbstract(p.abstract_inverted_index));
-  const doi = p.doi ? p.doi.replace('https://doi.org/', '') : '';
   const url = p.primary_location?.landing_page_url
     || (doi ? `https://doi.org/${doi}` : '')
     || (p.id?.startsWith('https://') ? p.id : '');
