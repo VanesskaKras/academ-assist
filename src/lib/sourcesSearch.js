@@ -271,85 +271,58 @@ async function fetchEnglishViaBackend(enKeywords, limit) {
   }
 }
 
-/**
- * Головна функція: шукає джерела для підрозділу.
- *
- * Стратегія:
- * 1. findTopTerms: два найспецифічніших терміни з ключових фраз + назви підрозділу (B+C)
- * 2. title.search за обома термінами → тільки статті де є ці слова в заголовку
- * 3. Доповнюємо повнотекстовим пошуком за першою ключовою фразою
- * 4. Жорсткий фільтр: вимагаємо coreTerm в заголовку (з fallback)
- * 5. Скоринг + domainBoost за словами теми/підрозділу (E)
- *
- * @param {string[]} ukKeywords   — українські ключові фрази (від Gemini)
- * @param {string[]} enKeywords   — англійські ключові фрази (від Gemini)
- * @param {number}   needed       — скільки джерел потрібно
- * @param {string}   sectionTitle — назва підрозділу
- * @param {string}   topic        — тема + напрям роботи
- */
+// ── Головна функція пошуку ──
+// 6 запитів паралельно: різні фрази + різні режими (full-text / title.search)
+// r1, r3, r4, r5, r6 — OpenAlex (сирий формат) → mapOpenAlex
+// r2              — CrossRef (вже відформатовано fetchCrossRefUkrainian) → без маппінгу
 export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4, sectionTitle = '', topic = '', page = 1, semKeywords = [], anchors = []) {
-  const target = 15;
+  const target = 20;
   const maxForeign = 3;
-  const fetchLimit = target + 8;
+  const fetchLimit = 15;
   const allUkKeywords = [...new Set([...ukKeywords, ...semKeywords])];
   const coreTerm = buildCoreTerm(sectionTitle, topic);
+  const yr = 'publication_year:>2019';
 
   const specificity = (phrase) =>
     phrase.toLowerCase().split(/\s+/).filter(w => w.length > 4 && !STOP_WORDS.has(w)).length;
   const sortedPhrases = [...allUkKeywords].sort((a, b) => specificity(b) - specificity(a));
 
-  const enQuery = enKeywords.slice(0, 3).join(' ').trim();
-  const yr = 'publication_year:>2019';
+  const p0 = sortedPhrases[0] || coreTerm;
+  const p1 = sortedPhrases[1] || p0;
+  const p2 = sortedPhrases[2] || p0;
 
-  // Кожне оновлення = нова фраза. Після всіх фраз — наступна сторінка OpenAlex + title.search
-  const totalPhrases = Math.max(sortedPhrases.length, 1);
-  const phraseIdx = (page - 1) % totalPhrases;
-  const oaPage = Math.floor((page - 1) / totalPhrases) + 1;
-  const isTitleSearch = oaPage % 2 === 0;
-  const mainPhrase = sortedPhrases[phraseIdx] || coreTerm;
-  const nextPhrase = sortedPhrases[(phraseIdx + 1) % totalPhrases] || coreTerm;
+  const [r1, r2, r3, r4, r5, r6] = await Promise.allSettled([
+    openAlexSearch(p0, `language:uk,${yr}`, fetchLimit, page),              // r1: full-text uk, p0
+    fetchCrossRefUkrainian(p0, fetchLimit),                                  // r2: CrossRef p0 (вже готово)
+    openAlexTitleSearch(p1, ['language:uk', yr], fetchLimit, page),          // r3: title uk, p1
+    openAlexSearch(p2, `language:uk,${yr}`, fetchLimit, page),               // r4: full-text uk, p2
+    openAlexTitleSearch(coreTerm, ['language:uk', yr], fetchLimit, page),    // r5: title uk, coreTerm
+    openAlexSearch(p1, yr, fetchLimit, page),                                // r6: full-text будь-яка мова, p1
+  ]);
 
-  let queries;
-  if (isTitleSearch) {
-    queries = [
-      openAlexTitleSearch(mainPhrase, ['language:uk', yr], fetchLimit, oaPage),
-      fetchCrossRefUkrainian(mainPhrase, fetchLimit),
-      openAlexTitleSearch(nextPhrase, ['language:uk', yr], fetchLimit, oaPage),
-      coreTerm !== mainPhrase ? openAlexTitleSearch(coreTerm, ['language:uk', yr], fetchLimit, oaPage) : Promise.resolve([]),
-      Promise.resolve([]),
-      Promise.resolve([]),
-    ];
-  } else {
-    queries = [
-      openAlexSearch(mainPhrase, `language:uk,${yr}`, fetchLimit, oaPage),
-      fetchCrossRefUkrainian(mainPhrase, fetchLimit),
-      openAlexSearch(mainPhrase, yr, fetchLimit, oaPage),
-      openAlexSearch(nextPhrase, `language:uk,${yr}`, fetchLimit, oaPage),
-      coreTerm !== mainPhrase ? openAlexSearch(coreTerm, `language:uk,${yr}`, fetchLimit, oaPage) : Promise.resolve([]),
-      Promise.resolve([]),
-    ];
-  }
-
-  const [r1, r2, r3, r4, r5, r6] = await Promise.allSettled(queries);
-
-  const mapUk = (r) => r.status === 'fulfilled'
-    ? r.value.filter(p => hasCyrillic(p.title || '')).map(p => mapOpenAlex(p, 'uk'))
+  // OpenAlex → mapOpenAlex; CrossRef (r2) вже у потрібному форматі
+  const mapOA = (r, lang) => r.status === 'fulfilled'
+    ? r.value.filter(p => p.title && !isBlocked(p)).map(p => mapOpenAlex(p, lang))
     : [];
-  const fromR1 = r1.status === 'fulfilled' ? r1.value.map(p => mapOpenAlex(p, 'uk')) : [];
-  const fromCR = r2.status === 'fulfilled' ? r2.value.filter(p => hasCyrillic(p.title || '')) : [];
 
-  // ── Дедуп ──
-  const mergeOrder = [...fromR1, ...fromCR, ...mapUk(r3), ...mapUk(r4), ...mapUk(r5), ...mapUk(r6)];
+  const fromR1 = mapOA(r1, 'uk');
+  const fromCR = r2.status === 'fulfilled' ? r2.value.filter(p => hasCyrillic(p.title || '')) : [];
+  const fromR3 = mapOA(r3, 'uk');
+  const fromR4 = mapOA(r4, 'uk');
+  const fromR5 = mapOA(r5, 'uk');
+  const fromR6 = mapOA(r6, undefined).filter(p => hasCyrillic(p.title));
+
+  // Дедуп
   const seen = new Set();
   const allUk = [];
-  for (const p of mergeOrder) {
+  for (const p of [...fromR1, ...fromCR, ...fromR3, ...fromR4, ...fromR5, ...fromR6]) {
     const key = (p.title || '').toLowerCase().slice(0, 60);
     if (!key || seen.has(key)) continue;
     seen.add(key);
     allUk.push(p);
   }
 
-  // ── Крок 5: скоринг + domainBoost (E) ──
+  // Скоринг + domainBoost
   const withScore = allUk.map(p => ({
     ...p,
     _score: scoreRelevance(p.title.toLowerCase(), allUkKeywords),
@@ -357,6 +330,7 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
   const boosted = domainBoost(withScore, sectionTitle, topic);
 
   // Англійські джерела
+  const enQuery = enKeywords.slice(0, 3).join(' ').trim();
   const enRaw = enQuery
     ? await fetchEnglishViaBackend(enKeywords, maxForeign + 2).catch(() => [])
     : [];
@@ -365,15 +339,45 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
     _score: scoreRelevance((p.title || '').toLowerCase(), enKeywords),
   })).sort((a, b) => b._score - a._score);
 
-  // Фінальна дедуп між укр і англ
   const finalSeen = new Set(boosted.slice(0, target).map(p => (p.title || '').toLowerCase().slice(0, 60)));
-  const enFiltered = enScored.filter(p => {
-    const key = (p.title || '').toLowerCase().slice(0, 60);
-    return !finalSeen.has(key);
-  });
+  const enFiltered = enScored.filter(p => !finalSeen.has((p.title || '').toLowerCase().slice(0, 60)));
 
   return [
     ...boosted.slice(0, target),
     ...enFiltered.slice(0, maxForeign),
   ];
+}
+
+// ── Gemini-фільтрація: залишає тільки релевантні до підрозділу джерела ──
+export async function filterSourcesWithGemini(candidates, sectionTitle, topic) {
+  if (candidates.length < 4) return candidates;
+  const items = candidates.map((p, i) => `${i}. ${p.title}`).join('\n');
+  const prompt = `Тема наукової роботи: "${topic}"
+Підрозділ: "${sectionTitle}"
+
+Список знайдених статей:
+${items}
+
+Залиш тільки ті статті, що реально стосуються саме цього підрозділу. Видали нерелевантні або надто загальні.
+Поверни JSON: {"keep":[0,2,5,...]} — тільки масив індексів статей що залишити.`;
+  try {
+    const res = await fetch('/api/gemini', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        _model: 'gemini-2.5-flash-lite',
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: { maxOutputTokens: 400, responseMimeType: 'application/json' },
+      }),
+    });
+    if (!res.ok) return candidates;
+    const data = await res.json();
+    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const parsed = JSON.parse(raw);
+    const keepSet = new Set(parsed.keep || []);
+    if (keepSet.size < 2) return candidates;
+    return candidates.filter((_, i) => keepSet.has(i));
+  } catch {
+    return candidates;
+  }
 }

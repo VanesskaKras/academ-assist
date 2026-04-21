@@ -12,7 +12,7 @@ import { playDoneSound } from "./lib/audio.js";
 import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, METHODOLOGY_READING_PROMPT, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt } from "./lib/prompts.js";
 import { FIELD_LABELS, isPsychoPed, isEcon, getEmpiricalSections, getEconSections, STAGES_TEXT_FIRST, STAGE_KEYS_TEXT_FIRST, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
-import { searchSourcesForSection, buildSemanticKeywords } from "./lib/sourcesSearch.js";
+import { searchSourcesForSection, buildSemanticKeywords, filterSourcesWithGemini } from "./lib/sourcesSearch.js";
 import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
 import { StagePills } from "./components/StagePills.jsx";
 import { FieldBox, Heading, NavBtn, PrimaryBtn, GreenBtn, SaveIndicator } from "./components/Buttons.jsx";
@@ -1672,7 +1672,8 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
       const methodReq = [methodInfo?.otherRequirements, methodInfo?.theoryRequirements, methodInfo?.analysisRequirements].filter(Boolean).join(' ');
       const semKw = buildSemanticKeywords(sectionLabel, info?.topic || '', info?.direction || '', info?.subject || '', commentHints, methodReq);
       const secAnchors = searchAnchors[secId] || [];
-      const results = await searchSourcesForSection(ukKw, enKw, needed, sectionLabel, topicCtx, page, semKw, secAnchors);
+      const raw = await searchSourcesForSection(ukKw, enKw, needed, sectionLabel, topicCtx, page, semKw, secAnchors);
+      const results = await filterSourcesWithGemini(raw, sectionLabel, topicCtx);
       // Накопичуємо: нові джерела додаються до вже знайдених (без дублів)
       setSuggestedSources(prev => {
         const existing = isFirstSearch ? [] : (prev[secId] || []);
