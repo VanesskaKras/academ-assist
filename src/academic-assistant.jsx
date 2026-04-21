@@ -1695,25 +1695,35 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
         ? await fetchEnglishViaBackend(enKw, maxForeign).catch(() => [])
         : [];
 
-      // Gemini-фільтр по всіх паперах разом
-      const allPapers = [...groups.flatMap(g => g.papers), ...enRaw];
-      const filtered = await filterSourcesWithGemini(allPapers, sectionLabel, topicCtx);
+      // Gemini-фільтр per-фразу паралельно → топ 10 на кожну
+      const filteredGroups = await Promise.all(
+        groups.map(async g => {
+          if (!g.papers.length) return { phrase: g.phrase, papers: [] };
+          const filtered = await filterSourcesWithGemini(g.papers, sectionLabel, topicCtx);
+          return { phrase: g.phrase, papers: filtered.slice(0, 10) };
+        })
+      );
+
+      // Англійські окремо
+      const enFiltered = enRaw.length
+        ? (await filterSourcesWithGemini(enRaw, sectionLabel, topicCtx)).slice(0, maxForeign)
+        : [];
+      if (enFiltered.length) filteredGroups.push({ phrase: 'Іноземні джерела', papers: enFiltered });
 
       // Показуємо тільки нові (не бачені раніше)
+      const allPapers = filteredGroups.flatMap(g => g.papers);
       const alreadySeen = seenSourceKeys[secId] || new Set();
-      const newOnes = filtered.filter(p => !alreadySeen.has((p.title || '').toLowerCase().slice(0, 60)));
+      const newOnes = allPapers.filter(p => !alreadySeen.has((p.title || '').toLowerCase().slice(0, 60)));
       const updatedSeen = new Set(alreadySeen);
-      filtered.forEach(p => updatedSeen.add((p.title || '').toLowerCase().slice(0, 60)));
+      allPapers.forEach(p => updatedSeen.add((p.title || '').toLowerCase().slice(0, 60)));
       setSeenSourceKeys(prev => ({ ...prev, [secId]: updatedSeen }));
 
-      // Перебудовуємо групи — тільки з відфільтрованих нових
+      // Перебудовуємо групи — тільки нові
       const newIds = new Set(newOnes.map(p => (p.title || '').toLowerCase().slice(0, 60)));
-      const newGroups = groups.map(g => ({
+      const newGroups = filteredGroups.map(g => ({
         phrase: g.phrase,
         papers: g.papers.filter(p => newIds.has((p.title || '').toLowerCase().slice(0, 60))),
       })).filter(g => g.papers.length > 0);
-      const newEn = enRaw.filter(p => newIds.has((p.title || '').toLowerCase().slice(0, 60)));
-      if (newEn.length) newGroups.push({ phrase: 'Іноземні джерела', papers: newEn });
 
       setPhraseGroups(prev => ({ ...prev, [secId]: newGroups }));
       setSuggestedSources(prev => ({ ...prev, [secId]: newOnes }));

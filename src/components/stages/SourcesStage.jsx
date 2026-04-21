@@ -100,6 +100,8 @@ export function SourcesStage({
   const [selectedSugg, setSelectedSugg] = useState({});
   // { secId: bool } — чи відкрита панель пропозицій
   const [suggOpen, setSuggOpen] = useState({});
+  // { "secId_phraseIdx": bool } — чи розгорнута група фрази
+  const [expandedPhrases, setExpandedPhrases] = useState({});
 
   let runningIdx = 0;
   const missingSections = mainSections.filter(s => !(citInputs[s.id] || "").trim());
@@ -365,21 +367,26 @@ export function SourcesStage({
 
                       {/* Список карток — згруповані по фразах або плоский список */}
                       {(phraseGroups?.[sec.id] || []).length > 0
-                        ? (phraseGroups[sec.id].map((group, gi) => {
+                        ? phraseGroups[sec.id].map((group, gi) => {
                             const groupPapers = group.papers.filter(p =>
                               !alreadyAdded.includes((p.title || '').toLowerCase().slice(0, 60))
                             );
                             if (!groupPapers.length) return null;
+                            const expandKey = `${sec.id}_${gi}`;
+                            const isExpanded = expandedPhrases[expandKey];
+                            const INITIAL = 5;
+                            const visible = isExpanded ? groupPapers : groupPapers.slice(0, INITIAL);
+                            const remaining = groupPapers.length - INITIAL;
                             return (
-                              <div key={gi} style={{ marginBottom: 8 }}>
+                              <div key={gi} style={{ marginBottom: 12 }}>
                                 <div style={{
-                                  fontSize: 10, color: '#5a7a3a', padding: '3px 6px',
-                                  background: '#f0f7e8', borderRadius: 4, marginBottom: 5,
+                                  fontSize: 10, color: '#5a7a3a', padding: '3px 8px',
+                                  background: '#f0f7e8', borderRadius: 4, marginBottom: 6,
                                   fontStyle: 'italic', display: 'inline-block',
                                 }}>
                                   🔍 {group.phrase}
                                 </div>
-                                {groupPapers.map(paper => (
+                                {visible.map(paper => (
                                   <SourceCard
                                     key={paper.id}
                                     paper={paper}
@@ -387,9 +394,17 @@ export function SourcesStage({
                                     onToggle={() => togglePaper(sec.id, paper)}
                                   />
                                 ))}
+                                {!isExpanded && remaining > 0 && (
+                                  <button
+                                    onClick={() => setExpandedPhrases(prev => ({ ...prev, [expandKey]: true }))}
+                                    style={{ fontSize: 11, background: 'transparent', border: '1px solid #c8dfa0', color: '#5a7a3a', borderRadius: 5, padding: '3px 10px', cursor: 'pointer', marginTop: 2 }}
+                                  >
+                                    показати ще {remaining} →
+                                  </button>
+                                )}
                               </div>
                             );
-                          }))
+                          })
                         : suggestions.map(paper => (
                             <SourceCard
                               key={paper.id}
