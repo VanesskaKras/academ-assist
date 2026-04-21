@@ -298,6 +298,8 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
   const oaPage = Math.floor(((page - 1) * 3) / total) + 1;
   const enQ = enKeywords[0] || '';
 
+  const plQ = enQ || p0;
+
   const [r1, r2, r3, r4, r5, r6, r7, r8, r9] = await Promise.allSettled([
     openAlexSearch(p0, `language:uk,${yr}`, fetchLimit, oaPage),            // r1: full-text uk, p0
     fetchCrossRefUkrainian(p0, fetchLimit),                                  // r2: CrossRef uk, p0 (вже готово)
@@ -306,15 +308,16 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
     openAlexTitleSearch(coreTerm, ['language:uk', yr], fetchLimit, oaPage),  // r5: title uk, coreTerm
     openAlexSearch(p1, `language:uk,${yr}`, fetchLimit, oaPage),             // r6: full-text uk, p1
     openAlexTitleSearch(p2, ['language:uk', yr], fetchLimit, oaPage),        // r7: title uk, p2
-    enQ ? fetchCrossRefUkrainian(enQ, fetchLimit) : Promise.resolve([]),     // r8: CrossRef з англ. запитом
-    openAlexSearch(p0, yr, fetchLimit, oaPage),                              // r9: full-text будь-яка мова, p0
+    openAlexSearch(plQ, `language:pl,${yr}`, fetchLimit, oaPage),            // r8: польські джерела full-text
+    openAlexTitleSearch(plQ, ['language:pl', yr], fetchLimit, oaPage),       // r9: польські джерела title
   ]);
 
-  // OpenAlex → mapOpenAlex; CrossRef (r2, r8) вже у потрібному форматі
+  // OpenAlex → mapOpenAlex; CrossRef (r2) вже у потрібному форматі
   const mapOA = (r, lang) => r.status === 'fulfilled'
     ? r.value.filter(p => p.title && !isBlocked(p)).map(p => mapOpenAlex(p, lang))
     : [];
 
+  // Українські джерела
   const fromR1 = mapOA(r1, 'uk');
   const fromCR = r2.status === 'fulfilled' ? r2.value.filter(p => hasCyrillic(p.title || '')) : [];
   const fromR3 = mapOA(r3, 'uk');
@@ -322,13 +325,11 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
   const fromR5 = mapOA(r5, 'uk');
   const fromR6 = mapOA(r6, 'uk');
   const fromR7 = mapOA(r7, 'uk');
-  const fromCR2 = r8.status === 'fulfilled' ? r8.value.filter(p => hasCyrillic(p.title || '')) : [];
-  const fromR9 = mapOA(r9, undefined).filter(p => hasCyrillic(p.title));
 
-  // Дедуп
+  // Дедуп українських
   const seen = new Set();
   const allUk = [];
-  for (const p of [...fromR1, ...fromCR, ...fromR3, ...fromR4, ...fromR5, ...fromR6, ...fromR7, ...fromCR2, ...fromR9]) {
+  for (const p of [...fromR1, ...fromCR, ...fromR3, ...fromR4, ...fromR5, ...fromR6, ...fromR7]) {
     const key = (p.title || '').toLowerCase().slice(0, 60);
     if (!key || seen.has(key)) continue;
     seen.add(key);
@@ -342,22 +343,33 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
   })).sort((a, b) => b._score - a._score);
   const boosted = domainBoost(withScore, sectionTitle, topic);
 
-  // Англійські джерела
+  // Іноземні: польські (r8, r9) + англійські (Semantic Scholar)
+  const maxForeign = Math.max(1, Math.ceil(needed * 0.3));
   const enQuery = enKeywords.slice(0, 3).join(' ').trim();
   const enRaw = enQuery
-    ? await fetchEnglishViaBackend(enKeywords, maxForeign + 2).catch(() => [])
+    ? await fetchEnglishViaBackend(enKeywords, maxForeign).catch(() => [])
     : [];
-  const enScored = enRaw.map(p => ({
+  const fromPL = [...mapOA(r8, 'pl'), ...mapOA(r9, 'pl')];
+
+  const foreignSeen = new Set();
+  const allForeign = [];
+  for (const p of [...fromPL, ...enRaw]) {
+    const key = (p.title || '').toLowerCase().slice(0, 60);
+    if (!key || foreignSeen.has(key)) continue;
+    foreignSeen.add(key);
+    allForeign.push(p);
+  }
+  const foreignScored = allForeign.map(p => ({
     ...p,
     _score: scoreRelevance((p.title || '').toLowerCase(), enKeywords),
   })).sort((a, b) => b._score - a._score);
 
-  const finalSeen = new Set(boosted.slice(0, target).map(p => (p.title || '').toLowerCase().slice(0, 60)));
-  const enFiltered = enScored.filter(p => !finalSeen.has((p.title || '').toLowerCase().slice(0, 60)));
+  const ukSeen = new Set(boosted.slice(0, target).map(p => (p.title || '').toLowerCase().slice(0, 60)));
+  const foreignFiltered = foreignScored.filter(p => !ukSeen.has((p.title || '').toLowerCase().slice(0, 60)));
 
   return [
     ...boosted.slice(0, target),
-    ...enFiltered.slice(0, maxForeign),
+    ...foreignFiltered.slice(0, maxForeign),
   ];
 }
 

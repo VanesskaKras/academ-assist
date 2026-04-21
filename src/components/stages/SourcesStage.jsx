@@ -25,6 +25,11 @@ function SourceCard({ paper, checked, onToggle }) {
     ? `${authorsList.slice(0, 2).join(', ')} та ін.`
     : authorsList.join(', ') || 'Автор невідомий';
   const isUk = paper.lang === 'uk';
+  const isPl = paper.lang === 'pl';
+  const langBg = isUk ? '#e8f5e0' : isPl ? '#fff0f5' : '#e8f0ff';
+  const langColor = isUk ? '#3a6010' : isPl ? '#8a1050' : '#1a4a8a';
+  const langBorder = isUk ? '#b8dfa0' : isPl ? '#e0a0c0' : '#b0c8f0';
+  const langLabel = isUk ? '🇺🇦 укр.' : isPl ? '🇵🇱 польськ.' : '🌐 зарубіж.';
   return (
     <label style={{
       display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer',
@@ -46,11 +51,9 @@ function SourceCard({ paper, checked, onToggle }) {
           {paper.year && <span style={{ fontSize: 11, color: '#888' }}>{paper.year}</span>}
           <span style={{
             fontSize: 10, padding: '1px 6px', borderRadius: 8,
-            background: isUk ? '#e8f5e0' : '#e8f0ff',
-            color: isUk ? '#3a6010' : '#1a4a8a',
-            border: `1px solid ${isUk ? '#b8dfa0' : '#b0c8f0'}`,
+            background: langBg, color: langColor, border: `1px solid ${langBorder}`,
             flexShrink: 0,
-          }}>{isUk ? '🇺🇦 укр.' : '🌐 зарубіж.'}</span>
+          }}>{langLabel}</span>
         </div>
         <div style={{ fontSize: 12, color: '#1a1a14', lineHeight: '1.4', marginBottom: 2 }}>
           {paper.title.length > 120 ? paper.title.slice(0, 120) + '…' : paper.title}
@@ -143,9 +146,9 @@ export function SourcesStage({
       };
     }));
 
-    // Обмежуємо зарубіжні до 10%
+    // Обмежуємо зарубіжні до 30%
     const needed = sourceDist[secId] || 4;
-    const maxForeign = Math.max(1, Math.round(needed * 0.1));
+    const maxForeign = Math.max(1, Math.round(needed * 0.3));
     const ukPapers = enriched.filter(p => p.lang === 'uk');
     const enPapers = enriched.filter(p => p.lang !== 'uk').slice(0, maxForeign);
     const papers = [...ukPapers, ...enPapers];
@@ -212,7 +215,7 @@ export function SourcesStage({
       <div style={{ padding: "12px 16px", background: "#f0f5e8", border: "1px solid #c8dfa0", borderRadius: 8, marginBottom: 20, fontSize: 13, color: "#3a6010", lineHeight: "1.7" }}>
         <strong>Як це працює:</strong> Натисніть <em>"Знайти джерела автоматично"</em> — програма згенерує ключові слова і знайде відповідні джерела для кожного підрозділу. Виберіть потрібні галочкою та натисніть <em>"Додати вибрані"</em>. Після заповнення натисніть <em>"Розставити всі посилання"</em>.
         <div style={{ marginTop: 6, fontSize: 12, color: "#5a6a3a" }}>
-          Обмеження: зарубіжних джерел <strong>не більше 10%</strong> від загальної кількості. Російські та білоруські джерела <strong>заборонені</strong>.
+          Обмеження: іноземних джерел (польськ. + зарубіж.) <strong>не більше 30%</strong> від загальної кількості. Російські та білоруські джерела <strong>заборонені</strong>.
         </div>
         <div style={{ marginTop: 8 }}>
           <a
@@ -276,9 +279,10 @@ export function SourcesStage({
         const selectedList = selectedSugg[sec.id] || [];
         const selectedCount = selectedList.length;
         const ukCount = suggestions.filter(p => p.lang === 'uk').length;
-        const enCount = suggestions.filter(p => p.lang !== 'uk').length;
+        const plCount = suggestions.filter(p => p.lang === 'pl').length;
+        const enCount = suggestions.filter(p => p.lang !== 'uk' && p.lang !== 'pl').length;
         const needed = sourceDist[sec.id] || 4;
-        const maxForeign = Math.max(1, Math.round(needed * 0.1));
+        const maxForeign = Math.max(1, Math.round(needed * 0.3));
         const selectedForeign = selectedList.filter(p => p.lang !== 'uk').length;
         const foreignOverLimit = selectedForeign > maxForeign;
 
@@ -331,6 +335,7 @@ export function SourcesStage({
                         : <>
                           <span style={{ fontSize: 12, fontWeight: 600, color: "#3a6010" }}>Знайдені джерела ({suggestions.length})</span>
                           <span style={{ fontSize: 11, color: "#5a7a3a" }}>🇺🇦 {ukCount} укр.</span>
+                          {plCount > 0 && <span style={{ fontSize: 11, color: "#9a3a6a" }}>🇵🇱 {plCount} польськ.</span>}
                           {enCount > 0 && <span style={{ fontSize: 11, color: "#3a6a9a" }}>🌐 {enCount} зарубіж.</span>}
                         </>
                       }
@@ -352,7 +357,7 @@ export function SourcesStage({
 
                       {/* Попередження про ліміт зарубіжних */}
                       <div style={{ fontSize: 11, color: "#5a6a3a", marginBottom: 8 }}>
-                        Зарубіжних можна вибрати <strong>максимум {maxForeign}</strong> (10% від потрібних {needed} дж.)
+                        Іноземних (польськ. + зарубіж.) можна вибрати <strong>максимум {maxForeign}</strong> (30% від потрібних {needed} дж.)
                         {foreignOverLimit && (
                           <span style={{ marginLeft: 8, color: "#8a1a1a", fontWeight: 600 }}>⚠ Перевищено ліміт!</span>
                         )}
