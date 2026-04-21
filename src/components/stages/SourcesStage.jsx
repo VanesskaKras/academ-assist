@@ -93,7 +93,7 @@ export function SourcesStage({
   mainSections, citInputs, setCitInputs, sourceDist, sourceTotal,
   keywords, kwLoading, kwError, setKwError, methodInfo, commentAnalysis,
   allRefs, refList, showMissingSources, citInputsSnapshot, allCitLoading, info,
-  suggestedSources, sourcesSearchLoading, sourcesSearchError, doSearchSources,
+  suggestedSources, phraseGroups, sourcesSearchLoading, sourcesSearchError, doSearchSources,
   doGenKeywords, doAddAllCitations, onAddAbstracts, onFinish, onProceedToWriting, setStage, workflowMode,
 }) {
   // { secId: paper[] } — зберігаємо повні об'єкти, не тільки ID
@@ -363,15 +363,42 @@ export function SourcesStage({
                         )}
                       </div>
 
-                      {/* Список карток */}
-                      {suggestions.map(paper => (
-                        <SourceCard
-                          key={paper.id}
-                          paper={paper}
-                          checked={isChecked(sec.id, paper.id)}
-                          onToggle={() => togglePaper(sec.id, paper)}
-                        />
-                      ))}
+                      {/* Список карток — згруповані по фразах або плоский список */}
+                      {(phraseGroups?.[sec.id] || []).length > 0
+                        ? (phraseGroups[sec.id].map((group, gi) => {
+                            const groupPapers = group.papers.filter(p =>
+                              !alreadyAdded.includes((p.title || '').toLowerCase().slice(0, 60))
+                            );
+                            if (!groupPapers.length) return null;
+                            return (
+                              <div key={gi} style={{ marginBottom: 8 }}>
+                                <div style={{
+                                  fontSize: 10, color: '#5a7a3a', padding: '3px 6px',
+                                  background: '#f0f7e8', borderRadius: 4, marginBottom: 5,
+                                  fontStyle: 'italic', display: 'inline-block',
+                                }}>
+                                  🔍 {group.phrase}
+                                </div>
+                                {groupPapers.map(paper => (
+                                  <SourceCard
+                                    key={paper.id}
+                                    paper={paper}
+                                    checked={isChecked(sec.id, paper.id)}
+                                    onToggle={() => togglePaper(sec.id, paper)}
+                                  />
+                                ))}
+                              </div>
+                            );
+                          }))
+                        : suggestions.map(paper => (
+                            <SourceCard
+                              key={paper.id}
+                              paper={paper}
+                              checked={isChecked(sec.id, paper.id)}
+                              onToggle={() => togglePaper(sec.id, paper)}
+                            />
+                          ))
+                      }
 
                       {/* Кнопки дій */}
                       <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap", alignItems: "center" }}>

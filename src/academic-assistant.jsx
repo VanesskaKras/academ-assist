@@ -12,7 +12,7 @@ import { playDoneSound } from "./lib/audio.js";
 import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, METHODOLOGY_READING_PROMPT, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt } from "./lib/prompts.js";
 import { FIELD_LABELS, isPsychoPed, isEcon, getEmpiricalSections, getEconSections, STAGES_TEXT_FIRST, STAGE_KEYS_TEXT_FIRST, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
-import { searchSourcesForSection, buildSemanticKeywords, filterSourcesWithGemini } from "./lib/sourcesSearch.js";
+import { filterSourcesWithGemini, generateSearchPhrases, searchByPhrases, fetchEnglishViaBackend } from "./lib/sourcesSearch.js";
 import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
 import { StagePills } from "./components/StagePills.jsx";
 import { FieldBox, Heading, NavBtn, PrimaryBtn, GreenBtn, SaveIndicator } from "./components/Buttons.jsx";
@@ -105,6 +105,8 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [abstractsMap, setAbstractsMap] = useState({}); // { citationString: abstractSnippet }
   const [searchPageCount, setSearchPageCount] = useState({}); // лічильник натискань "оновити" на секцію
   const [seenSourceKeys, setSeenSourceKeys] = useState({}); // заголовки вже показаних джерел — не показувати повторно
+  const [phraseGroups, setPhraseGroups] = useState({}); // { secId: [{phrase, papers}] }
+  const [cachedSearchPhrases, setCachedSearchPhrases] = useState({}); // { secId: string[] } — фрази від Gemini, кешуються для refresh
   const [sessionCost, setSessionCost] = useState(() => {
     try { return JSON.parse(localStorage.getItem("sessionCost")) || { claude: 0, gemini: 0 }; } catch { return { claude: 0, gemini: 0 }; }
   });
@@ -1659,6 +1661,7 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
     const isFirstSearch = (searchPageCount[secId] || 0) === 0;
     if (isFirstSearch) {
       setSuggestedSources(prev => ({ ...prev, [secId]: [] }));
+      setPhraseGroups(prev => ({ ...prev, [secId]: [] }));
       setSeenSourceKeys(prev => ({ ...prev, [secId]: new Set() }));
     }
     setSourcesSearchLoading(prev => ({ ...prev, [secId]: true }));
@@ -1667,23 +1670,52 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
     setSearchPageCount(prev => ({ ...prev, [secId]: nextCount }));
     const page = nextCount;
     try {
-      const ukKw = (kwList || []).filter(k => /[іїєґІЇЄҐа-яА-Я]/.test(k));
       const enKw = (kwList || []).filter(k => !/[а-яА-ЯіїєґІЇЄҐ]/.test(k));
       const needed = sourceDist[secId] || 4;
       const topicCtx = [info?.topic, info?.direction, info?.subject].filter(Boolean).join(' ');
-      const commentHints = [commentAnalysis?.planHints, commentAnalysis?.writingHints].filter(Boolean).join(' ');
-      const methodReq = [methodInfo?.otherRequirements, methodInfo?.theoryRequirements, methodInfo?.analysisRequirements].filter(Boolean).join(' ');
-      const semKw = buildSemanticKeywords(sectionLabel, info?.topic || '', info?.direction || '', info?.subject || '', commentHints, methodReq);
-      const secAnchors = searchAnchors[secId] || [];
-      const raw = await searchSourcesForSection(ukKw, enKw, needed, sectionLabel, topicCtx, page, semKw, secAnchors);
-      const results = await filterSourcesWithGemini(raw, sectionLabel, topicCtx);
 
-      // Показуємо тільки ті що ще не бачили — замінюємо список, а не накопичуємо
+      // Перший пошук: Gemini генерує фрази і кешує їх
+      // Refresh: використовуємо кешовані фрази, але шукаємо глибше (page++)
+      let phrases = cachedSearchPhrases[secId] || [];
+      if (isFirstSearch || !phrases.length) {
+        phrases = await generateSearchPhrases(sectionLabel, info?.topic || '', info?.direction || '', info?.subject || '');
+        // Fallback: якщо Gemini не відповів — беремо укр. ключові слова
+        if (!phrases.length) {
+          phrases = (kwList || []).filter(k => /[іїєґІЇЄҐа-яА-Я]/.test(k)).slice(0, 5);
+        }
+        setCachedSearchPhrases(prev => ({ ...prev, [secId]: phrases }));
+      }
+
+      // Пошук по кожній фразі окремо
+      const groups = await searchByPhrases(phrases, page);
+
+      // Англійські джерела через Semantic Scholar
+      const maxForeign = Math.max(1, Math.ceil(needed * 0.3));
+      const enRaw = enKw.length
+        ? await fetchEnglishViaBackend(enKw, maxForeign).catch(() => [])
+        : [];
+
+      // Gemini-фільтр по всіх паперах разом
+      const allPapers = [...groups.flatMap(g => g.papers), ...enRaw];
+      const filtered = await filterSourcesWithGemini(allPapers, sectionLabel, topicCtx);
+
+      // Показуємо тільки нові (не бачені раніше)
       const alreadySeen = seenSourceKeys[secId] || new Set();
-      const newOnes = results.filter(p => !alreadySeen.has((p.title || '').toLowerCase().slice(0, 60)));
+      const newOnes = filtered.filter(p => !alreadySeen.has((p.title || '').toLowerCase().slice(0, 60)));
       const updatedSeen = new Set(alreadySeen);
-      results.forEach(p => updatedSeen.add((p.title || '').toLowerCase().slice(0, 60)));
+      filtered.forEach(p => updatedSeen.add((p.title || '').toLowerCase().slice(0, 60)));
       setSeenSourceKeys(prev => ({ ...prev, [secId]: updatedSeen }));
+
+      // Перебудовуємо групи — тільки з відфільтрованих нових
+      const newIds = new Set(newOnes.map(p => (p.title || '').toLowerCase().slice(0, 60)));
+      const newGroups = groups.map(g => ({
+        phrase: g.phrase,
+        papers: g.papers.filter(p => newIds.has((p.title || '').toLowerCase().slice(0, 60))),
+      })).filter(g => g.papers.length > 0);
+      const newEn = enRaw.filter(p => newIds.has((p.title || '').toLowerCase().slice(0, 60)));
+      if (newEn.length) newGroups.push({ phrase: 'Іноземні джерела', papers: newEn });
+
+      setPhraseGroups(prev => ({ ...prev, [secId]: newGroups }));
       setSuggestedSources(prev => ({ ...prev, [secId]: newOnes }));
     } catch (e) {
       console.error('Source search error:', e.message);
@@ -2617,6 +2649,7 @@ ${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
             citInputsSnapshot={citInputsSnapshot} allCitLoading={allCitLoading}
             info={info} doGenKeywords={doGenKeywords}
             suggestedSources={suggestedSources}
+            phraseGroups={phraseGroups}
             sourcesSearchLoading={sourcesSearchLoading}
             sourcesSearchError={sourcesSearchError}
             doSearchSources={doSearchSources}

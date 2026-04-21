@@ -256,7 +256,7 @@ async function fetchCrossRefUkrainian(query, limit) {
 }
 
 // ── Semantic Scholar через бекенд (немає CORS у браузері) ──
-async function fetchEnglishViaBackend(enKeywords, limit) {
+export async function fetchEnglishViaBackend(enKeywords, limit) {
   try {
     const res = await fetch('/api/search-sources', {
       method: 'POST',
@@ -417,4 +417,76 @@ ${items}
   } catch {
     return candidates;
   }
+}
+
+// ── Gemini генерує 4–5 точних академічних пошукових фраз для підрозділу ──
+export async function generateSearchPhrases(sectionLabel, topic, direction = '', subject = '') {
+  const domainCtx = [direction, subject].filter(Boolean).join(', ');
+  const prompt = `Тема наукової роботи: "${topic}"${domainCtx ? `\nГалузь: ${domainCtx}` : ''}
+Підрозділ: "${sectionLabel}"
+
+Згенеруй 5 точних пошукових фраз для пошуку в наукових базах (OpenAlex, CrossRef).
+Вимоги:
+- 3–5 слів, називний відмінок
+- Реальні наукові формулювання (як пишуть у заголовках статей)
+- Українська мова
+- Кожна фраза — інший аспект підрозділу, не повторювати одне й те саме
+
+Поверни JSON: {"phrases":["фраза 1","фраза 2","фраза 3","фраза 4","фраза 5"]}`;
+  try {
+    const res = await fetch('/api/gemini', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        _model: 'gemini-2.5-flash-lite',
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: { maxOutputTokens: 300, responseMimeType: 'application/json' },
+      }),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const parsed = JSON.parse(raw);
+    return (parsed.phrases || []).filter(p => typeof p === 'string' && p.trim().length > 3).slice(0, 5);
+  } catch {
+    return [];
+  }
+}
+
+// ── Пошук по кожній фразі окремо → повертає [{phrase, papers}] ──
+export async function searchByPhrases(phrases, page = 1) {
+  const yr = 'publication_year:>2019';
+  const limit = 10;
+
+  const rawGroups = await Promise.all(phrases.map(async phrase => {
+    const [titleRes, fullRes, crRes] = await Promise.allSettled([
+      openAlexTitleSearch(phrase, ['language:uk', yr], limit, page),
+      openAlexSearch(phrase, `language:uk,${yr}`, limit, page),
+      fetchCrossRefUkrainian(phrase, limit),
+    ]);
+    const papers = [];
+    const seen = new Set();
+    const tryAdd = (p) => {
+      const key = (p.title || '').toLowerCase().slice(0, 60);
+      if (!key || seen.has(key) || isBlocked(p)) return;
+      seen.add(key);
+      papers.push(p);
+    };
+    if (titleRes.status === 'fulfilled') titleRes.value.forEach(p => tryAdd(mapOpenAlex(p, 'uk')));
+    if (fullRes.status === 'fulfilled') fullRes.value.forEach(p => tryAdd(mapOpenAlex(p, 'uk')));
+    if (crRes.status === 'fulfilled') crRes.value.filter(p => hasCyrillic(p.title || '')).forEach(p => tryAdd(p));
+    return { phrase, papers };
+  }));
+
+  // Дедуп між групами — стаття залишається тільки в першій групі де знайшлась
+  const globalSeen = new Set();
+  return rawGroups.map(g => ({
+    phrase: g.phrase,
+    papers: g.papers.filter(p => {
+      const key = (p.title || '').toLowerCase().slice(0, 60);
+      if (!key || globalSeen.has(key)) return false;
+      globalSeen.add(key);
+      return true;
+    }),
+  })).filter(g => g.papers.length > 0);
 }
