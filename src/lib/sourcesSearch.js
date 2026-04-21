@@ -336,12 +336,7 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
     allUk.push(p);
   }
 
-  // Скоринг + domainBoost
-  const withScore = allUk.map(p => ({
-    ...p,
-    _score: scoreRelevance(p.title.toLowerCase(), allUkKeywords),
-  })).sort((a, b) => b._score - a._score);
-  const boosted = domainBoost(withScore, sectionTitle, topic);
+  const boosted = allUk;
 
   // Іноземні: польські (r8, r9) + англійські (Semantic Scholar)
   const maxForeign = Math.max(1, Math.ceil(needed * 0.3));
@@ -359,10 +354,7 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
     foreignSeen.add(key);
     allForeign.push(p);
   }
-  const foreignScored = allForeign.map(p => ({
-    ...p,
-    _score: scoreRelevance((p.title || '').toLowerCase(), enKeywords),
-  })).sort((a, b) => b._score - a._score);
+  const foreignScored = allForeign;
 
   const ukSeen = new Set(boosted.slice(0, target).map(p => (p.title || '').toLowerCase().slice(0, 60)));
   const foreignFiltered = foreignScored.filter(p => !ukSeen.has((p.title || '').toLowerCase().slice(0, 60)));
