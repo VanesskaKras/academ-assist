@@ -325,20 +325,20 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
           }
           setTitlePage(filledText);
           setTitlePageLines(filledLines);
-          await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, methodInfo: parsed, fileLabel, titlePage: filledText, titlePageLines: filledLines, stage: "parsed", status: "new" });
+          await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, methodInfo: parsed, fileLabel, titlePage: filledText, titlePageLines: filledLines, ...(appendicesText?.trim() ? { appendicesText } : {}), stage: "parsed", status: "new" });
         } else {
-          await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, methodInfo: parsed, fileLabel, stage: "parsed", status: "new" });
+          await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, methodInfo: parsed, fileLabel, ...(appendicesText?.trim() ? { appendicesText } : {}), stage: "parsed", status: "new" });
         }
       } catch (e) {
         console.warn("methodInfo extract failed:", e.message);
         setApiError(e.message);
         if (!methodInfo) setMethodInfo(null);
-        await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, ...(methodInfo ? { methodInfo } : {}), stage: "parsed", status: "new" });
+        await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, ...(methodInfo ? { methodInfo } : {}), ...(appendicesText?.trim() ? { appendicesText } : {}), stage: "parsed", status: "new" });
       }
     } else {
       // Якщо PDF не завантажено але methodInfo вже є (з попереднього аналізу) — залишаємо його
       if (!methodInfo) setMethodInfo(null);
-      await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, ...(methodInfo ? { methodInfo } : {}), stage: "parsed", status: "new" });
+      await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, ...(methodInfo ? { methodInfo } : {}), ...(appendicesText?.trim() ? { appendicesText } : {}), stage: "parsed", status: "new" });
     }
 
     // КРОК 3: Аналіз коментаря клієнта (+ фото якщо є)
@@ -357,7 +357,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
         const caMatch = caRaw.match(/\{[\s\S]*\}/);
         const caParsed = JSON.parse(caMatch?.[0] || caRaw);
         setCommentAnalysis(caParsed);
-        await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, commentAnalysis: caParsed, stage: "parsed", status: "new" });
+        await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, commentAnalysis: caParsed, ...(appendicesText?.trim() ? { appendicesText } : {}), stage: "parsed", status: "new" });
       } catch (e) {
         console.warn("commentAnalysis failed:", e.message);
         setCommentAnalysis(null);
@@ -833,9 +833,17 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
     const buildMessages = (instruction) => {
       const prevEntries = Object.entries(contentRef.current).filter(([k]) => k !== sec.id);
       if (!prevEntries.length) return [{ role: "user", content: instruction }];
+      const isLargeWork = totalPages > 50;
+      const currentChapter = sec.id.split(".")[0];
       const contextText = prevEntries.map(([k, v]) => {
         const s = sections.find(x => x.id === k);
-        return `=== ${s?.label || k} ===\n${v}`;
+        const label = s?.label || k;
+        if (!isLargeWork) return `=== ${label} ===\n${v}`;
+        const sameChapter = k.split(".")[0] === currentChapter;
+        if (sameChapter) return `=== ${label} ===\n${v}`;
+        // Інші розділи: лише перший змістовний абзац
+        const firstPara = v.split("\n").find(p => p.trim().length > 60) || v.slice(0, 400);
+        return `=== ${label} [перший абзац] ===\n${firstPara}`;
       }).join("\n\n---\n\n");
       return [
         { role: "user", content: "Ось вже написані частини цієї роботи:" },
@@ -982,7 +990,7 @@ ${methodInfo?.chapterConclusionRequirements ? `ВИМОГИ МЕТОДИЧКИ: 
       }
 
       const appendixBlock = appendicesText
-        ? `\nДОДАТОК А (вже згенерований — спирайся на нього точно):\n${appendicesText.substring(0, 3000)}\n`
+        ? `\nДОДАТОК А (вже згенерований — спирайся на нього точно):\n${appendicesText}\n`
         : "";
 
       const empCommentHints = commentAnalysis?.empiricalHints;
@@ -2329,7 +2337,17 @@ ${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
     const concs = sections.find(s => s.type === "conclusions");
     const srcs = sections.find(s => s.type === "sources");
     const main = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
-    return [intro, ...main, concs, srcs].filter(Boolean);
+    const ordered = [];
+    for (let i = 0; i < main.length; i++) {
+      ordered.push(main[i]);
+      const chap = main[i].id.split(".")[0];
+      const nextChap = main[i + 1]?.id.split(".")[0];
+      if (chap !== nextChap) {
+        const chapConc = sections.find(s => s.type === "chapter_conclusion" && s.id === `${chap}.conclusions`);
+        if (chapConc) ordered.push(chapConc);
+      }
+    }
+    return [intro, ...ordered, concs, srcs].filter(Boolean);
   }, [sections]);
 
   const mainSections = useMemo(() => sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type)), [sections]);
@@ -2534,6 +2552,7 @@ ${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
             tplText={tplText} setTplText={setTplText}
             clientPlan={clientPlan} setClientPlan={setClientPlan}
             comment={comment} setComment={setComment}
+            appendicesText={appendicesText} setAppendicesText={setAppendicesText}
             fileLabel={fileLabel} fileB64={fileB64} methodInfo={methodInfo}
             photos={photos} setPhotos={setPhotos} info={info}
             running={running} loadMsg={loadMsg}

@@ -6,6 +6,7 @@ import { ClientPlanInput } from "../ClientPlanInput.jsx";
 
 export function InputStage({
   tplText, setTplText, clientPlan, setClientPlan, comment, setComment,
+  appendicesText, setAppendicesText,
   fileLabel, fileB64, methodInfo, photos, setPhotos, info, running, loadMsg,
   handleFile, doAnalyze, setStage,
 }) {
@@ -41,6 +42,11 @@ export function InputStage({
           )}
         </FieldBox>
       </div>
+      <FieldBox label="Готова анкета / додаток (необов'язково)">
+        <textarea value={appendicesText} onChange={e => setAppendicesText(e.target.value)}
+          placeholder="Вставте готову анкету або інший додаток якщо є. Порожньо = анкета згенерується автоматично перед написанням тексту."
+          style={{ ...TA, minHeight: 90 }} />
+      </FieldBox>
       <FieldBox label="Фото як додатковий матеріал (необов'язково)">
         <PhotoDropZone
           photos={photos}

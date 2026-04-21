@@ -132,7 +132,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     return new Paragraph({
       heading: HeadingLevel.HEADING_2,
       spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
-      alignment: AlignmentType.LEFT, indent: { firstLine: INDENT },
+      alignment: AlignmentType.BOTH, indent: { firstLine: INDENT },
       children: [new TextRun({ text, font: FONT, size: SIZE, bold: true, color: "000000" })],
     });
   }
@@ -290,7 +290,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
       s = s.replace(/\(назва\s+теми\)/gi, topicStr);
     }
     s = s.replace(/\[РІК\]/g, currentYear).replace(/\[ДАТА\]/g, currentYear);
-    s = s.replace(/\b20\d{2}\b/g, currentYear);
+    s = s.replace(/(?<![/\d])20\d{2}(?![/\d])/g, currentYear);
     return s;
   };
   const resolvedLines = titlePageLines?.length
@@ -325,14 +325,15 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     const sec = displayOrder[i]; const txt = numberedContent[sec.id];
     if (!txt) continue;
     const isMain = !["intro", "conclusions", "sources"].includes(sec.type);
-    const isSubsection = isMain && /^\d+\.\d+/.test(sec.id);
+    const isChapterConc = sec.type === "chapter_conclusion";
+    const isSubsection = isMain && (/^\d+\.\d+/.test(sec.id) || isChapterConc);
     const thisChapter = isSubsection ? sec.id.split(".")[0] : null;
 
     let needsPageBreak = true;
     if (firstMainSec) { needsPageBreak = true; firstMainSec = false; }
     else if (isSubsection) {
       const prevSec = displayOrder.slice(0, i).reverse().find(s => numberedContent[s.id]);
-      const prevIsSubsection = prevSec && !["intro", "conclusions", "sources"].includes(prevSec.type) && /^\d+\.\d+/.test(prevSec.id || "");
+      const prevIsSubsection = prevSec && !["intro", "conclusions", "sources"].includes(prevSec.type) && (/^\d+\.\d+/.test(prevSec.id || "") || prevSec.type === "chapter_conclusion");
       needsPageBreak = !prevIsSubsection || thisChapter !== prevSec?.id?.split(".")?.[0];
     }
     if (needsPageBreak) children.push(new Paragraph({ pageBreakBefore: true, spacing: { before: 0, after: 0, line: LINE, lineRule: "auto" }, children: [] }));
@@ -400,7 +401,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
       default: { document: { run: { font: FONT, size: SIZE, color: "000000" }, paragraph: { spacing: { line: LINE, lineRule: "auto" } } } },
       paragraphStyles: [
         { id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal", run: { font: FONT, size: SIZE, bold: true, color: "000000" }, paragraph: { spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, alignment: AlignmentType.CENTER, indent: { firstLine: 0 } } },
-        { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", run: { font: FONT, size: SIZE, bold: true, color: "000000" }, paragraph: { spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, alignment: AlignmentType.LEFT, indent: { firstLine: INDENT } } },
+        { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", run: { font: FONT, size: SIZE, bold: true, color: "000000" }, paragraph: { spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, alignment: AlignmentType.BOTH, indent: { firstLine: INDENT } } },
       ],
     },
     sections: [{

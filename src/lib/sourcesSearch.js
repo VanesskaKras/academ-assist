@@ -189,8 +189,9 @@ async function openAlexSearch(query, filterStr, limit, page = 1) {
 }
 
 // Пошук тільки по заголовках — набагато точніший
-async function openAlexTitleSearch(query, filterStr, limit, page = 1) {
-  const url = `${OA_BASE}?filter=title.search:${encodeURIComponent(query)},${filterStr}&per_page=${limit}&page=${page}&select=${OA_FIELDS}`;
+async function openAlexTitleSearch(query, filters, limit, page = 1) {
+  const filterParams = filters.map(f => `filter=${f}`).join('&');
+  const url = `${OA_BASE}?filter=title.search:${encodeURIComponent(query)}&${filterParams}&per_page=${limit}&page=${page}&select=${OA_FIELDS}`;
   const r = await fetch(url, { cache: 'no-store' });
   if (!r.ok) return [];
   const d = await r.json();
@@ -311,10 +312,10 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
   let queries;
   if (isTitleSearch) {
     queries = [
-      openAlexTitleSearch(mainPhrase, `language:uk,${yr}`, fetchLimit, oaPage),
+      openAlexTitleSearch(mainPhrase, ['language:uk', yr], fetchLimit, oaPage),
       fetchCrossRefUkrainian(mainPhrase, fetchLimit),
-      openAlexTitleSearch(nextPhrase, `language:uk,${yr}`, fetchLimit, oaPage),
-      coreTerm !== mainPhrase ? openAlexTitleSearch(coreTerm, `language:uk,${yr}`, fetchLimit, oaPage) : Promise.resolve([]),
+      openAlexTitleSearch(nextPhrase, ['language:uk', yr], fetchLimit, oaPage),
+      coreTerm !== mainPhrase ? openAlexTitleSearch(coreTerm, ['language:uk', yr], fetchLimit, oaPage) : Promise.resolve([]),
       Promise.resolve([]),
       Promise.resolve([]),
     ];
