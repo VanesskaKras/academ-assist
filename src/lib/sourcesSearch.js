@@ -336,10 +336,10 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
     ? r.value.filter(p => hasCyrillic(p.title || '')).map(p => mapOpenAlex(p, 'uk'))
     : [];
   const fromR1 = r1.status === 'fulfilled' ? r1.value.map(p => mapOpenAlex(p, 'uk')) : [];
-  const fromCR = r4.status === 'fulfilled' ? r4.value : [];
+  const fromCR = r2.status === 'fulfilled' ? r2.value.filter(p => hasCyrillic(p.title || '')) : [];
 
   // ── Дедуп ──
-  const mergeOrder = [...fromR1, ...mapUk(r2), ...mapUk(r3), ...fromCR, ...mapUk(r5), ...mapUk(r6)];
+  const mergeOrder = [...fromR1, ...fromCR, ...mapUk(r3), ...mapUk(r4), ...mapUk(r5), ...mapUk(r6)];
   const seen = new Set();
   const allUk = [];
   for (const p of mergeOrder) {
