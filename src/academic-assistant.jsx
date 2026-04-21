@@ -104,6 +104,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [sourcesSearchError, setSourcesSearchError] = useState({});
   const [abstractsMap, setAbstractsMap] = useState({}); // { citationString: abstractSnippet }
   const [searchPageCount, setSearchPageCount] = useState({}); // лічильник натискань "оновити" на секцію
+  const [seenSourceKeys, setSeenSourceKeys] = useState({}); // заголовки вже показаних джерел — не показувати повторно
   const [sessionCost, setSessionCost] = useState(() => {
     try { return JSON.parse(localStorage.getItem("sessionCost")) || { claude: 0, gemini: 0 }; } catch { return { claude: 0, gemini: 0 }; }
   });
@@ -1656,12 +1657,14 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
   // ── Автоматичний пошук джерел ──
   const doSearchSources = async (secId, kwList, sectionLabel = '') => {
     const isFirstSearch = (searchPageCount[secId] || 0) === 0;
-    if (isFirstSearch) setSuggestedSources(prev => ({ ...prev, [secId]: [] }));
+    if (isFirstSearch) {
+      setSuggestedSources(prev => ({ ...prev, [secId]: [] }));
+      setSeenSourceKeys(prev => ({ ...prev, [secId]: new Set() }));
+    }
     setSourcesSearchLoading(prev => ({ ...prev, [secId]: true }));
     setSourcesSearchError(prev => ({ ...prev, [secId]: null }));
     const nextCount = (searchPageCount[secId] || 0) + 1;
     setSearchPageCount(prev => ({ ...prev, [secId]: nextCount }));
-    // непарна = повнотекстовий по фразі[floor((page-1)/2)], парна = title.search по тій самій фразі
     const page = nextCount;
     try {
       const ukKw = (kwList || []).filter(k => /[іїєґІЇЄҐа-яА-Я]/.test(k));
@@ -1674,13 +1677,14 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
       const secAnchors = searchAnchors[secId] || [];
       const raw = await searchSourcesForSection(ukKw, enKw, needed, sectionLabel, topicCtx, page, semKw, secAnchors);
       const results = await filterSourcesWithGemini(raw, sectionLabel, topicCtx);
-      // Накопичуємо: нові джерела додаються до вже знайдених (без дублів)
-      setSuggestedSources(prev => {
-        const existing = isFirstSearch ? [] : (prev[secId] || []);
-        const existingKeys = new Set(existing.map(p => (p.title || '').toLowerCase().slice(0, 60)));
-        const newOnes = results.filter(p => !existingKeys.has((p.title || '').toLowerCase().slice(0, 60)));
-        return { ...prev, [secId]: [...existing, ...newOnes] };
-      });
+
+      // Показуємо тільки ті що ще не бачили — замінюємо список, а не накопичуємо
+      const alreadySeen = seenSourceKeys[secId] || new Set();
+      const newOnes = results.filter(p => !alreadySeen.has((p.title || '').toLowerCase().slice(0, 60)));
+      const updatedSeen = new Set(alreadySeen);
+      results.forEach(p => updatedSeen.add((p.title || '').toLowerCase().slice(0, 60)));
+      setSeenSourceKeys(prev => ({ ...prev, [secId]: updatedSeen }));
+      setSuggestedSources(prev => ({ ...prev, [secId]: newOnes }));
     } catch (e) {
       console.error('Source search error:', e.message);
       setSourcesSearchError(prev => ({ ...prev, [secId]: e.message }));
