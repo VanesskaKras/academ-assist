@@ -275,49 +275,55 @@ async function fetchEnglishViaBackend(enKeywords, limit) {
 // 9 запитів паралельно: різні фрази, режими (full-text / title.search), дві сторінки OpenAlex
 // r1,r3-r7,r9 — OpenAlex (сирий формат) → mapOpenAlex
 // r2, r8      — CrossRef (вже відформатовано fetchCrossRefUkrainian) → без маппінгу
-export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4, sectionTitle = '', topic = '', page = 1, semKeywords = [], anchors = []) {
+export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4, sectionTitle = '', topic = '', page = 1, semKeywords = [], anchors = [], geminiPhrases = []) {
   const target = 25;
-
   const fetchLimit = 15;
   const allUkKeywords = [...new Set([...ukKeywords, ...semKeywords])];
-  const coreTerm = buildCoreTerm(sectionTitle, topic);
   const yr = 'publication_year:>2019';
-  const page2 = page + 1;
 
-  const specificity = (phrase) =>
-    phrase.toLowerCase().split(/\s+/).filter(w => w.length > 4 && !STOP_WORDS.has(w)).length;
-  const sortedPhrases = [...allUkKeywords].sort((a, b) => specificity(b) - specificity(a));
+  // ── Фрази для запитів ──
+  // Якщо Gemini надав фрази — використовуємо їх; інакше — стара логіка ротації
+  let p0, p1, p2, coreTerm, oaPage;
+  const usingGemini = geminiPhrases.length >= 2;
 
-  // Кожне оновлення (page++) зсуває набір фраз на 3 позиції → реально різні запити
-  const total = Math.max(sortedPhrases.length, 1);
-  const i0 = ((page - 1) * 3) % total;
-  const p0 = sortedPhrases[i0] || coreTerm;
-  const p1 = sortedPhrases[(i0 + 1) % total] || p0;
-  const p2 = sortedPhrases[(i0 + 2) % total] || p0;
-  // OpenAlex page міняється повільніше: новий цикл після того як пройшли всі фрази
-  const oaPage = Math.floor(((page - 1) * 3) / total) + 1;
+  if (usingGemini) {
+    p0 = geminiPhrases[0];
+    p1 = geminiPhrases[1] || p0;
+    p2 = geminiPhrases[2] || p0;
+    coreTerm = geminiPhrases[3] || buildCoreTerm(sectionTitle, topic);
+    oaPage = page; // пряме відображення: refresh = наступна сторінка OpenAlex
+  } else {
+    coreTerm = buildCoreTerm(sectionTitle, topic);
+    const specificity = (phrase) =>
+      phrase.toLowerCase().split(/\s+/).filter(w => w.length > 4 && !STOP_WORDS.has(w)).length;
+    const sortedPhrases = [...allUkKeywords].sort((a, b) => specificity(b) - specificity(a));
+    const total = Math.max(sortedPhrases.length, 1);
+    const i0 = ((page - 1) * 3) % total;
+    p0 = sortedPhrases[i0] || coreTerm;
+    p1 = sortedPhrases[(i0 + 1) % total] || p0;
+    p2 = sortedPhrases[(i0 + 2) % total] || p0;
+    oaPage = Math.floor(((page - 1) * 3) / total) + 1;
+  }
+
   const enQ = enKeywords[0] || '';
-
   const plQ = enQ || p0;
 
   const [r1, r2, r3, r4, r5, r6, r7, r8, r9] = await Promise.allSettled([
     openAlexSearch(p0, `language:uk,${yr}`, fetchLimit, oaPage),            // r1: full-text uk, p0
-    fetchCrossRefUkrainian(p0, fetchLimit),                                  // r2: CrossRef uk, p0 (вже готово)
+    fetchCrossRefUkrainian(p0, fetchLimit),                                  // r2: CrossRef uk, p0
     openAlexTitleSearch(p1, ['language:uk', yr], fetchLimit, oaPage),        // r3: title uk, p1
     openAlexSearch(p2, `language:uk,${yr}`, fetchLimit, oaPage),             // r4: full-text uk, p2
-    openAlexTitleSearch(coreTerm, ['language:uk', yr], fetchLimit, oaPage),  // r5: title uk, coreTerm
+    openAlexTitleSearch(coreTerm, ['language:uk', yr], fetchLimit, oaPage),  // r5: title uk, coreTerm/p3
     openAlexSearch(p1, `language:uk,${yr}`, fetchLimit, oaPage),             // r6: full-text uk, p1
     openAlexTitleSearch(p2, ['language:uk', yr], fetchLimit, oaPage),        // r7: title uk, p2
-    openAlexSearch(plQ, `language:pl,${yr}`, fetchLimit, oaPage),            // r8: польські джерела full-text
-    openAlexTitleSearch(plQ, ['language:pl', yr], fetchLimit, oaPage),       // r9: польські джерела title
+    openAlexSearch(plQ, `language:pl,${yr}`, fetchLimit, oaPage),            // r8: польські full-text
+    openAlexTitleSearch(plQ, ['language:pl', yr], fetchLimit, oaPage),       // r9: польські title
   ]);
 
-  // OpenAlex → mapOpenAlex; CrossRef (r2) вже у потрібному форматі
   const mapOA = (r, lang) => r.status === 'fulfilled'
     ? r.value.filter(p => p.title && !isBlocked(p)).map(p => mapOpenAlex(p, lang))
     : [];
 
-  // Українські джерела
   const fromR1 = mapOA(r1, 'uk');
   const fromCR = r2.status === 'fulfilled' ? r2.value.filter(p => hasCyrillic(p.title || '')) : [];
   const fromR3 = mapOA(r3, 'uk');
@@ -326,14 +332,35 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
   const fromR6 = mapOA(r6, 'uk');
   const fromR7 = mapOA(r7, 'uk');
 
-  // Дедуп українських
+  // Дедуп + attribution (яка фраза першою знайшла статтю)
   const seen = new Set();
   const allUk = [];
-  for (const p of [...fromR1, ...fromCR, ...fromR3, ...fromR4, ...fromR5, ...fromR6, ...fromR7]) {
-    const key = (p.title || '').toLowerCase().slice(0, 60);
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    allUk.push(p);
+  const phraseAttrib = new Map(); // titleKey → phrase
+
+  const addGroup = (papers, phraseLabel) => {
+    for (const p of papers) {
+      const key = (p.title || '').toLowerCase().slice(0, 60);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      allUk.push(p);
+      if (usingGemini) phraseAttrib.set(key, phraseLabel);
+    }
+  };
+
+  if (usingGemini) {
+    addGroup([...fromR1, ...fromCR], p0);
+    addGroup(fromR3, p1);
+    addGroup(fromR4, p2);
+    addGroup(fromR5, coreTerm);
+    addGroup(fromR6, p1);
+    addGroup(fromR7, p2);
+  } else {
+    for (const p of [...fromR1, ...fromCR, ...fromR3, ...fromR4, ...fromR5, ...fromR6, ...fromR7]) {
+      const key = (p.title || '').toLowerCase().slice(0, 60);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      allUk.push(p);
+    }
   }
 
   // Скоринг + domainBoost
@@ -343,7 +370,7 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
   })).sort((a, b) => b._score - a._score);
   const boosted = domainBoost(withScore, sectionTitle, topic);
 
-  // Іноземні: польські (r8, r9) + англійські (Semantic Scholar)
+  // Іноземні: польські + англійські
   const maxForeign = Math.max(1, Math.ceil(needed * 0.3));
   const enQuery = enKeywords.slice(0, 3).join(' ').trim();
   const enRaw = enQuery
@@ -367,10 +394,29 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
   const ukSeen = new Set(boosted.slice(0, target).map(p => (p.title || '').toLowerCase().slice(0, 60)));
   const foreignFiltered = foreignScored.filter(p => !ukSeen.has((p.title || '').toLowerCase().slice(0, 60)));
 
-  return [
+  const flat = [
     ...boosted.slice(0, target),
     ...foreignFiltered.slice(0, maxForeign),
   ];
+
+  // Групи по Gemini-фразах (порожні якщо фрази не надано)
+  let groups = [];
+  if (usingGemini) {
+    const groupMap = {};
+    for (const p of boosted.slice(0, target)) {
+      const key = (p.title || '').toLowerCase().slice(0, 60);
+      const phrase = phraseAttrib.get(key) || p0;
+      if (!groupMap[phrase]) groupMap[phrase] = [];
+      groupMap[phrase].push(p);
+    }
+    // Зберігаємо порядок фраз як у Gemini
+    const phraseOrder = [p0, p1, p2, coreTerm].filter((v, i, a) => a.indexOf(v) === i);
+    groups = phraseOrder
+      .filter(ph => groupMap[ph]?.length)
+      .map(ph => ({ phrase: ph, papers: groupMap[ph] }));
+  }
+
+  return { flat, groups };
 }
 
 // ── Gemini-фільтрація: двохрівнева з поясненням ──
@@ -416,5 +462,39 @@ ${items}
       }));
   } catch {
     return candidates;
+  }
+}
+
+// ── Gemini генерує 4 точних академічних пошукових фрази для підрозділу ──
+export async function generateSearchPhrases(sectionLabel, topic, direction = '', subject = '') {
+  const domainCtx = [direction, subject].filter(Boolean).join(', ');
+  const prompt = `Тема наукової роботи: "${topic}"${domainCtx ? `\nГалузь: ${domainCtx}` : ''}
+Підрозділ: "${sectionLabel}"
+
+Згенеруй рівно 4 пошукові фрази для пошуку в наукових базах (OpenAlex, CrossRef).
+Вимоги:
+- 3–5 слів, називний відмінок
+- Реальні наукові формулювання (як пишуть у заголовках статей)
+- Українська мова
+- Кожна фраза — інший аспект підрозділу
+
+Поверни JSON: {"phrases":["фраза 1","фраза 2","фраза 3","фраза 4"]}`;
+  try {
+    const res = await fetch('/api/gemini', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        _model: 'gemini-2.5-flash-lite',
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: { maxOutputTokens: 200, responseMimeType: 'application/json' },
+      }),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const parsed = JSON.parse(raw);
+    return (parsed.phrases || []).filter(p => typeof p === 'string' && p.trim().length > 3).slice(0, 4);
+  } catch {
+    return [];
   }
 }
