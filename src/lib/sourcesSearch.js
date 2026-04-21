@@ -272,16 +272,17 @@ async function fetchEnglishViaBackend(enKeywords, limit) {
 }
 
 // ── Головна функція пошуку ──
-// 6 запитів паралельно: різні фрази + різні режими (full-text / title.search)
-// r1, r3, r4, r5, r6 — OpenAlex (сирий формат) → mapOpenAlex
-// r2              — CrossRef (вже відформатовано fetchCrossRefUkrainian) → без маппінгу
+// 9 запитів паралельно: різні фрази, режими (full-text / title.search), дві сторінки OpenAlex
+// r1,r3-r7,r9 — OpenAlex (сирий формат) → mapOpenAlex
+// r2, r8      — CrossRef (вже відформатовано fetchCrossRefUkrainian) → без маппінгу
 export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4, sectionTitle = '', topic = '', page = 1, semKeywords = [], anchors = []) {
-  const target = 20;
+  const target = 25;
   const maxForeign = 3;
   const fetchLimit = 15;
   const allUkKeywords = [...new Set([...ukKeywords, ...semKeywords])];
   const coreTerm = buildCoreTerm(sectionTitle, topic);
   const yr = 'publication_year:>2019';
+  const page2 = page + 1;
 
   const specificity = (phrase) =>
     phrase.toLowerCase().split(/\s+/).filter(w => w.length > 4 && !STOP_WORDS.has(w)).length;
@@ -290,17 +291,21 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
   const p0 = sortedPhrases[0] || coreTerm;
   const p1 = sortedPhrases[1] || p0;
   const p2 = sortedPhrases[2] || p0;
+  const enQ = enKeywords[0] || '';
 
-  const [r1, r2, r3, r4, r5, r6] = await Promise.allSettled([
-    openAlexSearch(p0, `language:uk,${yr}`, fetchLimit, page),              // r1: full-text uk, p0
-    fetchCrossRefUkrainian(p0, fetchLimit),                                  // r2: CrossRef p0 (вже готово)
-    openAlexTitleSearch(p1, ['language:uk', yr], fetchLimit, page),          // r3: title uk, p1
-    openAlexSearch(p2, `language:uk,${yr}`, fetchLimit, page),               // r4: full-text uk, p2
-    openAlexTitleSearch(coreTerm, ['language:uk', yr], fetchLimit, page),    // r5: title uk, coreTerm
-    openAlexSearch(p1, yr, fetchLimit, page),                                // r6: full-text будь-яка мова, p1
+  const [r1, r2, r3, r4, r5, r6, r7, r8, r9] = await Promise.allSettled([
+    openAlexSearch(p0, `language:uk,${yr}`, fetchLimit, page),              // r1: full-text uk, p0, стор.page
+    fetchCrossRefUkrainian(p0, fetchLimit),                                  // r2: CrossRef uk, p0 (вже готово)
+    openAlexTitleSearch(p1, ['language:uk', yr], fetchLimit, page),          // r3: title uk, p1, стор.page
+    openAlexSearch(p2, `language:uk,${yr}`, fetchLimit, page),               // r4: full-text uk, p2, стор.page
+    openAlexTitleSearch(coreTerm, ['language:uk', yr], fetchLimit, page),    // r5: title uk, coreTerm, стор.page
+    openAlexSearch(p0, `language:uk,${yr}`, fetchLimit, page2),              // r6: full-text uk, p0, стор.page+1
+    openAlexTitleSearch(p1, ['language:uk', yr], fetchLimit, page2),         // r7: title uk, p1, стор.page+1
+    enQ ? fetchCrossRefUkrainian(enQ, fetchLimit) : Promise.resolve([]),     // r8: CrossRef з англ. запитом
+    openAlexSearch(p1, yr, fetchLimit, page),                                // r9: full-text будь-яка мова, p1
   ]);
 
-  // OpenAlex → mapOpenAlex; CrossRef (r2) вже у потрібному форматі
+  // OpenAlex → mapOpenAlex; CrossRef (r2, r8) вже у потрібному форматі
   const mapOA = (r, lang) => r.status === 'fulfilled'
     ? r.value.filter(p => p.title && !isBlocked(p)).map(p => mapOpenAlex(p, lang))
     : [];
@@ -310,12 +315,15 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
   const fromR3 = mapOA(r3, 'uk');
   const fromR4 = mapOA(r4, 'uk');
   const fromR5 = mapOA(r5, 'uk');
-  const fromR6 = mapOA(r6, undefined).filter(p => hasCyrillic(p.title));
+  const fromR6 = mapOA(r6, 'uk');
+  const fromR7 = mapOA(r7, 'uk');
+  const fromCR2 = r8.status === 'fulfilled' ? r8.value.filter(p => hasCyrillic(p.title || '')) : [];
+  const fromR9 = mapOA(r9, undefined).filter(p => hasCyrillic(p.title));
 
   // Дедуп
   const seen = new Set();
   const allUk = [];
-  for (const p of [...fromR1, ...fromCR, ...fromR3, ...fromR4, ...fromR5, ...fromR6]) {
+  for (const p of [...fromR1, ...fromCR, ...fromR3, ...fromR4, ...fromR5, ...fromR6, ...fromR7, ...fromCR2, ...fromR9]) {
     const key = (p.title || '').toLowerCase().slice(0, 60);
     if (!key || seen.has(key)) continue;
     seen.add(key);
@@ -348,7 +356,8 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
   ];
 }
 
-// ── Gemini-фільтрація: залишає тільки релевантні до підрозділу джерела ──
+// ── Gemini-фільтрація: двохрівнева з поясненням ──
+// Повертає [{...paper, geminiTier: 'exact'|'analogy', geminiReason: '...'}]
 export async function filterSourcesWithGemini(candidates, sectionTitle, topic) {
   if (candidates.length < 4) return candidates;
   const items = candidates.map((p, i) => `${i}. ${p.title}`).join('\n');
@@ -358,8 +367,13 @@ export async function filterSourcesWithGemini(candidates, sectionTitle, topic) {
 Список знайдених статей:
 ${items}
 
-Залиш тільки ті статті, що реально стосуються саме цього підрозділу. Видали нерелевантні або надто загальні.
-Поверни JSON: {"keep":[0,2,5,...]} — тільки масив індексів статей що залишити.`;
+Відбери статті за двома категоріями:
+- "exact": стаття ТОЧНО стосується цього підрозділу (предмет, мова/галузь, рівень — усе збігається)
+- "analogy": може підійти як теоретична аналогія (схожий підхід, але інша мова або суміжний контекст)
+Статті що взагалі не стосуються — не включай.
+Для кожної відібраної напиши одне речення до 15 слів — чому підходить.
+
+Поверни JSON: {"results":[{"index":0,"tier":"exact","reason":"Розглядає..."},{"index":3,"tier":"analogy","reason":"Аналогічний підхід у..."}]}`;
   try {
     const res = await fetch('/api/gemini', {
       method: 'POST',
@@ -367,16 +381,22 @@ ${items}
       body: JSON.stringify({
         _model: 'gemini-2.5-flash-lite',
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: { maxOutputTokens: 400, responseMimeType: 'application/json' },
+        generationConfig: { maxOutputTokens: 800, responseMimeType: 'application/json' },
       }),
     });
     if (!res.ok) return candidates;
     const data = await res.json();
     const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     const parsed = JSON.parse(raw);
-    const keepSet = new Set(parsed.keep || []);
-    if (keepSet.size < 2) return candidates;
-    return candidates.filter((_, i) => keepSet.has(i));
+    const results = parsed.results || [];
+    if (results.length < 2) return candidates;
+    return results
+      .filter(r => typeof r.index === 'number' && candidates[r.index])
+      .map(r => ({
+        ...candidates[r.index],
+        geminiTier: r.tier === 'analogy' ? 'analogy' : 'exact',
+        geminiReason: r.reason || '',
+      }));
   } catch {
     return candidates;
   }
