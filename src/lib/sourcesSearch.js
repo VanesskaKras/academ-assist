@@ -271,6 +271,36 @@ async function fetchEnglishViaBackend(enKeywords, limit) {
   }
 }
 
+// ── Пошук за однією фразою: 3 паралельних запити (OpenAlex uk, CrossRef, OpenAlex pl) ──
+export async function searchByPhrase(phrase, limit = 10, page = 1) {
+  const yr = 'publication_year:>2019';
+  const [r1, r2, r3] = await Promise.allSettled([
+    openAlexSearch(phrase, `language:uk,${yr}`, limit, page),
+    fetchCrossRefUkrainian(phrase, limit),
+    openAlexSearch(phrase, `language:pl,${yr}`, limit, page),
+  ]);
+
+  const ukRaw = r1.status === 'fulfilled'
+    ? r1.value.map(p => mapOpenAlex(p, 'uk'))
+    : [];
+  const crRaw = r2.status === 'fulfilled'
+    ? r2.value.filter(p => hasCyrillic(p.title || ''))
+    : [];
+  const plRaw = r3.status === 'fulfilled'
+    ? r3.value.map(p => mapOpenAlex(p, 'pl'))
+    : [];
+
+  const seen = new Set();
+  const results = [];
+  for (const p of [...ukRaw, ...crRaw, ...plRaw]) {
+    const key = (p.title || '').toLowerCase().slice(0, 60);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    results.push(p);
+  }
+  return results;
+}
+
 // ── Головна функція пошуку ──
 // 9 запитів паралельно: різні фрази, режими (full-text / title.search), дві сторінки OpenAlex
 // r1,r3-r7,r9 — OpenAlex (сирий формат) → mapOpenAlex
@@ -421,7 +451,7 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
 
 // ── Gemini-фільтрація: двохрівнева з поясненням ──
 // Повертає [{...paper, geminiTier: 'exact'|'analogy', geminiReason: '...'}]
-export async function filterSourcesWithGemini(candidates, sectionTitle, topic) {
+export async function filterSourcesWithGemini(candidates, sectionTitle, topic, maxResults = 15) {
   if (candidates.length < 4) return candidates;
   const items = candidates.map((p, i) => `${i}. ${p.title}`).join('\n');
   const prompt = `Тема наукової роботи: "${topic}"
@@ -430,7 +460,7 @@ export async function filterSourcesWithGemini(candidates, sectionTitle, topic) {
 Список знайдених статей:
 ${items}
 
-Відбери статті за двома категоріями:
+Відбери НАЙРЕЛЕВАНТНІШІ статті (максимум ${maxResults}) за двома категоріями:
 - "exact": стаття ТОЧНО стосується цього підрозділу (предмет, мова/галузь, рівень — усе збігається)
 - "analogy": може підійти як теоретична аналогія (схожий підхід, але інша мова або суміжний контекст)
 Статті що взагалі не стосуються — не включай.
@@ -444,7 +474,7 @@ ${items}
       body: JSON.stringify({
         _model: 'gemini-2.5-flash-lite',
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: { maxOutputTokens: 800, responseMimeType: 'application/json' },
+        generationConfig: { maxOutputTokens: 1200, responseMimeType: 'application/json' },
       }),
     });
     if (!res.ok) return candidates;

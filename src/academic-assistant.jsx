@@ -12,7 +12,7 @@ import { playDoneSound } from "./lib/audio.js";
 import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, METHODOLOGY_READING_PROMPT, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt } from "./lib/prompts.js";
 import { FIELD_LABELS, isPsychoPed, isEcon, getEmpiricalSections, getEconSections, STAGES_TEXT_FIRST, STAGE_KEYS_TEXT_FIRST, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
-import { searchSourcesForSection, buildSemanticKeywords, filterSourcesWithGemini, generateSearchPhrases } from "./lib/sourcesSearch.js";
+import { searchByPhrase, filterSourcesWithGemini } from "./lib/sourcesSearch.js";
 import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
 import { StagePills } from "./components/StagePills.jsx";
 import { FieldBox, Heading, NavBtn, PrimaryBtn, GreenBtn, SaveIndicator } from "./components/Buttons.jsx";
@@ -106,7 +106,6 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [searchPageCount, setSearchPageCount] = useState({}); // лічильник натискань "оновити" на секцію
   const [seenSourceKeys, setSeenSourceKeys] = useState({}); // заголовки вже показаних джерел — не показувати повторно
   const [phraseGroups, setPhraseGroups] = useState({}); // { secId: [{phrase, papers}] }
-  const [cachedSearchPhrases, setCachedSearchPhrases] = useState({}); // { secId: string[] }
   const [sessionCost, setSessionCost] = useState(() => {
     try { return JSON.parse(localStorage.getItem("sessionCost")) || { claude: 0, gemini: 0 }; } catch { return { claude: 0, gemini: 0 }; }
   });
@@ -1670,46 +1669,37 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
     setSearchPageCount(prev => ({ ...prev, [secId]: nextCount }));
     const page = nextCount;
     try {
-      const ukKw = (kwList || []).filter(k => /[іїєґІЇЄҐа-яА-Я]/.test(k));
-      const enKw = (kwList || []).filter(k => !/[а-яА-ЯіїєґІЇЄҐ]/.test(k));
-      const needed = sourceDist[secId] || 4;
       const topicCtx = [info?.topic, info?.direction, info?.subject].filter(Boolean).join(' ');
-      const commentHints = [commentAnalysis?.planHints, commentAnalysis?.writingHints].filter(Boolean).join(' ');
-      const methodReq = [methodInfo?.otherRequirements, methodInfo?.theoryRequirements, methodInfo?.analysisRequirements].filter(Boolean).join(' ');
-      const semKw = buildSemanticKeywords(sectionLabel, info?.topic || '', info?.direction || '', info?.subject || '', commentHints, methodReq);
-      const secAnchors = searchAnchors[secId] || [];
+      const globalSeen = new Set(isFirstSearch ? [] : (seenSourceKeys[secId] || []));
+      const updatedGroups = isFirstSearch ? [] : [...(phraseGroups[secId] || [])];
 
-      // Gemini-фрази: генеруємо один раз і кешуємо для refresh
-      let geminiPhrases = cachedSearchPhrases[secId] || [];
-      if (isFirstSearch || !geminiPhrases.length) {
-        geminiPhrases = await generateSearchPhrases(sectionLabel, info?.topic || '', info?.direction || '', info?.subject || '');
-        setCachedSearchPhrases(prev => ({ ...prev, [secId]: geminiPhrases }));
+      for (const phrase of (kwList || [])) {
+        const candidates = await searchByPhrase(phrase, 10, page);
+        const fresh = candidates.filter(p => {
+          const key = (p.title || '').toLowerCase().slice(0, 60);
+          return key && !globalSeen.has(key);
+        });
+        if (!fresh.length) continue;
+
+        const top15 = await filterSourcesWithGemini(fresh, sectionLabel, topicCtx, 15);
+        top15.forEach(p => globalSeen.add((p.title || '').toLowerCase().slice(0, 60)));
+
+        const existingIdx = updatedGroups.findIndex(g => g.phrase === phrase);
+        if (existingIdx >= 0) {
+          updatedGroups[existingIdx] = {
+            phrase,
+            papers: [...updatedGroups[existingIdx].papers, ...top15],
+          };
+        } else {
+          updatedGroups.push({ phrase, papers: top15 });
+        }
+
+        // Прогресивне оновлення — кожна фраза відображається одразу
+        setPhraseGroups(prev => ({ ...prev, [secId]: [...updatedGroups] }));
+        setSuggestedSources(prev => ({ ...prev, [secId]: updatedGroups.flatMap(g => g.papers) }));
       }
 
-      const { flat: raw, groups: rawGroups } = await searchSourcesForSection(ukKw, enKw, needed, sectionLabel, topicCtx, page, semKw, secAnchors, geminiPhrases);
-      const results = await filterSourcesWithGemini(raw, sectionLabel, topicCtx);
-
-      // Показуємо тільки нові
-      const alreadySeen = seenSourceKeys[secId] || new Set();
-      const newOnes = results.filter(p => !alreadySeen.has((p.title || '').toLowerCase().slice(0, 60)));
-      const updatedSeen = new Set(alreadySeen);
-      results.forEach(p => updatedSeen.add((p.title || '').toLowerCase().slice(0, 60)));
-      setSeenSourceKeys(prev => ({ ...prev, [secId]: updatedSeen }));
-
-      // Перебудовуємо групи з відфільтрованих (зберігаємо geminiReason/Tier)
-      const enrichedMap = new Map(results.map(p => [(p.title || '').toLowerCase().slice(0, 60), p]));
-      const newIds = new Set(newOnes.map(p => (p.title || '').toLowerCase().slice(0, 60)));
-      const newGroups = rawGroups
-        .map(g => ({
-          phrase: g.phrase,
-          papers: g.papers
-            .map(p => enrichedMap.get((p.title || '').toLowerCase().slice(0, 60)))
-            .filter(p => p && newIds.has((p.title || '').toLowerCase().slice(0, 60))),
-        }))
-        .filter(g => g.papers.length > 0);
-
-      setPhraseGroups(prev => ({ ...prev, [secId]: newGroups }));
-      setSuggestedSources(prev => ({ ...prev, [secId]: newOnes }));
+      setSeenSourceKeys(prev => ({ ...prev, [secId]: globalSeen }));
     } catch (e) {
       console.error('Source search error:', e.message);
       setSourcesSearchError(prev => ({ ...prev, [secId]: e.message }));

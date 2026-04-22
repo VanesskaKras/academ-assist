@@ -98,8 +98,8 @@ export function SourcesStage({
 }) {
   const [selectedSugg, setSelectedSugg] = useState({});
   const [suggOpen, setSuggOpen] = useState({});
-  // "secId_phraseIdx" → true якщо група розгорнута
-  const [expandedPhrases, setExpandedPhrases] = useState({});
+  // "secId_phraseIdx" → поточна сторінка (1-based)
+  const [phrasePages, setPhrasePages] = useState({});
 
   let runningIdx = 0;
   const missingSections = mainSections.filter(s => !(citInputs[s.id] || "").trim());
@@ -370,23 +370,33 @@ export function SourcesStage({
                               !alreadyAdded.includes((p.title || '').toLowerCase().slice(0, 60))
                             );
                             if (!groupPapers.length) return null;
-                            const expandKey = `${sec.id}_${gi}`;
-                            const isExpanded = expandedPhrases[expandKey];
-                            const visible = isExpanded ? groupPapers : groupPapers.slice(0, 5);
-                            const remaining = groupPapers.length - 5;
+                            const pageKey = `${sec.id}_${gi}`;
+                            const PAGE_SIZE = 5;
+                            const currentPage = phrasePages[pageKey] || 1;
+                            const totalPages = Math.ceil(groupPapers.length / PAGE_SIZE);
+                            const visible = groupPapers.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
                             return (
-                              <div key={gi} style={{ marginBottom: 12 }}>
+                              <div key={gi} style={{ marginBottom: 14 }}>
                                 <div style={{ fontSize: 10, color: '#5a7a3a', padding: '3px 8px', background: '#f0f7e8', borderRadius: 4, marginBottom: 6, fontStyle: 'italic', display: 'inline-block' }}>
                                   🔍 {group.phrase}
                                 </div>
                                 {visible.map(paper => (
                                   <SourceCard key={paper.id} paper={paper} checked={isChecked(sec.id, paper.id)} onToggle={() => togglePaper(sec.id, paper)} />
                                 ))}
-                                {!isExpanded && remaining > 0 && (
-                                  <button
-                                    onClick={() => setExpandedPhrases(prev => ({ ...prev, [expandKey]: true }))}
-                                    style={{ fontSize: 11, background: 'transparent', border: '1px solid #c8dfa0', color: '#5a7a3a', borderRadius: 5, padding: '3px 10px', cursor: 'pointer', marginTop: 2 }}
-                                  >показати ще {remaining} →</button>
+                                {totalPages > 1 && (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                                    <button
+                                      onClick={() => setPhrasePages(prev => ({ ...prev, [pageKey]: Math.max(1, currentPage - 1) }))}
+                                      disabled={currentPage === 1}
+                                      style={{ fontSize: 11, background: 'transparent', border: '1px solid #c8dfa0', color: currentPage === 1 ? '#bbb' : '#5a7a3a', borderRadius: 5, padding: '2px 8px', cursor: currentPage === 1 ? 'default' : 'pointer' }}
+                                    >←</button>
+                                    <span style={{ fontSize: 11, color: '#5a7a3a' }}>{currentPage} / {totalPages}</span>
+                                    <button
+                                      onClick={() => setPhrasePages(prev => ({ ...prev, [pageKey]: Math.min(totalPages, currentPage + 1) }))}
+                                      disabled={currentPage === totalPages}
+                                      style={{ fontSize: 11, background: 'transparent', border: '1px solid #c8dfa0', color: currentPage === totalPages ? '#bbb' : '#5a7a3a', borderRadius: 5, padding: '2px 8px', cursor: currentPage === totalPages ? 'default' : 'pointer' }}
+                                    >→</button>
+                                  </div>
                                 )}
                               </div>
                             );
