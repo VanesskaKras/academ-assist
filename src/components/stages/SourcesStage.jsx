@@ -93,7 +93,7 @@ export function SourcesStage({
   mainSections, citInputs, setCitInputs, sourceDist, sourceTotal,
   keywords, kwLoading, kwError, setKwError, methodInfo, commentAnalysis,
   allRefs, refList, showMissingSources, citInputsSnapshot, allCitLoading, info,
-  suggestedSources, phraseGroups, sourcesSearchLoading, sourcesSearchError, doSearchSources,
+  suggestedSources, phraseGroups, sourcesSearchLoading, sourcesSearchError, doSearchSources, doRegenSectionSources,
   doGenKeywords, doAddAllCitations, onAddAbstracts, onFinish, onProceedToWriting, setStage, workflowMode,
 }) {
   const [selectedSugg, setSelectedSugg] = useState({});
@@ -343,7 +343,7 @@ export function SourcesStage({
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       {!isSearching && (
                         <button
-                          onClick={e => { e.stopPropagation(); doSearchSources(sec.id, keywords[sec.id] || [], sec.label || ''); }}
+                          onClick={e => { e.stopPropagation(); doRegenSectionSources(sec); }}
                           style={{ fontSize: 10, background: "transparent", border: "1px solid #8cc84b", color: "#3a6010", borderRadius: 5, padding: "2px 8px", cursor: "pointer" }}
                         >оновити</button>
                       )}

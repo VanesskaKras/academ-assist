@@ -1656,8 +1656,8 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
   };
 
   // ── Автоматичний пошук джерел ──
-  const doSearchSources = async (secId, kwList, sectionLabel = '') => {
-    const isFirstSearch = (searchPageCount[secId] || 0) === 0;
+  const doSearchSources = async (secId, kwList, sectionLabel = '', resetPage = false) => {
+    const isFirstSearch = resetPage || (searchPageCount[secId] || 0) === 0;
     if (isFirstSearch) {
       setSuggestedSources(prev => ({ ...prev, [secId]: [] }));
       setPhraseGroups(prev => ({ ...prev, [secId]: [] }));
@@ -1665,7 +1665,7 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
     }
     setSourcesSearchLoading(prev => ({ ...prev, [secId]: true }));
     setSourcesSearchError(prev => ({ ...prev, [secId]: null }));
-    const nextCount = (searchPageCount[secId] || 0) + 1;
+    const nextCount = resetPage ? 1 : (searchPageCount[secId] || 0) + 1;
     setSearchPageCount(prev => ({ ...prev, [secId]: nextCount }));
     const page = nextCount;
     try {
@@ -1783,6 +1783,62 @@ ${secBlocks}
       }
     } catch (e) { console.error(e); setKwError(e.message); }
     setKwLoading(false);
+  };
+
+  // ── Оновлення ключових слів + пошук для одного підрозділу ──
+  const doRegenSectionSources = async (sec) => {
+    setSourcesSearchLoading(prev => ({ ...prev, [sec.id]: true }));
+    setSourcesSearchError(prev => ({ ...prev, [sec.id]: null }));
+    try {
+      const txt = content[sec.id]
+        ? `\n${content[sec.id].substring(0, 1200).replace(/["\\]/g, " ").replace(/\n+/g, " ")}`
+        : "";
+      const domainCtx = [info?.direction, info?.subject].filter(Boolean).join(', ');
+      const commentCtx = [commentAnalysis?.planHints, commentAnalysis?.writingHints].filter(Boolean).join(' ').slice(0, 400);
+      const methodCtx = [methodInfo?.otherRequirements, methodInfo?.theoryRequirements, methodInfo?.analysisRequirements].filter(Boolean).join(' ').slice(0, 400);
+      const secBlock = `### ${sec.label} (потрібно ${sourceDist[sec.id] || 3} джерела)${txt}`;
+      const prompt = `Ти допомагаєш знайти наукові джерела для академічної роботи на тему "${info?.topic}"${domainCtx ? ` (галузь: ${domainCtx})` : ''}.
+
+ЗАВДАННЯ — для підрозділу:
+
+КРОК 1. Розпиши тезисно, про що би ти писав у цьому підрозділі — 5–7 конкретних тез (3–6 слів кожна). Це внутрішній крок, не виводь у відповідь.
+
+КРОК 2. Для кожної тези склади пошуковий запит: [2–3 ключових слова теми] + [теза].
+10–12 фраз: переважно українською, 3–4 англійською.
+ВАЖЛИВО: кожна фраза має містити конкретний предмет теми — не загальні слова без прив'язки до теми.${commentCtx ? `\nПОБАЖАННЯ КЛІЄНТА: ${commentCtx}` : ''}${methodCtx ? `\nВИМОГИ МЕТОДИЧКИ: ${methodCtx}` : ''}
+
+ПІДРОЗДІЛ:
+${secBlock}
+
+Поверни JSON: {"keywords":["фраза укр","english phrase",...]}`;
+
+      const res = await fetch("/api/gemini", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          _model: "gemini-2.5-flash-lite",
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          generationConfig: { maxOutputTokens: 1000, responseMimeType: "application/json" },
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error?.message || JSON.stringify(data).slice(0, 200));
+      const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      const parsed = JSON.parse(raw);
+      const newKw = (Array.isArray(parsed.keywords) ? parsed.keywords : [])
+        .map(item => typeof item === "object" && item !== null ? Object.values(item).join(" ") : String(item))
+        .filter(Boolean);
+      if (newKw.length) {
+        setKeywords(prev => ({ ...prev, [sec.id]: newKw }));
+        await doSearchSources(sec.id, newKw, sec.label || '', true);
+      } else {
+        setSourcesSearchLoading(prev => ({ ...prev, [sec.id]: false }));
+      }
+    } catch (e) {
+      console.error('doRegenSectionSources error:', e.message);
+      setSourcesSearchError(prev => ({ ...prev, [sec.id]: e.message }));
+      setSourcesSearchLoading(prev => ({ ...prev, [sec.id]: false }));
+    }
   };
 
   // ── Джерела ──
@@ -2636,6 +2692,7 @@ ${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
             sourcesSearchLoading={sourcesSearchLoading}
             sourcesSearchError={sourcesSearchError}
             doSearchSources={doSearchSources}
+            doRegenSectionSources={doRegenSectionSources}
             doAddAllCitations={doAddAllCitations}
             onAddAbstracts={(entries) => setAbstractsMap(prev => ({ ...prev, ...entries }))}
             onFinish={async () => { await saveToFirestore({ stage: "done", status: "done", content, citInputs, abstractsMap, refList }); setStage("done"); }}
