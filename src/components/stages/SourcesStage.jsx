@@ -63,16 +63,6 @@ function SourceCard({ paper, checked, onToggle }) {
             {paper.venue}{paper.pages ? ` · С. ${paper.pages}` : ''}
           </div>
         )}
-        {paper.geminiReason && (
-          <div style={{
-            marginTop: 5, fontSize: 11, borderRadius: 5, padding: '3px 8px',
-            background: paper.geminiTier === 'analogy' ? '#fefbe8' : '#eef8e4',
-            color: paper.geminiTier === 'analogy' ? '#7a5500' : '#2a6010',
-            border: `1px solid ${paper.geminiTier === 'analogy' ? '#f0d870' : '#a8d878'}`,
-          }}>
-            {paper.geminiTier === 'analogy' ? '~ Аналогія: ' : '✓ Підходить: '}{paper.geminiReason}
-          </div>
-        )}
         {paper.url && (
           <a
             href={paper.url}
@@ -355,13 +345,6 @@ export function SourcesStage({
                   {isOpen && !isSearching && suggestions.length > 0 && (
                     <div style={{ padding: "10px 12px", background: "#f5faf0" }}>
 
-                      {/* Попередження про ліміт зарубіжних */}
-                      <div style={{ fontSize: 11, color: "#5a6a3a", marginBottom: 8 }}>
-                        Іноземних (польськ. + зарубіж.) можна вибрати <strong>максимум {maxForeign}</strong> (30% від потрібних {needed} дж.)
-                        {foreignOverLimit && (
-                          <span style={{ marginLeft: 8, color: "#8a1a1a", fontWeight: 600 }}>⚠ Перевищено ліміт!</span>
-                        )}
-                      </div>
 
                       {/* Картки — по фразах або плоский список */}
                       {(phraseGroups?.[sec.id] || []).length > 0
