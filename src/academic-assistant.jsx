@@ -1679,8 +1679,10 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
         : (thesesData || []);
 
       for (const { thesis, phrases } of normalizedTheses) {
-        for (const phrase of (phrases || [])) {
-          const candidates = await searchByPhrase(phrase, 10, page);
+        for (let pi = 0; pi < (phrases || []).length; pi++) {
+          const phrase = phrases[pi];
+          const useScholar = pi === 0; // Scholar тільки для першої фрази тези
+          const candidates = await searchByPhrase(phrase, 10, page, useScholar);
           const fresh = candidates.filter(p => {
             const key = (p.title || '').toLowerCase().slice(0, 60);
             return key && !globalSeen.has(key);

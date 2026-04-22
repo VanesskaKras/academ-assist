@@ -364,12 +364,12 @@ async function fetchEnglishViaBackend(enKeywords, limit) {
   }
 }
 
-// ── Пошук за однією фразою: BASE, Scholar, CORE, OpenAlex uk, CrossRef, OpenAlex pl ──
-export async function searchByPhrase(phrase, limit = 10, page = 1) {
+// ── Пошук за однією фразою: BASE, Scholar (опційно), CORE, OpenAlex uk, CrossRef, OpenAlex pl ──
+export async function searchByPhrase(phrase, limit = 10, page = 1, useScholar = false) {
   const yr = 'publication_year:>2019';
   const [r1, r2, r3, r4, r5, r6] = await Promise.allSettled([
     fetchBASE(phrase, limit),
-    fetchScholar(phrase, limit),
+    useScholar ? fetchScholar(phrase, limit) : Promise.resolve([]),
     fetchCORE(phrase, limit),
     openAlexSearch(phrase, `language:uk,${yr}`, limit, page),
     fetchCrossRefUkrainian(phrase, limit),
