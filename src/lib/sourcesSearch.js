@@ -224,6 +224,78 @@ function mapOpenAlex(p, forceLang) {
   };
 }
 
+// ── BASE (Bielefeld Academic Search Engine) — індексує укр. репозиторії ──
+async function fetchBASE(query, limit) {
+  try {
+    const q = `${query} dclanguage:uk`;
+    const url = `https://api.base-search.net/cgi-bin/BaseHttpSearchInterface.fcgi?func=PerformSearch&query=${encodeURIComponent(q)}&format=json&hits=${limit}`;
+    const r = await fetch(url, { cache: 'no-store' });
+    if (!r.ok) return [];
+    const d = await r.json();
+    return (d.response?.docs || []).filter(p => {
+      const title = Array.isArray(p.dctitle) ? p.dctitle[0] : p.dctitle;
+      return title && !isBlocked(p);
+    });
+  } catch { return []; }
+}
+
+function mapBASE(doc) {
+  const title = Array.isArray(doc.dctitle) ? doc.dctitle[0] : (doc.dctitle || '');
+  const rawDoi = Array.isArray(doc.dcdoi) ? doc.dcdoi[0] : (doc.dcdoi || '');
+  const doi = rawDoi.replace('https://doi.org/', '');
+  const rawLink = Array.isArray(doc.dclink) ? doc.dclink[0] : (doc.dclink || '');
+  const url = rawLink || (doi ? `https://doi.org/${doi}` : '');
+  const rawId = Array.isArray(doc.dcidentifier) ? doc.dcidentifier[0] : (doc.dcidentifier || '');
+  const abstract = Array.isArray(doc.dcdescription) ? doc.dcdescription[0] : (doc.dcdescription || '');
+  return {
+    id: rawId || url || String(Math.random()),
+    title,
+    authors: (doc.dcauthor || []).slice(0, 3).map(String),
+    year: doc.dcyear || '',
+    venue: Array.isArray(doc.dcpublisher) ? doc.dcpublisher[0] : (doc.dcpublisher || ''),
+    doi,
+    pages: '',
+    lang: hasCyrillic(title) ? 'uk' : 'pl',
+    source: 'base',
+    abstract: snippetAbstract(abstract),
+    url,
+  };
+}
+
+// ── CORE.ac.uk — агрегатор відкритого доступу, індексує репозиторії ──
+const CORE_KEY = typeof import.meta !== 'undefined' ? (import.meta.env?.VITE_CORE_API_KEY || '') : '';
+
+async function fetchCORE(query, limit) {
+  if (!CORE_KEY) return [];
+  try {
+    const url = `https://api.core.ac.uk/v3/search/works?q=${encodeURIComponent(query)}&limit=${limit}&apiKey=${CORE_KEY}`;
+    const r = await fetch(url, { cache: 'no-store' });
+    if (!r.ok) return [];
+    const d = await r.json();
+    return (d.results || []).filter(p => p.title && !isBlocked(p));
+  } catch { return []; }
+}
+
+function mapCORE(result) {
+  const title = result.title || '';
+  const doi = result.doi || '';
+  const urls = result.sourceFulltextUrls || [];
+  const url = result.downloadUrl || urls[0] || (doi ? `https://doi.org/${doi}` : '');
+  return {
+    id: result.id ? `core-${result.id}` : String(Math.random()),
+    title,
+    authors: (result.authors || []).slice(0, 3).map(a => (typeof a === 'string' ? a : a.name || '')).filter(Boolean),
+    year: result.yearPublished || '',
+    venue: (result.journals || [])[0]?.title || result.publisher || '',
+    doi,
+    pages: '',
+    lang: hasCyrillic(title) ? 'uk' : 'en',
+    source: 'core',
+    abstract: snippetAbstract(result.abstract || ''),
+    url,
+  };
+}
+
 // ── CrossRef (добре покриває укр. журнали з DOI) ──
 async function fetchCrossRefUkrainian(query, limit) {
   const url = `https://api.crossref.org/works?query=${encodeURIComponent(query)}&filter=from-pub-date:2020&rows=${Math.min(limit * 2, 20)}`;
@@ -271,28 +343,26 @@ async function fetchEnglishViaBackend(enKeywords, limit) {
   }
 }
 
-// ── Пошук за однією фразою: 3 паралельних запити (OpenAlex uk, CrossRef, OpenAlex pl) ──
+// ── Пошук за однією фразою: BASE, CORE, OpenAlex uk, CrossRef, OpenAlex pl ──
 export async function searchByPhrase(phrase, limit = 10, page = 1) {
   const yr = 'publication_year:>2019';
-  const [r1, r2, r3] = await Promise.allSettled([
+  const [r1, r2, r3, r4, r5] = await Promise.allSettled([
+    fetchBASE(phrase, limit),
+    fetchCORE(phrase, limit),
     openAlexSearch(phrase, `language:uk,${yr}`, limit, page),
     fetchCrossRefUkrainian(phrase, limit),
     openAlexSearch(phrase, `language:pl,${yr}`, limit, page),
   ]);
 
-  const ukRaw = r1.status === 'fulfilled'
-    ? r1.value.map(p => mapOpenAlex(p, 'uk'))
-    : [];
-  const crRaw = r2.status === 'fulfilled'
-    ? r2.value.filter(p => hasCyrillic(p.title || ''))
-    : [];
-  const plRaw = r3.status === 'fulfilled'
-    ? r3.value.map(p => mapOpenAlex(p, 'pl'))
-    : [];
+  const baseRaw = r1.status === 'fulfilled' ? r1.value.map(mapBASE) : [];
+  const coreRaw = r2.status === 'fulfilled' ? r2.value.map(mapCORE) : [];
+  const ukRaw   = r3.status === 'fulfilled' ? r3.value.map(p => mapOpenAlex(p, 'uk')) : [];
+  const crRaw   = r4.status === 'fulfilled' ? r4.value.filter(p => hasCyrillic(p.title || '')) : [];
+  const plRaw   = r5.status === 'fulfilled' ? r5.value.map(p => mapOpenAlex(p, 'pl')) : [];
 
   const seen = new Set();
   const results = [];
-  for (const p of [...ukRaw, ...crRaw, ...plRaw]) {
+  for (const p of [...baseRaw, ...coreRaw, ...ukRaw, ...crRaw, ...plRaw]) {
     const key = (p.title || '').toLowerCase().slice(0, 60);
     if (!key || seen.has(key)) continue;
     seen.add(key);
