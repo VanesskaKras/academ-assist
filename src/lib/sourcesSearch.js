@@ -31,9 +31,16 @@ const BLOCKED = [
   'белорус', 'беларус', 'minsk', 'минск', 'гродн', 'витебск', 'брест',
 ];
 
+function isRussianUrl(url = '') {
+  return /\.ru(\/|$)/i.test(url.toLowerCase());
+}
+
 function isBlocked(obj) {
   const t = JSON.stringify(obj).toLowerCase();
-  return BLOCKED.some(p => t.includes(p));
+  if (BLOCKED.some(p => t.includes(p))) return true;
+  // Блокуємо будь-який .ru домен
+  const url = obj?.url || obj?.dclink || '';
+  return isRussianUrl(Array.isArray(url) ? url[0] : url);
 }
 
 function hasCyrillic(text = '') {

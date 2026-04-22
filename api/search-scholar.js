@@ -7,9 +7,14 @@ const BLOCKED = [
   'elibrary.ru', 'cyberleninka', 'белорус', 'беларус', 'minsk', 'минск',
 ];
 
+function isRussianUrl(url = '') {
+  return /\.ru(\/|$)/i.test(url.toLowerCase());
+}
+
 function isBlocked(obj) {
   const t = JSON.stringify(obj).toLowerCase();
-  return BLOCKED.some(p => t.includes(p));
+  if (BLOCKED.some(p => t.includes(p))) return true;
+  return isRussianUrl(obj?.link || obj?.url || '');
 }
 
 function withTimeout(promise, ms = 10000) {
