@@ -1689,7 +1689,7 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
           });
           if (!fresh.length) continue;
 
-          const top15 = await filterSourcesWithGemini(fresh, sectionLabel, topicCtx, 15, thesis);
+          const top15 = await filterSourcesWithGemini(fresh.slice(0, 15), sectionLabel, topicCtx, 15, thesis);
           top15.forEach(p => globalSeen.add((p.title || '').toLowerCase().slice(0, 60)));
 
           const existingIdx = updatedGroups.findIndex(g => g.phrase === phrase);
