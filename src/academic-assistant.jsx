@@ -1656,7 +1656,7 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
   };
 
   // ── Автоматичний пошук джерел ──
-  const doSearchSources = async (secId, kwList, sectionLabel = '', resetPage = false) => {
+  const doSearchSources = async (secId, thesesData, sectionLabel = '', resetPage = false) => {
     const isFirstSearch = resetPage || (searchPageCount[secId] || 0) === 0;
     if (isFirstSearch) {
       setSuggestedSources(prev => ({ ...prev, [secId]: [] }));
@@ -1673,30 +1673,37 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
       const globalSeen = new Set(isFirstSearch ? [] : (seenSourceKeys[secId] || []));
       const updatedGroups = isFirstSearch ? [] : [...(phraseGroups[secId] || [])];
 
-      for (const phrase of (kwList || [])) {
-        const candidates = await searchByPhrase(phrase, 10, page);
-        const fresh = candidates.filter(p => {
-          const key = (p.title || '').toLowerCase().slice(0, 60);
-          return key && !globalSeen.has(key);
-        });
-        if (!fresh.length) continue;
+      // Нормалізація: підтримка як [{thesis, phrases}], так і старого плоского рядкового масиву
+      const normalizedTheses = Array.isArray(thesesData) && thesesData.length > 0 && typeof thesesData[0] === 'string'
+        ? [{ thesis: '', phrases: thesesData }]
+        : (thesesData || []);
 
-        const top15 = await filterSourcesWithGemini(fresh, sectionLabel, topicCtx, 15);
-        top15.forEach(p => globalSeen.add((p.title || '').toLowerCase().slice(0, 60)));
+      for (const { thesis, phrases } of normalizedTheses) {
+        for (const phrase of (phrases || [])) {
+          const candidates = await searchByPhrase(phrase, 10, page);
+          const fresh = candidates.filter(p => {
+            const key = (p.title || '').toLowerCase().slice(0, 60);
+            return key && !globalSeen.has(key);
+          });
+          if (!fresh.length) continue;
 
-        const existingIdx = updatedGroups.findIndex(g => g.phrase === phrase);
-        if (existingIdx >= 0) {
-          updatedGroups[existingIdx] = {
-            phrase,
-            papers: [...updatedGroups[existingIdx].papers, ...top15],
-          };
-        } else {
-          updatedGroups.push({ phrase, papers: top15 });
+          const top15 = await filterSourcesWithGemini(fresh, sectionLabel, topicCtx, 15, thesis);
+          top15.forEach(p => globalSeen.add((p.title || '').toLowerCase().slice(0, 60)));
+
+          const existingIdx = updatedGroups.findIndex(g => g.phrase === phrase);
+          if (existingIdx >= 0) {
+            updatedGroups[existingIdx] = {
+              phrase,
+              papers: [...updatedGroups[existingIdx].papers, ...top15],
+            };
+          } else {
+            updatedGroups.push({ phrase, papers: top15 });
+          }
+
+          // Прогресивне оновлення — кожна фраза відображається одразу
+          setPhraseGroups(prev => ({ ...prev, [secId]: [...updatedGroups] }));
+          setSuggestedSources(prev => ({ ...prev, [secId]: updatedGroups.flatMap(g => g.papers) }));
         }
-
-        // Прогресивне оновлення — кожна фраза відображається одразу
-        setPhraseGroups(prev => ({ ...prev, [secId]: [...updatedGroups] }));
-        setSuggestedSources(prev => ({ ...prev, [secId]: updatedGroups.flatMap(g => g.papers) }));
       }
 
       setSeenSourceKeys(prev => ({ ...prev, [secId]: globalSeen }));
@@ -1724,22 +1731,27 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
 
 ЗАВДАННЯ — для кожного підрозділу:
 
-КРОК 1. Розпиши тезисно, про що би ти писав у цьому підрозділі — 5–7 конкретних тез (3–6 слів кожна). Це внутрішній крок, не виводь у відповідь.
+КРОК 1. Визнач 4–5 конкретних тез — про що писатиметься у цьому підрозділі (3–7 слів кожна, конкретний аспект змісту, не загальні назви розділів).
 
-КРОК 2. Для кожної тези склади пошуковий запит: [2–3 ключових слова теми] + [теза].
-Приклад: тема "інтерактивні технологій виховання", теза "відмінність від традиційних методів" → "інтерактивні технологій виховання відмінність традиційних методів".
-Вимоги: кожна фраза = якір теми + конкретний аспект. НЕ загальні слова без контексту теми.
-10–12 фраз на підрозділ: переважно українською, 3–4 англійською.
-ВАЖЛИВО: кожна фраза має містити конкретний предмет теми (назву мови, галузі, об'єкта дослідження) — не загальні слова без прив'язки до теми.
-
-КРОК 3. Згенеруй 2–3 короткі "якірні фрази" для full-text пошуку в наукових базах.
-Це 2–4 слова у НАЗИВНОМУ ВІДМІНКУ що характеризують підрозділ.
-Приклад: ["інтерактивні технологій виховання", "педагогічна взаємодія виховання"]${commentCtx ? `\nПОБАЖАННЯ КЛІЄНТА: ${commentCtx}` : ''}${methodCtx ? `\nВИМОГИ МЕТОДИЧКИ: ${methodCtx}` : ''}
+КРОК 2. Для кожної тези склади 2–3 пошукових фрази українською.
+Кожна фраза = [1–2 ключових слова з ТЕМИ роботи] + [конкретний аспект тези].
+Приклад: тема "ЕІ підлітки", теза "структура компонентів ЕІ" → "компоненти емоційного інтелекту підлітки", "структура ЕІ психологічна модель".
+ВАЖЛИВО: кожна фраза має містити конкретний предмет теми — не загальні слова без прив'язки.${commentCtx ? `\nПОБАЖАННЯ КЛІЄНТА: ${commentCtx}` : ''}${methodCtx ? `\nВИМОГИ МЕТОДИЧКИ: ${methodCtx}` : ''}
 
 ПІДРОЗДІЛИ:
 ${secBlocks}
 
-Поверни JSON: {"keywords":{"1.1":["фраза укр","english phrase",...],...},"searchAnchors":{"1.1":["якір 1","якір 2"],...}}`;
+Поверни JSON:
+{
+  "theses": {
+    "1.1": [
+      {"thesis": "конкретний аспект тези", "phrases": ["фраза 1","фраза 2","фраза 3"]},
+      ...
+    ],
+    ...
+  },
+  "searchAnchors": {"1.1": ["якір 1","якір 2"], ...}
+}`;
     try {
       const res = await fetch("/api/gemini", {
         method: "POST",
@@ -1754,32 +1766,44 @@ ${secBlocks}
       if (!res.ok) throw new Error(data.error?.message || JSON.stringify(data).slice(0, 200));
       const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
       const parsed = JSON.parse(raw);
-      const kwRaw = parsed.keywords || {};
+      const thesesRaw = parsed.theses || {};
       const anchorsRaw = parsed.searchAnchors || {};
+
+      const normalizeKey = (k) => k.match(/^(\d+\.\d+)/)?.[1] || k;
+
       const anchorsNorm = Object.fromEntries(
-        Object.entries(anchorsRaw).map(([k, v]) => {
-          const key = k.match(/^(\d+\.\d+)/)?.[1] || k;
-          return [key, Array.isArray(v) ? v.map(String).filter(Boolean) : []];
-        })
+        Object.entries(anchorsRaw).map(([k, v]) => [
+          normalizeKey(k),
+          Array.isArray(v) ? v.map(String).filter(Boolean) : [],
+        ])
       );
       setSearchAnchors(anchorsNorm);
-      const flattenKw = (v) => {
-        if (Array.isArray(v)) return v.map(item => typeof item === "object" && item !== null ? Object.values(item).join(" ") : String(item)).filter(Boolean);
-        if (typeof v === "object" && v !== null) return Object.values(v).flatMap(flattenKw);
-        return String(v).split(/[,;]+/).map(s => s.trim()).filter(Boolean);
-      };
+
+      // Нормалізуємо тези: {secId: [{thesis, phrases}]}
+      const thesesNorm = Object.fromEntries(
+        Object.entries(thesesRaw).map(([k, arr]) => [
+          normalizeKey(k),
+          (Array.isArray(arr) ? arr : []).map(t => ({
+            thesis: String(t.thesis || '').trim(),
+            phrases: (Array.isArray(t.phrases) ? t.phrases : []).map(String).filter(Boolean),
+          })).filter(t => t.phrases.length > 0),
+        ])
+      );
+
+      // Плоский список фраз для UI (відображення в SourcesStage)
       const kwNorm = Object.fromEntries(
-        Object.entries(kwRaw).map(([k, v]) => {
-          const normalizedKey = k.match(/^(\d+\.\d+)/)?.[1] || k;
-          return [normalizedKey, flattenKw(v)];
-        })
+        Object.entries(thesesNorm).map(([k, theses]) => [
+          k,
+          theses.flatMap(t => t.phrases),
+        ])
       );
       setKeywords(kwNorm);
+
       // Шукаємо джерела по черзі — один підрозділ за одним (видно прогрес)
       for (const s of mainSecs) {
-        const normalKey = s.id.match(/^(\d+\.\d+)/)?.[1] || s.id;
-        const kwList = kwNorm[normalKey] || kwNorm[s.id] || [];
-        if (kwList.length) await doSearchSources(s.id, kwList, s.label || '');
+        const normalKey = normalizeKey(s.id);
+        const thesesData = thesesNorm[normalKey] || thesesNorm[s.id] || [];
+        if (thesesData.length) await doSearchSources(s.id, thesesData, s.label || '');
       }
     } catch (e) { console.error(e); setKwError(e.message); }
     setKwLoading(false);
@@ -1801,16 +1825,16 @@ ${secBlocks}
 
 ЗАВДАННЯ — для підрозділу:
 
-КРОК 1. Розпиши тезисно, про що би ти писав у цьому підрозділі — 5–7 конкретних тез (3–6 слів кожна). Це внутрішній крок, не виводь у відповідь.
+КРОК 1. Визнач 4–5 конкретних тез — про що писатиметься у цьому підрозділі (3–7 слів кожна, конкретний аспект змісту, не загальні назви).
 
-КРОК 2. Для кожної тези склади пошуковий запит: [2–3 ключових слова теми] + [теза].
-10–12 фраз: переважно українською, 3–4 англійською.
-ВАЖЛИВО: кожна фраза має містити конкретний предмет теми — не загальні слова без прив'язки до теми.${commentCtx ? `\nПОБАЖАННЯ КЛІЄНТА: ${commentCtx}` : ''}${methodCtx ? `\nВИМОГИ МЕТОДИЧКИ: ${methodCtx}` : ''}
+КРОК 2. Для кожної тези склади 2–3 пошукових фрази українською.
+Кожна фраза = [1–2 ключових слова з ТЕМИ роботи] + [конкретний аспект тези].
+ВАЖЛИВО: кожна фраза має містити конкретний предмет теми — не загальні слова без прив'язки.${commentCtx ? `\nПОБАЖАННЯ КЛІЄНТА: ${commentCtx}` : ''}${methodCtx ? `\nВИМОГИ МЕТОДИЧКИ: ${methodCtx}` : ''}
 
 ПІДРОЗДІЛ:
 ${secBlock}
 
-Поверни JSON: {"keywords":["фраза укр","english phrase",...]}`;
+Поверни JSON: {"theses":[{"thesis":"конкретний аспект","phrases":["фраза 1","фраза 2","фраза 3"]},...]}`;
 
       const res = await fetch("/api/gemini", {
         method: "POST",
@@ -1818,19 +1842,22 @@ ${secBlock}
         body: JSON.stringify({
           _model: "gemini-2.5-flash-lite",
           contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: { maxOutputTokens: 1000, responseMimeType: "application/json" },
+          generationConfig: { maxOutputTokens: 1200, responseMimeType: "application/json" },
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error?.message || JSON.stringify(data).slice(0, 200));
       const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
       const parsed = JSON.parse(raw);
-      const newKw = (Array.isArray(parsed.keywords) ? parsed.keywords : [])
-        .map(item => typeof item === "object" && item !== null ? Object.values(item).join(" ") : String(item))
-        .filter(Boolean);
-      if (newKw.length) {
-        setKeywords(prev => ({ ...prev, [sec.id]: newKw }));
-        await doSearchSources(sec.id, newKw, sec.label || '', true);
+      const newTheses = (Array.isArray(parsed.theses) ? parsed.theses : [])
+        .map(t => ({
+          thesis: String(t.thesis || '').trim(),
+          phrases: (Array.isArray(t.phrases) ? t.phrases : []).map(String).filter(Boolean),
+        }))
+        .filter(t => t.phrases.length > 0);
+      if (newTheses.length) {
+        setKeywords(prev => ({ ...prev, [sec.id]: newTheses.flatMap(t => t.phrases) }));
+        await doSearchSources(sec.id, newTheses, sec.label || '', true);
       } else {
         setSourcesSearchLoading(prev => ({ ...prev, [sec.id]: false }));
       }

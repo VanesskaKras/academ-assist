@@ -451,19 +451,20 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
 
 // ── Gemini-фільтрація: двохрівнева з поясненням ──
 // Повертає [{...paper, geminiTier: 'exact'|'analogy', geminiReason: '...'}]
-export async function filterSourcesWithGemini(candidates, sectionTitle, topic, maxResults = 15) {
+export async function filterSourcesWithGemini(candidates, sectionTitle, topic, maxResults = 15, thesisContext = '') {
   if (candidates.length < 4) return candidates;
   const items = candidates.map((p, i) => `${i}. ${p.title}`).join('\n');
+  const thesisLine = thesisContext ? `Конкретний аспект для цих джерел: "${thesisContext}"\n` : '';
   const prompt = `Тема наукової роботи: "${topic}"
 Підрозділ: "${sectionTitle}"
-
+${thesisLine}
 Список знайдених статей:
 ${items}
 
 Відбери НАЙРЕЛЕВАНТНІШІ статті (максимум ${maxResults}) за двома категоріями:
-- "exact": стаття ТОЧНО стосується цього підрозділу (предмет, мова/галузь, рівень — усе збігається)
+- "exact": стаття ТОЧНО стосується цього підрозділу і конкретного аспекту (предмет, мова/галузь, рівень — усе збігається)
 - "analogy": може підійти як теоретична аналогія (схожий підхід, але інша мова або суміжний контекст)
-Статті що взагалі не стосуються — не включай.
+Статті що взагалі не стосуються теми чи аспекту — не включай.
 Для кожної відібраної напиши одне речення до 15 слів — чому підходить.
 
 Поверни JSON: {"results":[{"index":0,"tier":"exact","reason":"Розглядає..."},{"index":3,"tier":"analogy","reason":"Аналогічний підхід у..."}]}`;
