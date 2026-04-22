@@ -262,6 +262,20 @@ function mapBASE(doc) {
   };
 }
 
+// ── Google Scholar через Serper.dev (проксі /api/search-scholar) ──
+async function fetchScholar(query, limit) {
+  try {
+    const res = await fetch('/api/search-scholar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, limit }),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.sources || []).filter(p => p.title && !isBlocked(p));
+  } catch { return []; }
+}
+
 // ── CORE.ac.uk — агрегатор відкритого доступу, індексує репозиторії ──
 const CORE_KEY = typeof import.meta !== 'undefined' ? (import.meta.env?.VITE_CORE_API_KEY || '') : '';
 
@@ -343,26 +357,28 @@ async function fetchEnglishViaBackend(enKeywords, limit) {
   }
 }
 
-// ── Пошук за однією фразою: BASE, CORE, OpenAlex uk, CrossRef, OpenAlex pl ──
+// ── Пошук за однією фразою: BASE, Scholar, CORE, OpenAlex uk, CrossRef, OpenAlex pl ──
 export async function searchByPhrase(phrase, limit = 10, page = 1) {
   const yr = 'publication_year:>2019';
-  const [r1, r2, r3, r4, r5] = await Promise.allSettled([
+  const [r1, r2, r3, r4, r5, r6] = await Promise.allSettled([
     fetchBASE(phrase, limit),
+    fetchScholar(phrase, limit),
     fetchCORE(phrase, limit),
     openAlexSearch(phrase, `language:uk,${yr}`, limit, page),
     fetchCrossRefUkrainian(phrase, limit),
     openAlexSearch(phrase, `language:pl,${yr}`, limit, page),
   ]);
 
-  const baseRaw = r1.status === 'fulfilled' ? r1.value.map(mapBASE) : [];
-  const coreRaw = r2.status === 'fulfilled' ? r2.value.map(mapCORE) : [];
-  const ukRaw   = r3.status === 'fulfilled' ? r3.value.map(p => mapOpenAlex(p, 'uk')) : [];
-  const crRaw   = r4.status === 'fulfilled' ? r4.value.filter(p => hasCyrillic(p.title || '')) : [];
-  const plRaw   = r5.status === 'fulfilled' ? r5.value.map(p => mapOpenAlex(p, 'pl')) : [];
+  const baseRaw    = r1.status === 'fulfilled' ? r1.value.map(mapBASE) : [];
+  const scholarRaw = r2.status === 'fulfilled' ? r2.value : [];
+  const coreRaw    = r3.status === 'fulfilled' ? r3.value.map(mapCORE) : [];
+  const ukRaw      = r4.status === 'fulfilled' ? r4.value.map(p => mapOpenAlex(p, 'uk')) : [];
+  const crRaw      = r5.status === 'fulfilled' ? r5.value.filter(p => hasCyrillic(p.title || '')) : [];
+  const plRaw      = r6.status === 'fulfilled' ? r6.value.map(p => mapOpenAlex(p, 'pl')) : [];
 
   const seen = new Set();
   const results = [];
-  for (const p of [...baseRaw, ...coreRaw, ...ukRaw, ...crRaw, ...plRaw]) {
+  for (const p of [...baseRaw, ...scholarRaw, ...coreRaw, ...ukRaw, ...crRaw, ...plRaw]) {
     const key = (p.title || '').toLowerCase().slice(0, 60);
     if (!key || seen.has(key)) continue;
     seen.add(key);
