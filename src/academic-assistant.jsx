@@ -132,8 +132,6 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     const onScroll = () => {
       const y = window.scrollY;
       setScrolled(y > 300);
-      if (y > 120) setHeaderOpen(false);
-      else if (y < 10) setHeaderOpen(true);
     };
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
@@ -248,7 +246,6 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const handleNavigateHeader = useCallback((s) => {
     if (running) return;
     setStage(s === "input" && info ? "parsed" : s);
-    setHeaderOpen(false);
   }, [running, info]);
 
   // ── Аналіз шаблону ──
@@ -853,7 +850,7 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
         { role: "user", content: instruction },
       ];
     };
-    const approxParas = Math.max(3, Math.round((sec.pages || 1) * 3.5));
+    const approxParas = Math.max(2, Math.round((sec.pages || 1) * 2.5));
     const planSummary = sections
       .filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type))
       .map(s => s.label)
@@ -1048,7 +1045,7 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ ДО ЦЬОГО РОЗДІЛУ: $
 ПЛАН РОБОТИ (для розуміння структури та уникнення повторів):
 ${planSummary}
 
-Обсяг: ~${approxParas} абзаців (~${sec.pages} стор.).
+Обсяг: ~${Math.round((sec.pages || 1) * 250)} слів (~${sec.pages} стор.). Не перевищуй вказаний обсяг.
 Не обривай текст. Завершуй підсумковим абзацом. ${citNote} Без жирного.
 Абзаци мають різнитись за довжиною: чергуй короткі (2-3 речення) з довшими (5-7 речень).`;
     }
@@ -1090,7 +1087,7 @@ ${planSummary}
     setRegenLoading(true);
     const d = info;
     const lang = d?.language || "Українська";
-    const approxParas = Math.max(3, Math.round((sec.pages || 1) * 3.5));
+    const approxParas = Math.max(2, Math.round((sec.pages || 1) * 2.5));
     const customInstructions = regenPrompt ? `\nДОДАТКОВІ ВИМОГИ: ${regenPrompt}` : "";
     const originalText = contentRef.current[sec.id] || "";
 
@@ -1208,7 +1205,7 @@ ${methodInfo?.conclusionsRequirements ? `ВИМОГИ МЕТОДИЧКИ: ${meth
       ].filter(Boolean).join("\n");
       instruction = `Перепиши підрозділ "${sec.label}" для ${d.type} на тему "${d.topic}". Галузь: ${d.subject}.
 ${empiricalBlockRegen}${econBlockRegen}
-${clientReqsRegen ? `ВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО виконати):\n${clientReqsRegen}\n` : ""}Обсяг: ~${approxParas} абзаців (~${sec.pages} стор.).
+${clientReqsRegen ? `ВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО виконати):\n${clientReqsRegen}\n` : ""}Обсяг: ~${Math.round((sec.pages || 1) * 250)} слів (~${sec.pages} стор.). Не перевищуй вказаний обсяг.
 Не обривай текст. Завершуй підсумковим абзацом. Без посилань. Без жирного.${customInstructions}`;
     }
     const regenMaxTokens = Math.min(60000, Math.max(8000, Math.round((sec.pages || 1) * 3000)));
@@ -1624,7 +1621,7 @@ ${methodInfo?.chapterConclusionRequirements ? `ВИМОГИ МЕТОДИЧКИ: 
 Тип: ${typeHints[sec.type] || "основний"}.
 ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBlock}
 
-Обсяг: ~${approxParas} абзаців (~${sec.pages} стор.).
+Обсяг: ~${Math.round((sec.pages || 1) * 250)} слів (~${sec.pages} стор.). Не перевищуй вказаний обсяг.
 Не обривай текст. Завершуй підсумковим абзацом. Без посилань [1],[2]. Без жирного.
 Абзаци різняться за довжиною: чергуй короткі (2-3 речення) з довшими (5-7 речень).`;
       }
