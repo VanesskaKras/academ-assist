@@ -452,7 +452,7 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
 // ── Gemini-фільтрація: двохрівнева з поясненням ──
 // Повертає [{...paper, geminiTier: 'exact'|'analogy', geminiReason: '...'}]
 export async function filterSourcesWithGemini(candidates, sectionTitle, topic, maxResults = 15, thesisContext = '') {
-  if (candidates.length < 4) return candidates;
+  if (!candidates.length) return candidates;
   const items = candidates.map((p, i) => `${i}. ${p.title}`).join('\n');
   const thesisLine = thesisContext ? `Конкретний аспект для цих джерел: "${thesisContext}"\n` : '';
   const prompt = `Тема наукової роботи: "${topic}"
