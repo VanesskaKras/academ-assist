@@ -78,7 +78,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
   }
   const numberedContent = renumberTablesAndFigures(content, displayOrder);
 
-  const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel, TableOfContents, Table, TableRow, TableCell, WidthType, BorderStyle, ExternalHyperlink } = window.docx;
+  const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel, TableOfContents, Table, TableRow, TableCell, WidthType, BorderStyle, ExternalHyperlink, InternalHyperlink, Bookmark } = window.docx;
   const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
   const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
   const marg = methodInfo?.formatting?.margins || {};
@@ -103,13 +103,34 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     return false;
   }
   const FIG_INLINE_RE = /(?:рис(?:унок)?\.?\s*\d+(?:\.\d+)*|fig(?:ure)?\.?\s*\d+(?:\.\d+)*)/i;
+  function parseTextWithCitations(text, color) {
+    const CITE_RE = /\[(\d+)\]/g;
+    const result = [];
+    let lastIndex = 0;
+    let match;
+    while ((match = CITE_RE.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        result.push(new TextRun({ text: text.slice(lastIndex, match.index), font: FONT, size: SIZE, color }));
+      }
+      result.push(new InternalHyperlink({
+        anchor: `ref_${match[1]}`,
+        children: [new TextRun({ text: match[0], font: FONT, size: SIZE, color: "0563C1", underline: {} })],
+      }));
+      lastIndex = match.index + match[0].length;
+    }
+    if (lastIndex < text.length) {
+      result.push(new TextRun({ text: text.slice(lastIndex), font: FONT, size: SIZE, color }));
+    }
+    return result.length ? result : [new TextRun({ text, font: FONT, size: SIZE, color })];
+  }
   function bodyPara(text) {
     const hasFig = FIG_INLINE_RE.test(text || "");
+    const color = hasFig ? "B85C00" : "000000";
     return new Paragraph({
       indent: { firstLine: INDENT },
       spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
       alignment: AlignmentType.BOTH,
-      children: [new TextRun({ text: text || "", font: FONT, size: SIZE, color: hasFig ? "B85C00" : "000000" })],
+      children: parseTextWithCitations(text || "", color),
     });
   }
   function listPara(text) {
@@ -117,7 +138,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
       indent: { left: INDENT, hanging: 360 },
       spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
       alignment: AlignmentType.BOTH,
-      children: [new TextRun({ text, font: FONT, size: SIZE, color: "000000" })],
+      children: parseTextWithCitations(text, "000000"),
     });
   }
   function heading1(text) {
@@ -276,6 +297,31 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
       children: sourceParaChildren(cleaned),
     });
   }
+  function sourceParaWithBookmark(text, refNum) {
+    const cleaned = text.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1").trim();
+    if (!cleaned) return null;
+    const numMatch = cleaned.match(/^(\d+[\.\)]\s*)/);
+    let children;
+    if (numMatch) {
+      const prefix = numMatch[1];
+      const rest = cleaned.slice(prefix.length);
+      children = [
+        new Bookmark({
+          id: `ref_${refNum}`,
+          children: [new TextRun({ text: prefix, font: FONT, size: SIZE, color: "000000" })],
+        }),
+        ...sourceParaChildren(rest),
+      ];
+    } else {
+      children = sourceParaChildren(cleaned);
+    }
+    return new Paragraph({
+      spacing: { line: LINE, lineRule: "auto", before: 0, after: Math.round(LINE * 0.3) },
+      alignment: AlignmentType.BOTH,
+      indent: { firstLine: INDENT },
+      children,
+    });
+  }
 
   const children = [];
 
@@ -342,8 +388,15 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
       children.push(heading1(sec.label));
       children.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
       txt.split("\n").forEach(line => {
-        const p = sourcePara(line);
-        if (p) children.push(p);
+        const cleaned = line.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1").trim();
+        const numMatch = cleaned.match(/^(\d+)[\.\)]/);
+        if (numMatch) {
+          const p = sourceParaWithBookmark(line, parseInt(numMatch[1]));
+          if (p) children.push(p);
+        } else {
+          const p = sourcePara(line);
+          if (p) children.push(p);
+        }
       });
       continue;
     }
