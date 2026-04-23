@@ -317,6 +317,64 @@ function mapCORE(result) {
   };
 }
 
+// ── OpenAlex книги (тип book/monograph, україномовні) ──
+async function fetchOpenAlexBooks(query, limit) {
+  try {
+    const yr = 'publication_year:>2014';
+    const url = `${OA_BASE}?search=${encodeURIComponent(query)}&filter=type:book,language:uk,${yr}&per_page=${limit}&select=${OA_FIELDS}`;
+    const r = await fetch(url, { cache: 'no-store' });
+    if (!r.ok) return [];
+    const d = await r.json();
+    return (d.results || [])
+      .filter(p => p.title && !isBlocked(p))
+      .map(p => ({ ...mapOpenAlex(p, 'uk'), type: 'book' }));
+  } catch { return []; }
+}
+
+// ── CrossRef монографії ──
+async function fetchCrossRefBooks(query, limit) {
+  try {
+    const url = `https://api.crossref.org/works?query=${encodeURIComponent(query)}&filter=type:monograph&rows=${Math.min(limit, 10)}`;
+    const r = await fetch(url, {
+      cache: 'no-store',
+      headers: { 'User-Agent': 'AcademAssist/1.0 (mailto:support@academ-assist.vercel.app)' },
+    });
+    if (!r.ok) return [];
+    const d = await r.json();
+    return (d.message?.items || [])
+      .filter(p => p.title?.[0] && hasCyrillic(p.title[0]) && !isBlocked(p))
+      .map(p => ({
+        id: p.DOI || String(Math.random()),
+        title: p.title[0],
+        authors: (p.author || []).slice(0, 3)
+          .map(a => [a.family, a.given?.[0]].filter(Boolean).join(' ')).filter(Boolean),
+        year: p.published?.['date-parts']?.[0]?.[0]
+          || p['published-print']?.['date-parts']?.[0]?.[0] || '',
+        venue: p['container-title']?.[0] || p.publisher || '',
+        doi: p.DOI || '',
+        pages: '',
+        lang: 'uk',
+        source: 'crossref',
+        type: 'book',
+        url: p.DOI ? `https://doi.org/${p.DOI}` : '',
+      }));
+  } catch { return []; }
+}
+
+// ── Google Books через Serper.dev (проксі /api/search-books) ──
+async function fetchBooksSerper(query, limit) {
+  try {
+    const res = await fetch('/api/search-books', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, limit }),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.sources || []).filter(p => p.title && !isBlocked(p));
+  } catch { return []; }
+}
+
 // ── CrossRef (добре покриває укр. журнали з DOI) ──
 async function fetchCrossRefUkrainian(query, limit) {
   const url = `https://api.crossref.org/works?query=${encodeURIComponent(query)}&filter=from-pub-date:2020&rows=${Math.min(limit * 2, 20)}`;
@@ -431,7 +489,7 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
   const enQ = enKeywords[0] || '';
   const plQ = enQ || p0;
 
-  const [r1, r2, r3, r4, r5, r6, r7, r8, r9] = await Promise.allSettled([
+  const [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12] = await Promise.allSettled([
     openAlexSearch(p0, `language:uk,${yr}`, fetchLimit, oaPage),            // r1: full-text uk, p0
     fetchCrossRefUkrainian(p0, fetchLimit),                                  // r2: CrossRef uk, p0
     openAlexTitleSearch(p1, ['language:uk', yr], fetchLimit, oaPage),        // r3: title uk, p1
@@ -441,6 +499,9 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
     openAlexTitleSearch(p2, ['language:uk', yr], fetchLimit, oaPage),        // r7: title uk, p2
     openAlexSearch(plQ, `language:pl,${yr}`, fetchLimit, oaPage),            // r8: польські full-text
     openAlexTitleSearch(plQ, ['language:pl', yr], fetchLimit, oaPage),       // r9: польські title
+    fetchOpenAlexBooks(p0, fetchLimit),                                       // r10: книги OpenAlex
+    fetchCrossRefBooks(p0, fetchLimit),                                       // r11: монографії CrossRef
+    fetchBooksSerper(p0, 8),                                                  // r12: Google Books Serper
   ]);
 
   const mapOA = (r, lang) => r.status === 'fulfilled'
@@ -517,9 +578,33 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
   const ukSeen = new Set(boosted.slice(0, target).map(p => (p.title || '').toLowerCase().slice(0, 60)));
   const foreignFiltered = foreignScored.filter(p => !ukSeen.has((p.title || '').toLowerCase().slice(0, 60)));
 
+  // ── Книги: OpenAlex + CrossRef + Serper ──
+  const fromOABooks    = r10.status === 'fulfilled' ? r10.value : [];
+  const fromCRBooks    = r11.status === 'fulfilled' ? r11.value : [];
+  const fromSerperBooks = r12.status === 'fulfilled' ? r12.value : [];
+
+  const allArticlesSeen = new Set([
+    ...boosted.slice(0, target).map(p => (p.title || '').toLowerCase().slice(0, 60)),
+    ...foreignFiltered.slice(0, maxForeign).map(p => (p.title || '').toLowerCase().slice(0, 60)),
+  ]);
+  const booksSeen = new Set(allArticlesSeen);
+  const booksPool = [];
+  for (const p of [...fromOABooks, ...fromCRBooks, ...fromSerperBooks]) {
+    const key = (p.title || '').toLowerCase().slice(0, 60);
+    if (!key || booksSeen.has(key)) continue;
+    booksSeen.add(key);
+    booksPool.push(p);
+  }
+  const maxBooks = Math.max(2, Math.ceil(needed * 0.4));
+  const booksScored = booksPool
+    .map(p => ({ ...p, _score: scoreRelevance((p.title || '').toLowerCase(), allUkKeywords) }))
+    .sort((a, b) => b._score - a._score)
+    .slice(0, maxBooks);
+
   const flat = [
     ...boosted.slice(0, target),
     ...foreignFiltered.slice(0, maxForeign),
+    ...booksScored,
   ];
 
   // Групи по Gemini-фразах (порожні якщо фрази не надано)

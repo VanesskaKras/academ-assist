@@ -54,6 +54,13 @@ function SourceCard({ paper, checked, onToggle }) {
             background: langBg, color: langColor, border: `1px solid ${langBorder}`,
             flexShrink: 0,
           }}>{langLabel}</span>
+          {paper.type === 'book' && (
+            <span style={{
+              fontSize: 10, padding: '1px 6px', borderRadius: 8,
+              background: '#fff5e0', color: '#8a5a00', border: '1px solid #e8c870',
+              flexShrink: 0,
+            }}>📚 книга</span>
+          )}
         </div>
         <div style={{ fontSize: 12, color: '#1a1a14', lineHeight: '1.4', marginBottom: 2 }}>
           {paper.title.length > 120 ? paper.title.slice(0, 120) + '…' : paper.title}
