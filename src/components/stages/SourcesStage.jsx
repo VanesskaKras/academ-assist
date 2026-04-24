@@ -8,7 +8,8 @@ import { SpinDot } from "../SpinDot.jsx";
 function paperToCitation(paper) {
   const authorsList = Array.isArray(paper.authors) ? paper.authors : [];
   const authors = authorsList.length ? authorsList.join(', ') : 'Автор невідомий';
-  const venue = paper.venue ? ` ${paper.venue}.` : '';
+  const isDomainLike = paper.venue && /^[\w.-]+\.[a-zA-Z]{2,}$/.test(paper.venue.trim());
+  const venue = (paper.venue && !isDomainLike) ? ` ${paper.venue}.` : '';
   const pages = paper.pages
     ? ` ${paper.lang === 'en' ? 'P.' : 'С.'} ${paper.pages}.`
     : '';

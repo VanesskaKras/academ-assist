@@ -77,6 +77,8 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     });
   }
   const numberedContent = renumberTablesAndFigures(content, displayOrder);
+  Object.keys(numberedContent).forEach(k => { if (numberedContent[k]) numberedContent[k] = numberedContent[k].replace(/'/g, '\u2019'); });
+  const normAppendices = appendicesText ? appendicesText.replace(/'/g, '\u2019') : appendicesText;
 
   const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel, TableOfContents, Table, TableRow, TableCell, WidthType, BorderStyle, ExternalHyperlink, InternalHyperlink, Bookmark } = window.docx;
   const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
@@ -205,10 +207,11 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
         continue;
       }
       if (/^Таблиця\s+\d/.test(line.trim())) {
-        const tf = methodInfo?.formatting?.tableFormat || "";
-        const tAlignRight = /правий|right/i.test(tf);
-        const tCenter = /по\s*центру.*назв|назв.*по\s*центру/i.test(tf);
-        const tBold = /жирн|bold/i.test(tf);
+        const fmt = methodInfo?.formatting || {};
+        const tf = fmt.tableFormat || "";
+        const tAlignRight = fmt.tableNumberRight ?? /правий|right|справа|верхн.*кут/i.test(tf);
+        const tCenter    = fmt.tableTitleCenter ?? /по\s*центру.*назв|назв.*по\s*центру|центр/i.test(tf);
+        const tBold      = fmt.tableTitleBold   ?? /жирн|bold/i.test(tf);
         const tTwoLine = tAlignRight && (tCenter || tBold);
         const tAlign = tAlignRight ? AlignmentType.RIGHT : AlignmentType.BOTH;
         const dashIdx = line.search(/ [–\-] /);
@@ -425,10 +428,10 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     children.push(...makeBlocks(txt, sec.label));
   }
 
-  if (appendicesText && appendicesText.trim()) {
+  if (normAppendices && normAppendices.trim()) {
     children.push(new Paragraph({ pageBreakBefore: true, spacing: { before: 0, after: 0, line: LINE, lineRule: "auto" }, children: [] }));
     children.push(heading1("ДОДАТКИ"));
-    appendicesText.split("\n").forEach(line => {
+    normAppendices.split("\n").forEach(line => {
       const raw = line.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1").trim();
       if (!raw) {
         children.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
@@ -608,6 +611,7 @@ export async function exportAppendixToDocx(text, info, methodInfo) {
     return new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows });
   }
 
+  if (text) text = text.replace(/'/g, '\u2019');
   const children = [];
   const lines = text.split("\n");
   let i = 0;
@@ -624,10 +628,11 @@ export async function exportAppendixToDocx(text, info, methodInfo) {
       continue;
     }
     if (/^Таблиця\s+\d/.test(line.trim())) {
-      const tf = methodInfo?.formatting?.tableFormat || "";
-      const tAlignRight = /правий|right/i.test(tf);
-      const tCenter = /по\s*центру.*назв|назв.*по\s*центру/i.test(tf);
-      const tBold = /жирн|bold/i.test(tf);
+      const fmt = methodInfo?.formatting || {};
+      const tf = fmt.tableFormat || "";
+      const tAlignRight = fmt.tableNumberRight ?? /правий|right|справа|верхн.*кут/i.test(tf);
+      const tCenter    = fmt.tableTitleCenter ?? /по\s*центру.*назв|назв.*по\s*центру|центр/i.test(tf);
+      const tBold      = fmt.tableTitleBold   ?? /жирн|bold/i.test(tf);
       const tTwoLine = tAlignRight && (tCenter || tBold);
       const dashIdx = line.search(/ [–\-] /);
       if (tTwoLine && dashIdx !== -1) {
@@ -741,6 +746,7 @@ export async function exportSpeechToDocx(text, info, methodInfo) {
   const T = mmToTwip(marg.top    || 20);
   const B = mmToTwip(marg.bottom || 20);
   const INDENT = 709, LINE = 360;
+  if (text) text = text.replace(/'/g, '\u2019');
 
   const children = text.split("\n").map(line => {
     const raw = line.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1").trim();
