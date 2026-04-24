@@ -945,7 +945,7 @@ ${conclReq ? `ВИМОГИ МЕТОДИЧКИ: ${conclReq}\n` : ""}${commentAnal
       const chapConclReq = methodInfo?.chapterConclusionRequirements || "стисло підсумуй основні думки підрозділів, кожен абзац = один підрозділ";
       instruction = `Напиши "Висновки до розділу ${chapNum}" для ${d.type} на тему "${d.topic}".
 ${methodInfo?.chapterConclusionRequirements ? `ВИМОГИ МЕТОДИЧКИ: ${methodInfo.chapterConclusionRequirements}` : ""}
-Обсяг: 1 сторінка (~4-5 абзаців). ${chapConclReq}.
+Обсяг: 120–150 слів (не більше).
 Без нової інформації. Без посилань. Без жирного. Без нумерації. Пиши суцільними абзацами.
 Спирайся на повний текст підрозділів розділу ${chapNum} (є в контексті).`;
     } else {
@@ -993,6 +993,9 @@ ${methodInfo?.chapterConclusionRequirements ? `ВИМОГИ МЕТОДИЧКИ: 
         : "";
 
       const empCommentHints = commentAnalysis?.empiricalHints;
+      const methodInfoHasEmpirical = !!(methodInfo && /анкет|опитуванн|емпіричн|респондент|вибірк/i.test(
+        [methodInfo.analysisRequirements, methodInfo.otherRequirements, methodInfo.theoryRequirements].filter(Boolean).join(" ")
+      ));
       const empSampleLine = empCommentHints
         ? `ВИМОГА КЛІЄНТА: ${empCommentHints}`
         : methodInfo?.otherRequirements && /учасник|респондент|вибірк|осіб/i.test(methodInfo.otherRequirements)
@@ -1023,6 +1026,34 @@ ${appendixBlock}Цей підрозділ має містити емпіричн
 4. Результати: таблиця markdown (|---|---| формат) з відсотковими показниками по запитаннях з Додатку А.
 5. Аналіз: інтерпретація результатів таблиці, зв'язок із темою.
 6. В тексті додай: "Анкета наведена у Додатку А."`;
+      } else if ((empCommentHints || methodInfoHasEmpirical) && ["analysis", "recommendations"].includes(sec.type)) {
+        // Клієнт або методичка вказали емпіричне дослідження але робота не психолого-педагогічна (напр. фізична культура, спорт)
+        const practicalSecs = sections.filter(s => ["analysis", "recommendations"].includes(s.type));
+        const secIdx = practicalSecs.findIndex(s => s.id === sec.id);
+        if (secIdx === 0) {
+          empiricalBlock = `
+
+ОБОВ'ЯЗКОВО для цього підрозділу (емпіричне дослідження):
+${appendixBlock}ВИМОГА КЛІЄНТА: ${empCommentHints}
+1. Опиши організацію дослідження: вибірку відповідно до вимог клієнта (кількість, категорії, критерії відбору), біографічний блок анкети.
+2. Метод: анкетування. Мета анкети, кількість запитань — точно як в Додатку А.
+3. Принцип проведення: умови та порядок анкетування, якщо є кілька груп — опиши кожну окремо.
+4. Результати: таблиця markdown (|---|---| формат) з відсотковими показниками по запитаннях з Додатку А.
+5. Аналіз: інтерпретація результатів, порівняння груп якщо є кілька категорій респондентів.
+6. В тексті додай: "Анкета наведена у Додатку А."`;
+        } else if (secIdx < practicalSecs.length - 1) {
+          empiricalBlock = `
+
+КОНТЕКСТ (емпіричне дослідження):
+${appendixBlock}Цей підрозділ продовжує аналіз результатів дослідження. ВИМОГА КЛІЄНТА: ${empCommentHints}
+Подай результати у вигляді таблиці markdown (|---|---| формат) з відсотковими показниками. Якщо є кілька груп респондентів — порівняй їх між собою окремою таблицею. Проаналізуй дані. Зроби висновки. Не повторюй опис вибірки та методики.`;
+        } else {
+          empiricalBlock = `
+
+КОНТЕКСТ (емпіричне дослідження):
+${appendixBlock}Цей підрозділ формулює рекомендації на основі результатів дослідження. ВИМОГА КЛІЄНТА: ${empCommentHints}
+Спирайся на результати анкетування описані в попередніх підрозділах. Не повторюй опис вибірки та методики.`;
+        }
       }
 
       // sources-first: додаємо джерела як контекст для генерації
@@ -1182,6 +1213,9 @@ ${methodInfo?.conclusionsRequirements ? `ВИМОГИ МЕТОДИЧКИ: ${meth
       }
 
       const empCommentHintsRegen = commentAnalysis?.empiricalHints;
+      const methodInfoHasEmpiricalRegen = !!(methodInfo && /анкет|опитуванн|емпіричн|респондент|вибірк/i.test(
+        [methodInfo.analysisRequirements, methodInfo.otherRequirements, methodInfo.theoryRequirements].filter(Boolean).join(" ")
+      ));
       const empSampleRegen = empCommentHintsRegen
         ? `ВИМОГА КЛІЄНТА: ${empCommentHintsRegen}`
         : methodInfo?.otherRequirements && /учасник|респондент|вибірк|осіб/i.test(methodInfo.otherRequirements)
@@ -1197,6 +1231,26 @@ ${methodInfo?.conclusionsRequirements ? `ВИМОГИ МЕТОДИЧКИ: ${meth
         empiricalBlockRegen = `
 
 ОБОВ'ЯЗКОВО: вибірка ${empSampleRegen}, метод анкетування, принцип проведення, таблиця результатів markdown, аналіз, "Анкета у Додатку А."`;
+      } else if ((empCommentHintsRegen || methodInfoHasEmpiricalRegen) && ["analysis", "recommendations"].includes(sec.type)) {
+        const practicalSecsRegen = sections.filter(s => ["analysis", "recommendations"].includes(s.type));
+        const secIdxRegen = practicalSecsRegen.findIndex(s => s.id === sec.id);
+        const empHintSourceRegen = empCommentHintsRegen || [methodInfo?.analysisRequirements, methodInfo?.otherRequirements, methodInfo?.theoryRequirements].filter(Boolean).join(" ");
+        if (secIdxRegen === 0) {
+          empiricalBlockRegen = `
+
+ОБОВ'ЯЗКОВО (емпіричне дослідження): ВИМОГА КЛІЄНТА: ${empHintSourceRegen}
+Організація дослідження: вибірка (кількість, категорії, критерії відбору), біографічний блок. Метод анкетування. Кілька груп — опиши кожну. Таблиця markdown з результатами. Аналіз і порівняння груп. "Анкета у Додатку А."`;
+        } else if (secIdxRegen < practicalSecsRegen.length - 1) {
+          empiricalBlockRegen = `
+
+КОНТЕКСТ (емпіричне дослідження): ВИМОГА КЛІЄНТА: ${empHintSourceRegen}
+Таблиця markdown з результатами. Якщо кілька груп — порівняльна таблиця. Аналіз. Без повтору опису вибірки.`;
+        } else {
+          empiricalBlockRegen = `
+
+КОНТЕКСТ (емпіричне дослідження): ВИМОГА КЛІЄНТА: ${empHintSourceRegen}
+Рекомендації на основі результатів анкетування. Без повтору опису вибірки та методики.`;
+        }
       }
 
       const clientReqsRegen = [
@@ -1599,7 +1653,7 @@ ${methodInfo?.conclusionsRequirements ? `ВИМОГИ МЕТОДИЧКИ: ${meth
         const chapNum = sec.chapterNum || sec.id.split(".")[0];
         instruction = `Напиши "Висновки до розділу ${chapNum}" для ${d.type} на тему "${d.topic}".
 ${methodInfo?.chapterConclusionRequirements ? `ВИМОГИ МЕТОДИЧКИ: ${methodInfo.chapterConclusionRequirements}` : ""}
-Обсяг: ~4-5 абзаців. Без нової інформації. Без посилань. Без жирного. Без нумерації. Суцільними абзацами.
+Обсяг: 120–150 слів (не більше). Без нової інформації. Без посилань. Без жирного. Без нумерації. Суцільними абзацами.
 Спирайся на повний текст підрозділів розділу ${chapNum} (є в контексті).`;
 
       } else {

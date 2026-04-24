@@ -114,7 +114,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
       }
       result.push(new InternalHyperlink({
         anchor: `ref_${match[1]}`,
-        children: [new TextRun({ text: match[0], font: FONT, size: SIZE, color: "0563C1", underline: {} })],
+        children: [new TextRun({ text: match[0], font: FONT, size: SIZE, color: "000000" })],
       }));
       lastIndex = match.index + match[0].length;
     }
@@ -362,6 +362,10 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     alignment: AlignmentType.CENTER,
     spacing: { line: LINE_SINGLE, lineRule: "auto", before: 0, after: LINE_SINGLE * 2 },
     children: [new TextRun({ text: "ЗМІСТ", font: FONT, size: SIZE, bold: true, color: "000000" })],
+  }));
+  children.push(new Paragraph({
+    spacing: { line: LINE_SINGLE, lineRule: "auto", before: 0, after: 0 },
+    children: [],
   }));
 
   let lastChapter = null;

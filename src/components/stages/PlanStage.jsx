@@ -154,41 +154,66 @@ export function PlanStage({
           )}
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
             <NavBtn onClick={() => setStage("parsed")}>← Назад</NavBtn>
-            {Object.keys(content).length > 0 && (
-              <NavBtn onClick={() => setStage(workflowMode === "sources-first" ? "sources" : "writing")}>
-                Вперед (продовжити) →
-              </NavBtn>
-            )}
           </div>
 
-          {/* Вибір режиму */}
-          <div style={{ marginTop: 16, padding: "16px 18px", background: "#f0f5e8", border: "1.5px solid #c8dfa0", borderRadius: 8 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: "#2a4010", marginBottom: 12 }}>Оберіть порядок роботи:</div>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <button
-                onClick={() => startGen("sources-first")}
-                style={{
-                  flex: 1, minWidth: 200, padding: "12px 16px", borderRadius: 8, cursor: "pointer",
-                  fontFamily: "'Spectral',serif", fontSize: 13, textAlign: "left", lineHeight: 1.5,
-                  background: "#2a3a1a", color: "#e8ff47", border: "2px solid #5a9a1a",
-                }}
-              >
-                <div style={{ fontWeight: 600, marginBottom: 4 }}>Спочатку джерела →</div>
-                <div style={{ fontSize: 11, color: "#a8d060", opacity: 0.9 }}>Знайдіть джерела, потім AI пише текст спираючись на них і вставляє [1][2] одразу</div>
-              </button>
-              <button
-                onClick={() => startGen("text-first")}
-                style={{
-                  flex: 1, minWidth: 200, padding: "12px 16px", borderRadius: 8, cursor: "pointer",
-                  fontFamily: "'Spectral',serif", fontSize: 13, textAlign: "left", lineHeight: 1.5,
-                  background: "#1a1a14", color: "#f5f2eb", border: "2px solid #555",
-                }}
-              >
-                <div style={{ fontWeight: 600, marginBottom: 4 }}>Спочатку текст →</div>
-                <div style={{ fontSize: 11, color: "#aaa", opacity: 0.9 }}>AI генерує текст без посилань, потім ви додаєте джерела і розставляєте їх окремо</div>
-              </button>
+          {/* Вибір режиму або продовження */}
+          {Object.keys(content).length > 0 ? (
+            <div style={{ marginTop: 16, padding: "16px 18px", background: "#f0f5e8", border: "1.5px solid #c8dfa0", borderRadius: 8 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#2a4010", marginBottom: 12 }}>Текст вже згенеровано — продовжте роботу:</div>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <button
+                  onClick={() => setStage(workflowMode === "sources-first" ? "sources" : "writing")}
+                  style={{
+                    flex: 1, minWidth: 200, padding: "12px 16px", borderRadius: 8, cursor: "pointer",
+                    fontFamily: "'Spectral',serif", fontSize: 13, textAlign: "left", lineHeight: 1.5,
+                    background: "#2a3a1a", color: "#e8ff47", border: "2px solid #5a9a1a",
+                  }}
+                >
+                  <div style={{ fontWeight: 600, marginBottom: 4 }}>Продовжити →</div>
+                  <div style={{ fontSize: 11, color: "#a8d060", opacity: 0.9 }}>Повернутись до вже згенерованого тексту</div>
+                </button>
+                <button
+                  onClick={() => { if (window.confirm("Увага! Весь згенерований текст буде стерто. Продовжити?")) startGen(workflowMode || "sources-first"); }}
+                  style={{
+                    padding: "12px 16px", borderRadius: 8, cursor: "pointer",
+                    fontFamily: "'Spectral',serif", fontSize: 12, textAlign: "left", lineHeight: 1.5,
+                    background: "transparent", color: "#888", border: "1.5px dashed #ccc",
+                  }}
+                >
+                  <div style={{ fontWeight: 600, marginBottom: 4 }}>Генерувати заново</div>
+                  <div style={{ fontSize: 11, opacity: 0.8 }}>Стере поточний текст</div>
+                </button>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div style={{ marginTop: 16, padding: "16px 18px", background: "#f0f5e8", border: "1.5px solid #c8dfa0", borderRadius: 8 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#2a4010", marginBottom: 12 }}>Оберіть порядок роботи:</div>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <button
+                  onClick={() => startGen("sources-first")}
+                  style={{
+                    flex: 1, minWidth: 200, padding: "12px 16px", borderRadius: 8, cursor: "pointer",
+                    fontFamily: "'Spectral',serif", fontSize: 13, textAlign: "left", lineHeight: 1.5,
+                    background: "#2a3a1a", color: "#e8ff47", border: "2px solid #5a9a1a",
+                  }}
+                >
+                  <div style={{ fontWeight: 600, marginBottom: 4 }}>Спочатку джерела →</div>
+                  <div style={{ fontSize: 11, color: "#a8d060", opacity: 0.9 }}>Знайдіть джерела, потім AI пише текст спираючись на них і вставляє [1][2] одразу</div>
+                </button>
+                <button
+                  onClick={() => startGen("text-first")}
+                  style={{
+                    flex: 1, minWidth: 200, padding: "12px 16px", borderRadius: 8, cursor: "pointer",
+                    fontFamily: "'Spectral',serif", fontSize: 13, textAlign: "left", lineHeight: 1.5,
+                    background: "#1a1a14", color: "#f5f2eb", border: "2px solid #555",
+                  }}
+                >
+                  <div style={{ fontWeight: 600, marginBottom: 4 }}>Спочатку текст →</div>
+                  <div style={{ fontSize: 11, color: "#aaa", opacity: 0.9 }}>AI генерує текст без посилань, потім ви додаєте джерела і розставляєте їх окремо</div>
+                </button>
+              </div>
+            </div>
+          )}
         </>
       ) : (
         <div style={{ color: "#888", fontSize: 14 }}>
