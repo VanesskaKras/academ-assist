@@ -2823,6 +2823,7 @@ ${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
             stopGen={stopGen} resumeGen={resumeGen} doRegenAll={doRegenAll}
             doRegenSection={doRegenSection} setStage={setStage} workflowMode={workflowMode}
             doRemapCitations={doRemapCitations} remapLoading={remapLoading}
+            appendicesText={appendicesText} appendicesLoading={appendicesLoading}
           />
         )}
         {stage === "sources" && (

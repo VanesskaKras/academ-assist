@@ -7,6 +7,7 @@ export function WritingStage({
   displayOrder, sections, genIdx, content, regenAllAbortRef,
   stopGen, resumeGen, doRegenAll, doRegenSection, setStage, workflowMode,
   doRemapCitations, remapLoading,
+  appendicesText, appendicesLoading,
 }) {
   return (
     <div className="fade">
@@ -74,6 +75,19 @@ export function WritingStage({
           </div>
         );
       })}
+
+      {/* ── Додаток А (генерується у фоні) ── */}
+      {(appendicesLoading || appendicesText) && (
+        <div style={{ border: "1.5px solid #3a4a1a", borderRadius: 8, marginBottom: 10, overflow: "hidden" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 16px", background: "#1a2a0a", borderBottom: appendicesText ? "1px solid #2a3a10" : "none" }}>
+            <div style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, background: appendicesText ? "#a8e060" : "#555", animation: appendicesLoading && !appendicesText ? "pl 1.2s ease-in-out infinite" : "none" }} />
+            <div style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "#c8e890" }}>ДОДАТОК А</div>
+            {appendicesLoading && !appendicesText && <span style={{ fontSize: 11, color: "#7ab840", display: "inline-flex", alignItems: "center", gap: 6 }}><SpinDot />Генерую анкету...</span>}
+            {appendicesText && <button onClick={() => navigator.clipboard.writeText(appendicesText)} style={{ background: "transparent", border: "1px solid #4a6a20", color: "#7ab840", borderRadius: 5, padding: "3px 10px", fontSize: 10, cursor: "pointer", fontFamily: "'Spectral',serif", letterSpacing: 1 }}>COPY</button>}
+          </div>
+          {appendicesText && <div style={{ padding: "14px 18px", fontSize: 12, lineHeight: "1.85", color: "#2a3a1e", whiteSpace: "pre-wrap", maxHeight: 260, overflowY: "auto", background: "#f5faf0" }}>{appendicesText}</div>}
+        </div>
+      )}
 
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 24 }}>
         <NavBtn onClick={() => setStage(workflowMode === "sources-first" ? "sources" : "plan")} disabled={running}>
