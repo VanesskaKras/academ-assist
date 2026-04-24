@@ -10,7 +10,7 @@ import { exportToPptxFile } from "./lib/exportPptx.js";
 import { callClaude, callGemini, MODEL, MODEL_FAST } from "./lib/api.js";
 import { playDoneSound } from "./lib/audio.js";
 import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, METHODOLOGY_READING_PROMPT, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt } from "./lib/prompts.js";
-import { FIELD_LABELS, isPsychoPed, isEcon, getEmpiricalSections, getEconSections, STAGES_TEXT_FIRST, STAGE_KEYS_TEXT_FIRST, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan } from "./lib/planUtils.js";
+import { FIELD_LABELS, isPsychoPed, isEcon, hasEmpiricalResearch, getEmpiricalSections, getEconSections, STAGES_TEXT_FIRST, STAGE_KEYS_TEXT_FIRST, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { searchByPhrase, filterSourcesWithGemini } from "./lib/sourcesSearch.js";
 import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
@@ -731,8 +731,8 @@ Return ONLY JSON without markdown:
     const ORDER = ["theory", "analysis", "recommendations", "chapter_conclusion", "intro", "conclusions", "sources"];
     setSections(prev => [...prev].sort((a, b) => ORDER.indexOf(a.type) - ORDER.indexOf(b.type)));
     setContent({}); setGenIdx(0); setPaused(false); writingDoneRef.current = false;
-    // Генеруємо додатки у фоні (не блокуємо перехід)
-    if (!appendicesText) doGenAppendices();
+    // Генеруємо додатки у фоні тільки якщо є емпіричне дослідження
+    if (!appendicesText && (hasEmpiricalResearch(commentAnalysis, methodInfo) || isPsychoPed(info))) doGenAppendices();
     const nextStage = newMode === "sources-first" ? "sources" : "writing";
     setStage(nextStage);
     saveToFirestore({ workflowMode: newMode, stage: nextStage, status: "writing" });
@@ -816,8 +816,10 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
     }
     // Емпіричні підрозділи потребують готового Додатку А — чекаємо якщо він ще генерується
     if (appendicesLoading && !appendicesText && info) {
-      const empSecs = getEmpiricalSections(sections, info);
-      if (empSecs.chapterSectionIds.includes(sec.id) || sec.id === empSecs.anchorId) return;
+      const empSecs = getEmpiricalSections(sections, info, commentAnalysis, methodInfo);
+      const hasEmpirical = hasEmpiricalResearch(commentAnalysis, methodInfo);
+      if (empSecs.chapterSectionIds.includes(sec.id) || sec.id === empSecs.anchorId ||
+          (hasEmpirical && ["analysis", "recommendations"].includes(sec.type))) return;
     }
     runSection(sec);
   }, [stage, genIdx, paused, sections, appendicesText, appendicesLoading]);
@@ -992,67 +994,72 @@ ${methodInfo?.chapterConclusionRequirements ? `ВИМОГИ МЕТОДИЧКИ: 
         ? `\nДОДАТОК А (вже згенерований — спирайся на нього точно):\n${appendicesText}\n`
         : "";
 
-      const empCommentHints = commentAnalysis?.empiricalHints;
-      const methodInfoHasEmpirical = !!(methodInfo && /анкет|опитуванн|емпіричн|респондент|вибірк/i.test(
+      const rd = commentAnalysis?.researchDesign ?? (commentAnalysis?.empiricalHints ? { instrumentType: "questionnaire", groups: [], comparisonRequired: false, biographicalFields: [], statisticalMinN: null } : null);
+      const methodInfoHasEmpirical = !!(methodInfo && /анкет|опитуванн|емпіричн|респондент|вибірк|тест|експеримент|методик/i.test(
         [methodInfo.analysisRequirements, methodInfo.otherRequirements, methodInfo.theoryRequirements].filter(Boolean).join(" ")
       ));
-      const empSampleLine = empCommentHints
-        ? `ВИМОГА КЛІЄНТА: ${empCommentHints}`
-        : methodInfo?.otherRequirements && /учасник|респондент|вибірк|осіб/i.test(methodInfo.otherRequirements)
-          ? `ВИМОГА МЕТОДИЧКИ: ${methodInfo.otherRequirements}`
-          : "20-30 респондентів: вік, категорія, умови відбору";
-      const empAnchorSample = empCommentHints
-        ? `ВИМОГА КЛІЄНТА: ${empCommentHints}`
-        : methodInfo?.otherRequirements && /учасник|респондент|вибірк|осіб/i.test(methodInfo.otherRequirements)
-          ? `ВИМОГА МЕТОДИЧКИ: ${methodInfo.otherRequirements}`
-          : "25-30 респондентів (вік, категорія, умови відбору)";
+      const hasEmpirical = !!(rd || methodInfoHasEmpirical);
+
+      // Будуємо читабельний рядок з researchDesign або fallback
+      const buildEmpHint = (rd, legacyHint) => {
+        if (!rd) return legacyHint || "";
+        const parts = [];
+        if (rd.groups?.length) parts.push(`Групи: ${rd.groups.map(g => `${g.name}${g.minN ? ` (n≥${g.minN})` : ""}${g.criteria ? `, ${g.criteria}` : ""}`).join("; ")}.`);
+        if (rd.biographicalFields?.length) parts.push(`Біографічний блок: ${rd.biographicalFields.join(", ")}.`);
+        if (rd.statisticalMinN) parts.push(`Мін. вибірка: ${rd.statisticalMinN} осіб.`);
+        if (rd.comparisonRequired) parts.push("Порівняння між групами обов'язкове.");
+        return parts.join(" ") || legacyHint || "";
+      };
+      const empHint = buildEmpHint(rd, commentAnalysis?.empiricalHints || (methodInfo?.otherRequirements && /учасник|респондент|вибірк|осіб/i.test(methodInfo.otherRequirements) ? methodInfo.otherRequirements : "20-30 респондентів"));
+
+      const hasMultipleGroups = (rd?.groups?.length || 0) > 1;
+      const comparisonRequired = rd?.comparisonRequired || hasMultipleGroups;
+      const bioDesc = rd?.biographicalFields?.length ? rd.biographicalFields.join(", ") : "ПІБ, вік, стаж, кваліфікація";
+      const tableDataSource = appendicesText ? "по запитаннях з Додатку А" : "з репрезентативними відсотковими показниками за темою дослідження";
+      const appendixRef = appendicesText ? '\nДодай речення: "Анкета наведена у Додатку А."' : "";
+      const compTableInstruction = comparisonRequired ? `\nПорівняльна таблиця: ОБОВ'ЯЗКОВО окрема таблиця markdown що порівнює ключові показники між групами.` : "";
 
       if (isEmpChapter) {
         empiricalBlock = `
 
-КОНТЕКСТ (психолого-педагогічне емпіричне дослідження):
-${appendixBlock}Цей підрозділ є частиною емпіричного дослідження. Визнач за назвою підрозділу що саме писати:
-- якщо підрозділ про організацію або методику дослідження: опиши вибірку (${empSampleLine}), метод анкетування, мету та кількість запитань точно як в Додатку А, принцип проведення. Додай речення: "Анкета наведена у Додатку А."
-- якщо підрозділ про аналіз або результати: подай результати у вигляді таблиці markdown (|---|---| формат) з відсотковими показниками по запитаннях з Додатку А, проаналізуй дані, зроби висновки
-- якщо підрозділ про рекомендації або практичні висновки: спирайся на результати анкетування вже описані в попередніх підрозділах, не повторюй опис анкети та вибірки`;
+КОНТЕКСТ (емпіричне дослідження):
+${appendixBlock}${empHint ? `ВИМОГА: ${empHint}\n` : ""}Цей підрозділ є частиною емпіричного дослідження. Визнач за назвою підрозділу що саме писати:
+- якщо підрозділ про організацію або методику дослідження: опиши вибірку (групи, кількість, критерії відбору), біографічний блок анкети (${bioDesc}), метод та принцип проведення.${appendixRef}
+- якщо підрозділ про аналіз або результати: таблиця markdown ${tableDataSource}, аналіз даних.${compTableInstruction}
+- якщо підрозділ про рекомендації: спирайся на результати з попередніх підрозділів, не повторюй опис вибірки.`;
       } else if (isEmpAnchor) {
         empiricalBlock = `
 
-ОБОВ'ЯЗКОВО для цього підрозділу (психолого-педагогічне дослідження):
-${appendixBlock}Цей підрозділ має містити емпіричне дослідження що відповідає Додатку А:
-1. Вибірка: ${empAnchorSample}.
-2. Метод: анкетування. Мета анкети, кількість запитань — точно як в Додатку А.
-3. Принцип проведення: умови та порядок анкетування.
-4. Результати: таблиця markdown (|---|---| формат) з відсотковими показниками по запитаннях з Додатку А.
-5. Аналіз: інтерпретація результатів таблиці, зв'язок із темою.
-6. В тексті додай: "Анкета наведена у Додатку А."`;
-      } else if ((empCommentHints || methodInfoHasEmpirical) && ["analysis", "recommendations"].includes(sec.type)) {
-        // Клієнт або методичка вказали емпіричне дослідження але робота не психолого-педагогічна (напр. фізична культура, спорт)
+ОБОВ'ЯЗКОВО для цього підрозділу (емпіричне дослідження):
+${appendixBlock}${empHint ? `ВИМОГА: ${empHint}\n` : ""}1. Вибірка: ${rd?.groups?.length ? rd.groups.map(g => `${g.name}${g.minN ? ` — мін. ${g.minN} осіб` : ""}${g.criteria ? ` (${g.criteria})` : ""}`).join("; ") : "25-30 осіб (вік, категорія, умови відбору)"}.
+2. Біографічний блок анкети: ${bioDesc}.
+3. Метод: ${rd?.instrumentType === "fitness_test" ? "фізичне тестування" : rd?.instrumentType === "psycho_scale" ? "психологічна методика/шкала" : rd?.instrumentType === "pedagogical_experiment" ? "педагогічний експеримент" : "анкетування"}. Мета, кількість запитань${appendicesText ? " — точно як в Додатку А" : " — відповідно до теми"}.
+4. Принцип проведення: умови та порядок.
+5. Результати: таблиця markdown (|---|---| формат) ${tableDataSource}.${compTableInstruction}
+6. Аналіз: інтерпретація результатів.${appendixRef}`;
+      } else if (hasEmpirical && ["analysis", "recommendations"].includes(sec.type)) {
         const practicalSecs = sections.filter(s => ["analysis", "recommendations"].includes(s.type));
         const secIdx = practicalSecs.findIndex(s => s.id === sec.id);
         if (secIdx === 0) {
           empiricalBlock = `
 
 ОБОВ'ЯЗКОВО для цього підрозділу (емпіричне дослідження):
-${appendixBlock}ВИМОГА КЛІЄНТА: ${empCommentHints}
-1. Опиши організацію дослідження: вибірку відповідно до вимог клієнта (кількість, категорії, критерії відбору), біографічний блок анкети.
-2. Метод: анкетування. Мета анкети, кількість запитань — точно як в Додатку А.
-3. Принцип проведення: умови та порядок анкетування, якщо є кілька груп — опиши кожну окремо.
-4. Результати: таблиця markdown (|---|---| формат) з відсотковими показниками по запитаннях з Додатку А.
-5. Аналіз: інтерпретація результатів, порівняння груп якщо є кілька категорій респондентів.
-6. В тексті додай: "Анкета наведена у Додатку А."`;
+${appendixBlock}${empHint ? `ВИМОГА: ${empHint}\n` : ""}1. Організація дослідження: ${rd?.groups?.length ? `вибірка по групах: ${rd.groups.map(g => `${g.name}${g.minN ? ` (n≥${g.minN})` : ""}${g.criteria ? `, ${g.criteria}` : ""}`).join("; ")}` : "вибірка — кількість, категорії, критерії відбору"}.
+2. Біографічний блок анкети: ${bioDesc}.
+3. Метод: ${rd?.instrumentType === "fitness_test" ? "фізичне тестування" : rd?.instrumentType === "psycho_scale" ? "психологічна методика/шкала" : rd?.instrumentType === "pedagogical_experiment" ? "педагогічний експеримент" : "анкетування"}. ${appendicesText ? "Мета та кількість запитань — точно як в Додатку А." : "Опиши мету та орієнтовну кількість питань."}
+4. Принцип проведення: умови та порядок, якщо кілька груп — опиши кожну окремо.
+5. Результати: таблиця markdown (|---|---| формат) ${tableDataSource}.${compTableInstruction}
+6. Аналіз: інтерпретація результатів.${appendixRef}`;
         } else if (secIdx < practicalSecs.length - 1) {
           empiricalBlock = `
 
 КОНТЕКСТ (емпіричне дослідження):
-${appendixBlock}Цей підрозділ продовжує аналіз результатів дослідження. ВИМОГА КЛІЄНТА: ${empCommentHints}
-Подай результати у вигляді таблиці markdown (|---|---| формат) з відсотковими показниками. Якщо є кілька груп респондентів — порівняй їх між собою окремою таблицею. Проаналізуй дані. Зроби висновки. Не повторюй опис вибірки та методики.`;
+${appendixBlock}${empHint ? `ВИМОГА: ${empHint}\n` : ""}Цей підрозділ продовжує аналіз результатів. Таблиця markdown (|---|---| формат) ${tableDataSource}.${compTableInstruction} Аналіз і висновки. Не повторюй опис вибірки та методики.`;
         } else {
           empiricalBlock = `
 
 КОНТЕКСТ (емпіричне дослідження):
-${appendixBlock}Цей підрозділ формулює рекомендації на основі результатів дослідження. ВИМОГА КЛІЄНТА: ${empCommentHints}
-Спирайся на результати анкетування описані в попередніх підрозділах. Не повторюй опис вибірки та методики.`;
+${appendixBlock}${empHint ? `ВИМОГА: ${empHint}\n` : ""}Рекомендації на основі результатів дослідження з попередніх підрозділів. Не повторюй опис вибірки та методики.`;
         }
       }
 
@@ -1212,44 +1219,62 @@ ${methodInfo?.conclusionsRequirements ? `ВИМОГИ МЕТОДИЧКИ: ${meth
         econBlockRegen = `${formulasBlock}${tablesBlock}${genericEcon}`;
       }
 
-      const empCommentHintsRegen = commentAnalysis?.empiricalHints;
-      const methodInfoHasEmpiricalRegen = !!(methodInfo && /анкет|опитуванн|емпіричн|респондент|вибірк/i.test(
+      const rdRegen = commentAnalysis?.researchDesign ?? (commentAnalysis?.empiricalHints ? { instrumentType: "questionnaire", groups: [], comparisonRequired: false, biographicalFields: [], statisticalMinN: null } : null);
+      const methodInfoHasEmpiricalRegen = !!(methodInfo && /анкет|опитуванн|емпіричн|респондент|вибірк|тест|експеримент|методик/i.test(
         [methodInfo.analysisRequirements, methodInfo.otherRequirements, methodInfo.theoryRequirements].filter(Boolean).join(" ")
       ));
-      const empSampleRegen = empCommentHintsRegen
-        ? `ВИМОГА КЛІЄНТА: ${empCommentHintsRegen}`
-        : methodInfo?.otherRequirements && /учасник|респондент|вибірк|осіб/i.test(methodInfo.otherRequirements)
-          ? `ВИМОГА МЕТОДИЧКИ: ${methodInfo.otherRequirements}`
-          : "20-30 осіб";
+      const hasEmpiricalRegen = !!(rdRegen || methodInfoHasEmpiricalRegen);
+      const empHintRegen = (() => {
+        if (!rdRegen) return commentAnalysis?.empiricalHints || "";
+        const parts = [];
+        if (rdRegen.groups?.length) parts.push(`Групи: ${rdRegen.groups.map(g => `${g.name}${g.minN ? ` (n≥${g.minN})` : ""}${g.criteria ? `, ${g.criteria}` : ""}`).join("; ")}.`);
+        if (rdRegen.biographicalFields?.length) parts.push(`Біографічний блок: ${rdRegen.biographicalFields.join(", ")}.`);
+        if (rdRegen.statisticalMinN) parts.push(`Мін. вибірка: ${rdRegen.statisticalMinN} осіб.`);
+        if (rdRegen.comparisonRequired) parts.push("Порівняння між групами обов'язкове.");
+        return parts.join(" ") || commentAnalysis?.empiricalHints || "";
+      })();
+      const hasMultipleGroupsRegen = (rdRegen?.groups?.length || 0) > 1;
+      const comparisonRequiredRegen = rdRegen?.comparisonRequired || hasMultipleGroupsRegen;
+      const bioDescRegen = rdRegen?.biographicalFields?.length ? rdRegen.biographicalFields.join(", ") : "ПІБ, вік, стаж, кваліфікація";
+      const appendixRefRegen = appendicesText ? '\nДодай речення: "Анкета наведена у Додатку А."' : "";
+      const compTableRegen = comparisonRequiredRegen ? `\nПорівняльна таблиця: ОБОВ'ЯЗКОВО окрема таблиця markdown що порівнює ключові показники між групами.` : "";
+      const tableSourceRegen = appendicesText ? "по запитаннях з Додатку А" : "з репрезентативними відсотковими показниками за темою";
 
       if (isEmpChapterRegen) {
         empiricalBlockRegen = `
 
-КОНТЕКСТ (психолого-педагогічне емпіричне дослідження):
-Визнач за назвою підрозділу що писати: організація/методика → вибірка ${empSampleRegen} + анкетування + "Анкета у Додатку А"; аналіз/результати → таблиці markdown + інтерпретація; рекомендації → на основі результатів без повтору опису анкети.`;
+КОНТЕКСТ (емпіричне дослідження):
+${empHintRegen ? `ВИМОГА: ${empHintRegen}\n` : ""}Визнач за назвою підрозділу що писати:
+- організація/методика: вибірка (групи, кількість, критерії), біографічний блок (${bioDescRegen}), метод та принцип проведення.${appendixRefRegen}
+- аналіз/результати: таблиця markdown ${tableSourceRegen}, аналіз.${compTableRegen}
+- рекомендації: на основі результатів з попередніх підрозділів, без повтору вибірки.`;
       } else if (isEmpAnchorRegen) {
         empiricalBlockRegen = `
 
-ОБОВ'ЯЗКОВО: вибірка ${empSampleRegen}, метод анкетування, принцип проведення, таблиця результатів markdown, аналіз, "Анкета у Додатку А."`;
-      } else if ((empCommentHintsRegen || methodInfoHasEmpiricalRegen) && ["analysis", "recommendations"].includes(sec.type)) {
+ОБОВ'ЯЗКОВО (емпіричне дослідження):
+${empHintRegen ? `ВИМОГА: ${empHintRegen}\n` : ""}Вибірка, біографічний блок (${bioDescRegen}), метод, принцип проведення, таблиця markdown ${tableSourceRegen}, аналіз.${compTableRegen}${appendixRefRegen}`;
+      } else if (hasEmpiricalRegen && ["analysis", "recommendations"].includes(sec.type)) {
         const practicalSecsRegen = sections.filter(s => ["analysis", "recommendations"].includes(s.type));
         const secIdxRegen = practicalSecsRegen.findIndex(s => s.id === sec.id);
-        const empHintSourceRegen = empCommentHintsRegen || [methodInfo?.analysisRequirements, methodInfo?.otherRequirements, methodInfo?.theoryRequirements].filter(Boolean).join(" ");
         if (secIdxRegen === 0) {
           empiricalBlockRegen = `
 
-ОБОВ'ЯЗКОВО (емпіричне дослідження): ВИМОГА КЛІЄНТА: ${empHintSourceRegen}
-Організація дослідження: вибірка (кількість, категорії, критерії відбору), біографічний блок. Метод анкетування. Кілька груп — опиши кожну. Таблиця markdown з результатами. Аналіз і порівняння груп. "Анкета у Додатку А."`;
+ОБОВ'ЯЗКОВО (емпіричне дослідження):
+${empHintRegen ? `ВИМОГА: ${empHintRegen}\n` : ""}1. Організація: ${rdRegen?.groups?.length ? rdRegen.groups.map(g => `${g.name}${g.minN ? ` (n≥${g.minN})` : ""}${g.criteria ? `, ${g.criteria}` : ""}`).join("; ") : "вибірка — кількість, категорії, критерії"}.
+2. Біографічний блок: ${bioDescRegen}.
+3. Метод та принцип проведення.
+4. Таблиця markdown (|---|---| формат) ${tableSourceRegen}.${compTableRegen}
+5. Аналіз і висновки.${appendixRefRegen}`;
         } else if (secIdxRegen < practicalSecsRegen.length - 1) {
           empiricalBlockRegen = `
 
-КОНТЕКСТ (емпіричне дослідження): ВИМОГА КЛІЄНТА: ${empHintSourceRegen}
-Таблиця markdown з результатами. Якщо кілька груп — порівняльна таблиця. Аналіз. Без повтору опису вибірки.`;
+КОНТЕКСТ (емпіричне дослідження):
+${empHintRegen ? `ВИМОГА: ${empHintRegen}\n` : ""}Таблиця markdown ${tableSourceRegen}.${compTableRegen} Аналіз. Без повтору опису вибірки.`;
         } else {
           empiricalBlockRegen = `
 
-КОНТЕКСТ (емпіричне дослідження): ВИМОГА КЛІЄНТА: ${empHintSourceRegen}
-Рекомендації на основі результатів анкетування. Без повтору опису вибірки та методики.`;
+КОНТЕКСТ (емпіричне дослідження):
+${empHintRegen ? `ВИМОГА: ${empHintRegen}\n` : ""}Рекомендації на основі результатів. Без повтору опису вибірки та методики.`;
         }
       }
 
@@ -1390,52 +1415,105 @@ ${sectionSummaries}
       const empSecs = getEmpiricalSections(sections, info);
       const hasEmpChapter = empSecs.chapterSectionIds.length > 0 || empSecs.anchorId;
 
-      const empHintsForApp = commentAnalysis?.empiricalHints || "";
-      const needTwoQuestionnaires = /2\s*(дослідження|анкет|методик)|дві\s*(анкет|методик)|два\s*дослідження/i.test(empHintsForApp);
-      const empClientBlock = empHintsForApp ? `ВИМОГА КЛІЄНТА: ${empHintsForApp}\n` : "";
+      const rdApp = commentAnalysis?.researchDesign ?? (commentAnalysis?.empiricalHints ? { instrumentType: "questionnaire", groups: [], comparisonRequired: false, biographicalFields: [], statisticalMinN: null } : null);
+      const hasEmpiricalApp = hasEmpiricalResearch(commentAnalysis, methodInfo) || isPsychoPed(info) || hasEmpChapter;
 
-      const prompt = (isPsychoPed(info) || hasEmpChapter) && !appendicesCustomPrompt.trim()
-        ? needTwoQuestionnaires
-          ? `Згенеруй Додаток А та Додаток Б для ${info?.type || "наукової роботи"} на тему "${info?.topic}". Галузь: ${info?.subject}.
+      // Будуємо блок вимог з researchDesign
+      const empClientBlock = (() => {
+        if (!rdApp && !commentAnalysis?.empiricalHints) return "";
+        const parts = [];
+        if (rdApp?.groups?.length) parts.push(`Групи учасників: ${rdApp.groups.map(g => `${g.name}${g.minN ? ` (мін. ${g.minN} осіб)` : ""}${g.criteria ? `, ${g.criteria}` : ""}`).join("; ")}.`);
+        if (rdApp?.biographicalFields?.length) parts.push(`Біографічний блок анкети: ${rdApp.biographicalFields.join(", ")}.`);
+        if (rdApp?.statisticalMinN) parts.push(`Загальна мін. вибірка: ${rdApp.statisticalMinN} осіб.`);
+        if (rdApp?.comparisonRequired || (rdApp?.groups?.length || 0) > 1) parts.push("Передбачити порівняння між групами — питання мають бути однаковими для всіх груп.");
+        if (!parts.length && commentAnalysis?.empiricalHints) return `ВИМОГА КЛІЄНТА: ${commentAnalysis.empiricalHints}\n`;
+        return parts.length ? `ВИМОГА КЛІЄНТА:\n${parts.join("\n")}\n` : "";
+      })();
+
+      const needTwoQuestionnaires = rdApp?.groups?.length >= 2 ||
+        /2\s*(дослідження|анкет|методик)|дві\s*(анкет|методик)|два\s*дослідження/i.test(commentAnalysis?.empiricalHints || "");
+
+      const instrumentType = rdApp?.instrumentType || "questionnaire";
+      const bioFieldsLine = rdApp?.biographicalFields?.length
+        ? `Біографічний блок (перші запитання анкети): ${rdApp.biographicalFields.join(", ")}.`
+        : "Біографічний блок (перші 4-5 запитань): ПІБ або псевдонім, вік, стаж, кваліфікація або посада.";
+
+      const buildQuestionnairePrompt = (appendixLabel, groupDesc) => `Перший рядок: ${appendixLabel}
+Другий рядок: назва анкети відповідно до теми та групи респондентів.
+Звернення до респондента та інструкція (2-3 речення).
+${bioFieldsLine}
+12-15 запитань закритого типу з варіантами відповідей: а), б), в), г).
+Запитання логічно охоплюють різні аспекти теми${groupDesc ? ` для групи: ${groupDesc}` : ""}.
+В кінці: "Дякуємо за участь у дослідженні!"`;
+
+      const buildScalePrompt = (appendixLabel) => `Перший рядок: ${appendixLabel}
+Другий рядок: назва методики відповідно до теми.
+Опис методики: мета, сфера застосування, кількість тверджень.
+Інструкція для респондента (2-3 речення).
+20-25 тверджень або запитань відповідно до психологічної шкали (за темою: тривожність, самооцінка, мотивація, агресія тощо).
+Шкала відповідей: 1-4 або 1-5 балів, або варіанти "так/ні/важко відповісти".
+Ключ до обробки: розподіл балів, рівні (низький/середній/високий).`;
+
+      const buildFitnessTestPrompt = (appendixLabel) => `Перший рядок: ${appendixLabel}
+Другий рядок: назва батареї тестів відповідно до теми.
+Перелік 5-8 фізичних тестів або вимірювань: назва тесту, одиниці вимірювання, порядок проведення.
+Нормативна таблиця: вікові норми або рівні (низький/нижчий за середній/середній/вищий за середній/високий).
+Протокол фіксації результатів (таблиця для заповнення).`;
+
+      const buildExperimentPrompt = (appendixLabel) => `Перший рядок: ${appendixLabel}
+Другий рядок: назва протоколу педагогічного експерименту.
+Мета та гіпотеза експерименту.
+Опис контрольної та експериментальної груп (кількість, критерії відбору).
+Констатувальний етап: діагностичний інструментарій (тести, завдання, спостереження) — 10-15 пунктів.
+Формувальний етап: короткий опис педагогічного впливу або програми.
+Контрольний етап: ті самі діагностичні інструменти для порівняння.
+Протокол фіксації результатів до і після.`;
+
+      let prompt;
+      if (hasEmpiricalApp && !appendicesCustomPrompt.trim()) {
+        const header = `Згенеруй інструмент дослідження (Додаток А) для ${info?.type || "наукової роботи"} на тему "${info?.topic}". Галузь: ${info?.subject}.
 ${planBlock}
 ${methodBlock}
 ${empClientBlock}${clientBlock}
+Мова: ${lang}. БЕЗ markdown, зірочок, жирного. Звичайний текст.`;
 
-Кожен додаток — окрема анкета для одного з двох емпіричних досліджень.
-Визнач об'єкт дослідження з теми (хто респонденти: учні, студенти, педагоги, батьки тощо).
+        if (instrumentType === "psycho_scale") {
+          prompt = `${header}\n\n${buildScalePrompt("ДОДАТОК А")}`;
+        } else if (instrumentType === "fitness_test") {
+          prompt = `${header}\n\n${buildFitnessTestPrompt("ДОДАТОК А")}`;
+        } else if (instrumentType === "pedagogical_experiment") {
+          prompt = `${header}\n\n${buildExperimentPrompt("ДОДАТОК А")}`;
+        } else if (needTwoQuestionnaires && rdApp?.groups?.length >= 2) {
+          const g1 = rdApp.groups[0];
+          const g2 = rdApp.groups[1];
+          prompt = `${header}
 
-Вимоги до кожної анкети:
-- ДОДАТОК А / ДОДАТОК Б (перший рядок кожного додатку)
-- Назва анкети відповідно до теми та аспекту дослідження
-- Звернення до респондента та інструкція (2-3 речення)
-- 12-15 запитань закритого типу з варіантами відповідей: а), б), в), г)
-- В кінці: "Дякуємо за участь у дослідженні!"
-- Мова: ${lang}
-- БЕЗ markdown, зірочок, жирного. Звичайний текст. Кожен додаток починається з нового рядка.`
-          : `Згенеруй Додаток А для ${info?.type || "наукової роботи"} на тему "${info?.topic}". Галузь: ${info?.subject}.
-${planBlock}
-${methodBlock}
-${empClientBlock}${clientBlock}
+Кожен додаток — окрема анкета для своєї групи учасників.
 
-Додаток А містить анкету для емпіричного дослідження відповідно до теми роботи.
-Визнач об'єкт дослідження з теми (хто респонденти: учні, студенти, педагоги, батьки тощо).
-Визнач що саме досліджується (рівень сформованості, ставлення, знання, мотивація тощо).
+ДОДАТОК А — анкета для групи: ${g1.name}${g1.criteria ? ` (${g1.criteria})` : ""}.
+${buildQuestionnairePrompt("ДОДАТОК А", g1.name)}
 
-Вимоги до анкети:
-- Перший рядок: ДОДАТОК А
-- Другий рядок: назва анкети відповідно до теми та об'єкту дослідження
-- Звернення до респондента та інструкція (2-3 речення)
-- 12-15 запитань закритого типу з варіантами відповідей: а), б), в), г)
-- Запитання логічно охоплюють різні аспекти теми — структура анкети має відповідати підрозділам розділу 2
-- В кінці: "Дякуємо за участь у дослідженні!"
-- Мова: ${lang}
-- БЕЗ markdown, зірочок, жирного. Звичайний текст.`
-        : `Згенеруй розділ "Додатки" для ${info?.type || "наукової роботи"} на тему "${info?.topic}". Галузь: ${info?.subject || ""}.
+---
+
+ДОДАТОК Б — анкета для групи: ${g2.name}${g2.criteria ? ` (${g2.criteria})` : ""}.
+${buildQuestionnairePrompt("ДОДАТОК Б", g2.name)}
+${rdApp.groups.length > 2 ? `\nПримітка: якщо є третя група (${rdApp.groups[2]?.name}), використовують той самий інструмент що й для найближчої за профілем групи.` : ""}`;
+        } else {
+          prompt = `${header}
+
+Додаток А містить анкету для емпіричного дослідження.${rdApp?.groups?.length ? ` Основна група респондентів: ${rdApp.groups[0].name}${rdApp.groups[0].criteria ? ` (${rdApp.groups[0].criteria})` : ""}.` : ""}
+Визнач що саме досліджується відповідно до теми.
+
+${buildQuestionnairePrompt("ДОДАТОК А", rdApp?.groups?.[0]?.name || "")}`;
+        }
+      } else {
+        prompt = `Згенеруй розділ "Додатки" для ${info?.type || "наукової роботи"} на тему "${info?.topic}". Галузь: ${info?.subject || ""}.
 ${planBlock}
 ${methodBlock}
 ${clientBlock}
 ${customBlock || `Включи один або два додатки що логічно доповнюють роботу відповідно до теми та структури (таблиці, схеми, зразки документів тощо).`}
 Мова: ${lang}. БЕЗ markdown, зірочок, жирного. Кожен додаток починається з нового рядка: ДОДАТОК А, ДОДАТОК Б тощо.`;
+      }
 
       const raw = await callClaude(
         [{ role: "user", content: prompt }], null, buildSYS(lang, methodInfo), 6000, null, MODEL
@@ -1586,7 +1664,7 @@ ${JSON.stringify(analysis, null, 2)}
     const totalPages = parsePagesAvg(d?.pages);
     const isLarge = totalPages > 40;
     const secsToRegen = sections.filter(s => s.type !== "sources");
-    const empSecs = getEmpiricalSections(sections, d);
+    const empSecs = getEmpiricalSections(sections, d, commentAnalysis, methodInfo);
     const empIdsSet = new Set(empSecs.chapterSectionIds);
 
     // Будуємо multi-turn повідомлення для doRegenAll

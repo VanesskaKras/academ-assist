@@ -24,10 +24,20 @@ export const isEcon = (info) => {
   return /економ|фінанс|менедж|облік|маркет|бізнес|бухгалт|аудит|логіст|підприємн|публічн.*управл|держ.*управл/.test(dir);
 };
 
+// Визначає чи є в роботі емпіричне дослідження (з коментаря або методички)
+export const hasEmpiricalResearch = (commentAnalysis, methodInfo) => {
+  if (commentAnalysis?.researchDesign) return true;
+  if (commentAnalysis?.empiricalHints) return true; // fallback для старих замовлень
+  if (!methodInfo) return false;
+  return /анкет|опитуванн|емпіричн|респондент|вибірк|тест|експеримент|методик/i.test(
+    [methodInfo.analysisRequirements, methodInfo.otherRequirements, methodInfo.theoryRequirements].filter(Boolean).join(" ")
+  );
+};
+
 // Визначає підрозділи що мають отримати інструкції емпіричного дослідження
-export const getEmpiricalSections = (sections, info) => {
+export const getEmpiricalSections = (sections, info, commentAnalysis, methodInfo) => {
   const empty = { anchorId: null, chapterSectionIds: [] };
-  if (!isPsychoPed(info)) return empty;
+  if (!isPsychoPed(info) && !hasEmpiricalResearch(commentAnalysis, methodInfo)) return empty;
 
   const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
   const empiricalRe = /дослідженн|емпіричн|анкетуванн|практичн.*дослідж|вибірк|результат.*дослідж/i;
