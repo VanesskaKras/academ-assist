@@ -65,8 +65,9 @@ export function CorrectionsStage({
               onClick={doAnalyzeCorrections}
               disabled={correctionLoading || (!correctionText.trim() && correctionPhotos.length === 0)}
               style={{
-                background: (correctionLoading || (!correctionText.trim() && correctionPhotos.length === 0)) ? "#444" : "#e8ff47",
-                color: "#111", border: "none", borderRadius: 6,
+                background: (correctionLoading || (!correctionText.trim() && correctionPhotos.length === 0)) ? "#444" : "#1a1a14",
+                color: (correctionLoading || (!correctionText.trim() && correctionPhotos.length === 0)) ? "#888" : "#e8ff47",
+                border: "none", borderRadius: 6,
                 padding: "9px 24px", fontFamily: "'Spectral',serif",
                 fontSize: 13, cursor: correctionLoading ? "default" : "pointer",
                 display: "inline-flex", alignItems: "center", gap: 8,

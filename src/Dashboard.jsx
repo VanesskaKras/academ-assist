@@ -341,7 +341,6 @@ export default function Dashboard({ onOpen, onNew, onAdmin }) {
                     <div style={{ fontFamily: "'Spectral SC',serif", fontSize: 20, letterSpacing: 4 }}>ASSIST</div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <button onClick={() => setShowHelp(true)} title="Інструкція" style={{ background: "transparent", border: "1px solid #555", color: "#aaa", borderRadius: 6, padding: "6px 12px", cursor: "pointer", fontFamily: "inherit", fontSize: 14, lineHeight: 1 }}>ℹ</button>
                     <button onClick={() => setShowMyStats(true)} style={{ background: "transparent", border: "1px solid #555", color: "#aaa", borderRadius: 6, padding: "6px 14px", cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>Мої результати</button>
                     {profile?.role === "admin" && (
                         <button onClick={() => setShowStats(true)} style={{ background: "transparent", border: "1px solid #555", color: "#aaa", borderRadius: 6, padding: "6px 14px", cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>Статистика</button>
