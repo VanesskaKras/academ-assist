@@ -2205,7 +2205,27 @@ ${secBlock}
         body: JSON.stringify({
           _model: "gemini-2.5-flash-lite",
           contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: { maxOutputTokens: 1200, responseMimeType: "application/json" },
+          generationConfig: {
+            maxOutputTokens: 1200,
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: "object",
+              properties: {
+                theses: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      thesis: { type: "string" },
+                      phrases: { type: "array", items: { type: "string" } },
+                    },
+                    required: ["thesis", "phrases"],
+                  },
+                },
+              },
+              required: ["theses"],
+            },
+          },
         }),
       });
       const data = await res.json();
