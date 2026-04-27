@@ -770,9 +770,9 @@ Return ONLY JSON without markdown:
     const ORDER = ["theory", "analysis", "recommendations", "chapter_conclusion", "intro", "conclusions", "sources"];
     setSections(prev => [...prev].sort((a, b) => ORDER.indexOf(a.type) - ORDER.indexOf(b.type)));
     setContent({}); setGenIdx(0); setPaused(false); writingDoneRef.current = false;
-    // Генеруємо додатки у фоні якщо є емпіричне дослідження або визначено тип практичної частини
+    // Генеруємо додатки тільки для педагогіки/психології або якщо тип практики обрано вручну
     const practicalApproachForGen = commentAnalysis?.practicalApproach;
-    if (!appendicesText && (practicalApproachForGen || hasEmpiricalResearch(commentAnalysis, methodInfo) || isPsychoPed(info))) doGenAppendices();
+    if (!appendicesText && (practicalApproachForGen || isPsychoPed(info))) doGenAppendices();
     const nextStage = newMode === "sources-first" ? "sources" : "writing";
     setStage(nextStage);
     saveToFirestore({ workflowMode: newMode, stage: nextStage, status: "writing" });
