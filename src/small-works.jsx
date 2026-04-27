@@ -136,6 +136,19 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
   const [error, setError] = useState("");
 
   const currentIdRef = useRef(orderId || null);
+  const tokenAccRef = useRef({ inTok: 0, outTok: 0, costUsd: 0 });
+
+  useEffect(() => {
+    const handler = (e) => {
+      tokenAccRef.current = {
+        inTok: tokenAccRef.current.inTok + (e.detail.inTok || 0),
+        outTok: tokenAccRef.current.outTok + (e.detail.outTok || 0),
+        costUsd: tokenAccRef.current.costUsd + (e.detail.cost || 0),
+      };
+    };
+    window.addEventListener("apicost", handler);
+    return () => window.removeEventListener("apicost", handler);
+  }, []);
 
   // ── Завантаження існуючого замовлення ──
   useEffect(() => {
@@ -156,6 +169,9 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
           if (d.slides?.length) setSlides(d.slides);
           if (d.stage) setStage(d.stage);
           if (d.genIdx !== undefined) setGenIdx(d.genIdx);
+          if (d.totalInTok !== undefined) {
+            tokenAccRef.current = { inTok: d.totalInTok || 0, outTok: d.totalOutTok || 0, costUsd: d.totalCostUsd || 0 };
+          }
         }
       } catch (e) { console.error(e); }
       setDbLoading(false);
@@ -178,6 +194,10 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
         type: patch.info?.type || info?.type || workType || "",
         pages: patch.info?.pages || info?.pages || "",
         deadline: patch.info?.deadline || info?.deadline || "",
+        totalInTok: tokenAccRef.current.inTok,
+        totalOutTok: tokenAccRef.current.outTok,
+        totalCostUsd: tokenAccRef.current.costUsd,
+        ...(patch.status === "done" ? { completedAt: new Date().toISOString() } : {}),
       };
       await setDoc(ref, serializeForFirestore({ ...base, ...patch, createdAt: new Date().toISOString() }), { merge: true });
       setSaved(true); setTimeout(() => setSaved(false), 3000);

@@ -119,6 +119,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [sessionCost, setSessionCost] = useState(() => {
     try { return JSON.parse(localStorage.getItem("sessionCost")) || { claude: 0, gemini: 0 }; } catch { return { claude: 0, gemini: 0 }; }
   });
+  const tokenAccRef = useRef({ inTok: 0, outTok: 0, costUsd: 0 });
   useEffect(() => {
     const handler = (e) => {
       const isGemini = e.detail.model?.startsWith("gemini");
@@ -127,6 +128,11 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
         localStorage.setItem("sessionCost", JSON.stringify(next));
         return next;
       });
+      tokenAccRef.current = {
+        inTok: tokenAccRef.current.inTok + (e.detail.inTok || 0),
+        outTok: tokenAccRef.current.outTok + (e.detail.outTok || 0),
+        costUsd: tokenAccRef.current.costUsd + (e.detail.cost || 0),
+      };
     };
     window.addEventListener("apicost", handler);
     return () => window.removeEventListener("apicost", handler);
@@ -199,6 +205,9 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
             }
           }
           if (d.genIdx !== undefined) setGenIdx(d.genIdx);
+          if (d.totalInTok !== undefined) {
+            tokenAccRef.current = { inTok: d.totalInTok || 0, outTok: d.totalOutTok || 0, costUsd: d.totalCostUsd || 0 };
+          }
         }
       } catch (e) { console.error("Load error:", e); }
       setDbLoading(false);
@@ -249,6 +258,10 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
         pages: patch.info?.pages || info?.pages || "",
         deadline: patch.info?.deadline || info?.deadline || "",
         maxStageIdx: maxStageIdxRef.current,
+        totalInTok: tokenAccRef.current.inTok,
+        totalOutTok: tokenAccRef.current.outTok,
+        totalCostUsd: tokenAccRef.current.costUsd,
+        ...(patch.status === "done" ? { completedAt: new Date().toISOString() } : {}),
       };
       const data = serializeForFirestore({ ...base, ...patch });
       // merge:true — не потрібен getDoc перед записом, один запис замість двох

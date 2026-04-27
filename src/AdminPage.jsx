@@ -217,6 +217,196 @@ function StatsTab({ users }) {
     );
 }
 
+// ─── Вкладка витрат ──────────────────────────────────────────────────────────
+
+function CostsTab({ users }) {
+    const [allOrders, setAllOrders] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [customFrom, setCustomFrom] = useState("");
+    const [customTo, setCustomTo] = useState("");
+    const [filterUid, setFilterUid] = useState("all");
+
+    useEffect(() => {
+        const load = async () => {
+            setLoading(true);
+            const snap = await getDocs(collection(db, "orders"));
+            setAllOrders(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+            setLoading(false);
+        };
+        load();
+    }, []);
+
+    const orders = useMemo(() => {
+        let result = allOrders.filter(o => o.totalCostUsd !== undefined);
+        if (filterUid !== "all") result = result.filter(o => o.uid === filterUid);
+        const from = customFrom ? new Date(customFrom + "T00:00:00") : null;
+        const to = customTo ? new Date(customTo + "T23:59:59") : null;
+        if (from || to) {
+            result = result.filter(o => {
+                if (!o.createdAt) return false;
+                const d = new Date(o.createdAt);
+                if (from && d < from) return false;
+                if (to && d > to) return false;
+                return true;
+            });
+        }
+        return result.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+    }, [allOrders, customFrom, customTo, filterUid]);
+
+    const userMap = useMemo(() => {
+        const m = {};
+        users.forEach(u => { m[u.id] = u; });
+        return m;
+    }, [users]);
+
+    const totals = useMemo(() => {
+        const byManager = {};
+        let grandIn = 0, grandOut = 0, grandCost = 0;
+        orders.forEach(o => {
+            grandIn += o.totalInTok || 0;
+            grandOut += o.totalOutTok || 0;
+            grandCost += o.totalCostUsd || 0;
+            const uid = o.uid || "—";
+            if (!byManager[uid]) byManager[uid] = { inTok: 0, outTok: 0, costUsd: 0, count: 0 };
+            byManager[uid].inTok += o.totalInTok || 0;
+            byManager[uid].outTok += o.totalOutTok || 0;
+            byManager[uid].costUsd += o.totalCostUsd || 0;
+            byManager[uid].count++;
+        });
+        return { grandIn, grandOut, grandCost, byManager };
+    }, [orders]);
+
+    const fmt = iso => iso ? new Date(iso).toLocaleDateString("uk-UA", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—";
+    const fmtTok = n => n >= 1000 ? (n / 1000).toFixed(1) + "k" : (n || 0).toString();
+    const fmtCost = n => "$" + (n || 0).toFixed(4);
+
+    if (loading) return <div style={{ padding: 32, color: "#888" }}>Завантаження...</div>;
+
+    const managersWithData = Object.entries(totals.byManager).map(([uid, data]) => ({
+        uid, ...data, user: userMap[uid],
+    })).sort((a, b) => b.costUsd - a.costUsd);
+
+    return (
+        <div>
+            {/* Фільтри */}
+            <div style={{ background: "#fff", borderRadius: 10, padding: "16px 20px", marginBottom: 20, boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}>
+                <div style={{ fontSize: 11, color: "#888", letterSpacing: 1, textTransform: "uppercase", marginBottom: 12 }}>Фільтри</div>
+                <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ fontSize: 12, color: "#888" }}>Від</span>
+                        <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)}
+                            style={{ padding: "6px 10px", border: `1.5px solid ${customFrom ? "#1a1a14" : "#e0ddd4"}`, borderRadius: 7, fontSize: 13, fontFamily: "inherit", outline: "none" }} />
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ fontSize: 12, color: "#888" }}>До</span>
+                        <input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)}
+                            style={{ padding: "6px 10px", border: `1.5px solid ${customTo ? "#1a1a14" : "#e0ddd4"}`, borderRadius: 7, fontSize: 13, fontFamily: "inherit", outline: "none" }} />
+                    </div>
+                    <select value={filterUid} onChange={e => setFilterUid(e.target.value)}
+                        style={{ padding: "6px 10px", border: "1.5px solid #e0ddd4", borderRadius: 7, fontSize: 13, fontFamily: "inherit", outline: "none", background: "#fff" }}>
+                        <option value="all">Всі менеджери</option>
+                        {users.map(u => <option key={u.id} value={u.id}>{u.name || u.email}</option>)}
+                    </select>
+                    {(customFrom || customTo || filterUid !== "all") && (
+                        <button onClick={() => { setCustomFrom(""); setCustomTo(""); setFilterUid("all"); }}
+                            style={{ padding: "6px 12px", borderRadius: 7, border: "1.5px solid #e0ddd4", background: "transparent", color: "#888", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                            Скинути ✕
+                        </button>
+                    )}
+                </div>
+            </div>
+
+            {/* Підсумки по менеджерах */}
+            {managersWithData.length > 0 && (
+                <div style={{ background: "#fff", borderRadius: 10, padding: 20, marginBottom: 20, boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: "#1a1a14", marginBottom: 16 }}>Підсумки по менеджерах</div>
+                    <div style={{ overflowX: "auto" }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                            <thead>
+                                <tr style={{ borderBottom: "2px solid #f0ece2" }}>
+                                    <th style={{ textAlign: "left", padding: "8px 10px", color: "#888", fontWeight: 600, fontSize: 11, letterSpacing: 1, textTransform: "uppercase" }}>Менеджер</th>
+                                    <th style={{ textAlign: "center", padding: "8px 10px", color: "#888", fontWeight: 600, fontSize: 11, letterSpacing: 1, textTransform: "uppercase" }}>Замовлень</th>
+                                    <th style={{ textAlign: "center", padding: "8px 10px", color: "#888", fontWeight: 600, fontSize: 11, letterSpacing: 1, textTransform: "uppercase" }}>Токени вхід</th>
+                                    <th style={{ textAlign: "center", padding: "8px 10px", color: "#888", fontWeight: 600, fontSize: 11, letterSpacing: 1, textTransform: "uppercase" }}>Токени вихід</th>
+                                    <th style={{ textAlign: "center", padding: "8px 10px", color: "#888", fontWeight: 600, fontSize: 11, letterSpacing: 1, textTransform: "uppercase" }}>Вартість</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {managersWithData.map((row, i) => (
+                                    <tr key={row.uid} style={{ borderBottom: "1px solid #f0ece2", background: i % 2 === 0 ? "transparent" : "#faf8f3" }}>
+                                        <td style={{ padding: "10px 10px" }}>
+                                            <div style={{ fontWeight: 600, color: "#1a1a14" }}>{row.user?.name || "—"}</div>
+                                            <div style={{ fontSize: 11, color: "#aaa" }}>{row.user?.email || row.uid}</div>
+                                        </td>
+                                        <td style={{ textAlign: "center", fontWeight: 700, color: "#1a1a14" }}>{row.count}</td>
+                                        <td style={{ textAlign: "center", color: "#555", fontFamily: "monospace", fontSize: 12 }}>{fmtTok(row.inTok)}</td>
+                                        <td style={{ textAlign: "center", color: "#555", fontFamily: "monospace", fontSize: 12 }}>{fmtTok(row.outTok)}</td>
+                                        <td style={{ textAlign: "center", fontWeight: 700, color: "#1a6a1a" }}>{fmtCost(row.costUsd)}</td>
+                                    </tr>
+                                ))}
+                                {/* Загальний підсумок */}
+                                <tr style={{ borderTop: "2px solid #1a1a14", background: "#1a1a14" }}>
+                                    <td style={{ padding: "10px 10px", color: "#e8ff47", fontWeight: 700 }}>Всього</td>
+                                    <td style={{ textAlign: "center", color: "#e8ff47", fontWeight: 700 }}>{orders.length}</td>
+                                    <td style={{ textAlign: "center", color: "#aaa", fontFamily: "monospace", fontSize: 12 }}>{fmtTok(totals.grandIn)}</td>
+                                    <td style={{ textAlign: "center", color: "#aaa", fontFamily: "monospace", fontSize: 12 }}>{fmtTok(totals.grandOut)}</td>
+                                    <td style={{ textAlign: "center", color: "#e8ff47", fontWeight: 700, fontSize: 15 }}>{fmtCost(totals.grandCost)}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
+
+            {/* Таблиця по замовленнях */}
+            <div style={{ background: "#fff", borderRadius: 10, padding: 20, boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}>
+                <div style={{ fontSize: 15, fontWeight: 700, color: "#1a1a14", marginBottom: 16 }}>
+                    Замовлення з трекінгом токенів ({orders.length})
+                </div>
+                {orders.length === 0 ? (
+                    <div style={{ color: "#aaa", fontSize: 14 }}>Немає даних за вибраний період</div>
+                ) : (
+                    <div style={{ overflowX: "auto" }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                            <thead>
+                                <tr style={{ borderBottom: "2px solid #f0ece2" }}>
+                                    <th style={{ textAlign: "left", padding: "8px 8px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", whiteSpace: "nowrap" }}>Дата</th>
+                                    <th style={{ textAlign: "left", padding: "8px 8px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase" }}>Менеджер</th>
+                                    <th style={{ textAlign: "left", padding: "8px 8px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", whiteSpace: "nowrap" }}>№ замовл.</th>
+                                    <th style={{ textAlign: "left", padding: "8px 8px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase" }}>Тип роботи</th>
+                                    <th style={{ textAlign: "center", padding: "8px 6px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", whiteSpace: "nowrap" }}>Стор.</th>
+                                    <th style={{ textAlign: "center", padding: "8px 6px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", whiteSpace: "nowrap" }}>Вхід</th>
+                                    <th style={{ textAlign: "center", padding: "8px 6px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", whiteSpace: "nowrap" }}>Вихід</th>
+                                    <th style={{ textAlign: "center", padding: "8px 8px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", whiteSpace: "nowrap" }}>Вартість</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {orders.map((o, i) => {
+                                    const u = userMap[o.uid];
+                                    return (
+                                        <tr key={o.id} style={{ borderBottom: "1px solid #f0ece2", background: i % 2 === 0 ? "transparent" : "#faf8f3" }}>
+                                            <td style={{ padding: "9px 8px", color: "#888", fontSize: 11, whiteSpace: "nowrap" }}>{fmt(o.createdAt)}</td>
+                                            <td style={{ padding: "9px 8px" }}>
+                                                <div style={{ fontWeight: 600, color: "#1a1a14", fontSize: 12 }}>{u?.name || "—"}</div>
+                                            </td>
+                                            <td style={{ padding: "9px 8px", color: "#555", fontSize: 11, fontFamily: "monospace", whiteSpace: "nowrap" }}>{o.info?.orderNumber || "—"}</td>
+                                            <td style={{ padding: "9px 8px", color: "#1a1a14", whiteSpace: "nowrap" }}>{o.type || o.workType || "—"}</td>
+                                            <td style={{ textAlign: "center", padding: "9px 6px", color: "#555" }}>{o.pages || "—"}</td>
+                                            <td style={{ textAlign: "center", padding: "9px 6px", color: "#555", fontFamily: "monospace" }}>{fmtTok(o.totalInTok)}</td>
+                                            <td style={{ textAlign: "center", padding: "9px 6px", color: "#555", fontFamily: "monospace" }}>{fmtTok(o.totalOutTok)}</td>
+                                            <td style={{ textAlign: "center", padding: "9px 8px", fontWeight: 700, color: "#1a6a1a" }}>{fmtCost(o.totalCostUsd)}</td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
 // ─── Головна сторінка ─────────────────────────────────────────────────────────
 
 export default function AdminPage({ onBack }) {
@@ -303,6 +493,7 @@ export default function AdminPage({ onBack }) {
                     {[
                         { key: "users", label: "Користувачі" },
                         { key: "stats", label: "Статистика" },
+                        { key: "costs", label: "Витрати" },
                     ].map(t => (
                         <button key={t.key} onClick={() => setTab(t.key)}
                             style={{
@@ -419,6 +610,9 @@ export default function AdminPage({ onBack }) {
 
                 {/* Вкладка: Статистика */}
                 {tab === "stats" && <StatsTab users={users} />}
+
+                {/* Вкладка: Витрати */}
+                {tab === "costs" && <CostsTab users={users} />}
             </div>
         </div>
     );
