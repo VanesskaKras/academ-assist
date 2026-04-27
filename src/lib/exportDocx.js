@@ -314,7 +314,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
 
   function sourceParaChildren(text) {
     const URL_RE = /(https?:\/\/[^\s]+)/;
-    const parts = text.split(/(https?:\/\/[^\s]+)/);
+    const parts = text.split(URL_RE);
     return parts.flatMap(part => {
       if (URL_RE.test(part)) {
         const cleanUrl = part.replace(/[.,;:!?)]+$/, '');
@@ -325,11 +325,21 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
         });
         return tail ? [link, new TextRun({ text: tail, font: FONT, size: SIZE, color: "000000" })] : [link];
       }
-      return [new TextRun({ text: part, font: FONT, size: SIZE, color: "000000" })];
+      // Парсимо *курсив* всередині звичайного тексту
+      const runs = [];
+      const italicRe = /\*([^*]+)\*/g;
+      let last = 0, m;
+      while ((m = italicRe.exec(part)) !== null) {
+        if (m.index > last) runs.push(new TextRun({ text: part.slice(last, m.index), font: FONT, size: SIZE, color: "000000" }));
+        runs.push(new TextRun({ text: m[1], font: FONT, size: SIZE, color: "000000", italics: true }));
+        last = m.index + m[0].length;
+      }
+      if (last < part.length) runs.push(new TextRun({ text: part.slice(last), font: FONT, size: SIZE, color: "000000" }));
+      return runs;
     });
   }
   function sourcePara(text) {
-    const cleaned = text.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1").trim();
+    const cleaned = text.replace(/\*\*(.+?)\*\*/g, "$1").trim();
     if (!cleaned) return null;
     return new Paragraph({
       spacing: { line: LINE, lineRule: "auto", before: 0, after: Math.round(LINE * 0.3) },
@@ -339,7 +349,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     });
   }
   function sourceParaWithBookmark(text, refNum) {
-    const cleaned = text.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1").trim();
+    const cleaned = text.replace(/\*\*(.+?)\*\*/g, "$1").trim();
     if (!cleaned) return null;
     const numMatch = cleaned.match(/^(\d+[\.\)]\s*)/);
     let children;
