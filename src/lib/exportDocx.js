@@ -135,6 +135,44 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
       children: parseTextWithCitations(text || "", color),
     });
   }
+  function introBoldPara(text) {
+    const STARTS = /^(Актуальн|Мет(?:ою|а\s)|Завдання|Для досягн|Для вирішен|Об.єкт|Предмет|Методи\b|Наукова новизна|Практична знач|Апробац|Структур|Теоретико|Матеріал|Хронологічн)/i;
+    if (!STARTS.test(text)) return bodyPara(text);
+    let boldEnd = -1;
+    const colon = text.indexOf(':');
+    if (colon > 0 && colon < 120) {
+      boldEnd = colon + 1;
+    } else {
+      const dot = text.indexOf('.');
+      if (dot > 0 && dot < 50) {
+        boldEnd = dot + 1;
+      } else {
+        const єIdx = text.indexOf(' є ');
+        if (єIdx > 0 && єIdx < 60) {
+          boldEnd = єIdx + 2;
+        } else {
+          const полягIdx = text.indexOf(' полягає');
+          if (полягIdx > 0 && полягIdx < 60) boldEnd = полягIdx;
+          else {
+            const становIdx = text.indexOf(' становлять');
+            if (становIdx > 0 && становIdx < 70) boldEnd = становIdx;
+          }
+        }
+      }
+    }
+    if (boldEnd <= 0) return bodyPara(text);
+    const boldPart = text.slice(0, boldEnd);
+    const restPart = text.slice(boldEnd);
+    return new Paragraph({
+      indent: { firstLine: INDENT },
+      spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
+      alignment: AlignmentType.BOTH,
+      children: [
+        new TextRun({ text: boldPart, font: FONT, size: SIZE, bold: true, color: "000000" }),
+        ...(restPart ? parseTextWithCitations(restPart, "000000") : []),
+      ],
+    });
+  }
   function listPara(text) {
     return new Paragraph({
       indent: { left: INDENT, hanging: 360 },
@@ -186,7 +224,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     });
   }
 
-  function makeBlocks(text, secLabel) {
+  function makeBlocks(text, secLabel, isIntro = false) {
     if (!text) return [];
     const result = [];
     const lines = text.split("\n");
@@ -268,7 +306,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
         result.push(listPara(listText));
         i++; continue;
       }
-      result.push(bodyPara(raw));
+      result.push(isIntro ? introBoldPara(raw) : bodyPara(raw));
       i++;
     }
     return result;
@@ -425,7 +463,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
       children.push(headingSubsection(sec.label));
       children.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
     }
-    children.push(...makeBlocks(txt, sec.label));
+    children.push(...makeBlocks(txt, sec.label, sec.type === "intro"));
   }
 
   if (normAppendices && normAppendices.trim()) {
