@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "./AuthContext";
+import { KICKED_KEY } from "./AuthContext";
 
 export default function LoginPage() {
     const { login } = useAuth();
@@ -7,6 +8,14 @@ export default function LoginPage() {
     const [password, setPassword] = useState("");
     const [error, setError] = useState("");
     const [loading, setLoading] = useState(false);
+    const [kicked, setKicked] = useState(false);
+
+    useEffect(() => {
+        if (localStorage.getItem(KICKED_KEY) === "1") {
+            setKicked(true);
+            localStorage.removeItem(KICKED_KEY);
+        }
+    }, []);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -42,6 +51,11 @@ export default function LoginPage() {
                             style={{ width: "100%", padding: "10px 14px", border: "1.5px solid #ddd", borderRadius: 7, fontSize: 14, boxSizing: "border-box", fontFamily: "inherit" }}
                         />
                     </div>
+                    {kicked && (
+                        <div style={{ background: "#fff8e4", border: "1px solid #f0c040", borderRadius: 6, padding: "10px 14px", color: "#7a5a00", fontSize: 13, marginBottom: 16 }}>
+                            Сесію завершено — обліковий запис увійшов з іншого пристрою.
+                        </div>
+                    )}
                     {error && <div style={{ background: "#fff0f0", border: "1px solid #ffcccc", borderRadius: 6, padding: "10px 14px", color: "#c00", fontSize: 13, marginBottom: 16 }}>{error}</div>}
                     <button type="submit" disabled={loading}
                         style={{ width: "100%", padding: "12px", background: loading ? "#aaa" : "#1a1a14", color: "#e8ff47", border: "none", borderRadius: 7, fontSize: 14, fontWeight: 700, letterSpacing: 1, cursor: loading ? "default" : "pointer" }}>

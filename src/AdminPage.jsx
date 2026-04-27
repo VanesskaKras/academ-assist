@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { db, auth } from "./firebase";
-import { collection, getDocs, doc, updateDoc, setDoc, deleteDoc } from "firebase/firestore";
+import { collection, getDocs, doc, updateDoc, setDoc, deleteDoc, query, orderBy, limit } from "firebase/firestore";
 import { initializeApp, deleteApp } from "firebase/app";
 import { getAuth, createUserWithEmailAndPassword } from "firebase/auth";
 import { useAuth } from "./AuthContext";
@@ -498,6 +498,103 @@ function CostsTab({ users }) {
     );
 }
 
+// ─── Вкладка логів входів ────────────────────────────────────────────────────
+
+function parseUA(ua) {
+    if (!ua) return "—";
+    const browser = /Edg\//.test(ua) ? "Edge" : /Chrome\//.test(ua) ? "Chrome" : /Firefox\//.test(ua) ? "Firefox" : /Safari\//.test(ua) ? "Safari" : "Інший";
+    const os = /Windows/.test(ua) ? "Windows" : /Android/.test(ua) ? "Android" : /iPhone|iPad/.test(ua) ? "iOS" : /Mac/.test(ua) ? "Mac" : /Linux/.test(ua) ? "Linux" : "";
+    return os ? `${browser} / ${os}` : browser;
+}
+
+function LogsTab({ users }) {
+    const [logs, setLogs] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [filterUid, setFilterUid] = useState("all");
+
+    useEffect(() => {
+        const load = async () => {
+            setLoading(true);
+            const q = query(collection(db, "loginLogs"), orderBy("timestamp", "desc"), limit(300));
+            const snap = await getDocs(q);
+            setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+            setLoading(false);
+        };
+        load();
+    }, []);
+
+    const userMap = useMemo(() => {
+        const m = {};
+        users.forEach(u => { m[u.id] = u; });
+        return m;
+    }, [users]);
+
+    const filtered = filterUid === "all" ? logs : logs.filter(l => l.uid === filterUid);
+
+    const fmtTime = (iso) => {
+        if (!iso) return "—";
+        return new Date(iso).toLocaleString("uk-UA", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+    };
+
+    return (
+        <div>
+            <div style={{ background: "#fff", borderRadius: 10, padding: "16px 20px", marginBottom: 20, boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}>
+                <div style={{ fontSize: 11, color: "#888", letterSpacing: 1, textTransform: "uppercase", marginBottom: 10 }}>Фільтр</div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <select value={filterUid} onChange={e => setFilterUid(e.target.value)}
+                        style={{ padding: "6px 10px", border: "1.5px solid #e0ddd4", borderRadius: 7, fontSize: 13, fontFamily: "inherit", background: "#fff" }}>
+                        <option value="all">Всі менеджери</option>
+                        {users.map(u => <option key={u.id} value={u.id}>{u.name || u.email}</option>)}
+                    </select>
+                    {filterUid !== "all" && (
+                        <button onClick={() => setFilterUid("all")}
+                            style={{ padding: "6px 12px", borderRadius: 7, border: "1.5px solid #e0ddd4", background: "transparent", color: "#888", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                            Скинути ✕
+                        </button>
+                    )}
+                    <span style={{ fontSize: 12, color: "#bbb", marginLeft: 4 }}>{filtered.length} записів</span>
+                </div>
+            </div>
+
+            <div style={{ background: "#fff", borderRadius: 10, padding: 20, boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}>
+                <div style={{ fontSize: 15, fontWeight: 700, color: "#1a1a14", marginBottom: 16 }}>Логи входів</div>
+                {loading ? (
+                    <div style={{ color: "#888", fontSize: 14 }}>Завантаження...</div>
+                ) : filtered.length === 0 ? (
+                    <div style={{ color: "#aaa", fontSize: 14 }}>Немає записів</div>
+                ) : (
+                    <div style={{ overflowX: "auto" }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                            <thead>
+                                <tr style={{ borderBottom: "2px solid #f0ece2" }}>
+                                    <th style={{ textAlign: "left", padding: "8px 10px", color: "#888", fontWeight: 600, fontSize: 11, letterSpacing: 1, textTransform: "uppercase" }}>Менеджер</th>
+                                    <th style={{ textAlign: "left", padding: "8px 10px", color: "#888", fontWeight: 600, fontSize: 11, letterSpacing: 1, textTransform: "uppercase", whiteSpace: "nowrap" }}>Дата і час</th>
+                                    <th style={{ textAlign: "left", padding: "8px 10px", color: "#888", fontWeight: 600, fontSize: 11, letterSpacing: 1, textTransform: "uppercase" }}>Браузер / ОС</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {filtered.map((log, i) => {
+                                    const u = userMap[log.uid];
+                                    return (
+                                        <tr key={log.id} style={{ borderBottom: "1px solid #f0ece2", background: i % 2 === 0 ? "transparent" : "#faf8f3" }}>
+                                            <td style={{ padding: "10px 10px" }}>
+                                                <div style={{ fontWeight: 600, color: "#1a1a14" }}>{u?.name || "—"}</div>
+                                                <div style={{ fontSize: 11, color: "#aaa" }}>{log.email || u?.email || log.uid}</div>
+                                            </td>
+                                            <td style={{ padding: "10px 10px", color: "#555", whiteSpace: "nowrap" }}>{fmtTime(log.timestamp)}</td>
+                                            <td style={{ padding: "10px 10px", color: "#555" }}>{parseUA(log.userAgent)}</td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
 // ─── Головна сторінка ─────────────────────────────────────────────────────────
 
 export default function AdminPage({ onBack }) {
@@ -585,6 +682,7 @@ export default function AdminPage({ onBack }) {
                         { key: "users", label: "Користувачі" },
                         { key: "stats", label: "Статистика" },
                         { key: "costs", label: "Витрати" },
+                        { key: "logs", label: "Логи входів" },
                     ].map(t => (
                         <button key={t.key} onClick={() => setTab(t.key)}
                             style={{
@@ -704,6 +802,9 @@ export default function AdminPage({ onBack }) {
 
                 {/* Вкладка: Витрати */}
                 {tab === "costs" && <CostsTab users={users} />}
+
+                {/* Вкладка: Логи входів */}
+                {tab === "logs" && <LogsTab users={users} />}
             </div>
         </div>
     );
