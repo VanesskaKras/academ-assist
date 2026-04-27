@@ -770,8 +770,9 @@ Return ONLY JSON without markdown:
     const ORDER = ["theory", "analysis", "recommendations", "chapter_conclusion", "intro", "conclusions", "sources"];
     setSections(prev => [...prev].sort((a, b) => ORDER.indexOf(a.type) - ORDER.indexOf(b.type)));
     setContent({}); setGenIdx(0); setPaused(false); writingDoneRef.current = false;
-    // Генеруємо додатки у фоні тільки якщо є емпіричне дослідження
-    if (!appendicesText && (hasEmpiricalResearch(commentAnalysis, methodInfo) || isPsychoPed(info))) doGenAppendices();
+    // Генеруємо додатки у фоні якщо є емпіричне дослідження або визначено тип практичної частини
+    const practicalApproachForGen = commentAnalysis?.practicalApproach;
+    if (!appendicesText && (practicalApproachForGen || hasEmpiricalResearch(commentAnalysis, methodInfo) || isPsychoPed(info))) doGenAppendices();
     const nextStage = newMode === "sources-first" ? "sources" : "writing";
     setStage(nextStage);
     saveToFirestore({ workflowMode: newMode, stage: nextStage, status: "writing" });
@@ -853,12 +854,15 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
       setContent(p => ({ ...p, [sec.id]: "[Додайте джерела на кроці «Джерела»]" }));
       setGenIdx(g => g + 1); return;
     }
-    // Емпіричні підрозділи потребують готового Додатку А — чекаємо якщо він ще генерується
+    // Практичні підрозділи потребують готового Додатку А — чекаємо якщо він ще генерується
     if (appendicesLoading && !appendicesText && info) {
       const empSecs = getEmpiricalSections(sections, info, commentAnalysis, methodInfo);
       const hasEmpirical = hasEmpiricalResearch(commentAnalysis, methodInfo);
-      if (empSecs.chapterSectionIds.includes(sec.id) || sec.id === empSecs.anchorId ||
-          (hasEmpirical && ["analysis", "recommendations"].includes(sec.type))) return;
+      const practApproach = commentAnalysis?.practicalApproach;
+      const needsAppendix = empSecs.chapterSectionIds.includes(sec.id) || sec.id === empSecs.anchorId ||
+          (hasEmpirical && ["analysis", "recommendations"].includes(sec.type)) ||
+          (practApproach && practApproach !== "questionnaire" && ["analysis", "recommendations"].includes(sec.type));
+      if (needsAppendix) return;
     }
     runSection(sec);
   }, [stage, genIdx, paused, sections, appendicesText, appendicesLoading]);
@@ -1101,6 +1105,36 @@ ${appendixBlock}${empHint ? `ВИМОГА: ${empHint}\n` : ""}Рекоменда
         }
       }
 
+      // Практичний блок для нон-анкетних типів практики
+      let practicalBlock = "";
+      const practicalApproachRun = commentAnalysis?.practicalApproach;
+      if (practicalApproachRun && practicalApproachRun !== "questionnaire" && ["analysis", "recommendations"].includes(sec.type)) {
+        const appRef = appendicesText ? "\nДодай речення з посиланням на Додаток А." : "";
+        const appCtx = appendicesText ? `\nДОДАТОК А (вже згенерований — спирайся на нього точно):\n${appendicesText}\n` : "";
+        if (practicalApproachRun === "textbook_analysis") {
+          practicalBlock = `
+
+ОБОВ'ЯЗКОВО для цього підрозділу (аналіз підручників):${appCtx}Визнач за назвою підрозділу що саме писати:
+- підрозділ про критерії або методику аналізу: опиши принципи відбору підручників, параметри порівняння (структура, зміст, типи вправ, ілюстрації, методичний апарат, відповідність програмі).
+- підрозділ про аналіз або результати: таблиця markdown з порівнянням підручників за критеріями (спирайся на Додаток А). Після таблиці детальний аналіз кожного підручника.${appRef}
+- підрозділ про висновки або рекомендації: порівняльні висновки, який підручник краще відповідає меті навчання і чому.`;
+        } else if (practicalApproachRun === "lesson_observation") {
+          practicalBlock = `
+
+ОБОВ'ЯЗКОВО для цього підрозділу (аналіз уроків):${appCtx}Визнач за назвою підрозділу що саме писати:
+- підрозділ про методику спостереження: опиши протокол спостереження (Додаток А), кількість спостережуваних уроків, вчителів, клас.${appRef}
+- підрозділ про результати: таблиця markdown з результатами спостережень за аспектами (мотивація, пояснення, практика, організація тощо). Аналіз виявлених закономірностей.
+- підрозділ про рекомендації: методичні рекомендації вчителям на основі результатів спостережень.`;
+        } else if (practicalApproachRun === "materials_development") {
+          practicalBlock = `
+
+ОБОВ'ЯЗКОВО для цього підрозділу (розробка матеріалів):${appCtx}Визнач за назвою підрозділу що саме писати:
+- підрозділ про теоретичне обґрунтування: принципи розробки матеріалів, психолого-педагогічне підґрунтя вибору підходу.
+- підрозділ про опис матеріалів: детальний опис розроблених матеріалів (Додаток А) — структура, призначення, як використовувати на практиці.${appRef}
+- підрозділ про апробацію або ефективність: результати практичного застосування або обґрунтування очікуваної ефективності матеріалів.`;
+        }
+      }
+
       // sources-first: додаємо джерела як контекст для генерації
       const secSourceLines = workflowMode === "sources-first"
         ? (citInputs[sec.id] || "").split("\n").map(l => l.trim()).filter(Boolean)
@@ -1117,7 +1151,7 @@ ${appendixBlock}${empHint ? `ВИМОГА: ${empHint}\n` : ""}Рекоменда
 
       instruction = `Напиши підрозділ "${sec.label}" для ${d.type} на тему "${d.topic}". Галузь: ${d.subject}.
 Тип підрозділу: ${typeHints[sec.type] || "основний"}.
-${methodReq ? `ВИМОГИ МЕТОДИЧКИ ДО ЦЬОГО РОЗДІЛУ: ${methodReq}` : ""}${empiricalBlock}${econBlock}${sourcesBlock}
+${methodReq ? `ВИМОГИ МЕТОДИЧКИ ДО ЦЬОГО РОЗДІЛУ: ${methodReq}` : ""}${empiricalBlock}${practicalBlock}${econBlock}${sourcesBlock}
 ПЛАН РОБОТИ (для розуміння структури та уникнення повторів):
 ${planSummary}
 
@@ -1505,8 +1539,65 @@ ${bioFieldsLine}
 Контрольний етап: ті самі діагностичні інструменти для порівняння.
 Протокол фіксації результатів до і після.`;
 
+      const practicalApproach = commentAnalysis?.practicalApproach;
+
+      const buildTextbookAnalysisAppendix = () => `Згенеруй Додаток А для ${info?.type || "наукової роботи"} на тему "${info?.topic}". Галузь: ${info?.subject}.
+${planBlock}
+${methodBlock}
+${clientBlock}
+
+ДОДАТОК А містить порівняльну таблицю підручників.
+Перший рядок: ДОДАТОК А
+Другий рядок: Порівняльна таблиця підручників (назва відповідно до теми дослідження).
+Таблиця markdown з порівнянням 3-4 реалістичних підручників за критеріями:
+| Критерій | Підручник 1 | Підручник 2 | Підручник 3 |
+Рядки (критерії): автор(и) та рік видання; цільова аудиторія (клас або рівень); структура та кількість розділів; кількість і типи вправ; ілюстративний матеріал; методичний апарат; відповідність навчальній програмі; загальна оцінка.
+Підручники підбери реалістичні відповідно до теми "${info?.topic}". Клітинки заповни конкретними описовими даними.
+Мова: ${lang}. БЕЗ markdown-розмітки зірочками, БЕЗ жирного — крім самої таблиці яка в markdown.`;
+
+      const buildLessonObservationAppendix = () => `Згенеруй Додаток А для ${info?.type || "наукової роботи"} на тему "${info?.topic}". Галузь: ${info?.subject}.
+${planBlock}
+${methodBlock}
+${clientBlock}
+
+ДОДАТОК А містить протокол спостереження уроків.
+Перший рядок: ДОДАТОК А
+Другий рядок: Протокол спостереження уроку (назва відповідно до теми).
+Далі:
+Дата: _________  Школа: _________  Клас: _________
+Вчитель: _________  Тема уроку: _________
+Таблиця спостереження markdown:
+| Аспект | Оцінка (1-5) | Примітки |
+Аспекти (рядки): мета та завдання уроку; мотивація та введення теми; пояснення нового матеріалу; практична частина; зворотній зв'язок та корекція; організація навчального процесу; використання наочності та матеріалів; диференціація навчання.
+Після таблиці: Загальна оцінка уроку: ___ / 40
+Загальні спостереження та коментарі: _________________________
+Мова: ${lang}. БЕЗ markdown-розмітки зірочками, БЕЗ жирного — крім самої таблиці яка в markdown.`;
+
+      const buildMaterialsDevelopmentAppendix = () => {
+        const details = commentAnalysis?.practicalApproachDetails ? `\nДеталі: ${commentAnalysis.practicalApproachDetails}` : "";
+        return `Згенеруй Додаток А для ${info?.type || "наукової роботи"} на тему "${info?.topic}". Галузь: ${info?.subject}.
+${planBlock}
+${methodBlock}
+${clientBlock}${details}
+
+ДОДАТОК А містить розроблені дидактичні матеріали відповідно до теми.
+Перший рядок: ДОДАТОК А
+Визнач тип матеріалу з теми "${info?.topic}": план-конспект уроку, система вправ, дидактичні картки або тест.
+Якщо план-конспект: тема уроку, клас, мета (освітня, розвивальна, виховна), обладнання, хід уроку — вступна, основна та заключна частини з конкретними завданнями і часом кожного етапу.
+Якщо система вправ: 8-12 вправ різних типів (підготовчі, рецептивні, репродуктивні, продуктивні), кожна з назвою та інструкцією.
+Якщо дидактичні картки: 6-8 карток з конкретними завданнями відповідно до теми.
+Матеріал має бути повним і придатним до реального використання на практиці.
+Мова: ${lang}. БЕЗ markdown, зірочок, жирного. Звичайний текст.`;
+      };
+
       let prompt;
-      if (hasEmpiricalApp && !appendicesCustomPrompt.trim()) {
+      if (!appendicesCustomPrompt.trim() && practicalApproach === "textbook_analysis") {
+        prompt = buildTextbookAnalysisAppendix();
+      } else if (!appendicesCustomPrompt.trim() && practicalApproach === "lesson_observation") {
+        prompt = buildLessonObservationAppendix();
+      } else if (!appendicesCustomPrompt.trim() && practicalApproach === "materials_development") {
+        prompt = buildMaterialsDevelopmentAppendix();
+      } else if (hasEmpiricalApp && !appendicesCustomPrompt.trim()) {
         const header = `Згенеруй інструмент дослідження (Додаток А) для ${info?.type || "наукової роботи"} на тему "${info?.topic}". Галузь: ${info?.subject}.
 ${planBlock}
 ${methodBlock}
@@ -3008,6 +3099,7 @@ ${refLines2.join("\n")}`;
             info={info} setInfo={setInfo}
             methodInfo={methodInfo} setMethodInfo={setMethodInfo}
             fileB64={fileB64} apiError={apiError} sections={sections}
+            commentAnalysis={commentAnalysis} setCommentAnalysis={setCommentAnalysis}
             doGenPlan={doGenPlan} setStage={setStage}
           />
         )}

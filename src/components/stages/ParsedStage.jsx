@@ -1,10 +1,20 @@
 import { FIELD_LABELS, parsePagesAvg } from "../../lib/planUtils.js";
 import { Heading, NavBtn, PrimaryBtn } from "../Buttons.jsx";
 
+const PRACTICAL_OPTIONS = [
+  { key: "questionnaire", label: "Анкетування", desc: "Анкета у Додатку А, аналіз відповідей у практичних розділах" },
+  { key: "textbook_analysis", label: "Аналіз підручників", desc: "Порівняльна таблиця підручників у Додатку А" },
+  { key: "lesson_observation", label: "Аналіз уроків", desc: "Протокол спостереження уроків у Додатку А" },
+  { key: "materials_development", label: "Розробка матеріалів", desc: "Вправи / план-конспект / картки у Додатку А" },
+  { key: null, label: "Не потрібно", desc: "Без Додатку А" },
+];
+
 export function ParsedStage({
   info, setInfo, methodInfo, setMethodInfo, fileB64, apiError, sections,
+  commentAnalysis, setCommentAnalysis,
   doGenPlan, setStage,
 }) {
+  const showPractical = info.workCategory === "Гуманітарне" || commentAnalysis?.practicalApproach != null;
   return (
     <div className="fade">
       <Heading>02 / Перевірте дані</Heading>
@@ -73,6 +83,42 @@ export function ParsedStage({
               <pre style={{ fontSize: 12, color: "#3a6010", whiteSpace: "pre-wrap", fontFamily: "'Spectral',serif", lineHeight: 1.8, margin: 0 }}>{methodInfo.exampleTOC}</pre>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Тип практичної частини */}
+      {showPractical && (
+        <div style={{ border: "1.5px solid #d4cfc4", borderRadius: 8, overflow: "hidden", marginBottom: 16 }}>
+          <div style={{ background: "#ede9e0", padding: "9px 16px", fontSize: 11, color: "#888", letterSpacing: "1px", textTransform: "uppercase" }}>
+            Тип практичної частини
+          </div>
+          <div style={{ padding: "14px 16px", background: "#f9f7f2" }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+              {PRACTICAL_OPTIONS.map(opt => {
+                const isSelected = (commentAnalysis?.practicalApproach ?? undefined) === opt.key;
+                return (
+                  <button key={String(opt.key)} onClick={() => setCommentAnalysis(p => ({ ...(p || {}), practicalApproach: opt.key }))}
+                    style={{ padding: "6px 16px", borderRadius: 20, fontSize: 12, cursor: "pointer", fontFamily: "inherit", border: "1.5px solid", transition: "all .15s",
+                      background: isSelected ? "#1a1a14" : "transparent",
+                      color: isSelected ? "#e8ff47" : "#555",
+                      borderColor: isSelected ? "#1a1a14" : "#ccc" }}>
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+            {PRACTICAL_OPTIONS.filter(o => o.key != null).map(opt =>
+              (commentAnalysis?.practicalApproach ?? null) === opt.key
+                ? <div key={opt.key} style={{ fontSize: 12, color: "#4a7a1a", background: "#eef5e4", borderRadius: 6, padding: "6px 12px" }}>{opt.desc}</div>
+                : null
+            )}
+            {(commentAnalysis?.practicalApproach ?? null) === null && commentAnalysis?.practicalApproach !== undefined && (
+              <div style={{ fontSize: 12, color: "#888", fontStyle: "italic" }}>Додаток А не генерується</div>
+            )}
+            {commentAnalysis?.practicalApproach == null && (
+              <div style={{ fontSize: 12, color: "#aaa", fontStyle: "italic" }}>Оберіть тип — система підготує відповідний Додаток А</div>
+            )}
+          </div>
         </div>
       )}
 
