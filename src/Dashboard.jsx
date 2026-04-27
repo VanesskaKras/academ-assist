@@ -28,34 +28,22 @@ function getStatStatus(o) {
 }
 
 function UserStatsModal({ orders, onClose }) {
-    const [customFrom, setCustomFrom] = useState("");
-    const [customTo, setCustomTo] = useState("");
+    const todayStr = new Date().toISOString().slice(0, 10);
 
-    const filtered = useMemo(() => {
-        if (!customFrom && !customTo) return orders;
-        const from = customFrom ? new Date(customFrom + "T00:00:00") : null;
-        const to = customTo ? new Date(customTo + "T23:59:59") : null;
-        return orders.filter(o => {
-            if (!o.createdAt) return false;
-            const d = new Date(o.createdAt);
-            if (from && d < from) return false;
-            if (to && d > to) return false;
-            return true;
-        });
-    }, [orders, customFrom, customTo]);
+    const todayCount = useMemo(() =>
+        orders.filter(o => o.createdAt?.slice(0, 10) === todayStr).length,
+    [orders]);
 
-    const stats = useMemo(() => {
-        const c = { total: filtered.length };
+    const overall = useMemo(() => {
+        const c = { total: orders.length };
         STAT_META.forEach(s => { c[s.key] = 0; });
-        filtered.forEach(o => { const s = getStatStatus(o); if (c[s] !== undefined) c[s]++; });
+        orders.forEach(o => { const s = getStatStatus(o); if (c[s] !== undefined) c[s]++; });
         return c;
-    }, [filtered]);
-
-    const doneRate = stats.total > 0 ? Math.round((stats.done / stats.total) * 100) : 0;
+    }, [orders]);
 
     return (
         <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 1000, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "32px 16px", overflowY: "auto" }}>
-            <div onClick={e => e.stopPropagation()} style={{ background: "#f5f2eb", borderRadius: 14, width: "100%", maxWidth: 680, fontFamily: "'Spectral',Georgia,serif", boxShadow: "0 12px 60px rgba(0,0,0,0.3)" }}>
+            <div onClick={e => e.stopPropagation()} style={{ background: "#f5f2eb", borderRadius: 14, width: "100%", maxWidth: 580, fontFamily: "'Spectral',Georgia,serif", boxShadow: "0 12px 60px rgba(0,0,0,0.3)" }}>
 
                 <div style={{ background: "#1a1a14", borderRadius: "14px 14px 0 0", padding: "16px 24px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                     <div style={{ color: "#e8ff47", fontFamily: "'Spectral SC',serif", fontSize: 15, letterSpacing: 3 }}>МОЇ РЕЗУЛЬТАТИ</div>
@@ -63,55 +51,32 @@ function UserStatsModal({ orders, onClose }) {
                 </div>
 
                 <div style={{ padding: 20 }}>
-                    {/* Фільтр */}
-                    <div style={{ background: "#fff", borderRadius: 10, padding: "14px 18px", marginBottom: 16, boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
-                        <div style={{ fontSize: 10, color: "#aaa", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 12 }}>Період</div>
-                        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                                <span style={{ fontSize: 11, color: "#888" }}>Від</span>
-                                <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)} style={{ padding: "5px 8px", border: `1.5px solid ${customFrom ? "#1a1a14" : "#e0ddd4"}`, borderRadius: 6, fontSize: 12, fontFamily: "inherit", outline: "none" }} />
-                            </div>
-                            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                                <span style={{ fontSize: 11, color: "#888" }}>До</span>
-                                <input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)} style={{ padding: "5px 8px", border: `1.5px solid ${customTo ? "#1a1a14" : "#e0ddd4"}`, borderRadius: 6, fontSize: 12, fontFamily: "inherit", outline: "none" }} />
-                            </div>
-                            {(customFrom || customTo) && (
-                                <button onClick={() => { setCustomFrom(""); setCustomTo(""); }} style={{ padding: "5px 10px", borderRadius: 6, border: "1.5px solid #e0ddd4", background: "transparent", color: "#888", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>Скинути ✕</button>
-                            )}
-                            {!customFrom && !customTo && <span style={{ fontSize: 11, color: "#bbb" }}>— весь час</span>}
+                    {/* Сьогодні + Всього */}
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+                        <div style={{ background: "#1a1a14", borderRadius: 12, padding: "20px 22px" }}>
+                            <div style={{ fontSize: 11, color: "#666", letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 }}>Сьогодні</div>
+                            <div style={{ fontSize: 42, fontWeight: 700, color: "#e8ff47", lineHeight: 1 }}>{todayCount}</div>
+                            <div style={{ fontSize: 11, color: "#555", marginTop: 6 }}>замовлень</div>
+                        </div>
+                        <div style={{ background: "#fff", borderRadius: 12, padding: "20px 22px", boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
+                            <div style={{ fontSize: 11, color: "#aaa", letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 }}>Всього</div>
+                            <div style={{ fontSize: 42, fontWeight: 700, color: "#1a1a14", lineHeight: 1 }}>{overall.total}</div>
+                            <div style={{ fontSize: 11, color: "#aaa", marginTop: 6 }}>за весь час</div>
                         </div>
                     </div>
 
-                    {/* Статистика */}
-                    <div style={{ background: "#fff", borderRadius: 10, padding: "14px 18px", marginBottom: 16, boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
-                        <div style={{ fontSize: 14, fontWeight: 700, color: "#1a1a14", marginBottom: 14 }}>Замовлення</div>
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 10 }}>
-                            <div style={{ padding: "12px 14px", borderRadius: 10, background: "#1a1a14" }}>
-                                <div style={{ fontSize: 28, fontWeight: 700, color: "#e8ff47", lineHeight: 1 }}>{stats.total}</div>
-                                <div style={{ fontSize: 11, color: "#aaa", marginTop: 4 }}>Всього</div>
-                            </div>
+                    {/* По статусах */}
+                    <div style={{ background: "#fff", borderRadius: 10, padding: "14px 18px", boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
+                        <div style={{ fontSize: 12, color: "#aaa", letterSpacing: 1, textTransform: "uppercase", marginBottom: 12 }}>По статусах</div>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))", gap: 10 }}>
                             {STAT_META.map(s => (
-                                <div key={s.key} style={{ padding: "12px 14px", borderRadius: 10, background: s.bg, border: `1.5px solid ${s.color}22` }}>
-                                    <div style={{ fontSize: 28, fontWeight: 700, color: s.color, lineHeight: 1 }}>{stats[s.key]}</div>
+                                <div key={s.key} style={{ padding: "10px 12px", borderRadius: 10, background: s.bg, border: `1.5px solid ${s.color}22` }}>
+                                    <div style={{ fontSize: 24, fontWeight: 700, color: s.color, lineHeight: 1 }}>{overall[s.key]}</div>
                                     <div style={{ fontSize: 10, color: s.color, opacity: 0.8, marginTop: 4 }}>{s.label}</div>
                                 </div>
                             ))}
                         </div>
                     </div>
-
-                    {/* Відсоток виконання */}
-                    {stats.total > 0 && (
-                        <div style={{ background: "#fff", borderRadius: 10, padding: "14px 18px", boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                                <div style={{ fontSize: 13, color: "#555" }}>Виконано</div>
-                                <div style={{ fontSize: 18, fontWeight: 700, color: "#1a6a1a" }}>{doneRate}%</div>
-                            </div>
-                            <div style={{ height: 8, borderRadius: 4, background: "#f0f0f0", overflow: "hidden" }}>
-                                <div style={{ height: "100%", width: `${doneRate}%`, background: "#4aba4a", borderRadius: 4, transition: "width .4s" }} />
-                            </div>
-                            <div style={{ fontSize: 11, color: "#aaa", marginTop: 6 }}>{stats.done} з {stats.total} замовлень завершено</div>
-                        </div>
-                    )}
                 </div>
             </div>
         </div>
