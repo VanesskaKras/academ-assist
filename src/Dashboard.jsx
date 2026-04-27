@@ -31,7 +31,6 @@ function AdminStatsModal({ onClose }) {
     const [allOrders, setAllOrders] = useState([]);
     const [users, setUsers] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [range, setRange] = useState("7");
     const [customFrom, setCustomFrom] = useState("");
     const [customTo, setCustomTo] = useState("");
 
@@ -49,24 +48,17 @@ function AdminStatsModal({ onClose }) {
     }, []);
 
     const orders = useMemo(() => {
-        if (customFrom || customTo) {
-            const from = customFrom ? new Date(customFrom + "T00:00:00") : null;
-            const to = customTo ? new Date(customTo + "T23:59:59") : null;
-            return allOrders.filter(o => {
-                if (!o.createdAt) return false;
-                const d = new Date(o.createdAt);
-                if (from && d < from) return false;
-                if (to && d > to) return false;
-                return true;
-            });
-        }
-        const r = DATE_RANGES.find(d => d.key === range);
-        if (!r || !r.days) return allOrders;
-        const from = new Date();
-        from.setDate(from.getDate() - r.days);
-        from.setHours(0, 0, 0, 0);
-        return allOrders.filter(o => o.createdAt && new Date(o.createdAt) >= from);
-    }, [allOrders, range, customFrom, customTo]);
+        if (!customFrom && !customTo) return allOrders;
+        const from = customFrom ? new Date(customFrom + "T00:00:00") : null;
+        const to = customTo ? new Date(customTo + "T23:59:59") : null;
+        return allOrders.filter(o => {
+            if (!o.createdAt) return false;
+            const d = new Date(o.createdAt);
+            if (from && d < from) return false;
+            if (to && d > to) return false;
+            return true;
+        });
+    }, [allOrders, customFrom, customTo]);
 
     const overall = useMemo(() => {
         const c = { total: orders.length };
@@ -111,20 +103,8 @@ function AdminStatsModal({ onClose }) {
                     ) : (<>
                         {/* Фільтр */}
                         <div style={{ background: "#fff", borderRadius: 10, padding: "14px 18px", marginBottom: 16, boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
-                            <div style={{ fontSize: 10, color: "#aaa", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 10 }}>Період</div>
-                            <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 10 }}>
-                                {DATE_RANGES.map(r => {
-                                    const active = !customFrom && !customTo && range === r.key;
-                                    return (
-                                        <button key={r.key} onClick={() => { setRange(r.key); setCustomFrom(""); setCustomTo(""); }}
-                                            style={{ padding: "6px 14px", borderRadius: 20, fontSize: 12, cursor: "pointer", fontFamily: "inherit", border: active ? "2px solid #1a1a14" : "1.5px solid #e0ddd4", background: active ? "#1a1a14" : "#faf8f3", color: active ? "#e8ff47" : "#555", fontWeight: active ? 700 : 400, transition: "all .15s" }}>
-                                            {r.label}
-                                        </button>
-                                    );
-                                })}
-                            </div>
+                            <div style={{ fontSize: 10, color: "#aaa", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 12 }}>Період</div>
                             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                                <span style={{ fontSize: 11, color: "#aaa" }}>або діапазон:</span>
                                 <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                                     <span style={{ fontSize: 11, color: "#888" }}>Від</span>
                                     <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)} style={{ padding: "5px 8px", border: `1.5px solid ${customFrom ? "#1a1a14" : "#e0ddd4"}`, borderRadius: 6, fontSize: 12, fontFamily: "inherit", outline: "none" }} />
@@ -136,6 +116,7 @@ function AdminStatsModal({ onClose }) {
                                 {(customFrom || customTo) && (
                                     <button onClick={() => { setCustomFrom(""); setCustomTo(""); }} style={{ padding: "5px 10px", borderRadius: 6, border: "1.5px solid #e0ddd4", background: "transparent", color: "#888", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>Скинути ✕</button>
                                 )}
+                                {!customFrom && !customTo && <span style={{ fontSize: 11, color: "#bbb" }}>— весь час</span>}
                             </div>
                         </div>
 
