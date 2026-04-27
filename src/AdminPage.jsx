@@ -280,6 +280,32 @@ function CostsTab({ users }) {
     const fmtTok = n => n >= 1000 ? (n / 1000).toFixed(1) + "k" : (n || 0).toString();
     const fmtCost = n => "$" + (n || 0).toFixed(4);
 
+    const exportCSV = () => {
+        const header = ["Дата", "Менеджер", "Email", "№ замовлення", "Тип роботи", "К-сть сторінок", "Токени вхід", "Токени вихід", "Вартість USD"];
+        const rows = orders.map(o => {
+            const u = userMap[o.uid];
+            return [
+                fmt(o.createdAt),
+                u?.name || "—",
+                u?.email || o.uid,
+                o.info?.orderNumber || "—",
+                o.type || o.workType || "—",
+                o.pages || "—",
+                o.totalInTok || 0,
+                o.totalOutTok || 0,
+                (o.totalCostUsd || 0).toFixed(4),
+            ];
+        });
+        const csv = [header, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+        const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `vitrati_${new Date().toISOString().slice(0, 10)}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+    };
+
     if (loading) return <div style={{ padding: 32, color: "#888" }}>Завантаження...</div>;
 
     const managersWithData = Object.entries(totals.byManager).map(([uid, data]) => ({
@@ -360,8 +386,16 @@ function CostsTab({ users }) {
 
             {/* Таблиця по замовленнях */}
             <div style={{ background: "#fff", borderRadius: 10, padding: 20, boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}>
-                <div style={{ fontSize: 15, fontWeight: 700, color: "#1a1a14", marginBottom: 16 }}>
-                    Замовлення з трекінгом токенів ({orders.length})
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: "#1a1a14" }}>
+                        Замовлення з трекінгом токенів ({orders.length})
+                    </div>
+                    {orders.length > 0 && (
+                        <button onClick={exportCSV}
+                            style={{ padding: "7px 16px", borderRadius: 7, border: "1.5px solid #1a1a14", background: "transparent", color: "#1a1a14", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                            ↓ Експорт CSV
+                        </button>
+                    )}
                 </div>
                 {orders.length === 0 ? (
                     <div style={{ color: "#aaa", fontSize: 14 }}>Немає даних за вибраний період</div>
