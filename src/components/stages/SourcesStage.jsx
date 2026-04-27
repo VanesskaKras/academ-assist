@@ -88,7 +88,7 @@ function SourceCard({ paper, checked, onToggle }) {
 }
 
 export function SourcesStage({
-  mainSections, citInputs, setCitInputs, sourceDist, sourceTotal,
+  mainSections, citInputs, setCitInputs, citStructured, setCitStructured, sourceDist, sourceTotal,
   keywords, kwLoading, kwError, setKwError, methodInfo, commentAnalysis,
   allRefs, refList, showMissingSources, citInputsSnapshot, allCitLoading, info,
   suggestedSources, phraseGroups, sourcesSearchLoading, sourcesSearchError, doSearchSources, doRegenSectionSources,
@@ -132,15 +132,21 @@ export function SourcesStage({
     const allSelected = selectedSugg[secId] || [];
     if (!allSelected.length) return;
 
-    // Збагачуємо записи без авторів через CrossRef по DOI
+    // Збагачуємо всі записи з DOI через CrossRef (отримуємо структуровані дані)
     const enriched = await Promise.all(allSelected.map(async p => {
-      if ((p.authors?.length) || !p.doi) return p;
+      if (!p.doi) return p;
       const meta = await lookupDoiMetadata(p.doi);
       if (!meta) return p;
       return {
         ...p,
+        ...(meta.authorsStructured?.length ? { authorsStructured: meta.authorsStructured } : {}),
         ...(meta.authors?.length ? { authors: meta.authors } : {}),
         ...(meta.pages && !p.pages ? { pages: meta.pages } : {}),
+        ...(meta.volume ? { volume: meta.volume } : {}),
+        ...(meta.issue ? { issue: meta.issue } : {}),
+        ...(meta.journal && (!p.venue || /^[\w.-]+\.[a-zA-Z]{2,}$/.test(p.venue.trim())) ? { venue: meta.journal } : {}),
+        ...(meta.publisher ? { publisher: meta.publisher } : {}),
+        ...(meta.publisherLocation ? { publisherLocation: meta.publisherLocation } : {}),
       };
     }));
 
@@ -169,6 +175,15 @@ export function SourcesStage({
       const sep = cur ? '\n' : '';
       return { ...prev, [secId]: cur + sep + newLines.join('\n') };
     });
+
+    // Зберігаємо структуровані об'єкти паперів для якісного форматування
+    if (setCitStructured) {
+      setCitStructured(prev => ({
+        ...prev,
+        [secId]: [...(prev[secId] || []), ...papers],
+      }));
+    }
+
     setSelectedSugg(prev => ({ ...prev, [secId]: [] }));
 
     // Авторозтягування textarea після програмного оновлення
@@ -438,6 +453,7 @@ export function SourcesStage({
                   <button
                     onClick={() => {
                       setCitInputs(p => ({ ...p, [sec.id]: "" }));
+                      if (setCitStructured) setCitStructured(p => ({ ...p, [sec.id]: [] }));
                       requestAnimationFrame(() => {
                         const ta = document.querySelector(`textarea[data-secid="${sec.id}"]`);
                         if (ta) { ta.style.height = "auto"; }

@@ -122,12 +122,25 @@ export async function lookupDoiMetadata(doi) {
     const d = await r.json();
     const p = d.message;
     if (!p) return null;
-    const authors = (p.author || []).slice(0, 3)
-      .map(a => [a.family, a.given?.[0]].filter(Boolean).join(' ')).filter(Boolean);
+    const authorsStructured = (p.author || []).slice(0, 3)
+      .map(a => ({ family: a.family || '', given: a.given || '' }))
+      .filter(a => a.family);
+    const authors = authorsStructured
+      .map(a => [a.family, a.given?.[0]].filter(Boolean).join(' '))
+      .filter(Boolean);
     const pages = p.page
       ? p.page.replace('-', '–')
       : extractPagesFromDoi(doi);
-    return { authors, pages };
+    return {
+      authorsStructured,
+      authors,
+      pages,
+      volume: p.volume || '',
+      issue: p.issue || '',
+      journal: p['container-title']?.[0] || '',
+      publisher: p.publisher || '',
+      publisherLocation: p['publisher-location'] || '',
+    };
   } catch {
     return null;
   }

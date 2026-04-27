@@ -72,6 +72,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [allCitLoading, setAllCitLoading] = useState(false);
   const [refList, setRefList] = useState([]);
   const [citInputsSnapshot, setCitInputsSnapshot] = useState(null);
+  const [citStructured, setCitStructured] = useState({});
   const [figureRefs, setFigureRefs] = useState({});
   const [figureKeywords, setFigureKeywords] = useState([]);
   const [figKwLoading, setFigKwLoading] = useState(false);
@@ -181,6 +182,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
           if (d.commentAnalysis) setCommentAnalysis(d.commentAnalysis);
           if (d.content) setContent(d.content);
           if (d.citInputs) setCitInputs(d.citInputs);
+          if (d.citStructured) setCitStructured(d.citStructured);
           if (d.abstractsMap) setAbstractsMap(d.abstractsMap);
           if (d.refList) setRefList(d.refList);
           if (d.speechText) setSpeechText(d.speechText);
@@ -234,7 +236,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     if (stage !== "sources") return;
     clearTimeout(citSaveTimer.current);
     citSaveTimer.current = setTimeout(() => {
-      saveToFirestore({ citInputs, abstractsMap });
+      saveToFirestore({ citInputs, citStructured, abstractsMap });
     }, 1500);
     return () => clearTimeout(citSaveTimer.current);
   }, [citInputs]); // eslint-disable-line
@@ -2209,12 +2211,59 @@ ${secBlock}
 - ПОРЯДОК ГРУП: 1) законодавчі акти (за хронологією/номером); 2) книги та статті кирилицею за алфавітом; 3) українські електронні джерела за алфавітом; 4) іноземні джерела латиницею за алфавітом.`
         : `СТИЛЬ: ${sourcesStyle}. Точно дотримуйся цього стилю.`;
     const methodSourcesRules = methodInfo?.sourcesFormatRules ? `\nВИМОГИ МЕТОДИЧКИ ДО СПИСКУ ДЖЕРЕЛ: ${methodInfo.sourcesFormatRules}` : "";
+
+    // ── Lookup: title → structured paper object (з citStructured) ──
+    const structuredByTitle = {};
+    Object.values(citStructured).forEach(papers => {
+      (papers || []).forEach(p => {
+        if (p.title) structuredByTitle[p.title.toLowerCase().slice(0, 60)] = p;
+      });
+    });
+    const findStructuredForRef = (refText) => {
+      const lower = refText.toLowerCase();
+      for (const [key, paper] of Object.entries(structuredByTitle)) {
+        if (lower.includes(key)) return paper;
+      }
+      return null;
+    };
+    const buildStructuredEntry = (p) => {
+      const e = { _type: 'structured' };
+      if (p.authorsStructured?.length) e.authors = p.authorsStructured;
+      else if (p.authors?.length) e.authorsRaw = p.authors;
+      if (p.title) e.title = p.title;
+      if (p.year) e.year = p.year;
+      const venue = p.venue && !/^[\w.-]+\.[a-zA-Z]{2,}$/.test(p.venue.trim()) ? p.venue : '';
+      if (venue) e.journal = venue;
+      if (p.volume) e.volume = p.volume;
+      if (p.issue) e.issue = p.issue;
+      if (p.pages) e.pages = p.pages;
+      if (p.publisher) e.publisher = p.publisher;
+      if (p.publisherLocation) e.city = p.publisherLocation;
+      const url = p.url || (p.doi ? `https://doi.org/${p.doi}` : '');
+      if (url) e.url = url;
+      if (p.type === 'book') e._docType = 'book';
+      return e;
+    };
+    const refLines = allRefs.map((r, i) => {
+      const sp = findStructuredForRef(r);
+      if (sp) return `${i + 1}. ${JSON.stringify(buildStructuredEntry(sp))}`;
+      return `${i + 1}. ${r}`;
+    });
+
     const fmtPrompt = `${styleRules}
 ${sourcesOrder} ${sourcesGrouping}${methodSourcesRules}
 Збережи номери. Поверни ТІЛЬКИ список без заголовка. Для онлайн-джерел додай URL (дата звернення: ${accessDate}). НЕ використовуй "[Електронний ресурс]".
-КРИТИЧНО: НЕ перекладай і НЕ транслітеруй прізвища авторів та назви джерел. Самі слова зберігай точно — але порядок елементів (прізвище перед ім'ям, ініціали, розділові знаки) виправляй відповідно до вимог стилю. Переведення ВЕЛИКИХ ЛІТЕР у sentence case — дозволено і обов'язково.
 
-${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
+ФОРМАТ ВХІДНИХ ДАНИХ: кожен рядок — або JSON-об'єкт (_type:"structured") або сирий текст.
+Для JSON (_type:"structured"):
+- authors: [{family:"Прізвище", given:"Ім'я"}] → форматуй як "Прізвище І." (перша літера given). НЕ перекладай і НЕ транслітеруй.
+- authorsRaw: масив рядків → нормалізуй порядок (прізвище перед ініціалами), додай крапки після ініціалів.
+- journal + volume + issue → для ДСТУ: "Назва журналу. рік. Вип. N, № M. С. xx–xx."
+- _docType:"book" → це монографія/книга (Місто : Видавець, рік. Nс.)
+Для сирого тексту: нормалізуй порядок слів і розділові знаки за вимогами стилю.
+КРИТИЧНО: НЕ перекладай і НЕ транслітеруй прізвища авторів та назви джерел. Переведення ВЕЛИКИХ ЛІТЕР у sentence case — дозволено і обов'язково.
+
+${refLines.join("\n")}`;
     let fmtResult;
     try {
       fmtResult = await callGemini([{ role: "user", content: fmtPrompt }], null,
@@ -2440,7 +2489,7 @@ ${secsSummary}
 
     setContent(newContent);
     setCitInputsSnapshot(JSON.stringify(citInputs));
-    await saveToFirestore({ content: newContent, citInputs, refList: fmtResult?.split("\n").filter(Boolean) || [], stage: "sources", status: "writing" });
+    await saveToFirestore({ content: newContent, citInputs, citStructured, refList: fmtResult?.split("\n").filter(Boolean) || [], stage: "sources", status: "writing" });
     setAllCitLoading(false);
   };
 
@@ -2541,12 +2590,59 @@ ${secsSummary}
         : `СТИЛЬ: ${sourcesStyle}. Точно дотримуйся цього стилю.`;
 
     const methodSourcesRules2 = methodInfo?.sourcesFormatRules ? `\nВИМОГИ МЕТОДИЧКИ ДО СПИСКУ ДЖЕРЕЛ: ${methodInfo.sourcesFormatRules}` : "";
+
+    // ── Lookup структурованих даних (той самий підхід що в doAddAllCitations) ──
+    const structuredByTitle2 = {};
+    Object.values(citStructured).forEach(papers => {
+      (papers || []).forEach(p => {
+        if (p.title) structuredByTitle2[p.title.toLowerCase().slice(0, 60)] = p;
+      });
+    });
+    const findStructured2 = (refText) => {
+      const lower = refText.toLowerCase();
+      for (const [key, paper] of Object.entries(structuredByTitle2)) {
+        if (lower.includes(key)) return paper;
+      }
+      return null;
+    };
+    const buildEntry2 = (p) => {
+      const e = { _type: 'structured' };
+      if (p.authorsStructured?.length) e.authors = p.authorsStructured;
+      else if (p.authors?.length) e.authorsRaw = p.authors;
+      if (p.title) e.title = p.title;
+      if (p.year) e.year = p.year;
+      const v2 = p.venue && !/^[\w.-]+\.[a-zA-Z]{2,}$/.test(p.venue.trim()) ? p.venue : '';
+      if (v2) e.journal = v2;
+      if (p.volume) e.volume = p.volume;
+      if (p.issue) e.issue = p.issue;
+      if (p.pages) e.pages = p.pages;
+      if (p.publisher) e.publisher = p.publisher;
+      if (p.publisherLocation) e.city = p.publisherLocation;
+      const url2 = p.url || (p.doi ? `https://doi.org/${p.doi}` : '');
+      if (url2) e.url = url2;
+      if (p.type === 'book') e._docType = 'book';
+      return e;
+    };
+    const refLines2 = allRefs.map((r, i) => {
+      const sp = findStructured2(r);
+      if (sp) return `${i + 1}. ${JSON.stringify(buildEntry2(sp))}`;
+      return `${i + 1}. ${r}`;
+    });
+
     const fmtPrompt = `${styleRules}
 ${sourcesOrder} ${sourcesGrouping}${methodSourcesRules2}
 Збережи номери. Поверни ТІЛЬКИ список без заголовка. Для онлайн-джерел додай URL (дата звернення: ${accessDate}). НЕ використовуй "[Електронний ресурс]".
-КРИТИЧНО: НЕ перекладай і НЕ транслітеруй прізвища авторів та назви джерел. Самі слова зберігай точно — але порядок елементів (прізвище перед ім'ям, ініціали, розділові знаки) виправляй відповідно до вимог стилю. Переведення ВЕЛИКИХ ЛІТЕР у sentence case — дозволено і обов'язково.
 
-${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
+ФОРМАТ ВХІДНИХ ДАНИХ: кожен рядок — або JSON-об'єкт (_type:"structured") або сирий текст.
+Для JSON (_type:"structured"):
+- authors: [{family:"Прізвище", given:"Ім'я"}] → форматуй як "Прізвище І." (перша літера given). НЕ перекладай і НЕ транслітеруй.
+- authorsRaw: масив рядків → нормалізуй порядок (прізвище перед ініціалами), додай крапки після ініціалів.
+- journal + volume + issue → для ДСТУ: "Назва журналу. рік. Вип. N, № M. С. xx–xx."
+- _docType:"book" → це монографія/книга (Місто : Видавець, рік. Nс.)
+Для сирого тексту: нормалізуй порядок слів і розділові знаки за вимогами стилю.
+КРИТИЧНО: НЕ перекладай і НЕ транслітеруй прізвища авторів та назви джерел. Переведення ВЕЛИКИХ ЛІТЕР у sentence case — дозволено і обов'язково.
+
+${refLines2.join("\n")}`;
 
     let fmtResult;
     try {
@@ -2659,7 +2755,7 @@ ${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
     setRefList(newRefList);
     setContent(newContent);
     setCitInputsSnapshot(JSON.stringify(citInputs));
-    await saveToFirestore({ content: newContent, citInputs, refList: newRefList, stage: "done", status: "done" });
+    await saveToFirestore({ content: newContent, citInputs, citStructured, refList: newRefList, stage: "done", status: "done" });
     setRemapLoading(false);
     setStage("done");
   };
@@ -2949,6 +3045,7 @@ ${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
           <SourcesStage
             mainSections={mainSections}
             citInputs={citInputs} setCitInputs={setCitInputs}
+            citStructured={citStructured} setCitStructured={setCitStructured}
             sourceDist={sourceDist} sourceTotal={sourceTotal}
             keywords={keywords} kwLoading={kwLoading}
             kwError={kwError} setKwError={setKwError}
@@ -2965,7 +3062,7 @@ ${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
             doRegenSectionSources={doRegenSectionSources}
             doAddAllCitations={doAddAllCitations}
             onAddAbstracts={(entries) => setAbstractsMap(prev => ({ ...prev, ...entries }))}
-            onFinish={async () => { await saveToFirestore({ stage: "done", status: "done", content, citInputs, abstractsMap, refList }); setStage("done"); }}
+            onFinish={async () => { await saveToFirestore({ stage: "done", status: "done", content, citInputs, citStructured, abstractsMap, refList }); setStage("done"); }}
             onProceedToWriting={() => setStage("writing")}
             setStage={setStage} workflowMode={workflowMode}
           />
