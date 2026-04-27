@@ -3,6 +3,207 @@ import { db } from "./firebase";
 import { collection, query, where, orderBy, getDocs, deleteDoc, doc } from "firebase/firestore";
 import { useAuth } from "./AuthContext";
 
+const STAT_META = [
+    { key: "new",           label: "Нове",             color: "#888",    bg: "#f5f5f5"  },
+    { key: "plan_ready",    label: "План готовий",      color: "#5a7a2a", bg: "#eef5e4"  },
+    { key: "plan_approved", label: "План затверджено",  color: "#1a5a8a", bg: "#e4f0ff"  },
+    { key: "writing",       label: "В роботі",          color: "#2a7a6a", bg: "#e4f5f2"  },
+    { key: "sources",       label: "Джерела",           color: "#8a5a1a", bg: "#fff3e0"  },
+    { key: "done",          label: "Готово",            color: "#1a6a1a", bg: "#e4ffe4"  },
+];
+
+const DATE_RANGES = [
+    { key: "1",   label: "1 день",   days: 1   },
+    { key: "2",   label: "2 дні",    days: 2   },
+    { key: "7",   label: "7 днів",   days: 7   },
+    { key: "30",  label: "Місяць",   days: 30  },
+    { key: "90",  label: "3 місяці", days: 90  },
+    { key: "all", label: "Весь час", days: null },
+];
+
+function getStatStatus(o) {
+    const s = o.status || "new";
+    if (o.stage === "sources" || (s === "done" && (!o.refList || o.refList.length === 0))) return "sources";
+    return s;
+}
+
+function AdminStatsModal({ onClose }) {
+    const [allOrders, setAllOrders] = useState([]);
+    const [users, setUsers] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [range, setRange] = useState("7");
+    const [customFrom, setCustomFrom] = useState("");
+    const [customTo, setCustomTo] = useState("");
+
+    useEffect(() => {
+        const load = async () => {
+            const [ordersSnap, usersSnap] = await Promise.all([
+                getDocs(collection(db, "orders")),
+                getDocs(collection(db, "users")),
+            ]);
+            setAllOrders(ordersSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+            setUsers(usersSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+            setLoading(false);
+        };
+        load();
+    }, []);
+
+    const orders = useMemo(() => {
+        if (customFrom || customTo) {
+            const from = customFrom ? new Date(customFrom + "T00:00:00") : null;
+            const to = customTo ? new Date(customTo + "T23:59:59") : null;
+            return allOrders.filter(o => {
+                if (!o.createdAt) return false;
+                const d = new Date(o.createdAt);
+                if (from && d < from) return false;
+                if (to && d > to) return false;
+                return true;
+            });
+        }
+        const r = DATE_RANGES.find(d => d.key === range);
+        if (!r || !r.days) return allOrders;
+        const from = new Date();
+        from.setDate(from.getDate() - r.days);
+        from.setHours(0, 0, 0, 0);
+        return allOrders.filter(o => o.createdAt && new Date(o.createdAt) >= from);
+    }, [allOrders, range, customFrom, customTo]);
+
+    const overall = useMemo(() => {
+        const c = { total: orders.length };
+        STAT_META.forEach(s => { c[s.key] = 0; });
+        orders.forEach(o => { const s = getStatStatus(o); if (c[s] !== undefined) c[s]++; });
+        return c;
+    }, [orders]);
+
+    const byManager = useMemo(() => {
+        const userMap = {};
+        users.forEach(u => { userMap[u.id] = u; });
+        const map = {};
+        orders.forEach(o => {
+            if (!o.uid) return;
+            if (!map[o.uid]) {
+                map[o.uid] = { uid: o.uid, total: 0, lastOrder: null };
+                STAT_META.forEach(s => { map[o.uid][s.key] = 0; });
+            }
+            const s = getStatStatus(o);
+            if (map[o.uid][s] !== undefined) map[o.uid][s]++;
+            map[o.uid].total++;
+            if (!map[o.uid].lastOrder || o.createdAt > map[o.uid].lastOrder) map[o.uid].lastOrder = o.createdAt;
+        });
+        return Object.values(map).map(r => ({ ...r, user: userMap[r.uid] })).sort((a, b) => b.total - a.total);
+    }, [orders, users]);
+
+    const fmt = iso => iso ? new Date(iso).toLocaleDateString("uk-UA", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—";
+
+    return (
+        <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 1000, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "32px 16px", overflowY: "auto" }}>
+            <div onClick={e => e.stopPropagation()} style={{ background: "#f5f2eb", borderRadius: 14, width: "100%", maxWidth: 900, fontFamily: "'Spectral',Georgia,serif", boxShadow: "0 12px 60px rgba(0,0,0,0.3)" }}>
+
+                {/* Заголовок */}
+                <div style={{ background: "#1a1a14", borderRadius: "14px 14px 0 0", padding: "16px 24px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <div style={{ color: "#e8ff47", fontFamily: "'Spectral SC',serif", fontSize: 15, letterSpacing: 3 }}>СТАТИСТИКА</div>
+                    <button onClick={onClose} style={{ background: "none", border: "none", color: "#888", fontSize: 20, cursor: "pointer", lineHeight: 1 }}>✕</button>
+                </div>
+
+                <div style={{ padding: 20 }}>
+                    {loading ? (
+                        <div style={{ padding: 40, textAlign: "center", color: "#888" }}>Завантаження...</div>
+                    ) : (<>
+                        {/* Фільтр */}
+                        <div style={{ background: "#fff", borderRadius: 10, padding: "14px 18px", marginBottom: 16, boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
+                            <div style={{ fontSize: 10, color: "#aaa", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 10 }}>Період</div>
+                            <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 10 }}>
+                                {DATE_RANGES.map(r => {
+                                    const active = !customFrom && !customTo && range === r.key;
+                                    return (
+                                        <button key={r.key} onClick={() => { setRange(r.key); setCustomFrom(""); setCustomTo(""); }}
+                                            style={{ padding: "6px 14px", borderRadius: 20, fontSize: 12, cursor: "pointer", fontFamily: "inherit", border: active ? "2px solid #1a1a14" : "1.5px solid #e0ddd4", background: active ? "#1a1a14" : "#faf8f3", color: active ? "#e8ff47" : "#555", fontWeight: active ? 700 : 400, transition: "all .15s" }}>
+                                            {r.label}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                                <span style={{ fontSize: 11, color: "#aaa" }}>або діапазон:</span>
+                                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                                    <span style={{ fontSize: 11, color: "#888" }}>Від</span>
+                                    <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)} style={{ padding: "5px 8px", border: `1.5px solid ${customFrom ? "#1a1a14" : "#e0ddd4"}`, borderRadius: 6, fontSize: 12, fontFamily: "inherit", outline: "none" }} />
+                                </div>
+                                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                                    <span style={{ fontSize: 11, color: "#888" }}>До</span>
+                                    <input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)} style={{ padding: "5px 8px", border: `1.5px solid ${customTo ? "#1a1a14" : "#e0ddd4"}`, borderRadius: 6, fontSize: 12, fontFamily: "inherit", outline: "none" }} />
+                                </div>
+                                {(customFrom || customTo) && (
+                                    <button onClick={() => { setCustomFrom(""); setCustomTo(""); }} style={{ padding: "5px 10px", borderRadius: 6, border: "1.5px solid #e0ddd4", background: "transparent", color: "#888", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>Скинути ✕</button>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Загальна статистика */}
+                        <div style={{ background: "#fff", borderRadius: 10, padding: "14px 18px", marginBottom: 16, boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
+                            <div style={{ fontSize: 14, fontWeight: 700, color: "#1a1a14", marginBottom: 14 }}>Загальна статистика</div>
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 10 }}>
+                                <div style={{ padding: "12px 14px", borderRadius: 10, background: "#1a1a14" }}>
+                                    <div style={{ fontSize: 26, fontWeight: 700, color: "#e8ff47", lineHeight: 1 }}>{overall.total}</div>
+                                    <div style={{ fontSize: 11, color: "#aaa", marginTop: 4 }}>Всього</div>
+                                </div>
+                                {STAT_META.map(s => (
+                                    <div key={s.key} style={{ padding: "12px 14px", borderRadius: 10, background: s.bg, border: `1.5px solid ${s.color}22` }}>
+                                        <div style={{ fontSize: 26, fontWeight: 700, color: s.color, lineHeight: 1 }}>{overall[s.key]}</div>
+                                        <div style={{ fontSize: 10, color: s.color, opacity: 0.8, marginTop: 4 }}>{s.label}</div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* По менеджерам */}
+                        <div style={{ background: "#fff", borderRadius: 10, padding: "14px 18px", boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
+                            <div style={{ fontSize: 14, fontWeight: 700, color: "#1a1a14", marginBottom: 14 }}>По менеджерам</div>
+                            {byManager.length === 0 ? (
+                                <div style={{ color: "#aaa", fontSize: 13 }}>Немає даних за вибраний період</div>
+                            ) : (
+                                <div style={{ overflowX: "auto" }}>
+                                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                                        <thead>
+                                            <tr style={{ borderBottom: "2px solid #f0ece2" }}>
+                                                <th style={{ textAlign: "left", padding: "7px 10px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase" }}>Менеджер</th>
+                                                <th style={{ textAlign: "center", padding: "7px 8px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase" }}>Всього</th>
+                                                {STAT_META.map(s => (
+                                                    <th key={s.key} style={{ textAlign: "center", padding: "7px 5px", color: s.color, fontWeight: 600, fontSize: 9, whiteSpace: "nowrap" }}>{s.label}</th>
+                                                ))}
+                                                <th style={{ textAlign: "center", padding: "7px 8px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", whiteSpace: "nowrap" }}>Останнє</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {byManager.map((row, i) => (
+                                                <tr key={row.uid} style={{ borderBottom: "1px solid #f0ece2", background: i % 2 === 0 ? "transparent" : "#faf8f3" }}>
+                                                    <td style={{ padding: "9px 10px" }}>
+                                                        <div style={{ fontWeight: 600, color: "#1a1a14", fontSize: 13 }}>{row.user?.name || "—"}</div>
+                                                        <div style={{ fontSize: 10, color: "#aaa" }}>{row.user?.email || row.uid}</div>
+                                                    </td>
+                                                    <td style={{ textAlign: "center", fontWeight: 700, fontSize: 14, color: "#1a1a14" }}>{row.total}</td>
+                                                    {STAT_META.map(s => (
+                                                        <td key={s.key} style={{ textAlign: "center", padding: "9px 5px" }}>
+                                                            {row[s.key] > 0 ? (
+                                                                <span style={{ display: "inline-block", minWidth: 22, padding: "2px 7px", borderRadius: 10, background: s.bg, color: s.color, fontWeight: 600, fontSize: 11 }}>{row[s.key]}</span>
+                                                            ) : <span style={{ color: "#ddd" }}>—</span>}
+                                                        </td>
+                                                    ))}
+                                                    <td style={{ textAlign: "center", color: "#888", fontSize: 11, whiteSpace: "nowrap" }}>{fmt(row.lastOrder)}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+                        </div>
+                    </>)}
+                </div>
+            </div>
+        </div>
+    );
+}
+
 const STATUS_LABELS = {
     new: { label: "Нове", color: "#888", bg: "#f5f5f5", dot: "#ccc" },
     plan_ready: { label: "План готовий", color: "#5a7a2a", bg: "#eef5e4", dot: "#8ac040" },
@@ -20,13 +221,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin }) {
     const [filterStatus, setFilterStatus] = useState(null); // null = всі
     const [infoOrder, setInfoOrder] = useState(null); // модалка деталей
     const [showHelp, setShowHelp] = useState(false);
-    const [adminStats, setAdminStats] = useState(null);
-
-    const getAdminOrderStatus = (o) => {
-        const s = o.status || "new";
-        if (o.stage === "sources" || (s === "done" && (!o.refList || o.refList.length === 0))) return "sources";
-        return s;
-    };
+    const [showStats, setShowStats] = useState(false);
 
     useEffect(() => {
         const load = async () => {
@@ -46,21 +241,6 @@ export default function Dashboard({ onOpen, onNew, onAdmin }) {
         };
         load();
     }, [user.uid]);
-
-    useEffect(() => {
-        if (profile?.role !== "admin") return;
-        const load = async () => {
-            const snap = await getDocs(collection(db, "orders"));
-            const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-            const st = { total: all.length, new: 0, plan_ready: 0, plan_approved: 0, writing: 0, sources: 0, done: 0 };
-            all.forEach(o => {
-                const s = getAdminOrderStatus(o);
-                if (st[s] !== undefined) st[s]++;
-            });
-            setAdminStats(st);
-        };
-        load();
-    }, [profile?.role]);
 
     const deleteOrder = async (id, e) => {
         e.stopPropagation();
@@ -124,6 +304,9 @@ export default function Dashboard({ onOpen, onNew, onAdmin }) {
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                     <button onClick={() => setShowHelp(true)} title="Інструкція" style={{ background: "transparent", border: "1px solid #555", color: "#aaa", borderRadius: 6, padding: "6px 12px", cursor: "pointer", fontFamily: "inherit", fontSize: 14, lineHeight: 1 }}>ℹ</button>
+                    {profile?.role === "admin" && (
+                        <button onClick={() => setShowStats(true)} style={{ background: "transparent", border: "1px solid #555", color: "#aaa", borderRadius: 6, padding: "6px 14px", cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>Статистика</button>
+                    )}
                     {onAdmin && (
                         <button onClick={onAdmin} style={{ background: "#e8ff47", color: "#1a1a14", border: "none", borderRadius: 6, padding: "6px 16px", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700 }}>
                             ⚙ Адмін
@@ -133,28 +316,6 @@ export default function Dashboard({ onOpen, onNew, onAdmin }) {
                     <button onClick={logout} style={{ background: "transparent", border: "1px solid #555", color: "#aaa", borderRadius: 6, padding: "6px 14px", cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>Вийти</button>
                 </div>
             </div>
-
-            {/* Admin stats bar */}
-            {profile?.role === "admin" && adminStats && (
-                <div style={{ background: "#242418", borderBottom: "1px solid #333", padding: "8px 32px", display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-                    <span style={{ fontSize: 10, color: "#666", letterSpacing: 1.5, textTransform: "uppercase", marginRight: 6 }}>Усі замовлення:</span>
-                    <span style={{ padding: "3px 12px", borderRadius: 12, background: "#3a3a2e", color: "#e8ff47", fontSize: 12, fontWeight: 700 }}>
-                        {adminStats.total} всього
-                    </span>
-                    {[
-                        { key: "new",           label: "Нове",             color: "#aaa",    bg: "#2e2e2e" },
-                        { key: "plan_ready",    label: "План готовий",     color: "#8ac040", bg: "#2a3020" },
-                        { key: "plan_approved", label: "План затверджено", color: "#4a9ade", bg: "#1e2c3a" },
-                        { key: "writing",       label: "В роботі",         color: "#3abfa0", bg: "#1e3030" },
-                        { key: "sources",       label: "Джерела",          color: "#e8a050", bg: "#332a18" },
-                        { key: "done",          label: "Готово",           color: "#4aba4a", bg: "#1e321e" },
-                    ].filter(s => adminStats[s.key] > 0).map(s => (
-                        <span key={s.key} style={{ padding: "3px 12px", borderRadius: 12, background: s.bg, color: s.color, fontSize: 12, fontWeight: 600 }}>
-                            {adminStats[s.key]} {s.label}
-                        </span>
-                    ))}
-                </div>
-            )}
 
             <div style={{ maxWidth: 1100, margin: "0 auto", padding: "32px clamp(16px, 3vw, 48px)" }}>
 
@@ -309,6 +470,9 @@ export default function Dashboard({ onOpen, onNew, onAdmin }) {
                     </div>
                 </div>
             )}
+
+            {/* Статистика */}
+            {showStats && <AdminStatsModal onClose={() => setShowStats(false)} />}
 
             {/* Модалка деталей замовлення */}
             {infoOrder && (
