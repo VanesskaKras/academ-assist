@@ -56,6 +56,8 @@ function StatsTab({ users }) {
     const [allOrders, setAllOrders] = useState([]);
     const [loading, setLoading] = useState(true);
     const [range, setRange] = useState("7");
+    const [customFrom, setCustomFrom] = useState("");
+    const [customTo, setCustomTo] = useState("");
 
     useEffect(() => {
         const load = async () => {
@@ -68,13 +70,24 @@ function StatsTab({ users }) {
     }, []);
 
     const orders = useMemo(() => {
+        if (customFrom || customTo) {
+            const from = customFrom ? new Date(customFrom + "T00:00:00") : null;
+            const to = customTo ? new Date(customTo + "T23:59:59") : null;
+            return allOrders.filter(o => {
+                if (!o.createdAt) return false;
+                const d = new Date(o.createdAt);
+                if (from && d < from) return false;
+                if (to && d > to) return false;
+                return true;
+            });
+        }
         const r = DATE_RANGES.find(d => d.key === range);
         if (!r || !r.days) return allOrders;
         const from = new Date();
         from.setDate(from.getDate() - r.days);
         from.setHours(0, 0, 0, 0);
         return allOrders.filter(o => o.createdAt && new Date(o.createdAt) >= from);
-    }, [allOrders, range]);
+    }, [allOrders, range, customFrom, customTo]);
 
     const overall = useMemo(() => {
         const counts = { total: orders.length };
@@ -123,20 +136,44 @@ function StatsTab({ users }) {
             {/* Фільтр по даті */}
             <div style={{ background: "#fff", borderRadius: 10, padding: "16px 20px", marginBottom: 20, boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}>
                 <div style={{ fontSize: 11, color: "#888", letterSpacing: 1, textTransform: "uppercase", marginBottom: 10 }}>Період</div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {DATE_RANGES.map(r => (
-                        <button key={r.key} onClick={() => setRange(r.key)}
-                            style={{
-                                padding: "7px 16px", borderRadius: 20, fontSize: 13, cursor: "pointer", fontFamily: "inherit",
-                                border: range === r.key ? "2px solid #1a1a14" : "1.5px solid #e0ddd4",
-                                background: range === r.key ? "#1a1a14" : "#faf8f3",
-                                color: range === r.key ? "#e8ff47" : "#555",
-                                fontWeight: range === r.key ? 700 : 400,
-                                transition: "all .15s",
-                            }}>
-                            {r.label}
-                        </button>
-                    ))}
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+                    {DATE_RANGES.map(r => {
+                        const isActive = !customFrom && !customTo && range === r.key;
+                        return (
+                            <button key={r.key} onClick={() => { setRange(r.key); setCustomFrom(""); setCustomTo(""); }}
+                                style={{
+                                    padding: "7px 16px", borderRadius: 20, fontSize: 13, cursor: "pointer", fontFamily: "inherit",
+                                    border: isActive ? "2px solid #1a1a14" : "1.5px solid #e0ddd4",
+                                    background: isActive ? "#1a1a14" : "#faf8f3",
+                                    color: isActive ? "#e8ff47" : "#555",
+                                    fontWeight: isActive ? 700 : 400,
+                                    transition: "all .15s",
+                                }}>
+                                {r.label}
+                            </button>
+                        );
+                    })}
+                </div>
+                <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                    <div style={{ fontSize: 11, color: "#aaa", letterSpacing: 0.5 }}>або вкажи діапазон:</div>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <span style={{ fontSize: 12, color: "#888" }}>Від</span>
+                            <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)}
+                                style={{ padding: "6px 10px", border: `1.5px solid ${customFrom ? "#1a1a14" : "#e0ddd4"}`, borderRadius: 7, fontSize: 13, fontFamily: "inherit", outline: "none", cursor: "pointer", background: customFrom ? "#faf8f3" : "#fff" }} />
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <span style={{ fontSize: 12, color: "#888" }}>До</span>
+                            <input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)}
+                                style={{ padding: "6px 10px", border: `1.5px solid ${customTo ? "#1a1a14" : "#e0ddd4"}`, borderRadius: 7, fontSize: 13, fontFamily: "inherit", outline: "none", cursor: "pointer", background: customTo ? "#faf8f3" : "#fff" }} />
+                        </div>
+                        {(customFrom || customTo) && (
+                            <button onClick={() => { setCustomFrom(""); setCustomTo(""); }}
+                                style={{ padding: "6px 12px", borderRadius: 7, border: "1.5px solid #e0ddd4", background: "transparent", color: "#888", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                                Скинути ✕
+                            </button>
+                        )}
+                    </div>
                 </div>
             </div>
 

@@ -20,6 +20,13 @@ export default function Dashboard({ onOpen, onNew, onAdmin }) {
     const [filterStatus, setFilterStatus] = useState(null); // null = всі
     const [infoOrder, setInfoOrder] = useState(null); // модалка деталей
     const [showHelp, setShowHelp] = useState(false);
+    const [adminStats, setAdminStats] = useState(null);
+
+    const getAdminOrderStatus = (o) => {
+        const s = o.status || "new";
+        if (o.stage === "sources" || (s === "done" && (!o.refList || o.refList.length === 0))) return "sources";
+        return s;
+    };
 
     useEffect(() => {
         const load = async () => {
@@ -39,6 +46,21 @@ export default function Dashboard({ onOpen, onNew, onAdmin }) {
         };
         load();
     }, [user.uid]);
+
+    useEffect(() => {
+        if (profile?.role !== "admin") return;
+        const load = async () => {
+            const snap = await getDocs(collection(db, "orders"));
+            const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            const st = { total: all.length, new: 0, plan_ready: 0, plan_approved: 0, writing: 0, sources: 0, done: 0 };
+            all.forEach(o => {
+                const s = getAdminOrderStatus(o);
+                if (st[s] !== undefined) st[s]++;
+            });
+            setAdminStats(st);
+        };
+        load();
+    }, [profile?.role]);
 
     const deleteOrder = async (id, e) => {
         e.stopPropagation();
@@ -111,6 +133,28 @@ export default function Dashboard({ onOpen, onNew, onAdmin }) {
                     <button onClick={logout} style={{ background: "transparent", border: "1px solid #555", color: "#aaa", borderRadius: 6, padding: "6px 14px", cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>Вийти</button>
                 </div>
             </div>
+
+            {/* Admin stats bar */}
+            {profile?.role === "admin" && adminStats && (
+                <div style={{ background: "#242418", borderBottom: "1px solid #333", padding: "8px 32px", display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                    <span style={{ fontSize: 10, color: "#666", letterSpacing: 1.5, textTransform: "uppercase", marginRight: 6 }}>Усі замовлення:</span>
+                    <span style={{ padding: "3px 12px", borderRadius: 12, background: "#3a3a2e", color: "#e8ff47", fontSize: 12, fontWeight: 700 }}>
+                        {adminStats.total} всього
+                    </span>
+                    {[
+                        { key: "new",           label: "Нове",             color: "#aaa",    bg: "#2e2e2e" },
+                        { key: "plan_ready",    label: "План готовий",     color: "#8ac040", bg: "#2a3020" },
+                        { key: "plan_approved", label: "План затверджено", color: "#4a9ade", bg: "#1e2c3a" },
+                        { key: "writing",       label: "В роботі",         color: "#3abfa0", bg: "#1e3030" },
+                        { key: "sources",       label: "Джерела",          color: "#e8a050", bg: "#332a18" },
+                        { key: "done",          label: "Готово",           color: "#4aba4a", bg: "#1e321e" },
+                    ].filter(s => adminStats[s.key] > 0).map(s => (
+                        <span key={s.key} style={{ padding: "3px 12px", borderRadius: 12, background: s.bg, color: s.color, fontSize: 12, fontWeight: 600 }}>
+                            {adminStats[s.key]} {s.label}
+                        </span>
+                    ))}
+                </div>
+            )}
 
             <div style={{ maxWidth: 1100, margin: "0 auto", padding: "32px clamp(16px, 3vw, 48px)" }}>
 
