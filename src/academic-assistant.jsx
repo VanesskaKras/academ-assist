@@ -178,7 +178,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
           if (d.abstractsMap) setAbstractsMap(d.abstractsMap);
           if (d.refList) setRefList(d.refList);
           if (d.speechText) setSpeechText(d.speechText);
-          if (d.appendicesText) setAppendicesText(d.appendicesText);
+          if (d.appendicesText) setAppendicesText(d.appendicesText.replace(/\n{2,}/g, '\n'));
           if (d.titlePage) setTitlePage(d.titlePage);
           if (d.titlePageLines) setTitlePageLines(d.titlePageLines);
           if (d.slideJson) setSlideJson(d.slideJson);
@@ -1543,7 +1543,8 @@ ${customBlock || `Включи один або два додатки що лог
         .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
         .replace(/[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF]/g, "")
         .replace(/[„""]([^"„""]*)["""]/g, "«$1»")
-        .replace(/"([^"]*)"/g, "«$1»");
+        .replace(/"([^"]*)"/g, "«$1»")
+        .replace(/\n{2,}/g, '\n');
       setAppendicesText(result);
       await saveToFirestore({ appendicesText: result });
     } catch (e) { alert("Помилка генерації додатків: " + e.message); }
