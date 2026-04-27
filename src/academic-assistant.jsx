@@ -9,7 +9,7 @@ import { exportToDocx, exportPlanToDocx, exportAppendixToDocx, exportSpeechToDoc
 import { exportToPptxFile } from "./lib/exportPptx.js";
 import { callClaude, callGemini, MODEL, MODEL_FAST } from "./lib/api.js";
 import { playDoneSound } from "./lib/audio.js";
-import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, METHODOLOGY_READING_PROMPT, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt } from "./lib/prompts.js";
+import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, METHODOLOGY_READING_PROMPT, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildCorrectionsAnalysisPrompt, buildCorrectionRewritePrompt } from "./lib/prompts.js";
 import { FIELD_LABELS, isPsychoPed, isEcon, hasEmpiricalResearch, getEmpiricalSections, getEconSections, STAGES_TEXT_FIRST, STAGE_KEYS_TEXT_FIRST, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { searchByPhrase, filterSourcesWithGemini } from "./lib/sourcesSearch.js";
@@ -27,6 +27,7 @@ import { PlanStage } from "./components/stages/PlanStage.jsx";
 import { WritingStage } from "./components/stages/WritingStage.jsx";
 import { SourcesStage } from "./components/stages/SourcesStage.jsx";
 import { DoneStage } from "./components/stages/DoneStage.jsx";
+import { CorrectionsStage } from "./components/stages/CorrectionsStage.jsx";
 
 export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const { user } = useAuth();
@@ -86,6 +87,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [regenAllLoading, setRegenAllLoading] = useState(false);
   const regenAllAbortRef = useRef(null);
   const writingDoneRef = useRef(false);
+  const maxStageIdxRef = useRef(0);
   const [apiError, setApiError] = useState("");
   const [speechText, setSpeechText] = useState("");
   const [speechLoading, setSpeechLoading] = useState(false);
@@ -106,6 +108,14 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [searchPageCount, setSearchPageCount] = useState({}); // лічильник натискань "оновити" на секцію
   const [seenSourceKeys, setSeenSourceKeys] = useState({}); // заголовки вже показаних джерел — не показувати повторно
   const [phraseGroups, setPhraseGroups] = useState({}); // { secId: [{phrase, papers}] }
+  // ── Стейт для стейджу "Правки" ──
+  const [correctionText, setCorrectionText] = useState("");
+  const [correctionPhotos, setCorrectionPhotos] = useState([]);
+  const [correctionAnalysis, setCorrectionAnalysis] = useState(null);
+  const [correctionChecked, setCorrectionChecked] = useState({});
+  const [correctionLoading, setCorrectionLoading] = useState(false);
+  const [correctionApplyLoading, setCorrectionApplyLoading] = useState(false);
+  const [correctionHistory, setCorrectionHistory] = useState([]);
   const [sessionCost, setSessionCost] = useState(() => {
     try { return JSON.parse(localStorage.getItem("sessionCost")) || { claude: 0, gemini: 0 }; } catch { return { claude: 0, gemini: 0 }; }
   });
@@ -173,10 +183,20 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
           if (d.titlePageLines) setTitlePageLines(d.titlePageLines);
           if (d.slideJson) setSlideJson(d.slideJson);
           if (d.presentationReady) setPresentationReady(true);
+          if (d.correctionHistory?.length) setCorrectionHistory(d.correctionHistory);
           if (d.workflowMode) setWorkflowMode(d.workflowMode);
           if (d.stage) {
             const keys = d.workflowMode === "sources-first" ? STAGE_KEYS_SOURCES_FIRST : STAGE_KEYS_TEXT_FIRST;
-            setStage(d.stage); setMaxStageIdx(Math.max(0, keys.indexOf(d.stage)));
+            const stageIdx = keys.indexOf(d.stage);
+            setStage(d.stage);
+            // Відновлюємо maxStageIdx: беремо збережений максимум або хоча б індекс поточної стадії
+            const savedMax = d.maxStageIdx !== undefined ? d.maxStageIdx : stageIdx;
+            setMaxStageIdx(Math.max(0, savedMax));
+            // Якщо написання вже завершено — позначаємо, щоб useEffect не перезапускав генерацію
+            const writingIdx = keys.indexOf("writing");
+            if (stageIdx > writingIdx || (d.genIdx !== undefined && (d.sections?.length ?? 0) > 0 && d.genIdx >= d.sections.length)) {
+              writingDoneRef.current = true;
+            }
           }
           if (d.genIdx !== undefined) setGenIdx(d.genIdx);
         }
@@ -195,6 +215,9 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     const idx = activeStageKeys.indexOf(stage);
     if (idx >= 0) setMaxStageIdx(prev => Math.max(prev, idx));
   }, [stage, workflowMode]);
+
+  // Синхронізуємо ref з state для використання всередині async-функцій
+  useEffect(() => { maxStageIdxRef.current = maxStageIdx; }, [maxStageIdx]);
 
   // ── Авто-збереження citInputs на стейджі джерел ──
   const citSaveTimer = useRef(null);
@@ -225,6 +248,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
         type: patch.info?.type || info?.type || "",
         pages: patch.info?.pages || info?.pages || "",
         deadline: patch.info?.deadline || info?.deadline || "",
+        maxStageIdx: maxStageIdxRef.current,
       };
       const data = serializeForFirestore({ ...base, ...patch });
       // merge:true — не потрібен getDoc перед записом, один запис замість двох
@@ -240,13 +264,13 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
 
   const handleNavigateMain = useCallback((s) => {
     if (running) return;
-    setStage(s === "input" && info ? "parsed" : s);
-  }, [running, info]);
+    setStage(s);
+  }, [running]);
 
   const handleNavigateHeader = useCallback((s) => {
     if (running) return;
-    setStage(s === "input" && info ? "parsed" : s);
-  }, [running, info]);
+    setStage(s);
+  }, [running]);
 
   // ── Аналіз шаблону ──
   const doAnalyze = async () => {
@@ -1648,6 +1672,90 @@ ${JSON.stringify(analysis, null, 2)}
   const stopGen = () => { abortRef.current?.abort(); runningRef.current = false; setRunning(false); setPaused(true); setLoadMsg(""); };
   const resumeGen = () => { setApiError(""); setPaused(false); };
 
+  // ── Аналіз правок від викладача ──
+  const doAnalyzeCorrections = async () => {
+    if (!correctionText.trim() && correctionPhotos.length === 0) return;
+    setCorrectionLoading(true);
+    setCorrectionAnalysis(null);
+    setCorrectionChecked({});
+    try {
+      const prompt = buildCorrectionsAnalysisPrompt({
+        topic: info?.topic,
+        subject: info?.subject,
+        direction: info?.direction,
+        sections,
+        correctionsText: correctionText,
+      });
+      const imageContent = correctionPhotos.map(p => ({
+        type: "image",
+        source: { type: "base64", media_type: p.type, data: p.b64 },
+      }));
+      const userContent = imageContent.length
+        ? [...imageContent, { type: "text", text: prompt }]
+        : prompt;
+      const raw = await callClaude([{ role: "user", content: userContent }], { system: SYS_JSON_ARRAY, model: MODEL_FAST });
+      const jsonStr = raw.replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(jsonStr);
+      if (!Array.isArray(parsed)) throw new Error("Не масив");
+      const defaultChecked = {};
+      parsed.forEach(item => { defaultChecked[item.sectionId] = true; });
+      setCorrectionAnalysis(parsed);
+      setCorrectionChecked(defaultChecked);
+    } catch (e) {
+      alert("Помилка аналізу правок: " + e.message);
+    }
+    setCorrectionLoading(false);
+  };
+
+  // ── Застосування правок до обраних розділів ──
+  const doApplyCorrections = async () => {
+    if (!correctionAnalysis?.length) return;
+    const toFix = correctionAnalysis.filter(item => correctionChecked[item.sectionId]);
+    if (!toFix.length) return;
+    setCorrectionApplyLoading(true);
+    const lang = info?.language || "Українська";
+    const newContent = { ...contentRef.current };
+    const sectionsAffected = [];
+    for (const item of toFix) {
+      const sec = sections.find(s => s.id === item.sectionId);
+      if (!sec) continue;
+      try {
+        const prompt = buildCorrectionRewritePrompt({
+          section: sec,
+          originalText: contentRef.current[item.sectionId] || "",
+          issue: item.issue,
+          suggestion: item.suggestion,
+          info,
+          methodInfo,
+          lang,
+        });
+        const result = await callClaude([{ role: "user", content: prompt }], { system: buildSYS(lang, methodInfo), model: MODEL });
+        newContent[item.sectionId] = result;
+        sectionsAffected.push(item.sectionId);
+        setContent({ ...newContent });
+        contentRef.current = { ...newContent };
+      } catch (e) {
+        console.error("Помилка виправлення розділу", item.sectionId, e);
+      }
+    }
+    // Зберегти в історію правок
+    const historyEntry = {
+      clientTimestamp: Date.now(),
+      text: correctionText,
+      hasPhoto: correctionPhotos.length > 0,
+      sectionsAffected,
+      applied: true,
+    };
+    const newHistory = [...correctionHistory, historyEntry];
+    setCorrectionHistory(newHistory);
+    await saveToFirestore({ content: newContent, correctionHistory: newHistory });
+    setCorrectionText("");
+    setCorrectionPhotos([]);
+    setCorrectionAnalysis(null);
+    setCorrectionChecked({});
+    setCorrectionApplyLoading(false);
+  };
+
   // ── Переписати всю роботу з нуля (з урахуванням вже згенерованого контексту) ──
   const doRegenAll = async () => {
     if (!window.confirm("Переписати всю роботу повністю з нуля? Поточний текст буде замінено новим.")) return;
@@ -2875,8 +2983,21 @@ ${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
             doScanAndGenFigures={doScanAndGenFigures} setStage={setStage}
           />
         )}
-
-        
+        {stage === "corrections" && (
+          <CorrectionsStage
+            sections={sections}
+            correctionText={correctionText} setCorrectionText={setCorrectionText}
+            correctionPhotos={correctionPhotos} setCorrectionPhotos={setCorrectionPhotos}
+            correctionAnalysis={correctionAnalysis}
+            correctionChecked={correctionChecked} setCorrectionChecked={setCorrectionChecked}
+            correctionLoading={correctionLoading}
+            correctionApplyLoading={correctionApplyLoading}
+            correctionHistory={correctionHistory}
+            doAnalyzeCorrections={doAnalyzeCorrections}
+            doApplyCorrections={doApplyCorrections}
+            setStage={setStage}
+          />
+        )}
 
         </div>
       </div>{/* end flex layout wrapper */}

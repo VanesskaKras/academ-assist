@@ -168,3 +168,61 @@ export function buildCommentAnalysisPrompt({ topic, comment, photoCount }) {
 Поверни ТІЛЬКИ JSON (без markdown):
 {"planHints":"підказки для СТРУКТУРИ ПЛАНУ: к-сть розділів, назви розділів, висновки до розділів тощо. null якщо немає","textStructureHints":"підказки для СТРУКТУРИ ТЕКСТУ: що має бути у вступі чи висновках, вимоги до обсягів розділів у сторінках, особливі акценти. null якщо немає","writingHints":"підказки для СТИЛЮ ТА ЗМІСТУ написання: термінологія, підходи, що підкреслити, на що звернути увагу. null якщо немає","sourcesHints":"підказки для ДЖЕРЕЛ ТА ОФОРМЛЕННЯ: к-сть джерел, мова джерел, стиль цитування, конкретні автори або видання. null якщо немає","researchDesign":"ВАЖЛИВО: якщо в коментарі є будь-які ознаки емпіричного дослідження (анкетування, опитування, тестування, методика, вибірка, групи учасників, порівняння груп) — ОБОВ’ЯЗКОВО заміни цей рядок на JSON-обʼєкт (не рядок): {\"instrumentType\":\"questionnaire або psycho_scale або fitness_test або pedagogical_experiment або mixed\",\"groups\":[{\"name\":\"назва групи\",\"minN\":30,\"criteria\":\"критерії або null\"}],\"biographicalFields\":[\"ПІБ\",\"вік\",\"стаж\"],\"comparisonRequired\":true,\"statisticalMinN\":30}. instrumentType: questionnaire — анкета/опитування, psycho_scale — психологічна методика/шкала, fitness_test — фізичні тести/нормативи, pedagogical_experiment — педагогічний експеримент, mixed — кілька методів. groups — масив груп з кількістю та критеріями. biographicalFields — поля біографічного блоку якщо згадані. Якщо ознак дослідження немає — null","photoTOC":"якщо на фото є готовий план/зміст роботи (рядки виду Chapter 1 / Розділ 1, 1.1, 1.2, Introduction тощо) — скопіюй його текст дослівно. Якщо плану на фото немає — null"}`;
 }
+
+// ── Промпт для аналізу правок від викладача ──
+export function buildCorrectionsAnalysisPrompt({ topic, subject, direction, sections, correctionsText }) {
+  const sectionsList = sections
+    .filter(s => !["sources"].includes(s.type))
+    .map(s => `- id: "${s.id}", назва: "${s.label}"`)
+    .join("\n");
+
+  return `Ти аналізуєш зауваження викладача до академічної роботи.
+
+ТЕМА РОБОТИ: "${topic || ""}"
+НАПРЯМ: "${direction || ""}", ПРЕДМЕТ: "${subject || ""}"
+
+РОЗДІЛИ РОБОТИ:
+${sectionsList}
+
+ЗАУВАЖЕННЯ ВИКЛАДАЧА:
+${correctionsText}
+
+Визнач які розділи потребують виправлення на основі зауважень.
+Поверни ТІЛЬКИ JSON масив (без markdown):
+[{"sectionId":"id розділу","issue":"коротко що саме не так (1-2 речення)","suggestion":"конкретно що треба зробити для виправлення (1-2 речення)"}]
+
+Якщо зауваження стосується всієї роботи і не прив’язане до конкретного розділу — віднеси його до найбільш відповідного розділу. Повертай ТІЛЬКИ ті розділи що реально потребують змін.`;
+}
+
+// ── Промпт для виправлення одного розділу за правками ──
+export function buildCorrectionRewritePrompt({ section, originalText, issue, suggestion, info, methodInfo, lang }) {
+  const isEnglish = /англ|english/i.test(lang || "");
+  const langLine = isEnglish
+    ? "Write ONLY in English."
+    : `Мова відповіді: ТІЛЬКИ ${lang || "українська"}.`;
+
+  const methodContext = methodInfo
+    ? `\nВИМОГИ МЕТОДИЧКИ: ${[methodInfo.theoryRequirements, methodInfo.analysisRequirements, methodInfo.otherRequirements].filter(Boolean).join(". ")}`
+    : "";
+
+  return `${langLine}
+Ти виправляєш розділ академічної роботи відповідно до зауважень викладача.
+
+ТЕМА РОБОТИ: "${info?.topic || ""}"
+НАПРЯМ: "${info?.direction || ""}", ПРЕДМЕТ: "${info?.subject || ""}", ТИП: "${info?.type || ""}"${methodContext}
+
+РОЗДІЛ: "${section.label}"
+
+ОРИГІНАЛЬНИЙ ТЕКСТ РОЗДІЛУ:
+${originalText}
+
+ЗАУВАЖЕННЯ ВИКЛАДАЧА ДО ЦЬОГО РОЗДІЛУ:
+Проблема: ${issue}
+Що виправити: ${suggestion}
+
+ВАЖЛИВО:
+- Тема, напрям і загальний зміст роботи НЕ змінюються — тільки виправляй зазначені проблеми
+- Збережи структуру та обсяг розділу
+- Виправ конкретно те про що написано в зауваженні
+- Поверни ТІЛЬКИ текст розділу без жодних пояснень`;
+}

@@ -23,39 +23,5 @@ function _playAudioNow() {
   } catch { }
 }
 
-export function playDoneSound() {
-  if (!document.hidden) {
-    _playAudioNow();
-    return;
-  }
-  // Вкладка прихована — показуємо браузерне сповіщення
-  const showNotification = () => {
-    try {
-      new Notification("Текст готовий!", {
-        body: "Генерація завершена. Повертайтесь до вкладки.",
-        icon: "/favicon.ico",
-        silent: false,
-      });
-    } catch { }
-  };
-  if ("Notification" in window) {
-    if (Notification.permission === "granted") {
-      showNotification();
-    } else if (Notification.permission !== "denied") {
-      Notification.requestPermission().then(p => { if (p === "granted") showNotification(); });
-    }
-  }
-  // Запасний варіант: грати звук коли користувач повернеться на вкладку
-  const onVisible = () => {
-    if (!document.hidden) {
-      clearTimeout(fallbackTimer);
-      document.removeEventListener("visibilitychange", onVisible);
-      _playAudioNow();
-    }
-  };
-  document.addEventListener("visibilitychange", onVisible);
-  // Авто-cleanup через 60с якщо користувач так і не повернувся
-  const fallbackTimer = setTimeout(() => {
-    document.removeEventListener("visibilitychange", onVisible);
-  }, 60000);
-}
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function playDoneSound() {}

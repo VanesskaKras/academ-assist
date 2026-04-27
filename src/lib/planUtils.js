@@ -71,11 +71,11 @@ export const getEconSections = (sections, info) => {
     .map(s => s.id);
 };
 
-export const STAGES_TEXT_FIRST   = ["Дані", "Перевірка", "План", "Написання", "Джерела", "Готово"];
-export const STAGE_KEYS_TEXT_FIRST   = ["input", "parsed", "plan", "writing", "sources", "done"];
+export const STAGES_TEXT_FIRST   = ["Дані", "Перевірка", "План", "Написання", "Джерела", "Готово", "Правки"];
+export const STAGE_KEYS_TEXT_FIRST   = ["input", "parsed", "plan", "writing", "sources", "done", "corrections"];
 
-export const STAGES_SOURCES_FIRST = ["Дані", "Перевірка", "План", "Джерела", "Написання", "Готово"];
-export const STAGE_KEYS_SOURCES_FIRST = ["input", "parsed", "plan", "sources", "writing", "done"];
+export const STAGES_SOURCES_FIRST = ["Дані", "Перевірка", "План", "Джерела", "Написання", "Готово", "Правки"];
+export const STAGE_KEYS_SOURCES_FIRST = ["input", "parsed", "plan", "sources", "writing", "done", "corrections"];
 
 // Сумісність зі старим кодом (дефолт — text-first)
 export const STAGES     = STAGES_TEXT_FIRST;
@@ -89,6 +89,7 @@ export const ORDER_STATUS = {
   writing: "writing",
   sources: "writing",
   done: "done",
+  corrections: "corrections",
 };
 
 // Дефолт 80 — для великих академічних робіт (курсова, дипломна). Мала версія в shared.jsx має дефолт 20.
