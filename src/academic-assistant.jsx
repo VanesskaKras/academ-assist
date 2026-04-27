@@ -3002,25 +3002,25 @@ ${allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
         </div>
       </div>{/* end flex layout wrapper */}
 
-      {/* Scroll arrow */}
-      <button
-        onClick={() => scrolled ? window.scrollTo({ top: 0, behavior: "smooth" }) : window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" })}
-        title={scrolled ? "Нагору" : "Вниз"}
-        style={{
-          position: "fixed", right: 18, bottom: 24, zIndex: 999,
-          width: 38, height: 38, borderRadius: "50%",
-          background: "#1a1a14", border: "1.5px solid #444",
-          color: "#e8ff47", fontSize: 18, lineHeight: 1,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          cursor: "pointer", boxShadow: "0 2px 10px rgba(0,0,0,.25)",
-          transition: "opacity .2s, transform .2s",
-          opacity: 0.85,
-        }}
-        onMouseEnter={e => e.currentTarget.style.opacity = "1"}
-        onMouseLeave={e => e.currentTarget.style.opacity = "0.85"}
-      >
-        {scrolled ? "↑" : "↓"}
-      </button>
+      {/* Scroll arrows */}
+      <div style={{ position: "fixed", right: 18, bottom: 24, zIndex: 999, display: "flex", flexDirection: "column", gap: 6 }}>
+        {[{ dir: "↑", title: "Нагору", action: () => window.scrollTo({ top: 0, behavior: "smooth" }) },
+          { dir: "↓", title: "Вниз",   action: () => window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" }) }
+        ].map(({ dir, title, action }) => (
+          <button key={dir} onClick={action} title={title}
+            style={{
+              width: 38, height: 38, borderRadius: "50%",
+              background: "#1a1a14", border: "1.5px solid #444",
+              color: "#e8ff47", fontSize: 18, lineHeight: 1,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              cursor: "pointer", boxShadow: "0 2px 10px rgba(0,0,0,.25)",
+              opacity: 0.85,
+            }}
+            onMouseEnter={e => e.currentTarget.style.opacity = "1"}
+            onMouseLeave={e => e.currentTarget.style.opacity = "0.85"}
+          >{dir}</button>
+        ))}
+      </div>
 
     </div>
   );
