@@ -89,6 +89,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const regenAllAbortRef = useRef(null);
   const writingDoneRef = useRef(false);
   const maxStageIdxRef = useRef(0);
+  const generationStartRef = useRef(null);
   const [apiError, setApiError] = useState("");
   const [speechText, setSpeechText] = useState("");
   const [speechLoading, setSpeechLoading] = useState(false);
@@ -120,7 +121,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [sessionCost, setSessionCost] = useState(() => {
     try { return JSON.parse(localStorage.getItem("sessionCost")) || { claude: 0, gemini: 0 }; } catch { return { claude: 0, gemini: 0 }; }
   });
-  const tokenAccRef = useRef({ inTok: 0, outTok: 0, costUsd: 0 });
+  const tokenAccRef = useRef({ inTok: 0, outTok: 0, costUsd: 0, claudeInTok: 0, claudeOutTok: 0, claudeCostUsd: 0, geminiInTok: 0, geminiOutTok: 0, geminiCostUsd: 0 });
   useEffect(() => {
     const handler = (e) => {
       const isGemini = e.detail.model?.startsWith("gemini");
@@ -129,10 +130,19 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
         localStorage.setItem("sessionCost", JSON.stringify(next));
         return next;
       });
+      const inTok = e.detail.inTok || 0;
+      const outTok = e.detail.outTok || 0;
+      const cost = e.detail.cost || 0;
       tokenAccRef.current = {
-        inTok: tokenAccRef.current.inTok + (e.detail.inTok || 0),
-        outTok: tokenAccRef.current.outTok + (e.detail.outTok || 0),
-        costUsd: tokenAccRef.current.costUsd + (e.detail.cost || 0),
+        inTok: tokenAccRef.current.inTok + inTok,
+        outTok: tokenAccRef.current.outTok + outTok,
+        costUsd: tokenAccRef.current.costUsd + cost,
+        claudeInTok: tokenAccRef.current.claudeInTok + (isGemini ? 0 : inTok),
+        claudeOutTok: tokenAccRef.current.claudeOutTok + (isGemini ? 0 : outTok),
+        claudeCostUsd: tokenAccRef.current.claudeCostUsd + (isGemini ? 0 : cost),
+        geminiInTok: tokenAccRef.current.geminiInTok + (isGemini ? inTok : 0),
+        geminiOutTok: tokenAccRef.current.geminiOutTok + (isGemini ? outTok : 0),
+        geminiCostUsd: tokenAccRef.current.geminiCostUsd + (isGemini ? cost : 0),
       };
     };
     window.addEventListener("apicost", handler);
@@ -208,7 +218,14 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
           }
           if (d.genIdx !== undefined) setGenIdx(d.genIdx);
           if (d.totalInTok !== undefined) {
-            tokenAccRef.current = { inTok: d.totalInTok || 0, outTok: d.totalOutTok || 0, costUsd: d.totalCostUsd || 0 };
+            tokenAccRef.current = {
+              inTok: d.totalInTok || 0, outTok: d.totalOutTok || 0, costUsd: d.totalCostUsd || 0,
+              claudeInTok: d.claudeInTok || 0, claudeOutTok: d.claudeOutTok || 0, claudeCostUsd: d.claudeCostUsd || 0,
+              geminiInTok: d.geminiInTok || 0, geminiOutTok: d.geminiOutTok || 0, geminiCostUsd: d.geminiCostUsd || 0,
+            };
+          }
+          if (d.generationStartedAt && d.status !== "done") {
+            generationStartRef.current = new Date(d.generationStartedAt).getTime();
           }
         }
       } catch (e) { console.error("Load error:", e); }
@@ -263,7 +280,16 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
         totalInTok: tokenAccRef.current.inTok,
         totalOutTok: tokenAccRef.current.outTok,
         totalCostUsd: tokenAccRef.current.costUsd,
-        ...(patch.status === "done" ? { completedAt: new Date().toISOString() } : {}),
+        claudeInTok: tokenAccRef.current.claudeInTok,
+        claudeOutTok: tokenAccRef.current.claudeOutTok,
+        claudeCostUsd: tokenAccRef.current.claudeCostUsd,
+        geminiInTok: tokenAccRef.current.geminiInTok,
+        geminiOutTok: tokenAccRef.current.geminiOutTok,
+        geminiCostUsd: tokenAccRef.current.geminiCostUsd,
+        ...(patch.status === "done" ? {
+          completedAt: new Date().toISOString(),
+          ...(generationStartRef.current ? { generationDurationSec: Math.round((Date.now() - generationStartRef.current) / 1000) } : {}),
+        } : {}),
       };
       const data = serializeForFirestore({ ...base, ...patch });
       // merge:true — не потрібен getDoc перед записом, один запис замість двох
@@ -775,7 +801,9 @@ Return ONLY JSON without markdown:
     if (!appendicesText && (practicalApproachForGen || isPsychoPed(info))) doGenAppendices();
     const nextStage = newMode === "sources-first" ? "sources" : "writing";
     setStage(nextStage);
-    saveToFirestore({ workflowMode: newMode, stage: nextStage, status: "writing" });
+    const genStartPayload = nextStage === "sources" ? { generationStartedAt: new Date().toISOString() } : {};
+    if (nextStage === "sources") generationStartRef.current = Date.now();
+    saveToFirestore({ workflowMode: newMode, stage: nextStage, status: "writing", ...genStartPayload });
   };
 
   // ── Виявлення рисунків у тексті ──

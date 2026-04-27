@@ -262,26 +262,47 @@ function CostsTab({ users }) {
     const totals = useMemo(() => {
         const byManager = {};
         let grandIn = 0, grandOut = 0, grandCost = 0;
+        let grandClaudeIn = 0, grandClaudeOut = 0, grandClaudeCost = 0;
+        let grandGeminiIn = 0, grandGeminiOut = 0, grandGeminiCost = 0;
         orders.forEach(o => {
             grandIn += o.totalInTok || 0;
             grandOut += o.totalOutTok || 0;
             grandCost += o.totalCostUsd || 0;
+            grandClaudeIn += o.claudeInTok || 0;
+            grandClaudeOut += o.claudeOutTok || 0;
+            grandClaudeCost += o.claudeCostUsd || 0;
+            grandGeminiIn += o.geminiInTok || 0;
+            grandGeminiOut += o.geminiOutTok || 0;
+            grandGeminiCost += o.geminiCostUsd || 0;
             const uid = o.uid || "—";
-            if (!byManager[uid]) byManager[uid] = { inTok: 0, outTok: 0, costUsd: 0, count: 0 };
+            if (!byManager[uid]) byManager[uid] = { inTok: 0, outTok: 0, costUsd: 0, claudeInTok: 0, claudeOutTok: 0, claudeCostUsd: 0, geminiInTok: 0, geminiOutTok: 0, geminiCostUsd: 0, count: 0 };
             byManager[uid].inTok += o.totalInTok || 0;
             byManager[uid].outTok += o.totalOutTok || 0;
             byManager[uid].costUsd += o.totalCostUsd || 0;
+            byManager[uid].claudeInTok += o.claudeInTok || 0;
+            byManager[uid].claudeOutTok += o.claudeOutTok || 0;
+            byManager[uid].claudeCostUsd += o.claudeCostUsd || 0;
+            byManager[uid].geminiInTok += o.geminiInTok || 0;
+            byManager[uid].geminiOutTok += o.geminiOutTok || 0;
+            byManager[uid].geminiCostUsd += o.geminiCostUsd || 0;
             byManager[uid].count++;
         });
-        return { grandIn, grandOut, grandCost, byManager };
+        return { grandIn, grandOut, grandCost, grandClaudeIn, grandClaudeOut, grandClaudeCost, grandGeminiIn, grandGeminiOut, grandGeminiCost, byManager };
     }, [orders]);
 
     const fmt = iso => iso ? new Date(iso).toLocaleDateString("uk-UA", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—";
     const fmtTok = n => n >= 1000 ? (n / 1000).toFixed(1) + "k" : (n || 0).toString();
     const fmtCost = n => "$" + (n || 0).toFixed(4);
+    const fmtDur = s => {
+        if (!s) return "—";
+        const h = Math.floor(s / 3600);
+        const m = Math.floor((s % 3600) / 60);
+        if (h > 0) return `${h}год ${m}хв`;
+        return `${m}хв`;
+    };
 
     const exportCSV = () => {
-        const header = ["Дата", "Менеджер", "Email", "№ замовлення", "Тип роботи", "К-сть сторінок", "Токени вхід", "Токени вихід", "Вартість USD"];
+        const header = ["Дата", "Менеджер", "Email", "№ замовлення", "Тип роботи", "К-сть сторінок", "Claude вхід", "Claude вихід", "Claude USD", "Gemini вхід", "Gemini вихід", "Gemini USD", "Разом вхід", "Разом вихід", "Разом USD", "Час виконання"];
         const rows = orders.map(o => {
             const u = userMap[o.uid];
             return [
@@ -291,9 +312,16 @@ function CostsTab({ users }) {
                 o.info?.orderNumber || "—",
                 o.type || o.workType || "—",
                 o.pages || "—",
+                o.claudeInTok || 0,
+                o.claudeOutTok || 0,
+                (o.claudeCostUsd || 0).toFixed(4),
+                o.geminiInTok || 0,
+                o.geminiOutTok || 0,
+                (o.geminiCostUsd || 0).toFixed(4),
                 o.totalInTok || 0,
                 o.totalOutTok || 0,
                 (o.totalCostUsd || 0).toFixed(4),
+                fmtDur(o.generationDurationSec),
             ];
         });
         const csv = [header, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
@@ -349,12 +377,17 @@ function CostsTab({ users }) {
                     <div style={{ overflowX: "auto" }}>
                         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                             <thead>
+                                <tr style={{ borderBottom: "1px solid #f0ece2" }}>
+                                    <th rowSpan={2} style={{ textAlign: "left", padding: "8px 10px", color: "#888", fontWeight: 600, fontSize: 11, letterSpacing: 1, textTransform: "uppercase", verticalAlign: "bottom" }}>Менеджер</th>
+                                    <th rowSpan={2} style={{ textAlign: "center", padding: "8px 10px", color: "#888", fontWeight: 600, fontSize: 11, letterSpacing: 1, textTransform: "uppercase", verticalAlign: "bottom" }}>Замовл.</th>
+                                    <th colSpan={3} style={{ textAlign: "center", padding: "6px 10px", color: "#5a6a5a", fontWeight: 700, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", borderBottom: "1px solid #e0ece0", background: "#f5faf5" }}>Claude</th>
+                                    <th colSpan={3} style={{ textAlign: "center", padding: "6px 10px", color: "#5a5a6a", fontWeight: 700, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", borderBottom: "1px solid #e0e0ec", background: "#f5f5fa" }}>Gemini</th>
+                                    <th colSpan={3} style={{ textAlign: "center", padding: "6px 10px", color: "#888", fontWeight: 700, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", borderBottom: "1px solid #f0ece2" }}>Разом</th>
+                                </tr>
                                 <tr style={{ borderBottom: "2px solid #f0ece2" }}>
-                                    <th style={{ textAlign: "left", padding: "8px 10px", color: "#888", fontWeight: 600, fontSize: 11, letterSpacing: 1, textTransform: "uppercase" }}>Менеджер</th>
-                                    <th style={{ textAlign: "center", padding: "8px 10px", color: "#888", fontWeight: 600, fontSize: 11, letterSpacing: 1, textTransform: "uppercase" }}>Замовлень</th>
-                                    <th style={{ textAlign: "center", padding: "8px 10px", color: "#888", fontWeight: 600, fontSize: 11, letterSpacing: 1, textTransform: "uppercase" }}>Токени вхід</th>
-                                    <th style={{ textAlign: "center", padding: "8px 10px", color: "#888", fontWeight: 600, fontSize: 11, letterSpacing: 1, textTransform: "uppercase" }}>Токени вихід</th>
-                                    <th style={{ textAlign: "center", padding: "8px 10px", color: "#888", fontWeight: 600, fontSize: 11, letterSpacing: 1, textTransform: "uppercase" }}>Вартість</th>
+                                    {["Вхід","Вихід","$","Вхід","Вихід","$","Вхід","Вихід","$"].map((h, i) => (
+                                        <th key={i} style={{ textAlign: "center", padding: "4px 8px", color: "#aaa", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", whiteSpace: "nowrap" }}>{h}</th>
+                                    ))}
                                 </tr>
                             </thead>
                             <tbody>
@@ -365,15 +398,26 @@ function CostsTab({ users }) {
                                             <div style={{ fontSize: 11, color: "#aaa" }}>{row.user?.email || row.uid}</div>
                                         </td>
                                         <td style={{ textAlign: "center", fontWeight: 700, color: "#1a1a14" }}>{row.count}</td>
+                                        <td style={{ textAlign: "center", color: "#555", fontFamily: "monospace", fontSize: 12 }}>{fmtTok(row.claudeInTok)}</td>
+                                        <td style={{ textAlign: "center", color: "#555", fontFamily: "monospace", fontSize: 12 }}>{fmtTok(row.claudeOutTok)}</td>
+                                        <td style={{ textAlign: "center", fontWeight: 600, color: "#1a6a1a", fontSize: 12 }}>{fmtCost(row.claudeCostUsd)}</td>
+                                        <td style={{ textAlign: "center", color: "#555", fontFamily: "monospace", fontSize: 12 }}>{fmtTok(row.geminiInTok)}</td>
+                                        <td style={{ textAlign: "center", color: "#555", fontFamily: "monospace", fontSize: 12 }}>{fmtTok(row.geminiOutTok)}</td>
+                                        <td style={{ textAlign: "center", fontWeight: 600, color: "#1a6a1a", fontSize: 12 }}>{fmtCost(row.geminiCostUsd)}</td>
                                         <td style={{ textAlign: "center", color: "#555", fontFamily: "monospace", fontSize: 12 }}>{fmtTok(row.inTok)}</td>
                                         <td style={{ textAlign: "center", color: "#555", fontFamily: "monospace", fontSize: 12 }}>{fmtTok(row.outTok)}</td>
                                         <td style={{ textAlign: "center", fontWeight: 700, color: "#1a6a1a" }}>{fmtCost(row.costUsd)}</td>
                                     </tr>
                                 ))}
-                                {/* Загальний підсумок */}
                                 <tr style={{ borderTop: "2px solid #1a1a14", background: "#1a1a14" }}>
                                     <td style={{ padding: "10px 10px", color: "#e8ff47", fontWeight: 700 }}>Всього</td>
                                     <td style={{ textAlign: "center", color: "#e8ff47", fontWeight: 700 }}>{orders.length}</td>
+                                    <td style={{ textAlign: "center", color: "#aaa", fontFamily: "monospace", fontSize: 12 }}>{fmtTok(totals.grandClaudeIn)}</td>
+                                    <td style={{ textAlign: "center", color: "#aaa", fontFamily: "monospace", fontSize: 12 }}>{fmtTok(totals.grandClaudeOut)}</td>
+                                    <td style={{ textAlign: "center", color: "#e8ff47", fontWeight: 700 }}>{fmtCost(totals.grandClaudeCost)}</td>
+                                    <td style={{ textAlign: "center", color: "#aaa", fontFamily: "monospace", fontSize: 12 }}>{fmtTok(totals.grandGeminiIn)}</td>
+                                    <td style={{ textAlign: "center", color: "#aaa", fontFamily: "monospace", fontSize: 12 }}>{fmtTok(totals.grandGeminiOut)}</td>
+                                    <td style={{ textAlign: "center", color: "#e8ff47", fontWeight: 700 }}>{fmtCost(totals.grandGeminiCost)}</td>
                                     <td style={{ textAlign: "center", color: "#aaa", fontFamily: "monospace", fontSize: 12 }}>{fmtTok(totals.grandIn)}</td>
                                     <td style={{ textAlign: "center", color: "#aaa", fontFamily: "monospace", fontSize: 12 }}>{fmtTok(totals.grandOut)}</td>
                                     <td style={{ textAlign: "center", color: "#e8ff47", fontWeight: 700, fontSize: 15 }}>{fmtCost(totals.grandCost)}</td>
@@ -403,15 +447,21 @@ function CostsTab({ users }) {
                     <div style={{ overflowX: "auto" }}>
                         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                             <thead>
+                                <tr style={{ borderBottom: "1px solid #f0ece2" }}>
+                                    <th rowSpan={2} style={{ textAlign: "left", padding: "8px 8px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", whiteSpace: "nowrap", verticalAlign: "bottom" }}>Дата</th>
+                                    <th rowSpan={2} style={{ textAlign: "left", padding: "8px 8px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", verticalAlign: "bottom" }}>Менеджер</th>
+                                    <th rowSpan={2} style={{ textAlign: "left", padding: "8px 8px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", whiteSpace: "nowrap", verticalAlign: "bottom" }}>№</th>
+                                    <th rowSpan={2} style={{ textAlign: "left", padding: "8px 8px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", verticalAlign: "bottom" }}>Тип</th>
+                                    <th rowSpan={2} style={{ textAlign: "center", padding: "8px 6px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", whiteSpace: "nowrap", verticalAlign: "bottom" }}>Стор.</th>
+                                    <th colSpan={3} style={{ textAlign: "center", padding: "4px 8px", color: "#5a6a5a", fontWeight: 700, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", borderBottom: "1px solid #e0ece0", background: "#f5faf5" }}>Claude</th>
+                                    <th colSpan={3} style={{ textAlign: "center", padding: "4px 8px", color: "#5a5a6a", fontWeight: 700, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", borderBottom: "1px solid #e0e0ec", background: "#f5f5fa" }}>Gemini</th>
+                                    <th colSpan={3} style={{ textAlign: "center", padding: "4px 8px", color: "#888", fontWeight: 700, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", borderBottom: "1px solid #f0ece2" }}>Разом</th>
+                                    <th rowSpan={2} style={{ textAlign: "center", padding: "8px 8px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", whiteSpace: "nowrap", verticalAlign: "bottom" }}>Час</th>
+                                </tr>
                                 <tr style={{ borderBottom: "2px solid #f0ece2" }}>
-                                    <th style={{ textAlign: "left", padding: "8px 8px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", whiteSpace: "nowrap" }}>Дата</th>
-                                    <th style={{ textAlign: "left", padding: "8px 8px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase" }}>Менеджер</th>
-                                    <th style={{ textAlign: "left", padding: "8px 8px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", whiteSpace: "nowrap" }}>№ замовл.</th>
-                                    <th style={{ textAlign: "left", padding: "8px 8px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase" }}>Тип роботи</th>
-                                    <th style={{ textAlign: "center", padding: "8px 6px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", whiteSpace: "nowrap" }}>Стор.</th>
-                                    <th style={{ textAlign: "center", padding: "8px 6px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", whiteSpace: "nowrap" }}>Вхід</th>
-                                    <th style={{ textAlign: "center", padding: "8px 6px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", whiteSpace: "nowrap" }}>Вихід</th>
-                                    <th style={{ textAlign: "center", padding: "8px 8px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", whiteSpace: "nowrap" }}>Вартість</th>
+                                    {["Вхід","Вихід","$","Вхід","Вихід","$","Вхід","Вихід","$"].map((h, i) => (
+                                        <th key={i} style={{ textAlign: "center", padding: "4px 6px", color: "#aaa", fontWeight: 600, fontSize: 10, whiteSpace: "nowrap" }}>{h}</th>
+                                    ))}
                                 </tr>
                             </thead>
                             <tbody>
@@ -426,9 +476,16 @@ function CostsTab({ users }) {
                                             <td style={{ padding: "9px 8px", color: "#555", fontSize: 11, fontFamily: "monospace", whiteSpace: "nowrap" }}>{o.info?.orderNumber || "—"}</td>
                                             <td style={{ padding: "9px 8px", color: "#1a1a14", whiteSpace: "nowrap" }}>{o.type || o.workType || "—"}</td>
                                             <td style={{ textAlign: "center", padding: "9px 6px", color: "#555" }}>{o.pages || "—"}</td>
+                                            <td style={{ textAlign: "center", padding: "9px 6px", color: "#555", fontFamily: "monospace" }}>{fmtTok(o.claudeInTok)}</td>
+                                            <td style={{ textAlign: "center", padding: "9px 6px", color: "#555", fontFamily: "monospace" }}>{fmtTok(o.claudeOutTok)}</td>
+                                            <td style={{ textAlign: "center", padding: "9px 6px", fontWeight: 600, color: "#1a6a1a" }}>{fmtCost(o.claudeCostUsd)}</td>
+                                            <td style={{ textAlign: "center", padding: "9px 6px", color: "#555", fontFamily: "monospace" }}>{fmtTok(o.geminiInTok)}</td>
+                                            <td style={{ textAlign: "center", padding: "9px 6px", color: "#555", fontFamily: "monospace" }}>{fmtTok(o.geminiOutTok)}</td>
+                                            <td style={{ textAlign: "center", padding: "9px 6px", fontWeight: 600, color: "#1a6a1a" }}>{fmtCost(o.geminiCostUsd)}</td>
                                             <td style={{ textAlign: "center", padding: "9px 6px", color: "#555", fontFamily: "monospace" }}>{fmtTok(o.totalInTok)}</td>
                                             <td style={{ textAlign: "center", padding: "9px 6px", color: "#555", fontFamily: "monospace" }}>{fmtTok(o.totalOutTok)}</td>
                                             <td style={{ textAlign: "center", padding: "9px 8px", fontWeight: 700, color: "#1a6a1a" }}>{fmtCost(o.totalCostUsd)}</td>
+                                            <td style={{ textAlign: "center", padding: "9px 8px", color: "#555", fontFamily: "monospace", whiteSpace: "nowrap" }}>{fmtDur(o.generationDurationSec)}</td>
                                         </tr>
                                     );
                                 })}
