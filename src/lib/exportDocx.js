@@ -136,26 +136,31 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     });
   }
   function introBoldPara(text) {
-    const STARTS = /^(Актуальн|Мет(?:ою|а\s)|Завдання|Для досягн|Для вирішен|Об.єкт|Предмет|Методи\b|Наукова новизна|Практична знач|Апробац|Структур|Теоретико|Матеріал|Хронологічн)/i;
+    const STARTS = /^(Актуальн|Мет(?:ою|а\s)|Завдання|Для досягн|Для вирішен|Об.єкт|Предмет|Метод(?:и|ологічн)|Наукова новизна|Практична знач|Апробац|Структур|Теоретико|Матеріал|Хронологічн)/i;
     if (!STARTS.test(text)) return bodyPara(text);
     let boldEnd = -1;
     const colon = text.indexOf(':');
     if (colon > 0 && colon < 120) {
       boldEnd = colon + 1;
     } else {
-      const dot = text.indexOf('.');
-      if (dot > 0 && dot < 50) {
-        boldEnd = dot + 1;
+      const dashIdx = text.indexOf(' – ') !== -1 ? text.indexOf(' – ') : text.indexOf(' — ');
+      if (dashIdx > 0 && dashIdx < 80) {
+        boldEnd = dashIdx + 2;
       } else {
-        const єIdx = text.indexOf(' є ');
-        if (єIdx > 0 && єIdx < 60) {
-          boldEnd = єIdx + 2;
+        const dot = text.indexOf('.');
+        if (dot > 0 && dot < 50) {
+          boldEnd = dot + 1;
         } else {
-          const полягIdx = text.indexOf(' полягає');
-          if (полягIdx > 0 && полягIdx < 60) boldEnd = полягIdx;
-          else {
-            const становIdx = text.indexOf(' становлять');
-            if (становIdx > 0 && становIdx < 70) boldEnd = становIdx;
+          const єIdx = text.indexOf(' є ');
+          if (єIdx > 0 && єIdx < 60) {
+            boldEnd = єIdx + 2;
+          } else {
+            const полягIdx = text.indexOf(' полягає');
+            if (полягIdx > 0 && полягIdx < 60) boldEnd = полягIdx;
+            else {
+              const становIdx = text.indexOf(' становлять');
+              if (становIdx > 0 && становIdx < 70) boldEnd = становIdx;
+            }
           }
         }
       }
