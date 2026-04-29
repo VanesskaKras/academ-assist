@@ -570,6 +570,7 @@ export default function TrainingPage({ onBack }) {
     const [editActive, setEditActive] = useState({ si: 0, subi: null });
     const [editExpanded, setEditExpanded] = useState({});
     const [saving, setSaving] = useState(false);
+    const [saveMsg, setSaveMsg] = useState("");
     const [showTests, setShowTests] = useState(false);
 
     useEffect(() => {
@@ -643,23 +644,41 @@ export default function TrainingPage({ onBack }) {
 
     const saveEdit = async () => {
         setSaving(true);
+        setSaveMsg("");
         try {
             const existingIds = new Set(sections.map(s => s.id));
             const keepIds = new Set(editSections.filter(s => !s._new).map(s => s.id));
             for (const id of existingIds) {
                 if (!keepIds.has(id)) await deleteDoc(doc(db, "training_sections", id));
             }
+            const saved = [];
             for (let i = 0; i < editSections.length; i++) {
                 const { _new, id, ...raw } = editSections[i];
                 raw.order = i + 1;
                 const data = serializeSection(raw);
-                if (_new) await addDoc(collection(db, "training_sections"), data);
-                else await setDoc(doc(db, "training_sections", id), data);
+                if (_new) {
+                    const ref = await addDoc(collection(db, "training_sections"), data);
+                    saved.push({ ...editSections[i], id: ref.id, _new: false });
+                } else {
+                    await setDoc(doc(db, "training_sections", id), data);
+                    saved.push({ ...editSections[i], _new: false });
+                }
             }
-            await loadSections();
-            setEditMode(false);
-        } catch (e) { console.error(e); }
+            setSections(JSON.parse(JSON.stringify(saved)));
+            setEditSections(saved);
+            setSaveMsg("ok");
+            setTimeout(() => setSaveMsg(""), 2500);
+        } catch (e) {
+            console.error(e);
+            setSaveMsg("error");
+            setTimeout(() => setSaveMsg(""), 3000);
+        }
         setSaving(false);
+    };
+
+    const exitEdit = () => {
+        setEditMode(false);
+        setSaveMsg("");
     };
 
     const startEdit = () => {
@@ -829,7 +848,9 @@ export default function TrainingPage({ onBack }) {
                     )}
                     {isAdmin && editMode && (
                         <>
-                            <button onClick={() => setEditMode(false)} style={headerBtn}>Скасувати</button>
+                            {saveMsg === "ok" && <span style={{ fontSize: 12, color: "#e8ff47" }}>✓ Збережено</span>}
+                            {saveMsg === "error" && <span style={{ fontSize: 12, color: "#ff6b6b" }}>✕ Помилка збереження</span>}
+                            <button onClick={exitEdit} style={headerBtn}>← Вийти</button>
                             <button onClick={saveEdit} disabled={saving} style={{ ...primBtn, opacity: saving ? 0.6 : 1 }}>
                                 {saving ? "Збереження..." : "Зберегти"}
                             </button>
