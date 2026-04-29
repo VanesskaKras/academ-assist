@@ -228,6 +228,10 @@ function ContentView({ blocks }) {
                     </div>
                 );
 
+                if (block.type === "carousel") return (
+                    <CarouselView key={block.id} block={block} />
+                );
+
                 return null;
             })}
         </>
@@ -241,7 +245,7 @@ const miniBtn = {
     padding: "3px 8px", fontSize: 11, cursor: "pointer", color: "#666", fontFamily: "inherit",
 };
 
-const BLOCK_LABELS = { text: "Текст", image: "Фото", video: "Відео", drive: "Google Drive", table: "Таблиця" };
+const BLOCK_LABELS = { text: "Текст", image: "Фото", video: "Відео", drive: "Google Drive", table: "Таблиця", carousel: "Карусель" };
 
 function BlockEditor({ block, onUpdate, onRemove, onMoveUp, onMoveDown, isFirst, isLast }) {
     return (
@@ -385,6 +389,11 @@ function BlockEditor({ block, onUpdate, onRemove, onMoveUp, onMoveDown, isFirst,
                     />
                 </div>
             )}
+
+            {/* Carousel */}
+            {block.type === "carousel" && (
+                <CarouselEditor block={block} onUpdate={onUpdate} />
+            )}
         </div>
     );
 }
@@ -392,20 +401,161 @@ function BlockEditor({ block, onUpdate, onRemove, onMoveUp, onMoveDown, isFirst,
 // ── Main component ───────────────────────────────────────────────────────────
 
 const BLOCK_TYPES = [
-    { type: "text",  label: "+ Текст" },
-    { type: "image", label: "+ Фото" },
-    { type: "video", label: "+ Відео" },
-    { type: "drive", label: "+ Google Drive" },
-    { type: "table", label: "+ Таблиця" },
+    { type: "text",     label: "+ Текст" },
+    { type: "image",    label: "+ Фото" },
+    { type: "video",    label: "+ Відео" },
+    { type: "drive",    label: "+ Google Drive" },
+    { type: "table",    label: "+ Таблиця" },
+    { type: "carousel", label: "+ Карусель" },
 ];
 
+const SLIDE_BLOCK_TYPES = BLOCK_TYPES.filter(b => b.type !== "carousel");
+
 const NEW_BLOCK = {
-    text:  () => ({ id: genId(), type: "text",  value: "", }),
-    image: () => ({ id: genId(), type: "image", url: "", caption: "" }),
-    video: () => ({ id: genId(), type: "video", url: "", caption: "" }),
-    drive: () => ({ id: genId(), type: "drive", url: "", caption: "" }),
-    table: () => ({ id: genId(), type: "table", caption: "", headers: ["Колонка 1", "Колонка 2"], rows: [["", ""], ["", ""]] }),
+    text:     () => ({ id: genId(), type: "text",  value: "" }),
+    image:    () => ({ id: genId(), type: "image", url: "", caption: "" }),
+    video:    () => ({ id: genId(), type: "video", url: "", caption: "" }),
+    drive:    () => ({ id: genId(), type: "drive", url: "", caption: "" }),
+    table:    () => ({ id: genId(), type: "table", caption: "", headers: ["Колонка 1", "Колонка 2"], rows: [["", ""], ["", ""]] }),
+    carousel: () => ({ id: genId(), type: "carousel", slides: [
+        { id: genId(), title: "Слайд 1", content: [] },
+        { id: genId(), title: "Слайд 2", content: [] },
+    ]}),
 };
+
+// ── Carousel view ─────────────────────────────────────────────────────────────
+
+function CarouselView({ block }) {
+    const [cur, setCur] = useState(0);
+    const slides = block.slides || [];
+    if (!slides.length) return null;
+    const slide = slides[Math.min(cur, slides.length - 1)];
+
+    const navBtn = (disabled) => ({
+        background: "transparent", border: "1px solid " + (disabled ? "#e0ddd4" : "#bbb"),
+        borderRadius: 6, padding: "5px 16px", cursor: disabled ? "default" : "pointer",
+        fontSize: 13, color: disabled ? "#ccc" : "#444", fontFamily: "inherit",
+    });
+
+    return (
+        <div style={{ border: "2px solid #e8ff47", borderRadius: 12, overflow: "hidden", marginBottom: 24 }}>
+            {/* Slide tabs */}
+            <div style={{ background: "#1a1a14", display: "flex", overflowX: "auto" }}>
+                {slides.map((s, i) => (
+                    <button key={s.id} onClick={() => setCur(i)} style={{
+                        background: i === cur ? "#e8ff47" : "transparent",
+                        color: i === cur ? "#1a1a14" : "#888",
+                        border: "none", padding: "10px 20px",
+                        cursor: "pointer", fontSize: 13, fontFamily: "Georgia, serif",
+                        fontWeight: i === cur ? 700 : 400, whiteSpace: "nowrap", flexShrink: 0,
+                    }}>
+                        {s.title || `Слайд ${i + 1}`}
+                    </button>
+                ))}
+            </div>
+            {/* Content */}
+            <div style={{ padding: "20px 24px", minHeight: 60 }}>
+                <ContentView blocks={slide.content || []} />
+            </div>
+            {/* Navigation */}
+            {slides.length > 1 && (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 20px", borderTop: "1px solid #f0ece2", background: "#faf8f3" }}>
+                    <button onClick={() => setCur(p => Math.max(0, p - 1))} disabled={cur === 0} style={navBtn(cur === 0)}>← Назад</button>
+                    <span style={{ fontSize: 12, color: "#aaa" }}>{cur + 1} / {slides.length}</span>
+                    <button onClick={() => setCur(p => Math.min(slides.length - 1, p + 1))} disabled={cur === slides.length - 1} style={navBtn(cur === slides.length - 1)}>Далі →</button>
+                </div>
+            )}
+        </div>
+    );
+}
+
+// ── Carousel editor ───────────────────────────────────────────────────────────
+
+function CarouselEditor({ block, onUpdate }) {
+    const [activeSlide, setActiveSlide] = useState(0);
+    const slides = block.slides || [];
+
+    const updSlides = (s) => onUpdate({ ...block, slides: s });
+    const addSlide = () => { updSlides([...slides, { id: genId(), title: `Слайд ${slides.length + 1}`, content: [] }]); };
+    const rmSlide = (i) => {
+        const s = slides.filter((_, idx) => idx !== i);
+        updSlides(s);
+        setActiveSlide(p => Math.min(p, s.length - 1));
+    };
+    const updSlide = (i, patch) => updSlides(slides.map((s, idx) => idx === i ? { ...s, ...patch } : s));
+    const updSlideBlock = (si, bi, blk) => updSlides(slides.map((s, idx) => idx !== si ? s : {
+        ...s, content: s.content.map((b, k) => k === bi ? blk : b)
+    }));
+    const rmSlideBlock = (si, bi) => updSlides(slides.map((s, idx) => idx !== si ? s : {
+        ...s, content: s.content.filter((_, k) => k !== bi)
+    }));
+    const moveSlideBlock = (si, bi, dir) => updSlides(slides.map((s, idx) => {
+        if (idx !== si) return s;
+        const c = [...s.content]; const t = bi + dir;
+        if (t < 0 || t >= c.length) return s;
+        [c[bi], c[t]] = [c[t], c[bi]]; return { ...s, content: c };
+    }));
+    const addSlideBlock = (si, type) => updSlides(slides.map((s, idx) => idx !== si ? s : {
+        ...s, content: [...(s.content || []), NEW_BLOCK[type]()]
+    }));
+
+    const slide = slides[activeSlide];
+
+    return (
+        <div style={{ border: "2px solid #e8ff47", borderRadius: 8, overflow: "hidden" }}>
+            {/* Tabs */}
+            <div style={{ background: "#1a1a14", display: "flex", flexWrap: "wrap", gap: 4, padding: "8px 10px", alignItems: "center" }}>
+                {slides.map((s, i) => (
+                    <button key={s.id} onClick={() => setActiveSlide(i)} style={{
+                        background: i === activeSlide ? "#e8ff47" : "transparent",
+                        color: i === activeSlide ? "#1a1a14" : "#888",
+                        border: "1px solid " + (i === activeSlide ? "#e8ff47" : "#555"),
+                        borderRadius: 4, padding: "3px 12px", cursor: "pointer",
+                        fontSize: 12, fontFamily: "inherit", fontWeight: i === activeSlide ? 700 : 400,
+                    }}>
+                        {s.title || `Слайд ${i + 1}`}
+                    </button>
+                ))}
+                <button onClick={addSlide} style={{ background: "transparent", border: "1px dashed #555", borderRadius: 4, color: "#888", cursor: "pointer", padding: "3px 10px", fontSize: 11, fontFamily: "inherit" }}>
+                    + слайд
+                </button>
+            </div>
+            {/* Slide content */}
+            {slide && (
+                <div style={{ padding: 12, background: "#fafaf7" }}>
+                    <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                        <input
+                            value={slide.title}
+                            onChange={e => updSlide(activeSlide, { title: e.target.value })}
+                            placeholder="Назва слайду"
+                            style={{ flex: 1, padding: "5px 8px", border: "1.5px solid #e0ddd4", borderRadius: 6, fontSize: 13, fontFamily: "Georgia, serif", fontWeight: 600, outline: "none", background: "#fff" }}
+                        />
+                        {slides.length > 1 && (
+                            <button onClick={() => rmSlide(activeSlide)} style={{ ...miniBtn, color: "#c00", borderColor: "#ffcccc" }}>✕ слайд</button>
+                        )}
+                    </div>
+                    {(slide.content || []).map((blk, bi) => (
+                        <BlockEditor key={blk.id} block={blk}
+                            isFirst={bi === 0} isLast={bi === slide.content.length - 1}
+                            onUpdate={b => updSlideBlock(activeSlide, bi, b)}
+                            onRemove={() => rmSlideBlock(activeSlide, bi)}
+                            onMoveUp={() => moveSlideBlock(activeSlide, bi, -1)}
+                            onMoveDown={() => moveSlideBlock(activeSlide, bi, 1)}
+                        />
+                    ))}
+                    <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                        {SLIDE_BLOCK_TYPES.map(({ type, label }) => (
+                            <button key={type} onClick={() => addSlideBlock(activeSlide, type)}
+                                style={{ background: "#f5f2eb", border: "1.5px dashed #ccc", borderRadius: 6, padding: "4px 10px", fontSize: 11, cursor: "pointer", fontFamily: "inherit", color: "#666" }}>
+                                {label}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
 
 export default function TrainingPage({ onBack }) {
     const { profile } = useAuth();
