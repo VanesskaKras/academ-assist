@@ -69,8 +69,12 @@ function RichTextEditor({ value, onChange }) {
                     <option value="1">Малий</option>
                     <option value="3">Нормальний</option>
                     <option value="5">Великий</option>
-                    <option value="6">Заголовок</option>
                 </select>
+                <button onMouseDown={e => { e.preventDefault(); document.execCommand("formatBlock", false, "h3"); onChange(ref.current.innerHTML); }} style={{ ...tbBtn, fontWeight: 700 }} title="Заголовок">H</button>
+                <button onMouseDown={e => { e.preventDefault(); document.execCommand("formatBlock", false, "div"); onChange(ref.current.innerHTML); }} style={{ ...tbBtn, fontSize: 11, color: "#999" }} title="Звичайний текст">¶</button>
+                <div style={{ width: 1, height: 18, background: "#ddd", margin: "0 2px" }} />
+                <button onMouseDown={e => { e.preventDefault(); exec("insertUnorderedList"); }} style={tbBtn} title="Маркований список">• список</button>
+                <button onMouseDown={e => { e.preventDefault(); exec("insertOrderedList"); }} style={tbBtn} title="Нумерований список">1. список</button>
                 <div style={{ width: 1, height: 18, background: "#ddd", margin: "0 2px" }} />
                 <button onMouseDown={e => { e.preventDefault(); exec("removeFormat"); }} style={{ ...tbBtn, fontSize: 11, color: "#999" }}>✕ формат</button>
             </div>
@@ -99,16 +103,24 @@ function ContentView({ blocks }) {
     );
     return (
         <>
-            {blocks.map(block => {
+            {blocks.map((block, bi) => {
+                const prevIsText = bi > 0 && blocks[bi - 1]?.type === "text";
                 if (block.type === "text") {
                     const html = block.value || "";
-                    return isHtml(html) ? (
-                        <div key={block.id} style={{ fontSize: 15, lineHeight: 1.85, color: "#2a2a1e", marginBottom: 20 }}
-                            dangerouslySetInnerHTML={{ __html: html }} />
-                    ) : (
-                        <p key={block.id} style={{ fontSize: 15, lineHeight: 1.85, color: "#2a2a1e", marginBottom: 20, whiteSpace: "pre-wrap" }}>
-                            {html}
-                        </p>
+                    return (
+                        <div key={block.id}>
+                            {prevIsText && (
+                                <div style={{ borderTop: "1.5px solid #f0ece2", margin: "4px 0 20px 0" }} />
+                            )}
+                            {isHtml(html) ? (
+                                <div className="tr-html" style={{ fontSize: 15, lineHeight: 1.85, color: "#2a2a1e", marginBottom: 20 }}
+                                    dangerouslySetInnerHTML={{ __html: html }} />
+                            ) : (
+                                <p style={{ fontSize: 15, lineHeight: 1.85, color: "#2a2a1e", marginBottom: 20, whiteSpace: "pre-wrap" }}>
+                                    {html}
+                                </p>
+                            )}
+                        </div>
                     );
                 }
 
@@ -350,6 +362,26 @@ export default function TrainingPage({ onBack }) {
     const [editSections, setEditSections] = useState([]);
     const [saving, setSaving] = useState(false);
     const [showTests, setShowTests] = useState(false);
+
+    useEffect(() => {
+        const id = "training-content-css";
+        if (!document.getElementById(id)) {
+            const el = document.createElement("style");
+            el.id = id;
+            el.textContent = `
+                .tr-html ul,.tr-html ol{margin:8px 0 10px 22px;padding:0}
+                .tr-html ul{list-style:disc}
+                .tr-html ol{list-style:decimal}
+                .tr-html li{margin:3px 0;line-height:1.8}
+                .tr-html h2{font-size:1.2em;font-weight:700;margin:14px 0 6px;color:#1a1a14}
+                .tr-html h3{font-size:1.08em;font-weight:700;margin:12px 0 5px;color:#1a1a14}
+                .tr-html h4{font-size:1em;font-weight:700;margin:10px 0 4px;color:#3a3a2e}
+                .tr-html p{margin:5px 0}
+                .tr-html div{min-height:1em}
+            `;
+            document.head.appendChild(el);
+        }
+    }, []);
 
     useEffect(() => { loadSections(); }, []);
 
