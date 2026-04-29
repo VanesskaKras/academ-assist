@@ -158,7 +158,9 @@ function ContentView({ blocks }) {
                     return (
                         <div key={block.id}>
                             {prevIsText && (
-                                <div style={{ borderTop: "1.5px solid #f0ece2", margin: "4px 0 20px 0" }} />
+                                <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "8px 0 24px 0" }}>
+                                    <div style={{ flex: 1, height: 2, background: "#e8ff47", borderRadius: 2 }} />
+                                </div>
                             )}
                             {isHtml(html) ? (
                                 <div className="tr-html" style={{ fontSize: 15, lineHeight: 1.85, color: "#2a2a1e", marginBottom: 20 }}
