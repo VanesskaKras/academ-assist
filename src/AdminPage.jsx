@@ -599,6 +599,7 @@ function LogsTab({ users }) {
 // ─── Головна сторінка ─────────────────────────────────────────────────────────
 
 export default function AdminPage({ onBack }) {
+    const { user: currentUser } = useAuth();
     const [tab, setTab] = useState("users");
     const [users, setUsers] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -768,36 +769,43 @@ export default function AdminPage({ onBack }) {
                                         </div>
 
                                         <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                                            {u.role === "user" && (
+                                            {u.id === currentUser?.uid && (
+                                                <span style={{ fontSize: 11, color: "#aaa", padding: "5px 10px", fontStyle: "italic" }}>це ви</span>
+                                            )}
+                                            {u.id !== currentUser?.uid && u.role === "user" && (
                                                 <button onClick={() => changeRole(u.id, u.role)}
                                                     style={{ background: "#eef5e4", border: "1px solid #c8dfa0", color: "#3a6010", borderRadius: 6, padding: "5px 10px", fontSize: 11, cursor: "pointer" }}>
                                                     → Менеджер
                                                 </button>
                                             )}
-                                            {u.role === "manager" && (
+                                            {u.id !== currentUser?.uid && u.role === "manager" && (
                                                 <button onClick={() => changeRole(u.id, u.role)}
                                                     style={{ background: "#f0f5ff", border: "1px solid #c0d0f0", color: "#1a5a8a", borderRadius: 6, padding: "5px 10px", fontSize: 11, cursor: "pointer" }}>
                                                     → Адмін
                                                 </button>
                                             )}
-                                            {u.role === "admin" && (
+                                            {u.id !== currentUser?.uid && u.role === "admin" && (
                                                 <button onClick={() => changeRole(u.id, u.role)}
                                                     style={{ background: "#f5e4ff", border: "1px solid #d0a0f0", color: "#8a1a8a", borderRadius: 6, padding: "5px 10px", fontSize: 11, cursor: "pointer" }}>
                                                     → Менеджер
                                                 </button>
                                             )}
 
-                                            <button onClick={() => toggleBlock(u.id, u.blocked)}
-                                                style={{ background: u.blocked ? "#eef5e4" : "#fff0f0", border: `1px solid ${u.blocked ? "#c8dfa0" : "#ffcccc"}`, color: u.blocked ? "#3a6010" : "#c00", borderRadius: 6, padding: "5px 10px", fontSize: 11, cursor: "pointer" }}>
-                                                {u.blocked ? "Розблок." : "Блок."}
-                                            </button>
+                                            {u.id !== currentUser?.uid && (
+                                                <button onClick={() => toggleBlock(u.id, u.blocked)}
+                                                    style={{ background: u.blocked ? "#eef5e4" : "#fff0f0", border: `1px solid ${u.blocked ? "#c8dfa0" : "#ffcccc"}`, color: u.blocked ? "#3a6010" : "#c00", borderRadius: 6, padding: "5px 10px", fontSize: 11, cursor: "pointer" }}>
+                                                    {u.blocked ? "Розблок." : "Блок."}
+                                                </button>
+                                            )}
 
-                                            <button onClick={() => deleteUser(u.id)}
-                                                style={{ background: "transparent", border: "1px solid #ddd", color: "#aaa", borderRadius: 6, padding: "5px 10px", fontSize: 11, cursor: "pointer" }}
-                                                onMouseEnter={e => { e.currentTarget.style.borderColor = "#f99"; e.currentTarget.style.color = "#c55"; }}
-                                                onMouseLeave={e => { e.currentTarget.style.borderColor = "#ddd"; e.currentTarget.style.color = "#aaa"; }}>
-                                                ✕
-                                            </button>
+                                            {u.id !== currentUser?.uid && (
+                                                <button onClick={() => deleteUser(u.id)}
+                                                    style={{ background: "transparent", border: "1px solid #ddd", color: "#aaa", borderRadius: 6, padding: "5px 10px", fontSize: 11, cursor: "pointer" }}
+                                                    onMouseEnter={e => { e.currentTarget.style.borderColor = "#f99"; e.currentTarget.style.color = "#c55"; }}
+                                                    onMouseLeave={e => { e.currentTarget.style.borderColor = "#ddd"; e.currentTarget.style.color = "#aaa"; }}>
+                                                    ✕
+                                                </button>
+                                            )}
                                         </div>
                                     </div>
                                 );
