@@ -31,10 +31,23 @@ const isHtml = (s) => /<[a-z][\s\S]*>/i.test(s || "");
 
 function RichTextEditor({ value, onChange }) {
     const ref = useRef(null);
+    const savedSel = useRef(null);
 
     useEffect(() => {
         if (ref.current) ref.current.innerHTML = value || "";
     }, []);
+
+    const saveSelection = () => {
+        const sel = window.getSelection();
+        if (sel && sel.rangeCount > 0) savedSel.current = sel.getRangeAt(0).cloneRange();
+    };
+
+    const restoreSelection = () => {
+        if (!savedSel.current) return;
+        ref.current.focus();
+        const sel = window.getSelection();
+        if (sel) { sel.removeAllRanges(); sel.addRange(savedSel.current); }
+    };
 
     const exec = (cmd, val = null) => {
         ref.current.focus();
@@ -42,41 +55,76 @@ function RichTextEditor({ value, onChange }) {
         onChange(ref.current.innerHTML);
     };
 
-    const tbBtn = {
+    const setFontSize = (px) => {
+        ref.current.focus();
+        document.execCommand("fontSize", false, "7");
+        ref.current.querySelectorAll("font[size='7']").forEach(el => {
+            el.style.fontSize = px + "px";
+            el.removeAttribute("size");
+        });
+        onChange(ref.current.innerHTML);
+    };
+
+    const tb = {
         background: "transparent", border: "1px solid #ddd", borderRadius: 4,
-        padding: "3px 10px", fontSize: 13, cursor: "pointer", fontFamily: "inherit", color: "#444",
+        padding: "3px 7px", fontSize: 13, cursor: "pointer", fontFamily: "inherit", color: "#444",
+        lineHeight: 1.2, flexShrink: 0,
+    };
+    const sep = <div style={{ width: 1, height: 18, background: "#ddd", margin: "0 2px", flexShrink: 0 }} />;
+    const row = {
+        display: "flex", gap: 3, padding: "5px 8px", background: "#f5f2eb",
+        border: "1.5px solid #e0ddd4", flexWrap: "wrap", alignItems: "center",
     };
 
     return (
         <div>
-            <div style={{ display: "flex", gap: 4, padding: "6px 8px", background: "#f5f2eb", borderRadius: "6px 6px 0 0", border: "1.5px solid #e0ddd4", borderBottom: "1px solid #e0ddd4", flexWrap: "wrap", alignItems: "center" }}>
-                <button onMouseDown={e => { e.preventDefault(); exec("bold"); }} style={tbBtn} title="Жирний"><b>Ж</b></button>
-                <button onMouseDown={e => { e.preventDefault(); exec("underline"); }} style={tbBtn} title="Підкреслений"><u>П</u></button>
-                <button onMouseDown={e => { e.preventDefault(); exec("italic"); }} style={tbBtn} title="Курсив"><i>К</i></button>
-                <div style={{ width: 1, height: 18, background: "#ddd", margin: "0 2px" }} />
-                <select
-                    defaultValue=""
-                    onChange={e => {
-                        if (!e.target.value) return;
-                        ref.current.focus();
-                        document.execCommand("fontSize", false, e.target.value);
-                        e.target.value = "";
-                        onChange(ref.current.innerHTML);
-                    }}
-                    style={{ ...tbBtn, padding: "3px 6px", fontSize: 12 }}
-                >
+            {/* Row 1: inline + size + colors */}
+            <div style={{ ...row, borderRadius: "6px 6px 0 0", borderBottom: "1px solid #e0ddd4" }}>
+                <button onMouseDown={e => { e.preventDefault(); exec("bold"); }} style={tb}><b>Ж</b></button>
+                <button onMouseDown={e => { e.preventDefault(); exec("italic"); }} style={tb}><i>К</i></button>
+                <button onMouseDown={e => { e.preventDefault(); exec("underline"); }} style={tb}><u>П</u></button>
+                <button onMouseDown={e => { e.preventDefault(); exec("strikeThrough"); }} style={tb}><s>aв</s></button>
+                {sep}
+                <select defaultValue="" onChange={e => { if (e.target.value) { setFontSize(e.target.value); e.target.value = ""; } }}
+                    style={{ ...tb, padding: "3px 4px", fontSize: 12 }}>
                     <option value="" disabled>Розмір</option>
-                    <option value="1">Малий</option>
-                    <option value="3">Нормальний</option>
-                    <option value="5">Великий</option>
+                    {[10, 11, 12, 13, 14, 15, 16, 18, 20, 24].map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
-                <button onMouseDown={e => { e.preventDefault(); document.execCommand("formatBlock", false, "h3"); onChange(ref.current.innerHTML); }} style={{ ...tbBtn, fontWeight: 700 }} title="Заголовок">H</button>
-                <button onMouseDown={e => { e.preventDefault(); document.execCommand("formatBlock", false, "div"); onChange(ref.current.innerHTML); }} style={{ ...tbBtn, fontSize: 11, color: "#999" }} title="Звичайний текст">¶</button>
-                <div style={{ width: 1, height: 18, background: "#ddd", margin: "0 2px" }} />
-                <button onMouseDown={e => { e.preventDefault(); exec("insertUnorderedList"); }} style={tbBtn} title="Маркований список">• список</button>
-                <button onMouseDown={e => { e.preventDefault(); exec("insertOrderedList"); }} style={tbBtn} title="Нумерований список">1. список</button>
-                <div style={{ width: 1, height: 18, background: "#ddd", margin: "0 2px" }} />
-                <button onMouseDown={e => { e.preventDefault(); exec("removeFormat"); }} style={{ ...tbBtn, fontSize: 11, color: "#999" }}>✕ формат</button>
+                {sep}
+                {/* Text color */}
+                <label title="Колір тексту" style={{ ...tb, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 3, position: "relative", overflow: "hidden" }}>
+                    <b style={{ fontSize: 13 }}>А</b>
+                    <input type="color" defaultValue="#000000"
+                        onMouseDown={saveSelection}
+                        onChange={e => { restoreSelection(); exec("foreColor", e.target.value); }}
+                        style={{ opacity: 0, position: "absolute", inset: 0, width: "100%", height: "100%", cursor: "pointer", border: "none", padding: 0 }} />
+                </label>
+                {/* Highlight color */}
+                <label title="Виділення кольором" style={{ ...tb, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 3, position: "relative", overflow: "hidden" }}>
+                    <b style={{ fontSize: 13, background: "#ffff00", padding: "0 2px" }}>А</b>
+                    <input type="color" defaultValue="#ffff00"
+                        onMouseDown={saveSelection}
+                        onChange={e => { restoreSelection(); exec("hiliteColor", e.target.value); }}
+                        style={{ opacity: 0, position: "absolute", inset: 0, width: "100%", height: "100%", cursor: "pointer", border: "none", padding: 0 }} />
+                </label>
+                {sep}
+                <button onMouseDown={e => { e.preventDefault(); exec("removeFormat"); }} style={{ ...tb, fontSize: 11, color: "#999" }}>✕ формат</button>
+            </div>
+            {/* Row 2: headings + align + lists + indent */}
+            <div style={{ ...row, borderTop: "none", borderBottom: "none" }}>
+                <button onMouseDown={e => { e.preventDefault(); document.execCommand("formatBlock", false, "h2"); onChange(ref.current.innerHTML); }} style={{ ...tb, fontWeight: 700, fontSize: 11 }} title="Заголовок 1">H1</button>
+                <button onMouseDown={e => { e.preventDefault(); document.execCommand("formatBlock", false, "h3"); onChange(ref.current.innerHTML); }} style={{ ...tb, fontWeight: 700, fontSize: 11 }} title="Заголовок 2">H2</button>
+                <button onMouseDown={e => { e.preventDefault(); document.execCommand("formatBlock", false, "div"); onChange(ref.current.innerHTML); }} style={{ ...tb, fontSize: 11, color: "#888" }} title="Звичайний текст">¶</button>
+                {sep}
+                <button onMouseDown={e => { e.preventDefault(); exec("justifyLeft"); }} style={tb} title="По лівому краю">⬅</button>
+                <button onMouseDown={e => { e.preventDefault(); exec("justifyCenter"); }} style={tb} title="По центру">↔</button>
+                <button onMouseDown={e => { e.preventDefault(); exec("justifyRight"); }} style={tb} title="По правому краю">➡</button>
+                {sep}
+                <button onMouseDown={e => { e.preventDefault(); exec("insertUnorderedList"); }} style={tb} title="Маркований список">• список</button>
+                <button onMouseDown={e => { e.preventDefault(); exec("insertOrderedList"); }} style={tb} title="Нумерований список">1. список</button>
+                {sep}
+                <button onMouseDown={e => { e.preventDefault(); exec("indent"); }} style={{ ...tb, fontSize: 12 }} title="Збільшити відступ">→|</button>
+                <button onMouseDown={e => { e.preventDefault(); exec("outdent"); }} style={{ ...tb, fontSize: 12 }} title="Зменшити відступ">|←</button>
             </div>
             <div
                 ref={ref}
@@ -373,7 +421,8 @@ export default function TrainingPage({ onBack }) {
                 .tr-html ul{list-style:disc}
                 .tr-html ol{list-style:decimal}
                 .tr-html li{margin:3px 0;line-height:1.8}
-                .tr-html h2{font-size:1.2em;font-weight:700;margin:14px 0 6px;color:#1a1a14}
+                .tr-html h2{font-size:1.3em;font-weight:700;margin:16px 0 6px;color:#1a1a14}
+                .tr-html [style*="text-align"]{display:block}
                 .tr-html h3{font-size:1.08em;font-weight:700;margin:12px 0 5px;color:#1a1a14}
                 .tr-html h4{font-size:1em;font-weight:700;margin:10px 0 4px;color:#3a3a2e}
                 .tr-html p{margin:5px 0}
