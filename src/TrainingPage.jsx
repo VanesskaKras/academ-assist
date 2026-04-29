@@ -385,11 +385,41 @@ export default function TrainingPage({ onBack }) {
 
     useEffect(() => { loadSections(); }, []);
 
+    const deserializeSection = (raw) => ({
+        ...raw,
+        subsections: (raw.subsections || []).map(sub => ({
+            ...sub,
+            content: (sub.content || []).map(block => {
+                if (block.type !== "table") return block;
+                return {
+                    ...block,
+                    rows: (block.rows || []).map(row =>
+                        Array.isArray(row) ? row : (row.cells || [])
+                    ),
+                };
+            }),
+        })),
+    });
+
+    const serializeSection = (sec) => ({
+        ...sec,
+        subsections: (sec.subsections || []).map(sub => ({
+            ...sub,
+            content: (sub.content || []).map(block => {
+                if (block.type !== "table") return block;
+                return {
+                    ...block,
+                    rows: (block.rows || []).map(row => ({ cells: row })),
+                };
+            }),
+        })),
+    });
+
     const loadSections = async () => {
         setLoading(true);
         try {
             const snap = await getDocs(query(collection(db, "training_sections"), orderBy("order")));
-            const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            const data = snap.docs.map(d => deserializeSection({ id: d.id, ...d.data() }));
             setSections(data);
             if (data.length > 0) {
                 const first = data[0];
@@ -410,8 +440,9 @@ export default function TrainingPage({ onBack }) {
                 if (!keepIds.has(id)) await deleteDoc(doc(db, "training_sections", id));
             }
             for (let i = 0; i < editSections.length; i++) {
-                const { _new, id, ...data } = editSections[i];
-                data.order = i + 1;
+                const { _new, id, ...raw } = editSections[i];
+                raw.order = i + 1;
+                const data = serializeSection(raw);
                 if (_new) await addDoc(collection(db, "training_sections"), data);
                 else await setDoc(doc(db, "training_sections", id), data);
             }
