@@ -410,6 +410,8 @@ export default function TrainingPage({ onBack }) {
     const [expanded, setExpanded] = useState({});
     const [editMode, setEditMode] = useState(false);
     const [editSections, setEditSections] = useState([]);
+    const [editActive, setEditActive] = useState({ si: 0, subi: null });
+    const [editExpanded, setEditExpanded] = useState({});
     const [saving, setSaving] = useState(false);
     const [showTests, setShowTests] = useState(false);
 
@@ -504,7 +506,12 @@ export default function TrainingPage({ onBack }) {
     };
 
     const startEdit = () => {
-        setEditSections(JSON.parse(JSON.stringify(sections)));
+        const copy = JSON.parse(JSON.stringify(sections));
+        setEditSections(copy);
+        const exp = {};
+        copy.forEach(s => { exp[s.id] = true; });
+        setEditExpanded(exp);
+        setEditActive({ si: 0, subi: copy[0]?.subsections?.length ? 0 : null });
         setEditMode(true);
     };
 
@@ -632,51 +639,139 @@ export default function TrainingPage({ onBack }) {
             {loading ? (
                 <div style={{ padding: 60, textAlign: "center", color: "#888", fontSize: 14 }}>Завантаження...</div>
             ) : editMode ? (
-                /* ── EDITOR ── */
-                <div style={{ maxWidth: 900, margin: "0 auto", padding: "32px 20px" }}>
-                    {editSections.length === 0 && (
-                        <div style={{ textAlign: "center", padding: "48px 0", color: "#aaa", fontSize: 14 }}>
-                            Розділів ще немає. Додайте перший розділ.
-                        </div>
-                    )}
-
-                    {editSections.map((sec, si) => (
-                        <div key={sec.id} style={{ background: "#fff", borderRadius: 12, padding: 24, marginBottom: 20, boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}>
-                            {/* Section title */}
-                            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20, paddingBottom: 16, borderBottom: "1.5px solid #f0ece2" }}>
-                                <span style={{ fontSize: 10, color: "#888", background: "#f0ece2", padding: "2px 10px", borderRadius: 4, textTransform: "uppercase", letterSpacing: 1, flexShrink: 0, fontFamily: "inherit" }}>
-                                    Розділ {si + 1}
-                                </span>
-                                <input
-                                    value={sec.title}
-                                    onChange={e => updSec(si, { title: e.target.value })}
-                                    style={{ flex: 1, fontSize: 16, fontWeight: 700, fontFamily: "Georgia, serif", border: "none", borderBottom: "2px solid #e0ddd4", background: "transparent", padding: "4px 0", outline: "none", color: "#1a1a14" }}
-                                />
-                                <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-                                    {si > 0 && <button onClick={() => moveSec(si, -1)} style={miniBtn}>↑</button>}
-                                    {si < editSections.length - 1 && <button onClick={() => moveSec(si, 1)} style={miniBtn}>↓</button>}
-                                    <button onClick={() => { if (window.confirm("Видалити розділ?")) rmSec(si); }} style={{ ...miniBtn, color: "#c00", borderColor: "#ffcccc" }}>✕</button>
+                /* ── EDITOR (sidebar + content) ── */
+                <div style={{ maxWidth: 1200, margin: "0 auto", padding: "32px 20px", display: "flex", gap: 24, alignItems: "flex-start" }}>
+                    {/* Edit sidebar */}
+                    <div style={{ width: 230, flexShrink: 0, position: "sticky", top: 24, maxHeight: "calc(100vh - 100px)", display: "flex", flexDirection: "column" }}>
+                        <div style={{ background: "#fff", borderRadius: 12, boxShadow: "0 2px 12px rgba(0,0,0,0.06)", flex: 1, overflowY: "auto", paddingBottom: 8 }}>
+                            {editSections.length === 0 ? (
+                                <div style={{ padding: "20px 16px", color: "#aaa", fontSize: 13 }}>Немає розділів</div>
+                            ) : editSections.map((sec, si) => (
+                                <div key={sec.id}>
+                                    <div
+                                        onClick={() => {
+                                            setEditExpanded(p => ({ ...p, [sec.id]: !p[sec.id] }));
+                                            setEditActive({ si, subi: null });
+                                        }}
+                                        style={{
+                                            padding: "10px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
+                                            background: editActive.si === si && editActive.subi === null ? "#f0ece2" : "transparent",
+                                            borderLeft: editActive.si === si && editActive.subi === null ? "3px solid #1a1a14" : "3px solid transparent",
+                                            transition: "all .12s",
+                                        }}
+                                    >
+                                        <span style={{ fontSize: 10, color: "#bbb", minWidth: 10 }}>{editExpanded[sec.id] ? "▾" : "▸"}</span>
+                                        <span style={{ fontSize: 13, fontWeight: 600, color: "#333", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                            {sec.title || "Без назви"}
+                                        </span>
+                                    </div>
+                                    {editExpanded[sec.id] && (sec.subsections || []).map((sub, subi) => (
+                                        <div
+                                            key={sub.id}
+                                            onClick={() => setEditActive({ si, subi })}
+                                            style={{
+                                                padding: "8px 14px 8px 34px", cursor: "pointer", fontSize: 12,
+                                                color: editActive.si === si && editActive.subi === subi ? "#1a1a14" : "#888",
+                                                background: editActive.si === si && editActive.subi === subi ? "#eef5d8" : "transparent",
+                                                borderLeft: editActive.si === si && editActive.subi === subi ? "3px solid #8ac040" : "3px solid transparent",
+                                                fontWeight: editActive.si === si && editActive.subi === subi ? 600 : 400,
+                                                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                                                transition: "all .12s",
+                                            }}
+                                        >
+                                            {sub.title || "Без назви"}
+                                        </div>
+                                    ))}
                                 </div>
-                            </div>
+                            ))}
+                        </div>
+                        <button onClick={() => {
+                            addSec();
+                            setEditActive({ si: editSections.length, subi: null });
+                        }} style={{ marginTop: 10, width: "100%", background: "#1a1a14", color: "#e8ff47", border: "none", borderRadius: 8, padding: "9px 0", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                            + Додати розділ
+                        </button>
+                    </div>
 
-                            {/* Subsections */}
-                            {(sec.subsections || []).map((sub, subi) => (
-                                <div key={sub.id} style={{ marginBottom: 20, paddingLeft: 16, borderLeft: "3px solid #e8ff47" }}>
-                                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-                                        <span style={{ fontSize: 10, color: "#888", background: "#fdf9e8", padding: "2px 8px", borderRadius: 4, textTransform: "uppercase", letterSpacing: 1, flexShrink: 0, fontFamily: "inherit" }}>Підрозділ</span>
+                    {/* Edit content panel */}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                        {editSections.length === 0 ? (
+                            <div style={{ background: "#fff", borderRadius: 12, padding: 40, textAlign: "center", color: "#aaa", fontSize: 14, boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}>
+                                Натисніть «+ Додати розділ» щоб почати
+                            </div>
+                        ) : (() => {
+                            const { si, subi } = editActive;
+                            const sec = editSections[si];
+                            if (!sec) return null;
+
+                            /* ── Section editor ── */
+                            if (subi === null) return (
+                                <div style={{ background: "#fff", borderRadius: 12, padding: 28, boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}>
+                                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 24, paddingBottom: 16, borderBottom: "1.5px solid #f0ece2" }}>
+                                        <span style={{ fontSize: 10, color: "#888", background: "#f0ece2", padding: "2px 10px", borderRadius: 4, textTransform: "uppercase", letterSpacing: 1, fontFamily: "inherit" }}>
+                                            Розділ {si + 1}
+                                        </span>
+                                        <div style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
+                                            {si > 0 && <button onClick={() => { moveSec(si, -1); setEditActive({ si: si - 1, subi: null }); }} style={miniBtn}>↑</button>}
+                                            {si < editSections.length - 1 && <button onClick={() => { moveSec(si, 1); setEditActive({ si: si + 1, subi: null }); }} style={miniBtn}>↓</button>}
+                                            <button onClick={() => { if (window.confirm("Видалити розділ?")) { rmSec(si); setEditActive({ si: Math.max(0, si - 1), subi: null }); } }} style={{ ...miniBtn, color: "#c00", borderColor: "#ffcccc" }}>✕ Видалити</button>
+                                        </div>
+                                    </div>
+                                    <div style={{ marginBottom: 28 }}>
+                                        <label style={{ fontSize: 11, color: "#aaa", textTransform: "uppercase", letterSpacing: 1 }}>Назва розділу</label>
+                                        <input
+                                            value={sec.title}
+                                            onChange={e => updSec(si, { title: e.target.value })}
+                                            style={{ display: "block", width: "100%", fontSize: 20, fontWeight: 700, fontFamily: "Georgia, serif", border: "none", borderBottom: "2px solid #e0ddd4", background: "transparent", padding: "6px 0", outline: "none", color: "#1a1a14", boxSizing: "border-box", marginTop: 6 }}
+                                        />
+                                    </div>
+                                    <div>
+                                        <div style={{ fontSize: 11, color: "#aaa", textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>Підрозділи</div>
+                                        {(sec.subsections || []).length === 0 && (
+                                            <div style={{ color: "#ccc", fontSize: 13, marginBottom: 12 }}>Немає підрозділів</div>
+                                        )}
+                                        {(sec.subsections || []).map((sub, subi) => (
+                                            <div key={sub.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", background: "#faf8f3", borderRadius: 8, marginBottom: 6 }}>
+                                                <span style={{ flex: 1, fontSize: 13, color: "#333", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sub.title || "Без назви"}</span>
+                                                <button onClick={() => setEditActive({ si, subi })} style={{ ...miniBtn, color: "#555" }}>Редагувати →</button>
+                                                {subi > 0 && <button onClick={() => moveSub(si, subi, -1)} style={miniBtn}>↑</button>}
+                                                {subi < sec.subsections.length - 1 && <button onClick={() => moveSub(si, subi, 1)} style={miniBtn}>↓</button>}
+                                                <button onClick={() => { if (window.confirm("Видалити підрозділ?")) rmSub(si, subi); }} style={{ ...miniBtn, color: "#c00" }}>✕</button>
+                                            </div>
+                                        ))}
+                                        <button onClick={() => {
+                                            addSub(si);
+                                            setEditExpanded(p => ({ ...p, [sec.id]: true }));
+                                            setTimeout(() => setEditActive({ si, subi: (sec.subsections || []).length }), 0);
+                                        }} style={{ background: "transparent", border: "1.5px dashed #ccc", borderRadius: 7, padding: "7px 16px", fontSize: 12, cursor: "pointer", fontFamily: "inherit", color: "#888", marginTop: 4 }}>
+                                            + Додати підрозділ
+                                        </button>
+                                    </div>
+                                </div>
+                            );
+
+                            /* ── Subsection editor ── */
+                            const sub = sec.subsections?.[subi];
+                            if (!sub) return null;
+                            return (
+                                <div style={{ background: "#fff", borderRadius: 12, padding: 28, boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}>
+                                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 20, paddingBottom: 16, borderBottom: "1.5px solid #f0ece2" }}>
+                                        <button onClick={() => setEditActive({ si, subi: null })} style={{ ...miniBtn, fontSize: 12 }}>← {sec.title}</button>
+                                        <span style={{ fontSize: 10, color: "#888", background: "#fdf9e8", padding: "2px 8px", borderRadius: 4, textTransform: "uppercase", letterSpacing: 1, fontFamily: "inherit" }}>Підрозділ</span>
+                                        <div style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
+                                            {subi > 0 && <button onClick={() => { moveSub(si, subi, -1); setEditActive({ si, subi: subi - 1 }); }} style={miniBtn}>↑</button>}
+                                            {subi < sec.subsections.length - 1 && <button onClick={() => { moveSub(si, subi, 1); setEditActive({ si, subi: subi + 1 }); }} style={miniBtn}>↓</button>}
+                                            <button onClick={() => { if (window.confirm("Видалити підрозділ?")) { rmSub(si, subi); setEditActive({ si, subi: null }); } }} style={{ ...miniBtn, color: "#c00", borderColor: "#ffcccc" }}>✕ Видалити</button>
+                                        </div>
+                                    </div>
+                                    <div style={{ marginBottom: 20 }}>
+                                        <label style={{ fontSize: 11, color: "#aaa", textTransform: "uppercase", letterSpacing: 1 }}>Назва підрозділу</label>
                                         <input
                                             value={sub.title}
                                             onChange={e => updSub(si, subi, { title: e.target.value })}
-                                            style={{ flex: 1, fontSize: 14, fontWeight: 600, fontFamily: "Georgia, serif", border: "none", borderBottom: "1.5px solid #e0ddd4", background: "transparent", padding: "3px 0", outline: "none", color: "#1a1a14" }}
+                                            style={{ display: "block", width: "100%", fontSize: 16, fontWeight: 600, fontFamily: "Georgia, serif", border: "none", borderBottom: "2px solid #e0ddd4", background: "transparent", padding: "5px 0", outline: "none", color: "#1a1a14", boxSizing: "border-box", marginTop: 6 }}
                                         />
-                                        <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-                                            {subi > 0 && <button onClick={() => moveSub(si, subi, -1)} style={miniBtn}>↑</button>}
-                                            {subi < sec.subsections.length - 1 && <button onClick={() => moveSub(si, subi, 1)} style={miniBtn}>↓</button>}
-                                            <button onClick={() => { if (window.confirm("Видалити підрозділ?")) rmSub(si, subi); }} style={{ ...miniBtn, color: "#c00", borderColor: "#ffcccc" }}>✕</button>
-                                        </div>
                                     </div>
-
-                                    {/* Content blocks */}
                                     {(sub.content || []).map((blk, bi) => (
                                         <BlockEditor
                                             key={blk.id}
@@ -689,9 +784,7 @@ export default function TrainingPage({ onBack }) {
                                             onMoveDown={() => moveBlock(si, subi, bi, 1)}
                                         />
                                     ))}
-
-                                    {/* Add block buttons */}
-                                    <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                                    <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
                                         {BLOCK_TYPES.map(({ type, label }) => (
                                             <button key={type} onClick={() => addBlock(si, subi, type)}
                                                 style={{ background: "#f5f2eb", border: "1.5px dashed #ccc", borderRadius: 6, padding: "5px 12px", fontSize: 11, cursor: "pointer", fontFamily: "inherit", color: "#666" }}>
@@ -700,19 +793,9 @@ export default function TrainingPage({ onBack }) {
                                         ))}
                                     </div>
                                 </div>
-                            ))}
-
-                            <button onClick={() => addSub(si)}
-                                style={{ background: "transparent", border: "1.5px dashed #ccc", borderRadius: 7, padding: "7px 16px", fontSize: 12, cursor: "pointer", fontFamily: "inherit", color: "#888", marginTop: 8 }}>
-                                + Додати підрозділ
-                            </button>
-                        </div>
-                    ))}
-
-                    <button onClick={addSec}
-                        style={{ width: "100%", background: "#1a1a14", color: "#e8ff47", border: "none", borderRadius: 10, padding: "12px 0", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-                        + Додати розділ
-                    </button>
+                            );
+                        })()}
+                    </div>
                 </div>
             ) : (
                 /* ── READING VIEW ── */
