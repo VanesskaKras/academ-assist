@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { db, auth } from "./firebase";
+import TrainingTests from "./TrainingTests";
 import { collection, getDocs, doc, updateDoc, setDoc, deleteDoc, query, orderBy, limit } from "firebase/firestore";
 import { initializeApp, deleteApp } from "firebase/app";
 import { getAuth, createUserWithEmailAndPassword } from "firebase/auth";
@@ -655,7 +656,7 @@ export default function AdminPage({ onBack }) {
     };
 
     const changeRole = async (uid, currentRole) => {
-        const next = currentRole === "manager" ? "admin" : currentRole === "admin" ? "manager" : "manager";
+        const next = currentRole === "user" ? "manager" : currentRole === "manager" ? "admin" : "manager";
         if (!window.confirm(`Змінити роль на "${ROLE_LABELS[next]?.label}"?`)) return;
         await updateDoc(doc(db, "users", uid), { role: next });
         loadUsers();
@@ -683,6 +684,7 @@ export default function AdminPage({ onBack }) {
                         { key: "stats", label: "Статистика" },
                         { key: "costs", label: "Витрати" },
                         { key: "logs", label: "Логи входів" },
+                        { key: "tests", label: "Тести" },
                     ].map(t => (
                         <button key={t.key} onClick={() => setTab(t.key)}
                             style={{
@@ -712,6 +714,7 @@ export default function AdminPage({ onBack }) {
                                     <div style={{ fontSize: 11, color: "#888", letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 }}>Роль</div>
                                     <div style={{ display: "flex", gap: 10 }}>
                                         {[
+                                            { key: "user", label: "Стажер", desc: "Тільки навчання, без замовлень" },
                                             { key: "manager", label: "Менеджер", desc: "Створює та редагує замовлення" },
                                             { key: "admin", label: "Адмін", desc: "Повний доступ + адмін-панель" },
                                         ].map(r => (
@@ -751,8 +754,8 @@ export default function AdminPage({ onBack }) {
                                 const roleInfo = ROLE_LABELS[u.role] || ROLE_LABELS.user;
                                 return (
                                     <div key={u.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 0", borderBottom: "1px solid #f0ece2" }}>
-                                        <div style={{ width: 38, height: 38, borderRadius: "50%", background: u.blocked ? "#ffeeee" : "#eef5e4", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>
-                                            {u.blocked ? "🚫" : u.role === "admin" ? "👑" : "👤"}
+                                        <div style={{ width: 38, height: 38, borderRadius: "50%", background: u.blocked ? "#ffeeee" : u.role === "user" ? "#fdf9e8" : "#eef5e4", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>
+                                            {u.blocked ? "🚫" : u.role === "admin" ? "👑" : u.role === "user" ? "📚" : "👤"}
                                         </div>
 
                                         <div style={{ flex: 1, minWidth: 0 }}>
@@ -765,7 +768,13 @@ export default function AdminPage({ onBack }) {
                                         </div>
 
                                         <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                                            {u.role !== "admin" && (
+                                            {u.role === "user" && (
+                                                <button onClick={() => changeRole(u.id, u.role)}
+                                                    style={{ background: "#eef5e4", border: "1px solid #c8dfa0", color: "#3a6010", borderRadius: 6, padding: "5px 10px", fontSize: 11, cursor: "pointer" }}>
+                                                    → Менеджер
+                                                </button>
+                                            )}
+                                            {u.role === "manager" && (
                                                 <button onClick={() => changeRole(u.id, u.role)}
                                                     style={{ background: "#f0f5ff", border: "1px solid #c0d0f0", color: "#1a5a8a", borderRadius: 6, padding: "5px 10px", fontSize: 11, cursor: "pointer" }}>
                                                     → Адмін
@@ -805,6 +814,9 @@ export default function AdminPage({ onBack }) {
 
                 {/* Вкладка: Логи входів */}
                 {tab === "logs" && <LogsTab users={users} />}
+
+                {/* Вкладка: Тести */}
+                {tab === "tests" && <TrainingTests onBack={() => setTab("users")} />}
             </div>
         </div>
     );

@@ -48,7 +48,7 @@ export function AuthProvider({ children }) {
                         const newProfile = {
                             email: u.email,
                             name: u.email.split("@")[0],
-                            role: "manager",
+                            role: "user",
                             approved: true,
                             blocked: false,
                             createdAt: new Date().toISOString(),

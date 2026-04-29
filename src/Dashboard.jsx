@@ -250,7 +250,7 @@ const STATUS_LABELS = {
     done: { label: "Готово", color: "#1a6a1a", bg: "#e4ffe4", dot: "#4aba4a" },
 };
 
-export default function Dashboard({ onOpen, onNew, onAdmin }) {
+export default function Dashboard({ onOpen, onNew, onAdmin, onTraining }) {
     const { user, profile, logout } = useAuth();
     const [orders, setOrders] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -344,6 +344,11 @@ export default function Dashboard({ onOpen, onNew, onAdmin }) {
                     <button onClick={() => setShowMyStats(true)} style={{ background: "transparent", border: "1px solid #555", color: "#aaa", borderRadius: 6, padding: "6px 14px", cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>Мої результати</button>
                     {profile?.role === "admin" && (
                         <button onClick={() => setShowStats(true)} style={{ background: "transparent", border: "1px solid #555", color: "#aaa", borderRadius: 6, padding: "6px 14px", cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>Статистика</button>
+                    )}
+                    {onTraining && (
+                        <button onClick={onTraining} style={{ background: "transparent", border: "1px solid #555", color: "#aaa", borderRadius: 6, padding: "6px 14px", cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>
+                            Навчання
+                        </button>
                     )}
                     {onAdmin && (
                         <button onClick={onAdmin} style={{ background: "#e8ff47", color: "#1a1a14", border: "none", borderRadius: 6, padding: "6px 16px", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700 }}>

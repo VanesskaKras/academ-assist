@@ -5,6 +5,7 @@ import AdminPage from "./AdminPage";
 import Dashboard from "./Dashboard";
 import AcademAssist from "./academic-assistant";
 import SmallWorks from "./small-works";
+import TrainingPage from "./TrainingPage";
 
 function AppRouter() {
   const { user, profile } = useAuth();
@@ -26,8 +27,17 @@ function AppRouter() {
     );
   }
 
+  // Trainee: only training access
+  if (profile?.role === "user") {
+    return <TrainingPage />;
+  }
+
   if (view === "admin" && profile?.role === "admin") {
     return <AdminPage onBack={() => setView("dashboard")} />;
+  }
+
+  if (view === "training") {
+    return <TrainingPage onBack={() => setView("dashboard")} />;
   }
 
   if (view === "order") {
@@ -54,6 +64,7 @@ function AppRouter() {
       onOpen={(id, mode) => { setCurrentOrderId(id); setCurrentMode(mode || "large"); setView("order"); }}
       onNew={(mode) => { setCurrentOrderId(null); setCurrentMode(mode || "large"); setView("order"); }}
       onAdmin={profile?.role === "admin" ? () => setView("admin") : null}
+      onTraining={() => setView("training")}
     />
   );
 }
