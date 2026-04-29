@@ -610,6 +610,54 @@ export default function TrainingPage({ onBack }) {
     const headerBtn = { background: "transparent", border: "1px solid #555", color: "#aaa", borderRadius: 6, padding: "6px 14px", cursor: "pointer", fontFamily: "inherit", fontSize: 12 };
     const primBtn = { background: "#e8ff47", color: "#1a1a14", border: "none", borderRadius: 6, padding: "7px 20px", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700 };
 
+    const exportTxt = () => {
+        const stripHtml = (html) => {
+            const div = document.createElement("div");
+            div.innerHTML = html || "";
+            return (div.innerText || div.textContent || "").trim();
+        };
+        const lines = [];
+        sections.forEach((sec, si) => {
+            lines.push(`${"=".repeat(60)}`);
+            lines.push(`РОЗДІЛ ${si + 1}: ${sec.title}`);
+            lines.push(`${"=".repeat(60)}`);
+            lines.push("");
+            (sec.subsections || []).forEach((sub, subi) => {
+                lines.push(`${si + 1}.${subi + 1}  ${sub.title}`);
+                lines.push(`${"-".repeat(40)}`);
+                (sub.content || []).forEach(block => {
+                    if (block.type === "text") {
+                        lines.push(stripHtml(block.value));
+                        lines.push("");
+                    } else if (block.type === "image") {
+                        lines.push(`[Зображення${block.caption ? ": " + block.caption : ""}]`);
+                        lines.push("");
+                    } else if (block.type === "video") {
+                        lines.push(`[Відео${block.caption ? ": " + block.caption : ""}]`);
+                        lines.push("");
+                    } else if (block.type === "drive") {
+                        lines.push(`[Файл Google Drive${block.caption ? ": " + block.caption : ""}]`);
+                        lines.push("");
+                    } else if (block.type === "table" && block.headers?.length) {
+                        if (block.caption) lines.push(block.caption);
+                        lines.push(block.headers.join(" | "));
+                        lines.push("-".repeat(block.headers.join(" | ").length));
+                        (block.rows || []).forEach(row => lines.push(row.join(" | ")));
+                        lines.push("");
+                    }
+                });
+                lines.push("");
+            });
+        });
+        const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "навчання.txt";
+        a.click();
+        URL.revokeObjectURL(url);
+    };
+
     return (
         <div style={{ minHeight: "100vh", background: "#f5f2eb", fontFamily: "Georgia, serif" }}>
             {/* Header */}
@@ -629,6 +677,9 @@ export default function TrainingPage({ onBack }) {
                                 {saving ? "Збереження..." : "Зберегти"}
                             </button>
                         </>
+                    )}
+                    {!editMode && sections.length > 0 && (
+                        <button onClick={exportTxt} style={headerBtn}>↓ TXT</button>
                     )}
                     {!editMode && (
                         <button onClick={() => setShowTests(true)} style={primBtn}>Тести →</button>
