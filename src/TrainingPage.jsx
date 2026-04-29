@@ -14,15 +14,16 @@ function toYoutubeEmbed(url) {
     return m ? `https://www.youtube.com/embed/${m[1]}` : url;
 }
 
-function toDriveEmbed(url) {
+function toDriveEmbed(url, page) {
     if (!url) return "";
+    const suffix = page ? `#page=${page}` : "";
     const file = url.match(/\/file\/d\/([^\/\?]+)/);
-    if (file) return `https://drive.google.com/file/d/${file[1]}/preview`;
+    if (file) return `https://drive.google.com/file/d/${file[1]}/preview${suffix}`;
     const docs = url.match(/docs\.google\.com\/(document|spreadsheets|presentation)\/d\/([^\/\?]+)/);
-    if (docs) return `https://docs.google.com/${docs[1]}/d/${docs[2]}/preview`;
+    if (docs) return `https://docs.google.com/${docs[1]}/d/${docs[2]}/preview${suffix}`;
     const open = url.match(/[?&]id=([^&]+)/);
-    if (open) return `https://drive.google.com/file/d/${open[1]}/preview`;
-    return url;
+    if (open) return `https://drive.google.com/file/d/${open[1]}/preview${suffix}`;
+    return url + suffix;
 }
 
 const isHtml = (s) => /<[a-z][\s\S]*>/i.test(s || "");
@@ -193,7 +194,7 @@ function ContentView({ blocks }) {
                 if (block.type === "drive" && block.url) return (
                     <div key={block.id} style={{ marginBottom: 28 }}>
                         <div style={{ width: "100%", height: 520, borderRadius: 8, overflow: "hidden", boxShadow: "0 4px 20px rgba(0,0,0,0.12)" }}>
-                            <iframe src={toDriveEmbed(block.url)} style={{ width: "100%", height: "100%", border: "none" }} allowFullScreen title={block.caption || "Google Drive"} />
+                            <iframe src={toDriveEmbed(block.url, block.page)} style={{ width: "100%", height: "100%", border: "none" }} allowFullScreen title={block.caption || "Google Drive"} />
                         </div>
                         {block.caption && <div style={{ fontSize: 12, color: "#888", marginTop: 8, fontStyle: "italic", textAlign: "center" }}>{block.caption}</div>}
                     </div>
@@ -292,17 +293,23 @@ function BlockEditor({ block, onUpdate, onRemove, onMoveUp, onMoveDown, isFirst,
                         placeholder="Посилання з Google Drive (файл має бути відкритий для перегляду)"
                         style={{ width: "100%", padding: "8px 10px", border: "1.5px solid #e0ddd4", borderRadius: 6, fontSize: 13, fontFamily: "inherit", boxSizing: "border-box", outline: "none" }}
                     />
-                    <input
-                        value={block.caption || ""}
-                        onChange={e => onUpdate({ ...block, caption: e.target.value })}
-                        placeholder="Підпис (необов'язково)"
-                        style={{ width: "100%", padding: "8px 10px", border: "1.5px solid #e0ddd4", borderRadius: 6, fontSize: 12, fontFamily: "inherit", boxSizing: "border-box", color: "#888", outline: "none" }}
-                    />
-                    {block.url && (
-                        <div style={{ fontSize: 11, color: "#888", fontStyle: "italic" }}>
-                            Embed: {toDriveEmbed(block.url)}
-                        </div>
-                    )}
+                    <div style={{ display: "flex", gap: 8 }}>
+                        <input
+                            value={block.caption || ""}
+                            onChange={e => onUpdate({ ...block, caption: e.target.value })}
+                            placeholder="Підпис (необов'язково)"
+                            style={{ flex: 1, padding: "8px 10px", border: "1.5px solid #e0ddd4", borderRadius: 6, fontSize: 12, fontFamily: "inherit", boxSizing: "border-box", color: "#888", outline: "none" }}
+                        />
+                        <input
+                            type="number"
+                            min="1"
+                            value={block.page || ""}
+                            onChange={e => onUpdate({ ...block, page: e.target.value })}
+                            placeholder="Сторінка"
+                            title="Відкрити на сторінці (для PDF)"
+                            style={{ width: 100, padding: "8px 10px", border: "1.5px solid #e0ddd4", borderRadius: 6, fontSize: 12, fontFamily: "inherit", boxSizing: "border-box", color: "#888", outline: "none" }}
+                        />
+                    </div>
                 </div>
             )}
 
