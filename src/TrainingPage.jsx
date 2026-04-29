@@ -613,7 +613,7 @@ export default function TrainingPage({ onBack }) {
     return (
         <div style={{ minHeight: "100vh", background: "#f5f2eb", fontFamily: "Georgia, serif" }}>
             {/* Header */}
-            <div style={{ background: "#1a1a14", color: "#e8ff47", padding: "14px 32px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ background: "#1a1a14", color: "#e8ff47", padding: "14px 32px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", position: "sticky", top: 0, zIndex: 100 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
                     {onBack && <button onClick={onBack} style={headerBtn}>← Назад</button>}
                     <span style={{ fontSize: 17, fontWeight: 700, letterSpacing: 3 }}>ACADEM — НАВЧАННЯ</span>
