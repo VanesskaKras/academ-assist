@@ -27,6 +27,7 @@ import { PlanStage } from "./components/stages/PlanStage.jsx";
 import { WritingStage } from "./components/stages/WritingStage.jsx";
 import { SourcesStage } from "./components/stages/SourcesStage.jsx";
 import { DoneStage } from "./components/stages/DoneStage.jsx";
+import { ChecklistStage } from "./components/stages/ChecklistStage.jsx";
 import { CorrectionsStage } from "./components/stages/CorrectionsStage.jsx";
 
 export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
@@ -3220,6 +3221,9 @@ ${refLines2.join("\n")}`;
             generatePresentation={generatePresentation} generateSpeech={generateSpeech}
             doScanAndGenFigures={doScanAndGenFigures} setStage={setStage}
           />
+        )}
+        {stage === "checklist" && (
+          <ChecklistStage info={info} setStage={setStage} mode="large" />
         )}
         {stage === "corrections" && (
           <CorrectionsStage

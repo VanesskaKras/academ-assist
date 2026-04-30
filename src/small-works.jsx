@@ -10,6 +10,7 @@ import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
 import { FieldBox, Heading, NavBtn, PrimaryBtn, GreenBtn, SaveIndicator } from "./components/Buttons.jsx";
 import { DropZone } from "./components/DropZone.jsx";
 import { parsePagesAvg, exportSimpleDocx, TA, TA_WHITE, SHARED_STYLES } from "./shared.jsx";
+import { ChecklistStage } from "./components/stages/ChecklistStage.jsx";
 
 // ─────────────────────────────────────────────
 // Конфіг типів робіт
@@ -19,8 +20,8 @@ const WORK_TYPES = {
     label: "Реферат",
     icon: "📄",
     hasplan: true,
-    stages: ["Дані", "План", "Текст", "Готово"],
-    stageKeys: ["input", "plan", "writing", "done"],
+    stages: ["Дані", "План", "Текст", "Готово", "Чек-лист"],
+    stageKeys: ["input", "plan", "writing", "done", "checklist"],
     color: "#1a5a8a",
     bg: "#e4f0ff",
   },
@@ -28,8 +29,8 @@ const WORK_TYPES = {
     label: "Тези",
     icon: "📝",
     hasplan: false,
-    stages: ["Дані", "Генерація", "Готово"],
-    stageKeys: ["input", "writing", "done"],
+    stages: ["Дані", "Генерація", "Готово", "Чек-лист"],
+    stageKeys: ["input", "writing", "done", "checklist"],
     color: "#5a1a8a",
     bg: "#f0e4ff",
   },
@@ -37,8 +38,8 @@ const WORK_TYPES = {
     label: "Стаття",
     icon: "📰",
     hasplan: false,
-    stages: ["Дані", "Генерація", "Готово"],
-    stageKeys: ["input", "writing", "done"],
+    stages: ["Дані", "Генерація", "Готово", "Чек-лист"],
+    stageKeys: ["input", "writing", "done", "checklist"],
     color: "#1a6a1a",
     bg: "#e4ffe4",
   },
@@ -46,8 +47,8 @@ const WORK_TYPES = {
     label: "Есе",
     icon: "✍️",
     hasplan: false,
-    stages: ["Дані", "Генерація", "Готово"],
-    stageKeys: ["input", "writing", "done"],
+    stages: ["Дані", "Генерація", "Готово", "Чек-лист"],
+    stageKeys: ["input", "writing", "done", "checklist"],
     color: "#8a5a1a",
     bg: "#fff5e4",
   },
@@ -55,8 +56,8 @@ const WORK_TYPES = {
     label: "Презентація",
     icon: "🎞️",
     hasplan: false,
-    stages: ["Дані", "Генерація", "Готово"],
-    stageKeys: ["input", "writing", "done"],
+    stages: ["Дані", "Генерація", "Готово", "Чек-лист"],
+    stageKeys: ["input", "writing", "done", "checklist"],
     color: "#8a1a1a",
     bg: "#ffe4e4",
   },
@@ -755,7 +756,16 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
             <div style={{ marginTop: 20, padding: "10px 14px", background: "#f0ece2", borderRadius: 6, fontSize: 12, color: "#888" }}>
               Word: Times New Roman 14, міжрядковий 1.5, поля ліво 3см / право 1.5см / верх-низ 2см.
             </div>
+            <div style={{ marginTop: 20 }}>
+              <button onClick={() => setStage("checklist")} style={{ background: "transparent", border: "1.5px solid #e8ff47", color: "#e8ff47", borderRadius: 7, padding: "11px 22px", fontFamily: "'Spectral',serif", fontSize: 13, cursor: "pointer" }}>
+                Чек-лист →
+              </button>
+            </div>
           </div>
+        )}
+
+        {stage === "checklist" && (
+          <ChecklistStage info={info} setStage={setStage} mode="small" />
         )}
 
       </div>
