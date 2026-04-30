@@ -118,18 +118,10 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [correctionLoading, setCorrectionLoading] = useState(false);
   const [correctionApplyLoading, setCorrectionApplyLoading] = useState(false);
   const [correctionHistory, setCorrectionHistory] = useState([]);
-  const [sessionCost, setSessionCost] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("sessionCost")) || { claude: 0, gemini: 0 }; } catch { return { claude: 0, gemini: 0 }; }
-  });
   const tokenAccRef = useRef({ inTok: 0, outTok: 0, costUsd: 0, claudeInTok: 0, claudeOutTok: 0, claudeCostUsd: 0, geminiInTok: 0, geminiOutTok: 0, geminiCostUsd: 0 });
   useEffect(() => {
     const handler = (e) => {
       const isGemini = e.detail.model?.startsWith("gemini");
-      setSessionCost(c => {
-        const next = isGemini ? { ...c, gemini: c.gemini + e.detail.cost } : { ...c, claude: c.claude + e.detail.cost };
-        localStorage.setItem("sessionCost", JSON.stringify(next));
-        return next;
-      });
       const inTok = e.detail.inTok || 0;
       const outTok = e.detail.outTok || 0;
       const cost = e.detail.cost || 0;
@@ -2989,13 +2981,6 @@ ${refLines2.join("\n")}`;
             {info?.orderNumber && <div style={{ fontSize: 11, color: "#888", whiteSpace: "nowrap", flexShrink: 0 }}>#{info.orderNumber}</div>}
             {info?.topic && <div style={{ fontSize: 12, color: "#666", flex: 1, minWidth: 0, lineHeight: 1.4 }}>{info.topic}</div>}
             <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0, marginLeft: "auto" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: "#888", background: "#2a2a20", borderRadius: 6, padding: "4px 10px" }}>
-                <span>Claude: <b style={{ color: "#e8ff47" }}>${sessionCost.claude.toFixed(4)}</b></span>
-                <span style={{ color: "#444" }}>|</span>
-                <span>Gemini: <b style={{ color: "#e8ff47" }}>${sessionCost.gemini.toFixed(4)}</b></span>
-                <button onClick={() => { const z = { claude: 0, gemini: 0 }; setSessionCost(z); localStorage.setItem("sessionCost", JSON.stringify(z)); }}
-                  style={{ background: "transparent", border: "none", color: "#555", cursor: "pointer", fontSize: 13, lineHeight: 1, padding: "0 2px" }} title="Скинути">✕</button>
-              </div>
               <SaveIndicator saving={saving} saved={saved} />
               <StagePills stage={stage} maxStageIdx={maxStageIdx} onNavigate={running ? null : handleNavigateMain} stages={activeStages} stageKeys={activeStageKeys} />
             </div>
