@@ -443,7 +443,7 @@ function CardsView({ block }) {
     return (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, marginBottom: 24 }}>
             {(block.cards || []).map(card => (
-                <div key={card.id} style={{ border: "1.5px solid #e8e8e0", borderRadius: 12, padding: "16px 18px", background: "#fff" }}>
+                <div key={card.id} style={{ border: "1.5px solid #e8ff47", borderRadius: 12, padding: "16px 18px", background: "#fff" }}>
                     {card.label && (
                         <div style={{ fontSize: 10, color: "#aaa", textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 8, fontFamily: "inherit" }}>
                             {card.label}
