@@ -940,7 +940,7 @@ export default function TrainingPage({ onBack }) {
                             </button>
                         </>
                     )}
-                    {!editMode && sections.length > 0 && (
+                    {isAdmin && !editMode && sections.length > 0 && (
                         <button onClick={exportTxt} style={headerBtn}>↓ TXT</button>
                     )}
                     {!editMode && (
