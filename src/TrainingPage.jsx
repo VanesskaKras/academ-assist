@@ -232,6 +232,10 @@ function ContentView({ blocks }) {
                     <CarouselView key={block.id} block={block} />
                 );
 
+                if (block.type === "cards" && block.cards?.length) return (
+                    <CardsView key={block.id} block={block} />
+                );
+
                 return null;
             })}
         </>
@@ -245,7 +249,7 @@ const miniBtn = {
     padding: "3px 8px", fontSize: 11, cursor: "pointer", color: "#666", fontFamily: "inherit",
 };
 
-const BLOCK_LABELS = { text: "Текст", image: "Фото", video: "Відео", drive: "Google Drive", table: "Таблиця", carousel: "Карусель" };
+const BLOCK_LABELS = { text: "Текст", image: "Фото", video: "Відео", drive: "Google Drive", table: "Таблиця", carousel: "Карусель", cards: "Картки" };
 
 function BlockEditor({ block, onUpdate, onRemove, onMoveUp, onMoveDown, isFirst, isLast }) {
     return (
@@ -394,6 +398,11 @@ function BlockEditor({ block, onUpdate, onRemove, onMoveUp, onMoveDown, isFirst,
             {block.type === "carousel" && (
                 <CarouselEditor block={block} onUpdate={onUpdate} />
             )}
+
+            {/* Cards */}
+            {block.type === "cards" && (
+                <CardsEditor block={block} onUpdate={onUpdate} />
+            )}
         </div>
     );
 }
@@ -407,6 +416,7 @@ const BLOCK_TYPES = [
     { type: "drive",    label: "+ Google Drive" },
     { type: "table",    label: "+ Таблиця" },
     { type: "carousel", label: "+ Карусель" },
+    { type: "cards",    label: "+ Картки" },
 ];
 
 const SLIDE_BLOCK_TYPES = BLOCK_TYPES.filter(b => b.type !== "carousel");
@@ -421,7 +431,81 @@ const NEW_BLOCK = {
         { id: genId(), title: "Слайд 1", content: [] },
         { id: genId(), title: "Слайд 2", content: [] },
     ]}),
+    cards: () => ({ id: genId(), type: "cards", cards: [
+        { id: genId(), label: "", value: "", desc: "" },
+        { id: genId(), label: "", value: "", desc: "" },
+    ]}),
 };
+
+// ── Cards view ────────────────────────────────────────────────────────────────
+
+function CardsView({ block }) {
+    return (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, marginBottom: 24 }}>
+            {(block.cards || []).map(card => (
+                <div key={card.id} style={{ border: "1.5px solid #e8e8e0", borderRadius: 12, padding: "16px 18px", background: "#fff" }}>
+                    {card.label && (
+                        <div style={{ fontSize: 10, color: "#aaa", textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 8, fontFamily: "inherit" }}>
+                            {card.label}
+                        </div>
+                    )}
+                    {card.value && (
+                        <div style={{ fontSize: 22, fontWeight: 700, color: "#1a1a14", marginBottom: 6, fontFamily: "Georgia, serif", lineHeight: 1.2 }}>
+                            {card.value}
+                        </div>
+                    )}
+                    {card.desc && (
+                        <div style={{ fontSize: 13, color: "#666", lineHeight: 1.65, whiteSpace: "pre-line" }}>
+                            {card.desc}
+                        </div>
+                    )}
+                </div>
+            ))}
+        </div>
+    );
+}
+
+// ── Cards editor ──────────────────────────────────────────────────────────────
+
+function CardsEditor({ block, onUpdate }) {
+    const updCards = (cards) => onUpdate({ ...block, cards });
+    const addCard = () => updCards([...(block.cards || []), { id: genId(), label: "", value: "", desc: "" }]);
+    const rmCard = (i) => updCards((block.cards || []).filter((_, idx) => idx !== i));
+    const updCard = (i, patch) => updCards((block.cards || []).map((c, idx) => idx === i ? { ...c, ...patch } : c));
+
+    const fieldStyle = (fontSize, bold) => ({
+        width: "100%", padding: "4px 0", border: "none", borderBottom: "1px solid #e8e8e0",
+        fontSize, fontWeight: bold ? 700 : 400,
+        fontFamily: bold ? "Georgia, serif" : "inherit",
+        color: bold ? "#1a1a14" : "#666", background: "transparent",
+        outline: "none", boxSizing: "border-box", marginBottom: 6,
+    });
+
+    return (
+        <div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10, marginBottom: 10 }}>
+                {(block.cards || []).map((card, i) => (
+                    <div key={card.id} style={{ border: "1.5px solid #e0ddd4", borderRadius: 8, padding: "10px 10px 6px", background: "#fafaf7", position: "relative" }}>
+                        <button onClick={() => rmCard(i)} style={{ position: "absolute", top: 6, right: 6, ...miniBtn, color: "#c00", borderColor: "#ffcccc", padding: "1px 5px", fontSize: 10 }}>✕</button>
+                        <input value={card.label} onChange={e => updCard(i, { label: e.target.value })}
+                            placeholder="ЗАГОЛОВОК КАРТКИ"
+                            style={{ ...fieldStyle(10, false), textTransform: "uppercase", letterSpacing: 1, color: "#aaa", paddingRight: 20 }} />
+                        <input value={card.value} onChange={e => updCard(i, { value: e.target.value })}
+                            placeholder="Основне значення"
+                            style={fieldStyle(18, true)} />
+                        <textarea value={card.desc} onChange={e => updCard(i, { desc: e.target.value })}
+                            placeholder={"Опис (необов'язково)"}
+                            rows={2}
+                            style={{ ...fieldStyle(12, false), resize: "none", lineHeight: 1.5 }} />
+                    </div>
+                ))}
+            </div>
+            <button onClick={addCard} style={{ background: "transparent", border: "1.5px dashed #ccc", borderRadius: 7, padding: "5px 14px", fontSize: 11, cursor: "pointer", fontFamily: "inherit", color: "#888" }}>
+                + Картка
+            </button>
+        </div>
+    );
+}
 
 // ── Carousel view ─────────────────────────────────────────────────────────────
 
