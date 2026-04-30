@@ -3227,7 +3227,7 @@ ${refLines2.join("\n")}`;
             />
           )}
           {stage === "checklist" && (
-            <ChecklistStage info={info} setStage={setStage} mode="large" />
+            <ChecklistStage info={info} methodInfo={methodInfo} setStage={setStage} mode="large" />
           )}
           {stage === "corrections" && (
             <CorrectionsStage
