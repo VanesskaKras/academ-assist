@@ -234,7 +234,11 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   // Оновлюємо maxStageIdx коли просуваємось вперед
   useEffect(() => {
     const idx = activeStageKeys.indexOf(stage);
-    if (idx >= 0) setMaxStageIdx(prev => Math.max(prev, idx));
+    if (idx >= 0) {
+      // На стейджі "done" одразу розблоковуємо checklist і corrections
+      const newMax = stage === "done" ? activeStageKeys.length - 1 : idx;
+      setMaxStageIdx(prev => Math.max(prev, newMax));
+    }
   }, [stage, workflowMode]);
 
   // Синхронізуємо ref з state для використання всередині async-функцій
