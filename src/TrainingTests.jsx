@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { db } from "./firebase";
 import { collection, getDocs, addDoc, setDoc, deleteDoc, doc, query, orderBy, where } from "firebase/firestore";
 import { useAuth } from "./AuthContext";
@@ -33,6 +33,9 @@ export default function TrainingTests({ onBack }) {
     const [usersMap, setUsersMap] = useState({});
     const [editingTest, setEditingTest] = useState(null);
     const [saving, setSaving] = useState(false);
+    const [dragOver, setDragOver] = useState({ qi: null, idx: null });
+
+    const dragItem = useRef(null);
 
     useEffect(() => {
         loadTests();
@@ -70,22 +73,34 @@ export default function TrainingTests({ onBack }) {
 
     const startTest = (test) => {
         setActiveTest(test);
-        setAnswers({});
-        setSubmitted(false);
-        setScore(null);
+        const initialAnswers = {};
         const sr = {};
         (test.questions || []).forEach((q, qi) => {
+            if (q.type === "order") {
+                initialAnswers[qi] = shuffle([...(q.items || [])]);
+            }
             if (q.type === "match") {
                 sr[qi] = shuffle((q.pairs || []).map(p => p.right));
             }
         });
+        setAnswers(initialAnswers);
         setShuffledRights(sr);
+        setSubmitted(false);
+        setScore(null);
     };
 
     const isQuestionCorrect = (q, qi) => {
         if (q.type === "match") {
             const ans = answers[qi] || {};
             return (q.pairs || []).every((pair, pi) => ans[pi] === pair.right);
+        }
+        if (q.type === "order") {
+            return JSON.stringify(answers[qi]) === JSON.stringify(q.items);
+        }
+        if (q.type === "multi") {
+            const selected = [...(answers[qi] || [])].sort().join(",");
+            const correct = [...(q.correct || [])].sort().join(",");
+            return selected === correct;
         }
         return answers[qi] === q.correct;
     };
@@ -128,8 +143,39 @@ export default function TrainingTests({ onBack }) {
             const ans = answers[qi] || {};
             return (q.pairs || []).every((_, pi) => ans[pi] !== undefined && ans[pi] !== "");
         }
+        if (q.type === "order") return true;
+        if (q.type === "multi") return (answers[qi] || []).length > 0;
         return answers[qi] !== undefined;
     }) : false;
+
+    // Drag-and-drop for order questions
+    const handleDragStart = (qi, idx) => {
+        dragItem.current = { qi, idx };
+    };
+
+    const handleDragOver = (e, qi, idx) => {
+        e.preventDefault();
+        setDragOver({ qi, idx });
+    };
+
+    const handleDrop = (qi, toIdx) => {
+        if (!dragItem.current || dragItem.current.qi !== qi) return;
+        const fromIdx = dragItem.current.idx;
+        if (fromIdx === toIdx) { dragItem.current = null; setDragOver({ qi: null, idx: null }); return; }
+        setAnswers(p => {
+            const arr = [...(p[qi] || [])];
+            const [removed] = arr.splice(fromIdx, 1);
+            arr.splice(toIdx, 0, removed);
+            return { ...p, [qi]: arr };
+        });
+        dragItem.current = null;
+        setDragOver({ qi: null, idx: null });
+    };
+
+    const handleDragEnd = () => {
+        dragItem.current = null;
+        setDragOver({ qi: null, idx: null });
+    };
 
     // ── Test editor logic ──────────────────────────────────────────────────────
 
@@ -155,6 +201,12 @@ export default function TrainingTests({ onBack }) {
             if (q.type === "match") {
                 if (!q.pairs || q.pairs.length < 2) return alert("Додайте хоча б 2 пари для питання «З'єднай»");
                 if (q.pairs.some(p => !p.left.trim() || !p.right.trim())) return alert("Заповніть усі пари у питанні «З'єднай»");
+            } else if (q.type === "order") {
+                if (!q.items || q.items.length < 2) return alert("Додайте хоча б 2 елементи для питання «По порядку»");
+                if (q.items.some(item => !item.trim())) return alert("Заповніть усі елементи у питанні «По порядку»");
+            } else if (q.type === "multi") {
+                if (q.options.some(o => !o.trim())) return alert("Заповніть усі варіанти відповідей");
+                if (!q.correct || q.correct.length === 0) return alert("Відмітьте хоча б одну правильну відповідь");
             } else {
                 if (q.options.some(o => !o.trim())) return alert("Заповніть усі варіанти відповідей");
             }
@@ -182,15 +234,14 @@ export default function TrainingTests({ onBack }) {
     // Edit helpers — common
     const updTest = (patch) => setEditingTest(p => ({ ...p, ...patch }));
 
-    const addQuestion = (type = "radio") => setEditingTest(p => ({
-        ...p,
-        questions: [
-            ...p.questions,
-            type === "match"
-                ? { id: genId(), type: "match", text: "", pairs: [{ left: "", right: "" }, { left: "", right: "" }] }
-                : { id: genId(), type: "radio", text: "", options: ["", "", "", ""], correct: 0 },
-        ],
-    }));
+    const addQuestion = (type = "radio") => {
+        let q;
+        if (type === "match") q = { id: genId(), type: "match", text: "", pairs: [{ left: "", right: "" }, { left: "", right: "" }] };
+        else if (type === "order") q = { id: genId(), type: "order", text: "", items: ["", "", ""] };
+        else if (type === "multi") q = { id: genId(), type: "multi", text: "", options: ["", "", "", ""], correct: [] };
+        else q = { id: genId(), type: "radio", text: "", options: ["", "", "", ""], correct: 0 };
+        setEditingTest(p => ({ ...p, questions: [...p.questions, q] }));
+    };
 
     const rmQuestion = (qi) => setEditingTest(p => ({
         ...p, questions: p.questions.filter((_, i) => i !== qi),
@@ -205,6 +256,8 @@ export default function TrainingTests({ onBack }) {
         questions: p.questions.map((q, i) => {
             if (i !== qi) return q;
             if (type === "match") return { id: q.id, type: "match", text: q.text, pairs: [{ left: "", right: "" }, { left: "", right: "" }] };
+            if (type === "order") return { id: q.id, type: "order", text: q.text, items: ["", "", ""] };
+            if (type === "multi") return { id: q.id, type: "multi", text: q.text, options: ["", "", "", ""], correct: [] };
             return { id: q.id, type: "radio", text: q.text, options: ["", "", "", ""], correct: 0 };
         }),
     }));
@@ -217,7 +270,7 @@ export default function TrainingTests({ onBack }) {
         return { ...p, questions: qs };
     });
 
-    // Edit helpers — radio
+    // Edit helpers — radio / multi options
     const updOption = (qi, oi, value) => setEditingTest(p => ({
         ...p, questions: p.questions.map((q, i) => i !== qi ? q : {
             ...q, options: q.options.map((o, j) => j !== oi ? o : value),
@@ -236,6 +289,15 @@ export default function TrainingTests({ onBack }) {
             const options = q.options.filter((_, j) => j !== oi);
             const correct = q.correct === oi ? 0 : q.correct > oi ? q.correct - 1 : q.correct;
             return { ...q, options, correct: Math.min(correct, options.length - 1) };
+        }),
+    }));
+
+    const rmOptionMulti = (qi, oi) => setEditingTest(p => ({
+        ...p, questions: p.questions.map((q, i) => {
+            if (i !== qi) return q;
+            const options = q.options.filter((_, j) => j !== oi);
+            const correct = (q.correct || []).filter(c => c !== oi).map(c => c > oi ? c - 1 : c);
+            return { ...q, options, correct };
         }),
     }));
 
@@ -258,6 +320,36 @@ export default function TrainingTests({ onBack }) {
         }),
     }));
 
+    // Edit helpers — order
+    const updItem = (qi, ii, value) => setEditingTest(p => ({
+        ...p, questions: p.questions.map((q, i) => i !== qi ? q : {
+            ...q, items: q.items.map((item, j) => j !== ii ? item : value),
+        }),
+    }));
+
+    const addItem = (qi) => setEditingTest(p => ({
+        ...p, questions: p.questions.map((q, i) => i !== qi ? q : {
+            ...q, items: [...q.items, ""],
+        }),
+    }));
+
+    const rmItem = (qi, ii) => setEditingTest(p => ({
+        ...p, questions: p.questions.map((q, i) => i !== qi ? q : {
+            ...q, items: q.items.filter((_, j) => j !== ii),
+        }),
+    }));
+
+    const moveItem = (qi, ii, dir) => setEditingTest(p => ({
+        ...p, questions: p.questions.map((q, i) => {
+            if (i !== qi) return q;
+            const items = [...q.items];
+            const t = ii + dir;
+            if (t < 0 || t >= items.length) return q;
+            [items[ii], items[t]] = [items[t], items[ii]];
+            return { ...q, items };
+        }),
+    }));
+
     // ── Styles ─────────────────────────────────────────────────────────────────
 
     const fmtTime = (iso) => iso
@@ -267,7 +359,7 @@ export default function TrainingTests({ onBack }) {
     const headerBtn = { background: "transparent", border: "1px solid #555", color: "#aaa", borderRadius: 6, padding: "6px 14px", cursor: "pointer", fontFamily: "inherit", fontSize: 12 };
     const primBtn = { background: "#1a1a14", color: "#e8ff47", border: "none", borderRadius: 6, padding: "8px 22px", cursor: "pointer", fontFamily: "inherit", fontSize: 14, fontWeight: 700 };
     const miniBtn = { background: "transparent", border: "1px solid #ddd", borderRadius: 4, padding: "3px 8px", fontSize: 11, cursor: "pointer", color: "#666", fontFamily: "inherit" };
-    const typeTabBase = { border: "1.5px solid #e0ddd4", borderRadius: 6, padding: "5px 14px", fontSize: 12, cursor: "pointer", fontFamily: "inherit", fontWeight: 600, transition: "all .15s" };
+    const typeTabBase = { border: "1.5px solid #e0ddd4", borderRadius: 6, padding: "4px 10px", fontSize: 11, cursor: "pointer", fontFamily: "inherit", fontWeight: 600, transition: "all .15s", whiteSpace: "nowrap" };
 
     // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -326,15 +418,17 @@ export default function TrainingTests({ onBack }) {
                         {editingTest.questions.map((q, qi) => (
                             <div key={q.id} style={{ border: "1.5px solid #e0ddd4", borderRadius: 10, padding: 20, marginBottom: 16, background: "#faf8f3" }}>
                                 {/* Question header */}
-                                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-                                    <span style={{ fontSize: 11, color: "#888", background: "#f0ece2", padding: "2px 10px", borderRadius: 4, textTransform: "uppercase", letterSpacing: 1, fontFamily: "inherit", flexShrink: 0 }}>
-                                        Питання {qi + 1}
+                                <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+                                    <span style={{ fontSize: 11, color: "#888", background: "#f0ece2", padding: "4px 10px", borderRadius: 4, textTransform: "uppercase", letterSpacing: 1, fontFamily: "inherit", flexShrink: 0, marginTop: 2 }}>
+                                        {qi + 1}
                                     </span>
                                     {/* Type switcher */}
-                                    <div style={{ display: "flex", gap: 4 }}>
+                                    <div style={{ display: "flex", gap: 4, flexWrap: "wrap", flex: 1 }}>
                                         {[
                                             { value: "radio", label: "Один варіант" },
+                                            { value: "multi", label: "Декілька варіантів" },
                                             { value: "match", label: "З'єднай" },
+                                            { value: "order", label: "По порядку" },
                                         ].map(({ value, label }) => (
                                             <button key={value} onClick={() => setQuestionType(qi, value)}
                                                 style={{
@@ -347,7 +441,7 @@ export default function TrainingTests({ onBack }) {
                                             </button>
                                         ))}
                                     </div>
-                                    <div style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
+                                    <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
                                         {qi > 0 && <button onClick={() => moveQuestion(qi, -1)} style={miniBtn}>↑</button>}
                                         {qi < editingTest.questions.length - 1 && <button onClick={() => moveQuestion(qi, 1)} style={miniBtn}>↓</button>}
                                         <button onClick={() => { if (window.confirm("Видалити питання?")) rmQuestion(qi); }} style={{ ...miniBtn, color: "#c00", borderColor: "#ffcccc" }}>✕</button>
@@ -364,44 +458,67 @@ export default function TrainingTests({ onBack }) {
                                 />
 
                                 {/* ── Radio options editor ── */}
-                                {q.type !== "match" && (
+                                {q.type === "radio" && (
                                     <>
                                         <div style={{ fontSize: 11, color: "#888", letterSpacing: 1, textTransform: "uppercase", marginBottom: 8, fontFamily: "inherit" }}>
-                                            Варіанти відповідей — відмітьте правильний
+                                            Варіанти — відмітьте правильний
                                         </div>
                                         {q.options.map((opt, oi) => (
                                             <div key={oi} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                                                <input
-                                                    type="radio"
-                                                    name={`correct-${q.id}`}
-                                                    checked={q.correct === oi}
+                                                <input type="radio" name={`correct-${q.id}`} checked={q.correct === oi}
                                                     onChange={() => updQuestion(qi, { correct: oi })}
-                                                    title="Правильна відповідь"
-                                                    style={{ accentColor: "#1a6a1a", width: 16, height: 16, flexShrink: 0, cursor: "pointer" }}
-                                                />
-                                                <input
-                                                    value={opt}
-                                                    onChange={e => updOption(qi, oi, e.target.value)}
+                                                    style={{ accentColor: "#1a6a1a", width: 16, height: 16, flexShrink: 0, cursor: "pointer" }} />
+                                                <input value={opt} onChange={e => updOption(qi, oi, e.target.value)}
                                                     placeholder={`Варіант ${oi + 1}`}
-                                                    style={{
-                                                        flex: 1, padding: "7px 10px", borderRadius: 6, fontSize: 13, fontFamily: "inherit", outline: "none", boxSizing: "border-box",
-                                                        border: `1.5px solid ${q.correct === oi ? "#8ac040" : "#e0ddd4"}`,
-                                                        background: q.correct === oi ? "#f0fff0" : "#fff",
-                                                    }}
-                                                />
+                                                    style={{ flex: 1, padding: "7px 10px", borderRadius: 6, fontSize: 13, fontFamily: "inherit", outline: "none", boxSizing: "border-box", border: `1.5px solid ${q.correct === oi ? "#8ac040" : "#e0ddd4"}`, background: q.correct === oi ? "#f0fff0" : "#fff" }} />
                                                 {q.options.length > 2 && (
                                                     <button onClick={() => rmOption(qi, oi)} style={{ ...miniBtn, color: "#c00", borderColor: "#ffcccc", flexShrink: 0 }}>✕</button>
                                                 )}
                                             </div>
                                         ))}
                                         {q.options.length < 6 && (
-                                            <button onClick={() => addOption(qi)}
-                                                style={{ background: "transparent", border: "1.5px dashed #ccc", borderRadius: 6, padding: "5px 14px", fontSize: 11, cursor: "pointer", fontFamily: "inherit", color: "#888", marginTop: 4 }}>
+                                            <button onClick={() => addOption(qi)} style={{ background: "transparent", border: "1.5px dashed #ccc", borderRadius: 6, padding: "5px 14px", fontSize: 11, cursor: "pointer", fontFamily: "inherit", color: "#888", marginTop: 4 }}>
                                                 + Варіант
                                             </button>
                                         )}
                                         <div style={{ fontSize: 11, color: "#8ac040", marginTop: 10, fontStyle: "italic" }}>
                                             Правильна відповідь: {q.options[q.correct] ? `"${q.options[q.correct]}"` : "не вибрано"}
+                                        </div>
+                                    </>
+                                )}
+
+                                {/* ── Multi options editor ── */}
+                                {q.type === "multi" && (
+                                    <>
+                                        <div style={{ fontSize: 11, color: "#888", letterSpacing: 1, textTransform: "uppercase", marginBottom: 8, fontFamily: "inherit" }}>
+                                            Варіанти — відмітьте всі правильні
+                                        </div>
+                                        {q.options.map((opt, oi) => {
+                                            const isCorrect = (q.correct || []).includes(oi);
+                                            return (
+                                                <div key={oi} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                                                    <input type="checkbox" checked={isCorrect}
+                                                        onChange={() => {
+                                                            const cur = q.correct || [];
+                                                            updQuestion(qi, { correct: cur.includes(oi) ? cur.filter(x => x !== oi) : [...cur, oi] });
+                                                        }}
+                                                        style={{ accentColor: "#1a6a1a", width: 16, height: 16, flexShrink: 0, cursor: "pointer" }} />
+                                                    <input value={opt} onChange={e => updOption(qi, oi, e.target.value)}
+                                                        placeholder={`Варіант ${oi + 1}`}
+                                                        style={{ flex: 1, padding: "7px 10px", borderRadius: 6, fontSize: 13, fontFamily: "inherit", outline: "none", boxSizing: "border-box", border: `1.5px solid ${isCorrect ? "#8ac040" : "#e0ddd4"}`, background: isCorrect ? "#f0fff0" : "#fff" }} />
+                                                    {q.options.length > 2 && (
+                                                        <button onClick={() => rmOptionMulti(qi, oi)} style={{ ...miniBtn, color: "#c00", borderColor: "#ffcccc", flexShrink: 0 }}>✕</button>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+                                        {q.options.length < 8 && (
+                                            <button onClick={() => addOption(qi)} style={{ background: "transparent", border: "1.5px dashed #ccc", borderRadius: 6, padding: "5px 14px", fontSize: 11, cursor: "pointer", fontFamily: "inherit", color: "#888", marginTop: 4 }}>
+                                                + Варіант
+                                            </button>
+                                        )}
+                                        <div style={{ fontSize: 11, color: "#8ac040", marginTop: 10, fontStyle: "italic" }}>
+                                            Правильних відповідей: {(q.correct || []).length}
                                         </div>
                                     </>
                                 )}
@@ -415,36 +532,50 @@ export default function TrainingTests({ onBack }) {
                                             <div />
                                             {(q.pairs || []).map((pair, pi) => (
                                                 <>
-                                                    <input
-                                                        key={`l${pi}`}
-                                                        value={pair.left}
-                                                        onChange={e => updPair(qi, pi, "left", e.target.value)}
+                                                    <input key={`l${pi}`} value={pair.left} onChange={e => updPair(qi, pi, "left", e.target.value)}
                                                         placeholder={`Ліве ${pi + 1}`}
-                                                        style={{ padding: "7px 10px", borderRadius: 6, fontSize: 13, fontFamily: "inherit", outline: "none", border: "1.5px solid #e0ddd4", background: "#fff", boxSizing: "border-box" }}
-                                                    />
-                                                    <input
-                                                        key={`r${pi}`}
-                                                        value={pair.right}
-                                                        onChange={e => updPair(qi, pi, "right", e.target.value)}
+                                                        style={{ padding: "7px 10px", borderRadius: 6, fontSize: 13, fontFamily: "inherit", outline: "none", border: "1.5px solid #e0ddd4", background: "#fff", boxSizing: "border-box" }} />
+                                                    <input key={`r${pi}`} value={pair.right} onChange={e => updPair(qi, pi, "right", e.target.value)}
                                                         placeholder={`Праве ${pi + 1}`}
-                                                        style={{ padding: "7px 10px", borderRadius: 6, fontSize: 13, fontFamily: "inherit", outline: "none", border: "1.5px solid #e0ddd4", background: "#fff", boxSizing: "border-box" }}
-                                                    />
-                                                    <button
-                                                        key={`rm${pi}`}
-                                                        onClick={() => q.pairs.length > 2 && rmPair(qi, pi)}
-                                                        disabled={q.pairs.length <= 2}
-                                                        style={{ ...miniBtn, color: "#c00", borderColor: "#ffcccc", opacity: q.pairs.length <= 2 ? 0.3 : 1, cursor: q.pairs.length <= 2 ? "default" : "pointer" }}>
-                                                        ✕
-                                                    </button>
+                                                        style={{ padding: "7px 10px", borderRadius: 6, fontSize: 13, fontFamily: "inherit", outline: "none", border: "1.5px solid #e0ddd4", background: "#fff", boxSizing: "border-box" }} />
+                                                    <button key={`rm${pi}`} onClick={() => q.pairs.length > 2 && rmPair(qi, pi)} disabled={q.pairs.length <= 2}
+                                                        style={{ ...miniBtn, color: "#c00", borderColor: "#ffcccc", opacity: q.pairs.length <= 2 ? 0.3 : 1, cursor: q.pairs.length <= 2 ? "default" : "pointer" }}>✕</button>
                                                 </>
                                             ))}
                                         </div>
-                                        <button onClick={() => addPair(qi)}
-                                            style={{ background: "transparent", border: "1.5px dashed #ccc", borderRadius: 6, padding: "5px 14px", fontSize: 11, cursor: "pointer", fontFamily: "inherit", color: "#888", marginTop: 8 }}>
+                                        <button onClick={() => addPair(qi)} style={{ background: "transparent", border: "1.5px dashed #ccc", borderRadius: 6, padding: "5px 14px", fontSize: 11, cursor: "pointer", fontFamily: "inherit", color: "#888", marginTop: 8 }}>
                                             + Пара
                                         </button>
                                         <div style={{ fontSize: 11, color: "#888", marginTop: 10, fontStyle: "italic" }}>
-                                            Правильні відповіді задаються парами ліве → праве. При тесті права колонка перемішується.
+                                            При тесті права колонка перемішується.
+                                        </div>
+                                    </>
+                                )}
+
+                                {/* ── Order items editor ── */}
+                                {q.type === "order" && (
+                                    <>
+                                        <div style={{ fontSize: 11, color: "#888", letterSpacing: 1, textTransform: "uppercase", marginBottom: 8, fontFamily: "inherit" }}>
+                                            Елементи у правильному порядку
+                                        </div>
+                                        {(q.items || []).map((item, ii) => (
+                                            <div key={ii} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                                                <span style={{ fontSize: 12, color: "#aaa", minWidth: 18, textAlign: "right", flexShrink: 0 }}>{ii + 1}.</span>
+                                                <input value={item} onChange={e => updItem(qi, ii, e.target.value)}
+                                                    placeholder={`Елемент ${ii + 1}`}
+                                                    style={{ flex: 1, padding: "7px 10px", borderRadius: 6, fontSize: 13, fontFamily: "inherit", outline: "none", border: "1.5px solid #e0ddd4", background: "#fff", boxSizing: "border-box" }} />
+                                                {ii > 0 && <button onClick={() => moveItem(qi, ii, -1)} style={miniBtn}>↑</button>}
+                                                {ii < (q.items || []).length - 1 && <button onClick={() => moveItem(qi, ii, 1)} style={miniBtn}>↓</button>}
+                                                {(q.items || []).length > 2 && (
+                                                    <button onClick={() => rmItem(qi, ii)} style={{ ...miniBtn, color: "#c00", borderColor: "#ffcccc" }}>✕</button>
+                                                )}
+                                            </div>
+                                        ))}
+                                        <button onClick={() => addItem(qi)} style={{ background: "transparent", border: "1.5px dashed #ccc", borderRadius: 6, padding: "5px 14px", fontSize: 11, cursor: "pointer", fontFamily: "inherit", color: "#888", marginTop: 4 }}>
+                                            + Елемент
+                                        </button>
+                                        <div style={{ fontSize: 11, color: "#888", marginTop: 10, fontStyle: "italic" }}>
+                                            При тесті елементи перемішуються. Студент перетягує їх у правильному порядку.
                                         </div>
                                     </>
                                 )}
@@ -452,15 +583,18 @@ export default function TrainingTests({ onBack }) {
                         ))}
 
                         {/* Add question buttons */}
-                        <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
-                            <button onClick={() => addQuestion("radio")}
-                                style={{ flex: 1, background: "#1a1a14", color: "#e8ff47", border: "none", borderRadius: 10, padding: "11px 0", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-                                + Один варіант
-                            </button>
-                            <button onClick={() => addQuestion("match")}
-                                style={{ flex: 1, background: "transparent", color: "#1a1a14", border: "2px solid #1a1a14", borderRadius: 10, padding: "11px 0", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-                                + З'єднай
-                            </button>
+                        <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                            {[
+                                { type: "radio", label: "+ Один варіант", filled: true },
+                                { type: "multi", label: "+ Декілька варіантів", filled: false },
+                                { type: "match", label: "+ З'єднай", filled: false },
+                                { type: "order", label: "+ По порядку", filled: false },
+                            ].map(({ type, label, filled }) => (
+                                <button key={type} onClick={() => addQuestion(type)}
+                                    style={{ flex: 1, minWidth: 140, background: filled ? "#1a1a14" : "transparent", color: filled ? "#e8ff47" : "#1a1a14", border: filled ? "none" : "2px solid #1a1a14", borderRadius: 10, padding: "10px 0", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                                    {label}
+                                </button>
+                            ))}
                         </div>
                     </div>
 
@@ -505,7 +639,7 @@ export default function TrainingTests({ onBack }) {
                                         </div>
 
                                         {/* Radio question */}
-                                        {q.type !== "match" && (
+                                        {q.type === "radio" && (
                                             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                                                 {(q.options || []).map((opt, oi) => (
                                                     <label key={oi} style={{
@@ -524,10 +658,41 @@ export default function TrainingTests({ onBack }) {
                                             </div>
                                         )}
 
+                                        {/* Multi question */}
+                                        {q.type === "multi" && (
+                                            <>
+                                                <div style={{ fontSize: 12, color: "#888", marginBottom: 10, fontStyle: "italic" }}>
+                                                    Можна обрати кілька варіантів
+                                                </div>
+                                                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                                    {(q.options || []).map((opt, oi) => {
+                                                        const selected = (answers[qi] || []).includes(oi);
+                                                        return (
+                                                            <label key={oi} style={{
+                                                                display: "flex", alignItems: "center", gap: 12,
+                                                                padding: "10px 14px", borderRadius: 8, cursor: "pointer",
+                                                                border: `1.5px solid ${selected ? "#1a1a14" : "#e0ddd4"}`,
+                                                                background: selected ? "#f0ece2" : "#fff",
+                                                                transition: "all .15s", userSelect: "none",
+                                                            }}>
+                                                                <input type="checkbox" checked={selected}
+                                                                    onChange={() => setAnswers(p => {
+                                                                        const cur = p[qi] || [];
+                                                                        const next = cur.includes(oi) ? cur.filter(x => x !== oi) : [...cur, oi];
+                                                                        return { ...p, [qi]: next };
+                                                                    })}
+                                                                    style={{ accentColor: "#1a1a14", width: 16, height: 16, flexShrink: 0 }} />
+                                                                <span style={{ fontSize: 14, color: "#1a1a14" }}>{opt}</span>
+                                                            </label>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </>
+                                        )}
+
                                         {/* Match question */}
                                         {q.type === "match" && (
                                             <div style={{ border: "1.5px solid #e0ddd4", borderRadius: 10, overflow: "hidden" }}>
-                                                {/* Table header */}
                                                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", background: "#f0ece2", borderBottom: "1.5px solid #e0ddd4" }}>
                                                     <div style={{ padding: "8px 16px", fontSize: 11, color: "#888", textTransform: "uppercase", letterSpacing: 1, fontWeight: 600 }}>Поняття</div>
                                                     <div style={{ padding: "8px 16px", fontSize: 11, color: "#888", textTransform: "uppercase", letterSpacing: 1, fontWeight: 600, borderLeft: "1px solid #e0ddd4" }}>Оберіть відповідь</div>
@@ -545,29 +710,52 @@ export default function TrainingTests({ onBack }) {
                                                                 {pair.left}
                                                             </div>
                                                             <div style={{ padding: "8px 12px", borderLeft: "1px solid #e0ddd4", display: "flex", alignItems: "center" }}>
-                                                                <select
-                                                                    value={selected || ""}
-                                                                    onChange={e => setAnswers(p => ({
-                                                                        ...p,
-                                                                        [qi]: { ...(p[qi] || {}), [pi]: e.target.value },
-                                                                    }))}
-                                                                    style={{
-                                                                        width: "100%", padding: "7px 10px", borderRadius: 6, fontSize: 13,
-                                                                        fontFamily: "Georgia, serif", outline: "none", cursor: "pointer",
-                                                                        border: `1.5px solid ${selected ? "#1a1a14" : "#e0ddd4"}`,
-                                                                        background: selected ? "#f0ece2" : "#fff",
-                                                                        color: "#1a1a14",
-                                                                    }}>
+                                                                <select value={selected || ""}
+                                                                    onChange={e => setAnswers(p => ({ ...p, [qi]: { ...(p[qi] || {}), [pi]: e.target.value } }))}
+                                                                    style={{ width: "100%", padding: "7px 10px", borderRadius: 6, fontSize: 13, fontFamily: "Georgia, serif", outline: "none", cursor: "pointer", border: `1.5px solid ${selected ? "#1a1a14" : "#e0ddd4"}`, background: selected ? "#f0ece2" : "#fff", color: "#1a1a14" }}>
                                                                     <option value="">— оберіть —</option>
-                                                                    {opts.map((opt, oi) => (
-                                                                        <option key={oi} value={opt}>{opt}</option>
-                                                                    ))}
+                                                                    {opts.map((opt, oi) => <option key={oi} value={opt}>{opt}</option>)}
                                                                 </select>
                                                             </div>
                                                         </div>
                                                     );
                                                 })}
                                             </div>
+                                        )}
+
+                                        {/* Order question */}
+                                        {q.type === "order" && (
+                                            <>
+                                                <div style={{ fontSize: 12, color: "#888", marginBottom: 10, fontStyle: "italic" }}>
+                                                    Перетягуйте елементи щоб розставити у правильному порядку
+                                                </div>
+                                                <div>
+                                                    {(answers[qi] || []).map((item, idx) => {
+                                                        const isOver = dragOver.qi === qi && dragOver.idx === idx;
+                                                        return (
+                                                            <div key={idx}
+                                                                draggable
+                                                                onDragStart={() => handleDragStart(qi, idx)}
+                                                                onDragOver={e => handleDragOver(e, qi, idx)}
+                                                                onDrop={() => handleDrop(qi, idx)}
+                                                                onDragEnd={handleDragEnd}
+                                                                style={{
+                                                                    display: "flex", alignItems: "center", gap: 12,
+                                                                    padding: "10px 14px", borderRadius: 8,
+                                                                    border: `1.5px solid ${isOver ? "#1a1a14" : "#e0ddd4"}`,
+                                                                    background: isOver ? "#f0ece2" : "#fff",
+                                                                    marginBottom: 8, userSelect: "none", cursor: "grab",
+                                                                    transition: "border-color .1s, background .1s",
+                                                                    transform: isOver ? "scale(1.01)" : "none",
+                                                                }}>
+                                                                <span style={{ color: "#ccc", fontSize: 18, lineHeight: 1, cursor: "grab", flexShrink: 0 }}>⠿</span>
+                                                                <span style={{ fontSize: 14, color: "#1a1a14", flex: 1 }}>{item}</span>
+                                                                <span style={{ fontSize: 12, color: "#bbb", flexShrink: 0 }}>{idx + 1}</span>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </>
                                         )}
                                     </div>
                                 ))}
@@ -576,6 +764,8 @@ export default function TrainingTests({ onBack }) {
                                     <div style={{ fontSize: 13, color: "#888" }}>
                                         Відповіді: {(activeTest.questions || []).filter((q, qi) => {
                                             if (q.type === "match") return (q.pairs || []).every((_, pi) => (answers[qi] || {})[pi]);
+                                            if (q.type === "order") return true;
+                                            if (q.type === "multi") return (answers[qi] || []).length > 0;
                                             return answers[qi] !== undefined;
                                         }).length} / {activeTest.questions?.length || 0}
                                     </div>
@@ -600,9 +790,7 @@ export default function TrainingTests({ onBack }) {
                         ) : tests.length === 0 ? (
                             <div style={{ background: "#fff", borderRadius: 12, padding: 40, textAlign: "center", boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}>
                                 <div style={{ color: "#aaa", fontSize: 14, marginBottom: isAdmin ? 20 : 0 }}>Тести ще не додано.</div>
-                                {isAdmin && (
-                                    <button onClick={startNewTest} style={primBtn}>+ Створити перший тест</button>
-                                )}
+                                {isAdmin && <button onClick={startNewTest} style={primBtn}>+ Створити перший тест</button>}
                             </div>
                         ) : (
                             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -622,11 +810,7 @@ export default function TrainingTests({ onBack }) {
                                                 </div>
                                             </div>
                                             {best && (
-                                                <div style={{
-                                                    padding: "4px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600, flexShrink: 0,
-                                                    background: best.passed ? "#e4ffe4" : "#fff3e0",
-                                                    color: best.passed ? "#1a6a1a" : "#8a5a1a",
-                                                }}>
+                                                <div style={{ padding: "4px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600, flexShrink: 0, background: best.passed ? "#e4ffe4" : "#fff3e0", color: best.passed ? "#1a6a1a" : "#8a5a1a" }}>
                                                     {best.passed ? "Пройдено" : "Не пройдено"}
                                                 </div>
                                             )}
