@@ -59,14 +59,16 @@ export default function TrainingTests({ onBack }) {
     };
 
     const loadAllResults = async () => {
-        const [resultsSnap, usersSnap] = await Promise.all([
-            getDocs(collection(db, "training_results")),
-            getDocs(collection(db, "users")),
-        ]);
-        setAllResults(resultsSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-        const um = {};
-        usersSnap.docs.forEach(d => { um[d.id] = d.data(); });
-        setUsersMap(um);
+        try {
+            const [resultsSnap, usersSnap] = await Promise.all([
+                getDocs(collection(db, "training_results")),
+                getDocs(collection(db, "users")),
+            ]);
+            setAllResults(resultsSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+            const um = {};
+            usersSnap.docs.forEach(d => { um[d.id] = d.data(); });
+            setUsersMap(um);
+        } catch (e) { console.error("Помилка завантаження результатів:", e); }
     };
 
     // ── Test-taking logic ──────────────────────────────────────────────────────
@@ -110,6 +112,10 @@ export default function TrainingTests({ onBack }) {
         const total = activeTest.questions?.length || 0;
         const correct = (activeTest.questions || []).filter((q, qi) => isQuestionCorrect(q, qi)).length;
         setSubmitting(true);
+        // Show results immediately so UI never blocks on Firebase
+        setScore({ correct, total });
+        setSubmitted(true);
+        setSubmitting(false);
         try {
             const prevAttempts = myResults.filter(r => r.testId === activeTest.id);
             await addDoc(collection(db, "training_results"), {
@@ -125,12 +131,9 @@ export default function TrainingTests({ onBack }) {
                 submittedAt: new Date().toISOString(),
                 attempt: prevAttempts.length + 1,
             });
-            setScore({ correct, total });
-            setSubmitted(true);
             await loadMyResults();
             if (isAdmin) loadAllResults();
-        } catch (e) { console.error(e); }
-        setSubmitting(false);
+        } catch (e) { console.error("Помилка збереження результату:", e); }
     };
 
     const getBestResult = (testId) => {
@@ -606,21 +609,159 @@ export default function TrainingTests({ onBack }) {
                         </div>
 
                         {submitted && score ? (
-                            <div style={{ textAlign: "center", padding: "32px 0" }}>
-                                <div style={{
-                                    fontSize: 72, fontWeight: 700, lineHeight: 1, marginBottom: 12,
-                                    color: score.correct === score.total ? "#1a6a1a" : score.correct >= Math.ceil(score.total * 0.6) ? "#8a5a1a" : "#c00",
-                                }}>
-                                    {score.correct}/{score.total}
+                            <div>
+                                {/* Score summary */}
+                                <div style={{ textAlign: "center", padding: "28px 0 24px" }}>
+                                    <div style={{ fontSize: 13, color: "#888", letterSpacing: 1, textTransform: "uppercase", marginBottom: 10 }}>Тест завершено</div>
+                                    <div style={{
+                                        fontSize: 72, fontWeight: 700, lineHeight: 1, marginBottom: 14,
+                                        color: score.correct === score.total ? "#1a6a1a" : score.correct >= Math.ceil(score.total * 0.6) ? "#8a5a1a" : "#c00",
+                                    }}>
+                                        {score.correct}/{score.total}
+                                    </div>
+                                    <div style={{ fontSize: 18, color: "#555", marginBottom: 6 }}>
+                                        {score.correct === score.total
+                                            ? "Відмінно! Всі відповіді правильні."
+                                            : score.correct >= Math.ceil(score.total * 0.6)
+                                                ? "Непогано! Є що покращити."
+                                                : "Потрібно повторити матеріал і спробувати ще раз."}
+                                    </div>
+                                    <div style={{ fontSize: 13, color: "#aaa" }}>
+                                        Правильних відповідей: {score.correct} з {score.total}
+                                    </div>
                                 </div>
-                                <div style={{ fontSize: 18, color: "#555", marginBottom: 32 }}>
-                                    {score.correct === score.total
-                                        ? "Відмінно! Всі відповіді правильні."
-                                        : score.correct >= Math.ceil(score.total * 0.6)
-                                            ? "Непогано! Є що покращити."
-                                            : "Потрібно повторити матеріал і спробувати ще раз."}
+
+                                {/* Per-question breakdown */}
+                                <div style={{ borderTop: "2px solid #f0ece2", paddingTop: 24 }}>
+                                    <div style={{ fontSize: 11, color: "#888", letterSpacing: 1, textTransform: "uppercase", marginBottom: 18, fontWeight: 600 }}>
+                                        Розбір відповідей
+                                    </div>
+                                    {(activeTest.questions || []).map((q, qi) => {
+                                        const qCorrect = isQuestionCorrect(q, qi);
+                                        return (
+                                            <div key={qi} style={{
+                                                marginBottom: 16, padding: "16px 20px", borderRadius: 10,
+                                                border: `1.5px solid ${qCorrect ? "#b8e6b8" : "#ffcccc"}`,
+                                                background: qCorrect ? "#f4fff4" : "#fff5f5",
+                                            }}>
+                                                <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 12 }}>
+                                                    <span style={{ fontSize: 18, flexShrink: 0, lineHeight: 1, color: qCorrect ? "#1a6a1a" : "#c00", marginTop: 1 }}>
+                                                        {qCorrect ? "✓" : "✗"}
+                                                    </span>
+                                                    <div style={{ fontSize: 14, fontWeight: 600, color: "#1a1a14", lineHeight: 1.5 }}>
+                                                        {qi + 1}. {q.text}
+                                                    </div>
+                                                </div>
+
+                                                {/* Radio */}
+                                                {q.type === "radio" && (
+                                                    <div style={{ display: "flex", flexDirection: "column", gap: 5, paddingLeft: 28 }}>
+                                                        {(q.options || []).map((opt, oi) => {
+                                                            const isSel = answers[qi] === oi;
+                                                            const isRight = q.correct === oi;
+                                                            const bg = isRight ? "#e8ffe8" : isSel ? "#fff0f0" : "#fff";
+                                                            const border = isRight ? "1.5px solid #1a6a1a" : isSel ? "1.5px solid #c00" : "1px solid #e0ddd4";
+                                                            const color = isRight ? "#1a6a1a" : isSel ? "#c00" : "#555";
+                                                            return (
+                                                                <div key={oi} style={{ padding: "7px 12px", borderRadius: 6, border, background: bg, fontSize: 13, color, display: "flex", alignItems: "center", gap: 8 }}>
+                                                                    <span style={{ width: 14, flexShrink: 0 }}>{isRight ? "✓" : isSel ? "✗" : ""}</span>
+                                                                    {opt}
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                )}
+
+                                                {/* Multi */}
+                                                {q.type === "multi" && (
+                                                    <div style={{ display: "flex", flexDirection: "column", gap: 5, paddingLeft: 28 }}>
+                                                        {(q.options || []).map((opt, oi) => {
+                                                            const isSel = (answers[qi] || []).includes(oi);
+                                                            const isRight = (q.correct || []).includes(oi);
+                                                            const bg = isRight ? "#e8ffe8" : isSel ? "#fff0f0" : "#fff";
+                                                            const border = isRight ? "1.5px solid #1a6a1a" : isSel ? "1.5px solid #c00" : "1px solid #e0ddd4";
+                                                            const color = isRight ? "#1a6a1a" : isSel ? "#c00" : "#555";
+                                                            return (
+                                                                <div key={oi} style={{ padding: "7px 12px", borderRadius: 6, border, background: bg, fontSize: 13, color, display: "flex", alignItems: "center", gap: 8 }}>
+                                                                    <span style={{ width: 14, flexShrink: 0 }}>{isRight && isSel ? "✓" : isRight && !isSel ? "○" : isSel ? "✗" : ""}</span>
+                                                                    {opt}
+                                                                    {isRight && !isSel && <span style={{ fontSize: 11, color: "#1a6a1a", marginLeft: 4, fontStyle: "italic" }}>(правильна)</span>}
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                )}
+
+                                                {/* Match */}
+                                                {q.type === "match" && (
+                                                    <div style={{ paddingLeft: 28 }}>
+                                                        {(q.pairs || []).map((pair, pi) => {
+                                                            const userAns = (answers[qi] || {})[pi];
+                                                            const pairOk = userAns === pair.right;
+                                                            return (
+                                                                <div key={pi} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, fontSize: 13 }}>
+                                                                    <span style={{ minWidth: "38%", padding: "6px 10px", background: "#f0ece2", borderRadius: 5, color: "#1a1a14" }}>{pair.left}</span>
+                                                                    <span style={{ color: "#aaa" }}>→</span>
+                                                                    <span style={{
+                                                                        padding: "6px 10px", borderRadius: 5, flex: 1,
+                                                                        background: pairOk ? "#e8ffe8" : "#fff0f0",
+                                                                        color: pairOk ? "#1a6a1a" : "#c00",
+                                                                        border: `1px solid ${pairOk ? "#b8e6b8" : "#ffcccc"}`,
+                                                                    }}>
+                                                                        {userAns || "—"}
+                                                                        {!pairOk && <span style={{ color: "#1a6a1a", marginLeft: 8, fontStyle: "italic", fontSize: 12 }}>→ правильно: {pair.right}</span>}
+                                                                    </span>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                )}
+
+                                                {/* Order */}
+                                                {q.type === "order" && (
+                                                    <div style={{ paddingLeft: 28, display: "flex", gap: 16, flexWrap: "wrap" }}>
+                                                        <div style={{ flex: 1, minWidth: 160 }}>
+                                                            <div style={{ fontSize: 11, color: "#888", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Ваш порядок</div>
+                                                            {(answers[qi] || []).map((item, idx) => {
+                                                                const itemOk = (q.items || [])[idx] === item;
+                                                                return (
+                                                                    <div key={idx} style={{
+                                                                        padding: "6px 10px", borderRadius: 5, marginBottom: 4, fontSize: 13,
+                                                                        display: "flex", gap: 8, alignItems: "center",
+                                                                        background: itemOk ? "#e8ffe8" : "#fff0f0",
+                                                                        color: itemOk ? "#1a6a1a" : "#c00",
+                                                                        border: `1px solid ${itemOk ? "#b8e6b8" : "#ffcccc"}`,
+                                                                    }}>
+                                                                        <span style={{ fontSize: 11, opacity: 0.6 }}>{idx + 1}.</span>
+                                                                        {item}
+                                                                    </div>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                        {!qCorrect && (
+                                                            <div style={{ flex: 1, minWidth: 160 }}>
+                                                                <div style={{ fontSize: 11, color: "#888", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Правильний порядок</div>
+                                                                {(q.items || []).map((item, idx) => (
+                                                                    <div key={idx} style={{
+                                                                        padding: "6px 10px", borderRadius: 5, marginBottom: 4, fontSize: 13,
+                                                                        display: "flex", gap: 8, alignItems: "center",
+                                                                        background: "#e8ffe8", color: "#1a6a1a", border: "1px solid #b8e6b8",
+                                                                    }}>
+                                                                        <span style={{ fontSize: 11, opacity: 0.6 }}>{idx + 1}.</span>
+                                                                        {item}
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
                                 </div>
-                                <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+
+                                {/* Buttons */}
+                                <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap", marginTop: 28, paddingTop: 20, borderTop: "1.5px solid #f0ece2" }}>
                                     <button onClick={() => startTest(activeTest)}
                                         style={{ ...primBtn, background: "transparent", color: "#1a1a14", border: "1.5px solid #1a1a14" }}>
                                         Пройти ще раз
