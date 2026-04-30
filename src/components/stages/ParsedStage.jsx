@@ -115,9 +115,7 @@ export function ParsedStage({
             {(commentAnalysis?.practicalApproach ?? null) === null && commentAnalysis?.practicalApproach !== undefined && (
               <div style={{ fontSize: 12, color: "#888", fontStyle: "italic" }}>Додаток А не генерується</div>
             )}
-            {commentAnalysis?.practicalApproach == null && (
-              <div style={{ fontSize: 12, color: "#aaa", fontStyle: "italic" }}>Оберіть тип — система підготує відповідний Додаток А</div>
-            )}
+            <div style={{ fontSize: 12, color: "#aaa", marginTop: 4 }}>Система обирає тип автоматично на основі теми. Якщо клієнт вказав інше — змініть вручну.</div>
           </div>
         </div>
       )}

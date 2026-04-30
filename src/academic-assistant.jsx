@@ -229,7 +229,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
 
   // Активні стейджі залежно від режиму
   const activeStageKeys = workflowMode === "sources-first" ? STAGE_KEYS_SOURCES_FIRST : STAGE_KEYS_TEXT_FIRST;
-  const activeStages    = workflowMode === "sources-first" ? STAGES_SOURCES_FIRST    : STAGES_TEXT_FIRST;
+  const activeStages = workflowMode === "sources-first" ? STAGES_SOURCES_FIRST : STAGES_TEXT_FIRST;
 
   // Оновлюємо maxStageIdx коли просуваємось вперед
   useEffect(() => {
@@ -885,8 +885,8 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
       const hasEmpirical = hasEmpiricalResearch(commentAnalysis, methodInfo);
       const practApproach = commentAnalysis?.practicalApproach;
       const needsAppendix = empSecs.chapterSectionIds.includes(sec.id) || sec.id === empSecs.anchorId ||
-          (hasEmpirical && ["analysis", "recommendations"].includes(sec.type)) ||
-          (practApproach && practApproach !== "questionnaire" && ["analysis", "recommendations"].includes(sec.type));
+        (hasEmpirical && ["analysis", "recommendations"].includes(sec.type)) ||
+        (practApproach && practApproach !== "questionnaire" && ["analysis", "recommendations"].includes(sec.type));
       if (needsAppendix) return;
     }
     runSection(sec);
@@ -1040,13 +1040,13 @@ ${methodInfo?.chapterConclusionRequirements ? `ВИМОГИ МЕТОДИЧКИ: 
         const secTables = (methodInfo?.requiredTables || []).filter(t => !t.section || t.section === sec.type);
         const formulasBlock = secFormulas.length
           ? `\nОБОВ'ЯЗКОВІ ФОРМУЛИ З МЕТОДИЧКИ (підстав реалістичні числові значення та підрахуй результат):\n${secFormulas.map(f =>
-              `- ${f.name}: ${f.formula}\n  Змінні: ${f.variables}${f.interpretation ? `\n  Інтерпретація: ${f.interpretation}` : ""}`
-            ).join("\n")}`
+            `- ${f.name}: ${f.formula}\n  Змінні: ${f.variables}${f.interpretation ? `\n  Інтерпретація: ${f.interpretation}` : ""}`
+          ).join("\n")}`
           : "";
         const tablesBlock = secTables.length
           ? `\nОБОВ'ЯЗКОВІ ТАБЛИЦІ З МЕТОДИЧКИ (відтвори структуру, заповни реалістичними даними під тему "${d.topic}"):\n${secTables.map(t =>
-              `- ${t.name}\n  Структура: ${t.structure}\n  Що заповнювати: ${t.instructions}`
-            ).join("\n")}`
+            `- ${t.name}\n  Структура: ${t.structure}\n  Що заповнювати: ${t.instructions}`
+          ).join("\n")}`
           : "";
         const genericEcon = !secFormulas.length && !secTables.length
           ? `\nОБОВ'ЯЗКОВО для цього підрозділу (економічна/управлінська робота):
@@ -1166,9 +1166,9 @@ ${appendixBlock}${empHint ? `ВИМОГА: ${empHint}\n` : ""}Рекоменда
         : [];
       const sourcesBlock = secSourceLines.length > 0
         ? `\nДЖЕРЕЛА ДЛЯ ЦЬОГО ПІДРОЗДІЛУ (${secSourceLines.length} шт.) — спирайся на них при написанні, вставляй посилання [N] після відповідних тверджень:\n${secSourceLines.map((s, i) => {
-            const snippet = abstractsMap[s];
-            return snippet ? `[${i + 1}] ${s}\n    Зміст: ${snippet}` : `[${i + 1}] ${s}`;
-          }).join("\n")}\n`
+          const snippet = abstractsMap[s];
+          return snippet ? `[${i + 1}] ${s}\n    Зміст: ${snippet}` : `[${i + 1}] ${s}`;
+        }).join("\n")}\n`
         : "";
       const citNote = secSourceLines.length > 0
         ? "Вставляй [N] у текст одразу після тверджень що спираються на джерело (де N — номер зі списку вище). ЗАБОРОНЕНО вигадувати імена авторів перед цитатою — не пиши 'Іванов А. стверджує...'. Використовуй безособові конструкції: 'у дослідженні зазначається [N]', 'науковці вказують [N]', 'встановлено [N]' тощо. ЗАБОРОНЕНО об'єднувати кілька джерел в одну дужку [1, 6] — кожне джерело ставь окремо: [1] [6]."
@@ -1300,13 +1300,13 @@ ${methodInfo?.conclusionsRequirements ? `ВИМОГИ МЕТОДИЧКИ: ${meth
         const secTables = (methodInfo?.requiredTables || []).filter(t => !t.section || t.section === sec.type);
         const formulasBlock = secFormulas.length
           ? `\nОБОВ'ЯЗКОВІ ФОРМУЛИ З МЕТОДИЧКИ (підстав реалістичні числові значення та підрахуй результат):\n${secFormulas.map(f =>
-              `- ${f.name}: ${f.formula}\n  Змінні: ${f.variables}${f.interpretation ? `\n  Інтерпретація: ${f.interpretation}` : ""}`
-            ).join("\n")}`
+            `- ${f.name}: ${f.formula}\n  Змінні: ${f.variables}${f.interpretation ? `\n  Інтерпретація: ${f.interpretation}` : ""}`
+          ).join("\n")}`
           : "";
         const tablesBlock = secTables.length
           ? `\nОБОВ'ЯЗКОВІ ТАБЛИЦІ З МЕТОДИЧКИ (відтвори структуру, заповни реалістичними даними під тему "${d.topic}"):\n${secTables.map(t =>
-              `- ${t.name}\n  Структура: ${t.structure}\n  Що заповнювати: ${t.instructions}`
-            ).join("\n")}`
+            `- ${t.name}\n  Структура: ${t.structure}\n  Що заповнювати: ${t.instructions}`
+          ).join("\n")}`
           : "";
         const genericEcon = !secFormulas.length && !secTables.length
           ? `\nОБОВ'ЯЗКОВО: мінімум одна таблиця markdown з числовими даними, аналіз динаміки з цифрами${sec.type === "recommendations" ? ", таблиця прогнозних показників після впровадження рекомендацій" : ""}`
@@ -3117,133 +3117,133 @@ ${refLines2.join("\n")}`;
         paddingLeft: ["plan", "sources", "done"].includes(stage) && info ? (sidebarOpen ? 302 : 32) : 0,
         transition: "padding-left .28s cubic-bezier(.4,0,.2,1)",
       }}>
-      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "32px clamp(16px, 3vw, 48px)" }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto", padding: "32px clamp(16px, 3vw, 48px)" }}>
 
-        {/* ══ STAGES ══ */}
-        {stage === "input" && (
-          <InputStage
-            tplText={tplText} setTplText={setTplText}
-            clientPlan={clientPlan} setClientPlan={setClientPlan}
-            comment={comment} setComment={setComment}
-            appendicesText={appendicesText} setAppendicesText={setAppendicesText}
-            fileLabel={fileLabel} fileB64={fileB64} methodInfo={methodInfo}
-            photos={photos} setPhotos={setPhotos} info={info}
-            running={running} loadMsg={loadMsg}
-            handleFile={handleFile} doAnalyze={doAnalyze} setStage={setStage}
-          />
-        )}
-        {stage === "parsed" && info && (
-          <ParsedStage
-            info={info} setInfo={setInfo}
-            methodInfo={methodInfo} setMethodInfo={setMethodInfo}
-            fileB64={fileB64} apiError={apiError} sections={sections}
-            commentAnalysis={commentAnalysis} setCommentAnalysis={setCommentAnalysis}
-            doGenPlan={doGenPlan} setStage={setStage}
-          />
-        )}
-        {stage === "plan" && (
-          <PlanStage
-            sections={sections} setSections={setSections}
-            planDisplay={planDisplay} setPlanDisplay={setPlanDisplay}
-            planLoading={planLoading} clientPlan={clientPlan}
-            showManualPlanInput={showManualPlanInput} setShowManualPlanInput={setShowManualPlanInput}
-            manualPlanText={manualPlanText} setManualPlanText={setManualPlanText}
-            planDocxLoading={planDocxLoading} setPlanDocxLoading={setPlanDocxLoading}
-            namingLoading={namingLoading} totalPagesNum={totalPagesNum}
-            info={info} methodInfo={methodInfo} content={content}
-            doGenPlan={doGenPlan} doNamePlaceholders={doNamePlaceholders}
-            startGen={startGen} setStage={setStage} workflowMode={workflowMode}
-            setSourceDist={setSourceDist} setSourceTotal={setSourceTotal}
-            addNewChapter={addNewChapter} recalcPages={recalcPages}
-          />
-        )}
-        {stage === "writing" && (
-          <WritingStage
-            running={running} paused={paused}
-            regenId={regenId} setRegenId={setRegenId}
-            regenPrompt={regenPrompt} setRegenPrompt={setRegenPrompt}
-            regenLoading={regenLoading} regenAllLoading={regenAllLoading}
-            loadMsg={loadMsg} apiError={apiError} setApiError={setApiError}
-            progress={progress} displayOrder={displayOrder}
-            sections={sections} genIdx={genIdx} content={content}
-            regenAllAbortRef={regenAllAbortRef}
-            stopGen={stopGen} resumeGen={resumeGen} doRegenAll={doRegenAll}
-            doRegenSection={doRegenSection} setStage={setStage} workflowMode={workflowMode}
-            doRemapCitations={doRemapCitations} remapLoading={remapLoading}
-            appendicesText={appendicesText} appendicesLoading={appendicesLoading}
-          />
-        )}
-        {stage === "sources" && (
-          <SourcesStage
-            mainSections={mainSections}
-            citInputs={citInputs} setCitInputs={setCitInputs}
-            citStructured={citStructured} setCitStructured={setCitStructured}
-            sourceDist={sourceDist} sourceTotal={sourceTotal}
-            keywords={keywords} kwLoading={kwLoading}
-            kwError={kwError} setKwError={setKwError}
-            methodInfo={methodInfo} commentAnalysis={commentAnalysis}
-            allRefs={globalRefData.allRefs} refList={refList}
-            showMissingSources={showMissingSources}
-            citInputsSnapshot={citInputsSnapshot} allCitLoading={allCitLoading}
-            info={info} doGenKeywords={doGenKeywords}
-            suggestedSources={suggestedSources}
-            phraseGroups={phraseGroups}
-            sourcesSearchLoading={sourcesSearchLoading}
-            sourcesSearchError={sourcesSearchError}
-            doSearchSources={doSearchSources}
-            doRegenSectionSources={doRegenSectionSources}
-            doAddAllCitations={doAddAllCitations}
-            onAddAbstracts={(entries) => setAbstractsMap(prev => ({ ...prev, ...entries }))}
-            onFinish={async () => { await saveToFirestore({ stage: "done", status: "done", content, citInputs, citStructured, abstractsMap, refList }); setStage("done"); }}
-            onProceedToWriting={() => setStage("writing")}
-            setStage={setStage} workflowMode={workflowMode}
-          />
-        )}
-        {stage === "done" && (
-          <DoneStage
-            content={content} displayOrder={displayOrder}
-            titlePage={titlePage} setTitlePage={setTitlePage} titlePageLines={titlePageLines}
-            regenId={regenId} setRegenId={setRegenId}
-            regenPrompt={regenPrompt} setRegenPrompt={setRegenPrompt}
-            regenLoading={regenLoading} regenAllLoading={regenAllLoading}
-            loadMsg={loadMsg}
-            appendicesText={appendicesText} setAppendicesText={setAppendicesText}
-            appendicesLoading={appendicesLoading} setAppendicesLoading={setAppendicesLoading}
-            appendicesCustomPrompt={appendicesCustomPrompt} setAppendicesCustomPrompt={setAppendicesCustomPrompt}
-            speechText={speechText} setSpeechText={setSpeechText}
-            speechLoading={speechLoading} setSpeechLoading={setSpeechLoading}
-            presentationLoading={presentationLoading} presentationMsg={presentationMsg}
-            presentationReady={presentationReady}
-            docxLoading={docxLoading} setDocxLoading={setDocxLoading}
-            figureRefs={figureRefs} figureKeywords={figureKeywords}
-            figKwLoading={figKwLoading} figPanelOpen={figPanelOpen} setFigPanelOpen={setFigPanelOpen}
-            sections={sections} info={info} methodInfo={methodInfo}
-            doRegenSection={doRegenSection} doRegenAll={doRegenAll}
-            regenAllAbortRef={regenAllAbortRef}
-            doGenAppendices={doGenAppendices} saveToFirestore={saveToFirestore}
-            copyAll={copyAll} resetAll={resetAll}
-            generatePresentation={generatePresentation} generateSpeech={generateSpeech}
-            doScanAndGenFigures={doScanAndGenFigures} setStage={setStage}
-          />
-        )}
-        {stage === "checklist" && (
-          <ChecklistStage info={info} setStage={setStage} mode="large" />
-        )}
-        {stage === "corrections" && (
-          <CorrectionsStage
-            sections={sections}
-            correctionText={correctionText} setCorrectionText={setCorrectionText}
-            correctionPhotos={correctionPhotos} setCorrectionPhotos={setCorrectionPhotos}
-            correctionAnalysis={correctionAnalysis}
-            correctionChecked={correctionChecked} setCorrectionChecked={setCorrectionChecked}
-            correctionLoading={correctionLoading}
-            correctionApplyLoading={correctionApplyLoading}
-            correctionHistory={correctionHistory}
-            doAnalyzeCorrections={doAnalyzeCorrections}
-            doApplyCorrections={doApplyCorrections}
-            setStage={setStage}
-          />
-        )}
+          {/* ══ STAGES ══ */}
+          {stage === "input" && (
+            <InputStage
+              tplText={tplText} setTplText={setTplText}
+              clientPlan={clientPlan} setClientPlan={setClientPlan}
+              comment={comment} setComment={setComment}
+              appendicesText={appendicesText} setAppendicesText={setAppendicesText}
+              fileLabel={fileLabel} fileB64={fileB64} methodInfo={methodInfo}
+              photos={photos} setPhotos={setPhotos} info={info}
+              running={running} loadMsg={loadMsg}
+              handleFile={handleFile} doAnalyze={doAnalyze} setStage={setStage}
+            />
+          )}
+          {stage === "parsed" && info && (
+            <ParsedStage
+              info={info} setInfo={setInfo}
+              methodInfo={methodInfo} setMethodInfo={setMethodInfo}
+              fileB64={fileB64} apiError={apiError} sections={sections}
+              commentAnalysis={commentAnalysis} setCommentAnalysis={setCommentAnalysis}
+              doGenPlan={doGenPlan} setStage={setStage}
+            />
+          )}
+          {stage === "plan" && (
+            <PlanStage
+              sections={sections} setSections={setSections}
+              planDisplay={planDisplay} setPlanDisplay={setPlanDisplay}
+              planLoading={planLoading} clientPlan={clientPlan}
+              showManualPlanInput={showManualPlanInput} setShowManualPlanInput={setShowManualPlanInput}
+              manualPlanText={manualPlanText} setManualPlanText={setManualPlanText}
+              planDocxLoading={planDocxLoading} setPlanDocxLoading={setPlanDocxLoading}
+              namingLoading={namingLoading} totalPagesNum={totalPagesNum}
+              info={info} methodInfo={methodInfo} content={content}
+              doGenPlan={doGenPlan} doNamePlaceholders={doNamePlaceholders}
+              startGen={startGen} setStage={setStage} workflowMode={workflowMode}
+              setSourceDist={setSourceDist} setSourceTotal={setSourceTotal}
+              addNewChapter={addNewChapter} recalcPages={recalcPages}
+            />
+          )}
+          {stage === "writing" && (
+            <WritingStage
+              running={running} paused={paused}
+              regenId={regenId} setRegenId={setRegenId}
+              regenPrompt={regenPrompt} setRegenPrompt={setRegenPrompt}
+              regenLoading={regenLoading} regenAllLoading={regenAllLoading}
+              loadMsg={loadMsg} apiError={apiError} setApiError={setApiError}
+              progress={progress} displayOrder={displayOrder}
+              sections={sections} genIdx={genIdx} content={content}
+              regenAllAbortRef={regenAllAbortRef}
+              stopGen={stopGen} resumeGen={resumeGen} doRegenAll={doRegenAll}
+              doRegenSection={doRegenSection} setStage={setStage} workflowMode={workflowMode}
+              doRemapCitations={doRemapCitations} remapLoading={remapLoading}
+              appendicesText={appendicesText} appendicesLoading={appendicesLoading}
+            />
+          )}
+          {stage === "sources" && (
+            <SourcesStage
+              mainSections={mainSections}
+              citInputs={citInputs} setCitInputs={setCitInputs}
+              citStructured={citStructured} setCitStructured={setCitStructured}
+              sourceDist={sourceDist} sourceTotal={sourceTotal}
+              keywords={keywords} kwLoading={kwLoading}
+              kwError={kwError} setKwError={setKwError}
+              methodInfo={methodInfo} commentAnalysis={commentAnalysis}
+              allRefs={globalRefData.allRefs} refList={refList}
+              showMissingSources={showMissingSources}
+              citInputsSnapshot={citInputsSnapshot} allCitLoading={allCitLoading}
+              info={info} doGenKeywords={doGenKeywords}
+              suggestedSources={suggestedSources}
+              phraseGroups={phraseGroups}
+              sourcesSearchLoading={sourcesSearchLoading}
+              sourcesSearchError={sourcesSearchError}
+              doSearchSources={doSearchSources}
+              doRegenSectionSources={doRegenSectionSources}
+              doAddAllCitations={doAddAllCitations}
+              onAddAbstracts={(entries) => setAbstractsMap(prev => ({ ...prev, ...entries }))}
+              onFinish={async () => { await saveToFirestore({ stage: "done", status: "done", content, citInputs, citStructured, abstractsMap, refList }); setStage("done"); }}
+              onProceedToWriting={() => setStage("writing")}
+              setStage={setStage} workflowMode={workflowMode}
+            />
+          )}
+          {stage === "done" && (
+            <DoneStage
+              content={content} displayOrder={displayOrder}
+              titlePage={titlePage} setTitlePage={setTitlePage} titlePageLines={titlePageLines}
+              regenId={regenId} setRegenId={setRegenId}
+              regenPrompt={regenPrompt} setRegenPrompt={setRegenPrompt}
+              regenLoading={regenLoading} regenAllLoading={regenAllLoading}
+              loadMsg={loadMsg}
+              appendicesText={appendicesText} setAppendicesText={setAppendicesText}
+              appendicesLoading={appendicesLoading} setAppendicesLoading={setAppendicesLoading}
+              appendicesCustomPrompt={appendicesCustomPrompt} setAppendicesCustomPrompt={setAppendicesCustomPrompt}
+              speechText={speechText} setSpeechText={setSpeechText}
+              speechLoading={speechLoading} setSpeechLoading={setSpeechLoading}
+              presentationLoading={presentationLoading} presentationMsg={presentationMsg}
+              presentationReady={presentationReady}
+              docxLoading={docxLoading} setDocxLoading={setDocxLoading}
+              figureRefs={figureRefs} figureKeywords={figureKeywords}
+              figKwLoading={figKwLoading} figPanelOpen={figPanelOpen} setFigPanelOpen={setFigPanelOpen}
+              sections={sections} info={info} methodInfo={methodInfo}
+              doRegenSection={doRegenSection} doRegenAll={doRegenAll}
+              regenAllAbortRef={regenAllAbortRef}
+              doGenAppendices={doGenAppendices} saveToFirestore={saveToFirestore}
+              copyAll={copyAll} resetAll={resetAll}
+              generatePresentation={generatePresentation} generateSpeech={generateSpeech}
+              doScanAndGenFigures={doScanAndGenFigures} setStage={setStage}
+            />
+          )}
+          {stage === "checklist" && (
+            <ChecklistStage info={info} setStage={setStage} mode="large" />
+          )}
+          {stage === "corrections" && (
+            <CorrectionsStage
+              sections={sections}
+              correctionText={correctionText} setCorrectionText={setCorrectionText}
+              correctionPhotos={correctionPhotos} setCorrectionPhotos={setCorrectionPhotos}
+              correctionAnalysis={correctionAnalysis}
+              correctionChecked={correctionChecked} setCorrectionChecked={setCorrectionChecked}
+              correctionLoading={correctionLoading}
+              correctionApplyLoading={correctionApplyLoading}
+              correctionHistory={correctionHistory}
+              doAnalyzeCorrections={doAnalyzeCorrections}
+              doApplyCorrections={doApplyCorrections}
+              setStage={setStage}
+            />
+          )}
 
         </div>
       </div>{/* end flex layout wrapper */}
@@ -3251,7 +3251,7 @@ ${refLines2.join("\n")}`;
       {/* Scroll arrows */}
       <div style={{ position: "fixed", right: 18, bottom: 24, zIndex: 999, display: "flex", flexDirection: "column", gap: 6 }}>
         {[{ dir: "↑", title: "Нагору", action: () => window.scrollTo({ top: 0, behavior: "smooth" }) },
-          { dir: "↓", title: "Вниз",   action: () => window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" }) }
+        { dir: "↓", title: "Вниз", action: () => window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" }) }
         ].map(({ dir, title, action }) => (
           <button key={dir} onClick={action} title={title}
             style={{
