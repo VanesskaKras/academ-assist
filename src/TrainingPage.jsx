@@ -642,7 +642,7 @@ function CarouselEditor({ block, onUpdate }) {
 }
 
 export default function TrainingPage({ onBack }) {
-    const { profile } = useAuth();
+    const { profile, logout } = useAuth();
     const isAdmin = profile?.role === "admin";
 
     const [sections, setSections] = useState([]);
@@ -945,6 +945,9 @@ export default function TrainingPage({ onBack }) {
                     )}
                     {!editMode && (
                         <button onClick={() => setShowTests(true)} style={primBtn}>Тести →</button>
+                    )}
+                    {!isAdmin && !editMode && (
+                        <button onClick={logout} style={headerBtn}>Вийти</button>
                     )}
                 </div>
             </div>
