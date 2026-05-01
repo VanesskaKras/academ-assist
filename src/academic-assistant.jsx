@@ -614,20 +614,15 @@ Return ONLY JSON without markdown:
       const chapConclP = hasConcl ? chapCount : 0;
 
       const subsPerChapter = methodInfo.subsectionsPerChapter || 3;
-      const subsOverrides = methodInfo.subsectionsPerChapterOverrides || {};
-      const chapSubsCounts = Array.from({ length: chapCount }, (_, i) => subsOverrides[String(i + 1)] ?? subsPerChapter);
-      const totalSubsCount = chapSubsCounts.reduce((a, b) => a + b, 0);
+      const totalSubsCount = chapCount * subsPerChapter;
       const pagesPerSub = Math.max(3, Math.round((totalPages - introP - conclP - chapConclP) / totalSubsCount));
-      const subsCountLine = chapSubsCounts.every(c => c === subsPerChapter)
-        ? `- Subsections per chapter: ${subsPerChapter}`
-        : chapSubsCounts.map((c, i) => `- Chapter ${i + 1} subsections: ${c}`).join('\n');
 
       const planPrompt = `Create a plan for ${d.type} on topic: "${d.topic}". Field: ${d.subject}. Pages: ${totalPages}.
 Language of work: ${d.language || "Ukrainian"} — all labels and titles must be in this language.
 ${commentAnalysis?.planHints ? `\nCLIENT HINTS:\n${commentAnalysis.planHints}\n` : ""}
 GUIDE REQUIREMENTS:
 - Chapters: ${chapCount}
-${subsCountLine}
+- Subsections per chapter: ${subsPerChapter}
 - Chapter conclusions: ${hasConcl ? "YES — add after last subsection of each chapter" : "NO — do not add"}
 - Chapter types: ${chTypes.join(", ")}
 ${methodInfo.otherRequirements ? `- Other requirements: ${methodInfo.otherRequirements}` : ""}
