@@ -702,7 +702,7 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
 
             {/* Матеріал для роботи — тільки для тез */}
             {workType === "tezy" && (
-              <FieldBox label="Матеріал для роботи — методичка, файли, фото (необов'язково)">
+              <FieldBox label="Матеріал для роботи — методичка, файли, фото до 6 (необов'язково)">
                 <textarea
                   value={materialText}
                   onChange={e => setMaterialText(e.target.value)}
@@ -716,8 +716,8 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
                       <button onClick={() => setMaterialFiles(p => p.filter((_, j) => j !== i))} style={{ marginLeft: "auto", background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: 14 }}>✕</button>
                     </div>
                   ))}
-                  {materialFiles.length < 10 && (
-                    <DropZone fileLabel={null} onFile={(name, b64, type) => setMaterialFiles(p => p.length >= 10 ? [...p.slice(1), { name, b64, type }] : [...p, { name, b64, type }])} accept=".pdf,.docx,.jpg,.jpeg,.png" />
+                  {materialFiles.length < 6 && (
+                    <DropZone fileLabel={null} onFile={(name, b64, type) => setMaterialFiles(p => p.length >= 6 ? [...p.slice(1), { name, b64, type }] : [...p, { name, b64, type }])} accept=".pdf,.docx,.jpg,.jpeg,.png" />
                   )}
                 </div>
                 {(materialText.trim() || materialFiles.length > 0) && (
