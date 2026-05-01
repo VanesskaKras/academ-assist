@@ -302,24 +302,15 @@ function CostsTab({ users }) {
     };
 
     const exportCSV = () => {
-        const header = ["Дата", "Менеджер", "Email", "№ замовлення", "Тип роботи", "К-сть сторінок", "Claude вхід", "Claude вихід", "Claude USD", "Gemini вхід", "Gemini вихід", "Gemini USD", "Разом вхід", "Разом вихід", "Разом USD", "Час виконання"];
+        const header = ["Дата", "Менеджер", "№ замовлення", "Тип роботи", "К-сть сторінок", "Разом USD", "Час виконання"];
         const rows = orders.map(o => {
             const u = userMap[o.uid];
             return [
                 fmt(o.createdAt),
                 u?.name || "—",
-                u?.email || o.uid,
                 o.info?.orderNumber || "—",
                 o.type || o.workType || "—",
                 o.pages || "—",
-                o.claudeInTok || 0,
-                o.claudeOutTok || 0,
-                (o.claudeCostUsd || 0).toFixed(4),
-                o.geminiInTok || 0,
-                o.geminiOutTok || 0,
-                (o.geminiCostUsd || 0).toFixed(4),
-                o.totalInTok || 0,
-                o.totalOutTok || 0,
                 (o.totalCostUsd || 0).toFixed(4),
                 fmtDur(o.generationDurationSec),
             ];

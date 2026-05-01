@@ -188,6 +188,15 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
           if (d.citStructured) setCitStructured(d.citStructured);
           if (d.abstractsMap) setAbstractsMap(d.abstractsMap);
           if (d.refList) setRefList(d.refList);
+          if (d.suggestedSources) {
+            setSuggestedSources(d.suggestedSources);
+            const seen = {};
+            Object.entries(d.suggestedSources).forEach(([secId, papers]) => {
+              seen[secId] = new Set((papers || []).map(p => (p.title || '').toLowerCase().slice(0, 60)));
+            });
+            setSeenSourceKeys(seen);
+          }
+          if (d.phraseGroups) setPhraseGroups(d.phraseGroups);
           if (d.speechText) setSpeechText(d.speechText);
           if (d.appendicesText) setAppendicesText(d.appendicesText.replace(/\n{2,}/g, '\n'));
           if (d.titlePage) setTitlePage(d.titlePage);
@@ -254,6 +263,18 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     }, 1500);
     return () => clearTimeout(citSaveTimer.current);
   }, [citInputs]); // eslint-disable-line
+
+  // ── Авто-збереження результатів пошуку джерел ──
+  const sourcesSaveTimer = useRef(null);
+  useEffect(() => {
+    if (stage !== "sources") return;
+    if (!Object.keys(suggestedSources).length && !Object.keys(phraseGroups).length) return;
+    clearTimeout(sourcesSaveTimer.current);
+    sourcesSaveTimer.current = setTimeout(() => {
+      saveToFirestore({ suggestedSources, phraseGroups });
+    }, 2000);
+    return () => clearTimeout(sourcesSaveTimer.current);
+  }, [suggestedSources, phraseGroups]); // eslint-disable-line
 
   // ── Збереження в Firestore ──
   const saveToFirestore = async (patch) => {
@@ -593,15 +614,20 @@ Return ONLY JSON without markdown:
       const chapConclP = hasConcl ? chapCount : 0;
 
       const subsPerChapter = methodInfo.subsectionsPerChapter || 3;
-      const totalSubsCount = chapCount * subsPerChapter;
+      const subsOverrides = methodInfo.subsectionsPerChapterOverrides || {};
+      const chapSubsCounts = Array.from({ length: chapCount }, (_, i) => subsOverrides[String(i + 1)] ?? subsPerChapter);
+      const totalSubsCount = chapSubsCounts.reduce((a, b) => a + b, 0);
       const pagesPerSub = Math.max(3, Math.round((totalPages - introP - conclP - chapConclP) / totalSubsCount));
+      const subsCountLine = chapSubsCounts.every(c => c === subsPerChapter)
+        ? `- Subsections per chapter: ${subsPerChapter}`
+        : chapSubsCounts.map((c, i) => `- Chapter ${i + 1} subsections: ${c}`).join('\n');
 
       const planPrompt = `Create a plan for ${d.type} on topic: "${d.topic}". Field: ${d.subject}. Pages: ${totalPages}.
 Language of work: ${d.language || "Ukrainian"} — all labels and titles must be in this language.
 ${commentAnalysis?.planHints ? `\nCLIENT HINTS:\n${commentAnalysis.planHints}\n` : ""}
 GUIDE REQUIREMENTS:
 - Chapters: ${chapCount}
-- Subsections per chapter: ${subsPerChapter}
+${subsCountLine}
 - Chapter conclusions: ${hasConcl ? "YES — add after last subsection of each chapter" : "NO — do not add"}
 - Chapter types: ${chTypes.join(", ")}
 ${methodInfo.otherRequirements ? `- Other requirements: ${methodInfo.otherRequirements}` : ""}
@@ -940,7 +966,7 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
       const tasksCount = Math.min(mainSecs.length, isLarge ? 8 : 5);
 
       // Будуємо список елементів вступу: стандартні + з методички
-      const defaultComponents = ["актуальність теми", "мета дослідження", "завдання дослідження", "об'єкт дослідження", "предмет дослідження", "методи дослідження", "структура роботи"];
+      const defaultComponents = ["актуальність теми", "мета дослідження", "завдання дослідження", "об'єкт дослідження", "предмет дослідження", "методи дослідження", "практичне значення дослідження", "структура роботи"];
       const allComponents = methodInfo?.introComponents?.length
         ? methodInfo.introComponents
         : defaultComponents;
@@ -991,7 +1017,7 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
 ${componentLines.map((l, i) => `${i + 1}. ${l}`).join("\n\n")}
 ${methodInfo?.otherRequirements ? `\nВИМОГИ МЕТОДИЧКИ: ${methodInfo.otherRequirements}` : ""}${commentAnalysis?.textStructureHints ? `\nВИМОГИ КЛІЄНТА ДО СТРУКТУРИ (ОБОВ'ЯЗКОВО): ${commentAnalysis.textStructureHints}` : ""}
 
-ВАЖЛИВО: використай вже написані розділи роботи (є в контексті) для точного формулювання методів, вибірки, об'єкта — все має збігатись з текстом роботи. Дотримуйся формату кожного елемента суворо. НЕ додавай посилань. НЕ виділяй нічого жирним або курсивом. Пиши суцільним текстом абзацами.`;
+ВАЖЛИВО: використай вже написані розділи роботи (є в контексті) для точного формулювання методів, вибірки, об'єкта — все має збігатись з текстом роботи. Дотримуйся формату кожного елемента суворо. НЕ додавай посилань. НЕ виділяй нічого жирним або курсивом. Пиши суцільним текстом абзацами. ВИНЯТОК: завдання дослідження — пиши нумерованим списком (1. 2. 3. ...), кожне завдання з нового рядка.`;
 
     } else if (sec.type === "conclusions") {
       const conclReq = methodInfo?.conclusionsRequirements || "";
@@ -1253,7 +1279,7 @@ ${planSummary}
     if (sec.type === "intro") {
       const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
       const tasksCount = Math.min(mainSecs.length, isLarge ? 8 : 5);
-      const defaultComponents = ["актуальність теми", "мета дослідження", "завдання дослідження", "об'єкт дослідження", "предмет дослідження", "методи дослідження", "структура роботи"];
+      const defaultComponents = ["актуальність теми", "мета дослідження", "завдання дослідження", "об'єкт дослідження", "предмет дослідження", "методи дослідження", "практичне значення дослідження", "структура роботи"];
       const allComponents = methodInfo?.introComponents?.length ? methodInfo.introComponents : defaultComponents;
       const componentLines = allComponents.map((comp) => {
         const label = comp.charAt(0).toUpperCase() + comp.slice(1);
@@ -1277,7 +1303,7 @@ ${planSummary}
 
 ${componentLines.map((l, i) => `${i + 1}. ${l}`).join("\n")}
 ${methodInfo?.otherRequirements ? `\nВИМОГИ МЕТОДИЧКИ: ${methodInfo.otherRequirements}` : ""}
-ВАЖЛИВО: використай написані розділи роботи (є в контексті) для точного формулювання методів, вибірки, об'єкта. Дотримуйся формату кожного елемента суворо. НЕ виділяй нічого жирним або курсивом. Без посилань. Без нумерації у тексті.${customInstructions}`;
+ВАЖЛИВО: використай написані розділи роботи (є в контексті) для точного формулювання методів, вибірки, об'єкта. Дотримуйся формату кожного елемента суворо. НЕ виділяй нічого жирним або курсивом. Без посилань. ВИНЯТОК: завдання дослідження — пиши нумерованим списком (1. 2. 3. ...), кожне завдання з нового рядка.${customInstructions}`;
 
     } else if (sec.type === "conclusions") {
       instruction = `Перепиши ВИСНОВКИ для ${d.type} на тему "${d.topic}".

@@ -1,15 +1,6 @@
 import { useState } from "react";
 import { Heading, NavBtn } from "../Buttons.jsx";
 
-const CHECKLIST_BASE = [
-  "Перевірено унікальність тексту",
-  "Оформлено список літератури",
-  "Перевірено відповідність темі",
-  "Перевірена кількість сторінок",
-  "Підготовлено доповідь до захисту",
-  "Збережено копію роботи",
-];
-
 const CHECKLIST_FINAL = [
   { label: "Перевірено на плагіат та ШІ", link: "https://my.plag.com.ua/my-documents" },
   { label: "У вступі всі структурні елементи виділені жирним" },
@@ -69,7 +60,6 @@ function buildSections(mode, methodInfo) {
   const raw = [];
 
   if (mode === "large") {
-    raw.push({ title: null, items: CHECKLIST_BASE.map(label => ({ label })) });
     raw.push({ title: "Фінальне оформлення", items: CHECKLIST_FINAL });
     const methodItems = getMethodItems(methodInfo);
     if (methodItems.length > 0) {
