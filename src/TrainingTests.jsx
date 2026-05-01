@@ -40,8 +40,11 @@ export default function TrainingTests({ onBack }) {
     useEffect(() => {
         loadTests();
         loadMyResults();
-        if (isAdmin) loadAllResults();
     }, []);
+
+    useEffect(() => {
+        if (isAdmin) loadAllResults();
+    }, [isAdmin]);
 
     const loadTests = async () => {
         setLoading(true);
