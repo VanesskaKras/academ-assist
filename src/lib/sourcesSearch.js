@@ -35,12 +35,23 @@ function isRussianUrl(url = '') {
   return /\.ru(\/|$)/i.test(url.toLowerCase());
 }
 
+function isRussianText(text = '') {
+  // Символи наявні в російській, але відсутні в українській мові
+  return /[ёъыэЁЪЫЭ]/.test(text);
+}
+
 function isBlocked(obj) {
   const t = JSON.stringify(obj).toLowerCase();
   if (BLOCKED.some(p => t.includes(p))) return true;
   // Блокуємо будь-який .ru домен
   const url = obj?.url || obj?.dclink || '';
-  return isRussianUrl(Array.isArray(url) ? url[0] : url);
+  if (isRussianUrl(Array.isArray(url) ? url[0] : url)) return true;
+  // Блокуємо джерела з мовою 'ru' (поле OpenAlex)
+  if (obj?.language === 'ru') return true;
+  // Блокуємо джерела з російськомовним заголовком
+  const title = (Array.isArray(obj?.dctitle) ? obj.dctitle[0] : obj?.dctitle) || obj?.title || '';
+  if (isRussianText(title)) return true;
+  return false;
 }
 
 function hasCyrillic(text = '') {
