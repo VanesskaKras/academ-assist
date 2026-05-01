@@ -133,6 +133,7 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
   const [selectedTezyIds, setSelectedTezyIds] = useState([]); // обрані id
   const [tezySearchLoading, setTezySearchLoading] = useState(false);
   const [tezyCitations, setTezyCitations] = useState([]);    // відформатовані рядки джерел
+  const [tezyPage, setTezyPage] = useState(1);               // поточна сторінка джерел
 
   // Реферат — секції з текстом
   const [sections, setSections] = useState([]); // [{id, label, text}]
@@ -307,6 +308,7 @@ requirements — якщо є рекомендації у файлах, стис�
 
       const { flat } = await searchSourcesForSection(ukKw, [], needed + 6, topic, topic, 1, [], [], phrases);
       setTezyPapers((flat || []).slice(0, 10));
+      setTezyPage(1);
     } catch (e) {
       setError(e.message);
     }
@@ -868,40 +870,69 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
                   </button>
                 </div>
 
-                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 20 }}>
-                  {tezyPapers.map(paper => {
-                    const authorsList = Array.isArray(paper.authors) ? paper.authors : [];
-                    const authLine = authorsList.length > 2 ? `${authorsList.slice(0, 2).join(", ")} та ін.` : authorsList.join(", ") || "Автор невідомий";
-                    const isUk = paper.lang === "uk";
-                    const isChecked = selectedTezyIds.includes(paper.id);
-                    return (
-                      <label key={paper.id} style={{
-                        display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer",
-                        padding: "10px 12px", borderRadius: 7,
-                        background: isChecked ? "#f0f8e8" : "#faf8f3",
-                        border: `1.5px solid ${isChecked ? "#8cc84b" : "#e0ddd5"}`,
-                        transition: "all 0.15s",
-                      }}>
-                        <input type="checkbox" checked={isChecked}
-                          onChange={() => setSelectedTezyIds(p => isChecked ? p.filter(id => id !== paper.id) : [...p, paper.id])}
-                          style={{ marginTop: 3, accentColor: "#5a9a1a", flexShrink: 0 }} />
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 2, alignItems: "center" }}>
-                            <span style={{ fontSize: 11, fontWeight: 600, color: "#3a6010" }}>{authLine}</span>
-                            {paper.year && <span style={{ fontSize: 11, color: "#888" }}>{paper.year}</span>}
-                            <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 8, background: isUk ? "#e8f5e0" : "#e8f0ff", color: isUk ? "#3a6010" : "#1a4a8a", border: `1px solid ${isUk ? "#b8dfa0" : "#b0c8f0"}` }}>
-                              {isUk ? "🇺🇦 укр." : "🌐 зарубіж."}
-                            </span>
-                          </div>
-                          <div style={{ fontSize: 12, color: "#1a1a14", lineHeight: "1.4" }}>
-                            {paper.title.length > 120 ? paper.title.slice(0, 120) + "…" : paper.title}
-                          </div>
-                          {paper.venue && <div style={{ fontSize: 11, color: "#777", fontStyle: "italic", marginTop: 2 }}>{paper.venue}</div>}
+                {(() => {
+                  const PAGE_SIZE = 5;
+                  const totalPages = Math.ceil(tezyPapers.length / PAGE_SIZE);
+                  const pagePapers = tezyPapers.slice((tezyPage - 1) * PAGE_SIZE, tezyPage * PAGE_SIZE);
+                  return (
+                    <>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
+                        {pagePapers.map(paper => {
+                          const authorsList = Array.isArray(paper.authors) ? paper.authors : [];
+                          const authLine = authorsList.length > 2 ? `${authorsList.slice(0, 2).join(", ")} та ін.` : authorsList.join(", ") || "Автор невідомий";
+                          const isUk = paper.lang === "uk";
+                          const isChecked = selectedTezyIds.includes(paper.id);
+                          return (
+                            <label key={paper.id} style={{
+                              display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer",
+                              padding: "10px 12px", borderRadius: 7,
+                              background: isChecked ? "#f0f8e8" : "#faf8f3",
+                              border: `1.5px solid ${isChecked ? "#8cc84b" : "#e0ddd5"}`,
+                              transition: "all 0.15s",
+                            }}>
+                              <input type="checkbox" checked={isChecked}
+                                onChange={() => setSelectedTezyIds(p => isChecked ? p.filter(id => id !== paper.id) : [...p, paper.id])}
+                                style={{ marginTop: 3, accentColor: "#5a9a1a", flexShrink: 0 }} />
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 2, alignItems: "center" }}>
+                                  <span style={{ fontSize: 11, fontWeight: 600, color: "#3a6010" }}>{authLine}</span>
+                                  {paper.year && <span style={{ fontSize: 11, color: "#888" }}>{paper.year}</span>}
+                                  <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 8, background: isUk ? "#e8f5e0" : "#e8f0ff", color: isUk ? "#3a6010" : "#1a4a8a", border: `1px solid ${isUk ? "#b8dfa0" : "#b0c8f0"}` }}>
+                                    {isUk ? "🇺🇦 укр." : "🌐 зарубіж."}
+                                  </span>
+                                </div>
+                                <div style={{ fontSize: 12, color: "#1a1a14", lineHeight: "1.4" }}>
+                                  {paper.title.length > 120 ? paper.title.slice(0, 120) + "…" : paper.title}
+                                </div>
+                                {paper.venue && <div style={{ fontSize: 11, color: "#777", fontStyle: "italic", marginTop: 2 }}>{paper.venue}</div>}
+                              </div>
+                            </label>
+                          );
+                        })}
+                      </div>
+                      {totalPages > 1 && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 20 }}>
+                          <button
+                            onClick={() => setTezyPage(p => Math.max(1, p - 1))}
+                            disabled={tezyPage === 1}
+                            style={{ background: "transparent", border: "1px solid #d4cfc4", borderRadius: 6, padding: "4px 12px", fontSize: 12, cursor: tezyPage === 1 ? "default" : "pointer", color: tezyPage === 1 ? "#ccc" : "#555" }}
+                          >←</button>
+                          {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
+                            <button key={p} onClick={() => setTezyPage(p)}
+                              style={{ background: p === tezyPage ? "#1a1a14" : "transparent", border: "1px solid #d4cfc4", borderRadius: 6, padding: "4px 10px", fontSize: 12, cursor: "pointer", color: p === tezyPage ? "#e8ff47" : "#555", fontWeight: p === tezyPage ? 600 : 400 }}
+                            >{p}</button>
+                          ))}
+                          <button
+                            onClick={() => setTezyPage(p => Math.min(totalPages, p + 1))}
+                            disabled={tezyPage === totalPages}
+                            style={{ background: "transparent", border: "1px solid #d4cfc4", borderRadius: 6, padding: "4px 12px", fontSize: 12, cursor: tezyPage === totalPages ? "default" : "pointer", color: tezyPage === totalPages ? "#ccc" : "#555" }}
+                          >→</button>
+                          <span style={{ fontSize: 11, color: "#aaa", marginLeft: 4 }}>{tezyPage} / {totalPages}</span>
                         </div>
-                      </label>
-                    );
-                  })}
-                </div>
+                      )}
+                    </>
+                  );
+                })()}
 
                 <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                   <NavBtn onClick={() => { setTezyCitations([]); saveToFirestore({ stage: "writing", status: "new" }); setStage("writing"); doGenerateTezy([]); }}>
