@@ -679,10 +679,12 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
               </FieldBox>
             )}
 
-            <FieldBox label="Коментар">
-              <textarea value={comment} onChange={e => setComment(e.target.value)}
-                placeholder="Додаткові вимоги..." style={{ ...TA, minHeight: 70 }} />
-            </FieldBox>
+            {workType !== "tezy" && (
+              <FieldBox label="Коментар">
+                <textarea value={comment} onChange={e => setComment(e.target.value)}
+                  placeholder="Додаткові вимоги..." style={{ ...TA, minHeight: 70 }} />
+              </FieldBox>
+            )}
 
             {workType !== "tezy" && (
               <FieldBox label={`Рекомендації / методичка / скріни (до 3 файлів)${workType !== "referat" ? " — необов'язково" : ""}`}>
