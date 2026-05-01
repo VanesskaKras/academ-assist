@@ -67,16 +67,21 @@ const WORK_TYPES = {
 // ─────────────────────────────────────────────
 // StagePills для малих робіт (динамічні)
 // ─────────────────────────────────────────────
-function StagePills({ stage, workType }) {
+function StagePills({ stage, workType, onNavigate }) {
   const cfg = WORK_TYPES[workType] || WORK_TYPES.tezy;
   const cur = cfg.stageKeys.indexOf(stage);
   return (
     <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-      {cfg.stages.map((l, i) => (
-        <div key={i} style={{ padding: "4px 12px", borderRadius: 20, fontSize: 11, letterSpacing: "1px", background: i === cur ? "#e8ff47" : i < cur ? "#1e2a00" : "transparent", color: i === cur ? "#111" : i < cur ? "#6a9000" : "#555", border: `1px solid ${i === cur ? "#e8ff47" : i < cur ? "#3a5000" : "#444"}` }}>
-          {i < cur ? "✓ " : ""}{l}
-        </div>
-      ))}
+      {cfg.stages.map((l, i) => {
+        const clickable = i < cur && onNavigate;
+        return (
+          <div key={i}
+            onClick={clickable ? () => onNavigate(cfg.stageKeys[i]) : undefined}
+            style={{ padding: "4px 12px", borderRadius: 20, fontSize: 11, letterSpacing: "1px", cursor: clickable ? "pointer" : "default", background: i === cur ? "#e8ff47" : i < cur ? "#1e2a00" : "transparent", color: i === cur ? "#111" : i < cur ? "#6a9000" : "#555", border: `1px solid ${i === cur ? "#e8ff47" : i < cur ? "#3a5000" : "#444"}` }}>
+            {i < cur ? "✓ " : ""}{l}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -645,7 +650,7 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
         {info?.topic && <div style={{ fontSize: 12, color: "#555", flex: 1, minWidth: 0 }}>{info.topic}</div>}
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
           <SaveIndicator saving={saving} saved={saved} />
-          {workType && <StagePills stage={stage} workType={workType} />}
+          {workType && <StagePills stage={stage} workType={workType} onNavigate={setStage} />}
         </div>
       </div>
 
