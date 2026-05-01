@@ -284,11 +284,14 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining }) {
                 } else {
                     const q = query(
                         collection(db, "orders"),
-                        where("uid", "==", user.uid),
-                        orderBy("createdAt", "desc")
+                        where("uid", "==", user.uid)
                     );
                     const snap = await getDocs(q);
-                    setOrders(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                    setOrders(
+                        snap.docs
+                            .map(d => ({ id: d.id, ...d.data() }))
+                            .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""))
+                    );
                 }
             } catch (e) {
                 console.error(e);

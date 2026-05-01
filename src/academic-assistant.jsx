@@ -281,8 +281,9 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     if (!user) return;
     setSaving(true); setSaved(false);
     try {
+      const isNew = !currentIdRef.current;
       const id = currentIdRef.current || `${user.uid}_${Date.now()}`;
-      if (!currentIdRef.current) {
+      if (isNew) {
         currentIdRef.current = id;
         onOrderCreated?.(id);
       }
@@ -310,8 +311,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
         } : {}),
       };
       const data = serializeForFirestore({ ...base, ...patch });
-      // merge:true — не потрібен getDoc перед записом, один запис замість двох
-      await setDoc(ref, { ...data, createdAt: new Date().toISOString() }, { merge: true });
+      await setDoc(ref, { ...data, ...(isNew ? { createdAt: new Date().toISOString() } : {}) }, { merge: true });
       setSaved(true);
       clearTimeout(savedTimerRef.current);
       savedTimerRef.current = setTimeout(() => setSaved(false), 3000);

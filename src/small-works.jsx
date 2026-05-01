@@ -205,8 +205,9 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
     if (!user) return;
     setSaving(true); setSaved(false);
     try {
+      const isNew = !currentIdRef.current;
       const id = currentIdRef.current || `${user.uid}_${Date.now()}`;
-      if (!currentIdRef.current) { currentIdRef.current = id; onOrderCreated?.(id); }
+      if (isNew) { currentIdRef.current = id; onOrderCreated?.(id); }
       const ref = doc(db, "orders", id);
       const base = {
         uid: user.uid, mode: "small", workType,
@@ -220,7 +221,7 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
         totalCostUsd: tokenAccRef.current.costUsd,
         ...(patch.status === "done" ? { completedAt: new Date().toISOString() } : {}),
       };
-      await setDoc(ref, serializeForFirestore({ ...base, ...patch, createdAt: new Date().toISOString() }), { merge: true });
+      await setDoc(ref, serializeForFirestore({ ...base, ...patch, ...(isNew ? { createdAt: new Date().toISOString() } : {}) }), { merge: true });
       setSaved(true); setTimeout(() => setSaved(false), 3000);
     } catch (e) { console.error(e); }
     setSaving(false);
