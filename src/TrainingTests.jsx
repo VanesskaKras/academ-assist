@@ -29,8 +29,6 @@ export default function TrainingTests({ onBack }) {
     const [score, setScore] = useState(null);
     const [submitting, setSubmitting] = useState(false);
     const [myResults, setMyResults] = useState([]);
-    const [allResults, setAllResults] = useState([]);
-    const [usersMap, setUsersMap] = useState({});
     const [editingTest, setEditingTest] = useState(null);
     const [saving, setSaving] = useState(false);
     const [dragOver, setDragOver] = useState({ qi: null, idx: null });
@@ -42,9 +40,6 @@ export default function TrainingTests({ onBack }) {
         loadMyResults();
     }, []);
 
-    useEffect(() => {
-        if (isAdmin) loadAllResults();
-    }, [isAdmin]);
 
     const loadTests = async () => {
         setLoading(true);
@@ -61,18 +56,6 @@ export default function TrainingTests({ onBack }) {
         setMyResults(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     };
 
-    const loadAllResults = async () => {
-        try {
-            const [resultsSnap, usersSnap] = await Promise.all([
-                getDocs(collection(db, "training_results")),
-                getDocs(collection(db, "users")),
-            ]);
-            setAllResults(resultsSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-            const um = {};
-            usersSnap.docs.forEach(d => { um[d.id] = d.data(); });
-            setUsersMap(um);
-        } catch (e) { console.error("Помилка завантаження результатів:", e); }
-    };
 
     // ── Test-taking logic ──────────────────────────────────────────────────────
 
@@ -135,7 +118,6 @@ export default function TrainingTests({ onBack }) {
                 attempt: prevAttempts.length + 1,
             });
             await loadMyResults();
-            if (isAdmin) loadAllResults();
         } catch (e) { console.error("Помилка збереження результату:", e); }
     };
 
@@ -979,64 +961,6 @@ export default function TrainingTests({ onBack }) {
                             </div>
                         )}
 
-                        {/* Admin: all results */}
-                        {isAdmin && (
-                            <div style={{ marginTop: 48 }}>
-                                <div style={{ fontSize: 18, fontWeight: 700, letterSpacing: 2, color: "#1a1a14", marginBottom: 20, textTransform: "uppercase" }}>
-                                    Результати проходження
-                                </div>
-                                {allResults.length === 0 ? (
-                                    <div style={{ background: "#fff", borderRadius: 12, padding: 32, textAlign: "center", boxShadow: "0 2px 12px rgba(0,0,0,0.06)", color: "#aaa", fontSize: 14 }}>
-                                        Ще ніхто не проходив тести
-                                    </div>
-                                ) : (
-                                    <div style={{ background: "#fff", borderRadius: 12, padding: 20, boxShadow: "0 2px 12px rgba(0,0,0,0.06)", overflowX: "auto" }}>
-                                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                                            <thead>
-                                                <tr style={{ borderBottom: "2px solid #f0ece2" }}>
-                                                    {["Користувач", "Тест", "Результат", "Спроба", "Дата"].map(h => (
-                                                        <th key={h} style={{ textAlign: h === "Результат" || h === "Спроба" ? "center" : "left", padding: "8px 12px", color: "#888", fontWeight: 600, fontSize: 11, letterSpacing: 1, textTransform: "uppercase", whiteSpace: "nowrap" }}>{h}</th>
-                                                    ))}
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {allResults
-                                                    .sort((a, b) => (b.submittedAt || "").localeCompare(a.submittedAt || ""))
-                                                    .map((r, i) => {
-                                                        const u = usersMap[r.userId];
-                                                        return (
-                                                            <tr key={r.id} style={{ borderBottom: "1px solid #f0ece2", background: i % 2 === 0 ? "transparent" : "#faf8f3" }}>
-                                                                <td style={{ padding: "10px 12px" }}>
-                                                                    <div style={{ fontWeight: 600, color: "#1a1a14" }}>{u?.name || r.userName || "—"}</div>
-                                                                    <div style={{ fontSize: 11, color: "#aaa" }}>{u?.email || r.userEmail}</div>
-                                                                </td>
-                                                                <td style={{ padding: "10px 12px", color: "#555" }}>{r.testTitle}</td>
-                                                                <td style={{ textAlign: "center", padding: "10px 12px" }}>
-                                                                    <span style={{
-                                                                        fontWeight: 700,
-                                                                        color: r.passed ? "#1a6a1a" : r.score >= Math.ceil(r.total * 0.6) ? "#8a5a1a" : "#c00",
-                                                                    }}>
-                                                                        {r.score}/{r.total}
-                                                                    </span>
-                                                                    <span style={{
-                                                                        marginLeft: 8, fontSize: 11, padding: "2px 8px", borderRadius: 10, fontWeight: 600,
-                                                                        background: r.passed ? "#e4ffe4" : "#fff3e0",
-                                                                        color: r.passed ? "#1a6a1a" : "#8a5a1a",
-                                                                    }}>
-                                                                        {r.passed ? "Пройдено" : "Не пройдено"}
-                                                                    </span>
-                                                                </td>
-                                                                <td style={{ textAlign: "center", padding: "10px 12px", color: "#888" }}>{r.attempt}</td>
-                                                                <td style={{ padding: "10px 12px", color: "#888", fontSize: 12, whiteSpace: "nowrap" }}>{fmtTime(r.submittedAt)}</td>
-                                                            </tr>
-                                                        );
-                                                    })}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                )}
-                            </div>
-                        )}
                     </>
                 )}
             </div>

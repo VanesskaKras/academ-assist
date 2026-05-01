@@ -1,6 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
 import { db, auth } from "./firebase";
-import TrainingTests from "./TrainingTests";
 import { collection, getDocs, doc, updateDoc, setDoc, deleteDoc, query, orderBy, limit } from "firebase/firestore";
 import { initializeApp, deleteApp } from "firebase/app";
 import { getAuth, createUserWithEmailAndPassword } from "firebase/auth";
@@ -596,6 +595,89 @@ function LogsTab({ users }) {
     );
 }
 
+// ─── Результати тестів (адмін) ────────────────────────────────────────────────
+
+function AdminTestResults() {
+    const [results, setResults] = useState([]);
+    const [usersMap, setUsersMap] = useState({});
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        const load = async () => {
+            try {
+                const [resultsSnap, usersSnap] = await Promise.all([
+                    getDocs(collection(db, "training_results")),
+                    getDocs(collection(db, "users")),
+                ]);
+                setResults(resultsSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+                const um = {};
+                usersSnap.docs.forEach(d => { um[d.id] = d.data(); });
+                setUsersMap(um);
+            } finally {
+                setLoading(false);
+            }
+        };
+        load();
+    }, []);
+
+    const fmtTime = (iso) => iso
+        ? new Date(iso).toLocaleString("uk-UA", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })
+        : "—";
+
+    return (
+        <div style={{ maxWidth: 900, margin: "0 auto", padding: "32px 16px" }}>
+            <div style={{ fontSize: 18, fontWeight: 700, letterSpacing: 2, color: "#1a1a14", marginBottom: 20, textTransform: "uppercase" }}>
+                Результати проходження тестів
+            </div>
+            {loading ? (
+                <div style={{ color: "#aaa", padding: 32, textAlign: "center" }}>Завантаження...</div>
+            ) : results.length === 0 ? (
+                <div style={{ background: "#fff", borderRadius: 12, padding: 32, textAlign: "center", boxShadow: "0 2px 12px rgba(0,0,0,0.06)", color: "#aaa", fontSize: 14 }}>
+                    Ще ніхто не проходив тести
+                </div>
+            ) : (
+                <div style={{ background: "#fff", borderRadius: 12, padding: 20, boxShadow: "0 2px 12px rgba(0,0,0,0.06)", overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                        <thead>
+                            <tr style={{ borderBottom: "2px solid #f0ece2" }}>
+                                {["Менеджер", "Тест", "Результат", "Спроба", "Дата"].map(h => (
+                                    <th key={h} style={{ textAlign: h === "Результат" || h === "Спроба" ? "center" : "left", padding: "8px 12px", color: "#888", fontWeight: 600, fontSize: 11, letterSpacing: 1, textTransform: "uppercase", whiteSpace: "nowrap" }}>{h}</th>
+                                ))}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {results
+                                .sort((a, b) => (b.submittedAt || "").localeCompare(a.submittedAt || ""))
+                                .map((r, i) => {
+                                    const u = usersMap[r.userId];
+                                    return (
+                                        <tr key={r.id} style={{ borderBottom: "1px solid #f0ece2", background: i % 2 === 0 ? "transparent" : "#faf8f3" }}>
+                                            <td style={{ padding: "10px 12px" }}>
+                                                <div style={{ fontWeight: 600, color: "#1a1a14" }}>{u?.name || r.userName || "—"}</div>
+                                                <div style={{ fontSize: 11, color: "#aaa" }}>{u?.email || r.userEmail}</div>
+                                            </td>
+                                            <td style={{ padding: "10px 12px", color: "#555" }}>{r.testTitle}</td>
+                                            <td style={{ textAlign: "center", padding: "10px 12px" }}>
+                                                <span style={{ fontWeight: 700, color: r.passed ? "#1a6a1a" : "#c00" }}>
+                                                    {r.score}/{r.total}
+                                                </span>
+                                                <span style={{ marginLeft: 8, fontSize: 11, padding: "2px 8px", borderRadius: 10, fontWeight: 600, background: r.passed ? "#e4ffe4" : "#fff3e0", color: r.passed ? "#1a6a1a" : "#8a5a1a" }}>
+                                                    {r.passed ? "Пройдено" : "Не пройдено"}
+                                                </span>
+                                            </td>
+                                            <td style={{ textAlign: "center", padding: "10px 12px", color: "#888" }}>{r.attempt}</td>
+                                            <td style={{ padding: "10px 12px", color: "#888", fontSize: 12, whiteSpace: "nowrap" }}>{fmtTime(r.submittedAt)}</td>
+                                        </tr>
+                                    );
+                                })}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+        </div>
+    );
+}
+
 // ─── Головна сторінка ─────────────────────────────────────────────────────────
 
 export default function AdminPage({ onBack }) {
@@ -824,7 +906,7 @@ export default function AdminPage({ onBack }) {
                 {tab === "logs" && <LogsTab users={users} />}
 
                 {/* Вкладка: Тести */}
-                {tab === "tests" && <TrainingTests onBack={() => setTab("users")} />}
+                {tab === "tests" && <AdminTestResults />}
             </div>
         </div>
     );
