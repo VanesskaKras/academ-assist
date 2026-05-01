@@ -395,9 +395,27 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     s = s.replace(/(?<![/\d])20\d{2}(?![/\d])/g, currentYear);
     return s;
   };
+  const RIGHT_LINE_RE = /^(Група|Курс|ПІБ\s+студента|ПІБ\s+керівника)\s*:/i;
+  const buildDefaultTitlePageLines = () => [
+    { text: "МІНІСТЕРСТВО ОСВІТИ І НАУКИ УКРАЇНИ", align: "center", bold: true },
+    { text: "[Назва університету]", align: "center" },
+    { text: "", align: "center", spaceBefore: 960 },
+    { text: (info?.type || "КУРСОВА РОБОТА").toUpperCase(), align: "center", bold: true },
+    ...(info?.subject ? [{ text: `з дисципліни: ${info.subject}`, align: "center" }] : []),
+    { text: `на тему: «${topicStr || "[тема]"}»`, align: "center" },
+    { text: "", align: "center", spaceBefore: 2880 },
+    { text: "Група: ___________", align: "right" },
+    { text: "Курс: ___________", align: "right" },
+    { text: "ПІБ студента: ___________", align: "right" },
+    { text: "ПІБ керівника: ___________", align: "right" },
+    { text: "", align: "center", spaceBefore: 3840 },
+    { text: currentYear, align: "center" },
+  ];
   const resolvedLines = titlePageLines?.length
     ? titlePageLines.map(item => ({ ...item, text: applyTopic(item.text) }))
-    : (titlePage?.trim() ? titlePage.split("\n").map(text => ({ text: applyTopic(text), align: "center" })) : null);
+    : (titlePage?.trim()
+      ? titlePage.split("\n").map(text => ({ text: applyTopic(text), align: RIGHT_LINE_RE.test(text.trim()) ? "right" : "center" }))
+      : buildDefaultTitlePageLines());
   if (resolvedLines) {
     resolvedLines.forEach((item, idx) => {
       const itemSize = item.fontSize ? item.fontSize * 2 : SIZE;
@@ -531,7 +549,8 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
   const url = URL.createObjectURL(blob);
   try {
     const a = document.createElement("a");
-    const safeName = (info?.topic || "робота").replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
+    const prefix = info?.orderNumber ? info.orderNumber + "_" : "";
+    const safeName = prefix + (info?.topic || "робота").replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
     a.href = url; a.download = safeName + ".docx";
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
   } finally {
@@ -606,7 +625,8 @@ export async function exportPlanToDocx({ sections, info, methodInfo }) {
   const url = URL.createObjectURL(blob);
   try {
     const a = document.createElement("a");
-    const safeName = ("план_" + (info?.topic || "робота")).replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
+    const prefix = info?.orderNumber ? info.orderNumber + "_" : "";
+    const safeName = prefix + ("план_" + (info?.topic || "робота")).replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
     a.href = url; a.download = safeName + ".docx";
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
   } finally {
@@ -770,7 +790,8 @@ export async function exportAppendixToDocx(text, info, methodInfo) {
   const url = URL.createObjectURL(blob);
   try {
     const a = document.createElement("a");
-    const safeName = (info?.topic || "додатки").replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
+    const prefix = info?.orderNumber ? info.orderNumber + "_" : "";
+    const safeName = prefix + (info?.topic || "додатки").replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
     a.href = url; a.download = safeName + " - додатки.docx";
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
   } finally {
@@ -832,7 +853,8 @@ export async function exportSpeechToDocx(text, info, methodInfo) {
   const url = URL.createObjectURL(blob);
   try {
     const a = document.createElement("a");
-    const safeName = (info?.topic || "доповідь").replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
+    const prefix = info?.orderNumber ? info.orderNumber + "_" : "";
+    const safeName = prefix + (info?.topic || "доповідь").replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
     a.href = url; a.download = safeName + " - доповідь.docx";
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
   } finally {

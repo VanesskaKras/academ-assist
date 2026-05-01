@@ -68,7 +68,8 @@ export async function exportSimpleDocx({ title, sections, info }) {
   const url = URL.createObjectURL(blob);
   try {
     const a = document.createElement("a");
-    const safeName = (info?.topic || title || "робота").replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
+    const prefix = info?.orderNumber ? info.orderNumber + "_" : "";
+    const safeName = prefix + (info?.topic || title || "робота").replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
     a.href = url; a.download = safeName + ".docx";
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
   } finally {

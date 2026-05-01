@@ -284,6 +284,7 @@ export async function exportToPptxFile(slideData, info) {
     }
   }
 
-  const safeName = (info?.topic || "презентація").replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
+  const prefix = info?.orderNumber ? info.orderNumber + "_" : "";
+  const safeName = prefix + (info?.topic || "презентація").replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
   await pptx.writeFile({ fileName: safeName + " - презентація.pptx" });
 }
