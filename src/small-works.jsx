@@ -632,7 +632,7 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
         <div style={{ fontFamily: "'Spectral SC',serif", fontSize: 19, letterSpacing: 5, color: "#e8ff47" }}>ACADEM</div>
         <div style={{ fontFamily: "'Spectral SC',serif", fontSize: 19, letterSpacing: 5 }}>SMALL</div>
         {cfg && <div style={{ fontSize: 12, color: "#888", marginLeft: 4 }}>{cfg.icon} {cfg.label}</div>}
-        {info?.topic && <div style={{ fontSize: 12, color: "#555", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 260 }}>{info.topic}</div>}
+        {info?.topic && <div style={{ fontSize: 12, color: "#555", flex: 1, minWidth: 0 }}>{info.topic}</div>}
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
           <SaveIndicator saving={saving} saved={saved} />
           {workType && <StagePills stage={stage} workType={workType} />}
