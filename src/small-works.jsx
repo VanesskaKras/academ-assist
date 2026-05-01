@@ -239,7 +239,7 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
       const toClaudeFile = f => ({ type: f.type.startsWith("image/") ? "image" : "document", source: { type: "base64", media_type: f.type, data: f.b64 } });
       const fileContext = files.map(toClaudeFile);
       const matFileContext = materialFiles.length > 0
-        ? [{ type: "text", text: "Матеріал для роботи (файли):" }, ...materialFiles.map(toClaudeFile)]
+        ? [{ type: "text", text: "Матеріал, методичка та вимоги (файли):" }, ...materialFiles.map(toClaudeFile)]
         : [];
 
       const isTezy = workType === "tezy";
@@ -404,7 +404,7 @@ ${supervisorBlock}`;
     const toClaudeFile = f => ({ type: f.type.startsWith("image/") ? "image" : "document", source: { type: "base64", media_type: f.type, data: f.b64 } });
     const fileContext = files.map(toClaudeFile);
     const matFileContext = materialFiles.length > 0
-      ? [{ type: "text", text: "Матеріал для роботи (файли — проаналізуй і використай як основу):" }, ...materialFiles.map(toClaudeFile)]
+      ? [{ type: "text", text: "Матеріал, методичка та вимоги (файли — проаналізуй і використай):" }, ...materialFiles.map(toClaudeFile)]
       : [];
 
     try {
@@ -684,27 +684,29 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
                 placeholder="Додаткові вимоги..." style={{ ...TA, minHeight: 70 }} />
             </FieldBox>
 
-            <FieldBox label={workType === "tezy" ? "Методичка, рекомендації, скріни вимог (до 10 файлів)" : `Рекомендації / методичка / скріни (до 3 файлів)${workType !== "referat" ? " — необов'язково" : ""}`}>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {files.map((f, i) => (
-                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: "#eef5e4", borderRadius: 6, fontSize: 13 }}>
-                    <span>📄 {f.name}</span>
-                    <button onClick={() => setFiles(p => p.filter((_, j) => j !== i))} style={{ marginLeft: "auto", background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: 14 }}>✕</button>
-                  </div>
-                ))}
-                {files.length < fileLimit && (
-                  <DropZone fileLabel={null} onFile={handleAddFile} accept=".pdf,.docx,.jpg,.jpeg,.png" />
-                )}
-              </div>
-            </FieldBox>
+            {workType !== "tezy" && (
+              <FieldBox label={`Рекомендації / методичка / скріни (до 3 файлів)${workType !== "referat" ? " — необов'язково" : ""}`}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {files.map((f, i) => (
+                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: "#eef5e4", borderRadius: 6, fontSize: 13 }}>
+                      <span>📄 {f.name}</span>
+                      <button onClick={() => setFiles(p => p.filter((_, j) => j !== i))} style={{ marginLeft: "auto", background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: 14 }}>✕</button>
+                    </div>
+                  ))}
+                  {files.length < fileLimit && (
+                    <DropZone fileLabel={null} onFile={handleAddFile} accept=".pdf,.docx,.jpg,.jpeg,.png" />
+                  )}
+                </div>
+              </FieldBox>
+            )}
 
             {/* Матеріал для роботи — тільки для тез */}
             {workType === "tezy" && (
-              <FieldBox label="Матеріал для роботи (необов'язково)">
+              <FieldBox label="Матеріал для роботи — методичка, файли, фото (необов'язково)">
                 <textarea
                   value={materialText}
                   onChange={e => setMaterialText(e.target.value)}
-                  placeholder={"Вставте текст, тези, конспект, реферат або будь-який матеріал, на основі якого ШІ має написати тези."}
+                  placeholder="Вставте текст, конспект, реферат або будь-який матеріал для аналізу..."
                   style={{ ...TA, minHeight: 100 }}
                 />
                 <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
@@ -714,13 +716,13 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
                       <button onClick={() => setMaterialFiles(p => p.filter((_, j) => j !== i))} style={{ marginLeft: "auto", background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: 14 }}>✕</button>
                     </div>
                   ))}
-                  {materialFiles.length < 5 && (
-                    <DropZone fileLabel={null} onFile={(name, b64, type) => setMaterialFiles(p => p.length >= 5 ? [...p.slice(1), { name, b64, type }] : [...p, { name, b64, type }])} accept=".pdf,.docx,.jpg,.jpeg,.png" />
+                  {materialFiles.length < 10 && (
+                    <DropZone fileLabel={null} onFile={(name, b64, type) => setMaterialFiles(p => p.length >= 10 ? [...p.slice(1), { name, b64, type }] : [...p, { name, b64, type }])} accept=".pdf,.docx,.jpg,.jpeg,.png" />
                   )}
                 </div>
                 {(materialText.trim() || materialFiles.length > 0) && (
                   <div style={{ fontSize: 11, color: "#5a8a2a", marginTop: 6 }}>
-                    ✓ {[materialText.trim() ? `${materialText.trim().split(/\s+/).length} слів тексту` : null, materialFiles.length ? `${materialFiles.length} файл(и)` : null].filter(Boolean).join(" + ")} — буде передано ШІ як матеріал для аналізу
+                    ✓ {[materialText.trim() ? `${materialText.trim().split(/\s+/).length} сл.` : null, materialFiles.length ? `${materialFiles.length} файл(и)` : null].filter(Boolean).join(" + ")} — буде передано ШІ
                   </div>
                 )}
               </FieldBox>
@@ -920,34 +922,9 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
         {workType === "tezy" && stage === "writing" && (
           <div className="fade">
             <Heading>📝 Генерація тез</Heading>
-            {tezyCitations.length > 0 && (
-              <div style={{ marginBottom: 16, padding: "10px 14px", background: "#f0f8e8", borderRadius: 7, border: "1px solid #b8dfa0", fontSize: 12, color: "#3a6010" }}>
-                Обрано {tezyCitations.length} джерела — буде передано Claude для розстановки посилань [N].
-              </div>
-            )}
-            {!result ? (
-              <div style={{ textAlign: "center", padding: "40px 0" }}>
-                <p style={{ fontSize: 14, color: "#888", marginBottom: 24 }}>
-                  {files.length > 0 ? `Завантажено ${files.length} файл(ів) з вимогами. ` : ""}
-                  Генерую повну структуру тез з блоком автора, текстом та списком джерел.
-                </p>
-                <PrimaryBtn onClick={doGenerateTezy} loading={running} msg={loadMsg} label="Генерувати тези →" />
-              </div>
-            ) : (
-              <>
-                <div style={{ border: "1.5px solid #aaa49a", borderRadius: 8, overflow: "hidden", marginBottom: 16 }}>
-                  <div style={{ background: "#1a1a14", padding: "10px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ fontSize: 13, color: "#f5f2eb", fontWeight: 600 }}>Тези: {info?.topic}</span>
-                    <button onClick={() => navigator.clipboard.writeText(result)} style={{ background: "transparent", border: "1px solid #555", color: "#999", borderRadius: 5, padding: "3px 10px", fontSize: 10, cursor: "pointer" }}>COPY</button>
-                  </div>
-                  <div style={{ padding: "16px 20px", fontSize: 13, lineHeight: "1.85", color: "#2a2a1e", whiteSpace: "pre-wrap", maxHeight: 400, overflowY: "auto", background: "#faf8f3" }}>{result}</div>
-                </div>
-                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                  <NavBtn onClick={() => setResult("")}>Перегенерувати</NavBtn>
-                  <PrimaryBtn onClick={() => { saveToFirestore({ result, stage: "done", status: "done" }); setStage("done"); }} label="Завершити →" />
-                </div>
-              </>
-            )}
+            <div style={{ textAlign: "center", padding: "40px 0" }}>
+              <PrimaryBtn onClick={doGenerateTezy} loading={running} msg={loadMsg} label="Генерувати тези →" />
+            </div>
           </div>
         )}
 
