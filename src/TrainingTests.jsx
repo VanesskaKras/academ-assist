@@ -110,7 +110,10 @@ export default function TrainingTests({ onBack }) {
                 userName: profile?.name || user.email,
                 testId: activeTest.id,
                 testTitle: activeTest.title,
-                answers: (activeTest.questions || []).map((_, i) => answers[i] ?? null),
+                answers: (activeTest.questions || []).map((_, i) => {
+                    const ans = answers[i] ?? null;
+                    return Array.isArray(ans) ? JSON.stringify(ans) : ans;
+                }),
                 score: correct,
                 total,
                 passed: correct === total,
