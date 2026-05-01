@@ -253,6 +253,7 @@ const STATUS_LABELS = {
 export default function Dashboard({ onOpen, onNew, onAdmin, onTraining }) {
     const { user, profile, logout } = useAuth();
     const [orders, setOrders] = useState([]);
+    const [userMap, setUserMap] = useState({});
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState("");
     const [filterStatus, setFilterStatus] = useState(null); // null = всі
@@ -261,24 +262,41 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining }) {
     const [showStats, setShowStats] = useState(false);
     const [showMyStats, setShowMyStats] = useState(false);
 
+    const isAdmin = profile?.role === "admin";
+
     useEffect(() => {
         const load = async () => {
             setLoading(true);
             try {
-                const q = query(
-                    collection(db, "orders"),
-                    where("uid", "==", user.uid),
-                    orderBy("createdAt", "desc")
-                );
-                const snap = await getDocs(q);
-                setOrders(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                if (isAdmin) {
+                    const [ordersSnap, usersSnap] = await Promise.all([
+                        getDocs(query(collection(db, "orders"), orderBy("createdAt", "desc"))),
+                        getDocs(collection(db, "users")),
+                    ]);
+                    const map = {};
+                    usersSnap.docs.forEach(d => { map[d.id] = d.data(); });
+                    setUserMap(map);
+                    setOrders(ordersSnap.docs.map(d => ({
+                        id: d.id,
+                        ...d.data(),
+                        managerName: map[d.data().uid]?.name || d.data().uid || "—",
+                    })));
+                } else {
+                    const q = query(
+                        collection(db, "orders"),
+                        where("uid", "==", user.uid),
+                        orderBy("createdAt", "desc")
+                    );
+                    const snap = await getDocs(q);
+                    setOrders(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                }
             } catch (e) {
                 console.error(e);
             }
             setLoading(false);
         };
         load();
-    }, [user.uid]);
+    }, [user.uid, isAdmin]);
 
     const deleteOrder = async (id, e) => {
         e.stopPropagation();
@@ -311,7 +329,8 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining }) {
                 o.id?.toLowerCase().includes(q) ||
                 o.type?.toLowerCase().includes(q) ||
                 o.deadline?.toLowerCase().includes(q) ||
-                o.info?.orderNumber?.toLowerCase().includes(q)
+                o.info?.orderNumber?.toLowerCase().includes(q) ||
+                (isAdmin && o.managerName?.toLowerCase().includes(q))
             );
         }
         return result;
@@ -364,7 +383,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining }) {
 
                 {/* Top bar */}
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
-                    <div style={{ fontFamily: "'Spectral SC',serif", fontSize: 18, letterSpacing: 2, color: "#1a1a14" }}>МОЇ ЗАМОВЛЕННЯ</div>
+                    <div style={{ fontFamily: "'Spectral SC',serif", fontSize: 18, letterSpacing: 2, color: "#1a1a14" }}>{isAdmin ? "ВСІ ЗАМОВЛЕННЯ" : "МОЇ ЗАМОВЛЕННЯ"}</div>
                     <div style={{ display: "flex", gap: 8 }}>
                         <button onClick={() => onNew("small")} style={{ background: "transparent", color: "#1a1a14", border: "1.5px solid #1a1a14", borderRadius: 7, padding: "9px 18px", fontSize: 12, fontWeight: 600, cursor: "pointer", letterSpacing: 1, fontFamily: "inherit" }}>
                             + Мала робота
@@ -410,7 +429,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining }) {
                         <input
                             value={search}
                             onChange={e => setSearch(e.target.value)}
-                            placeholder="Пошук за темою, типом, дедлайном, номером замовлення..."
+                            placeholder={isAdmin ? "Пошук за темою, типом, дедлайном, номером замовлення, менеджером..." : "Пошук за темою, типом, дедлайном, номером замовлення..."}
                             style={{ width: "100%", padding: "11px 14px 11px 40px", border: "1.5px solid #d4cfc4", borderRadius: 8, fontSize: 14, fontFamily: "'Spectral',serif", background: "#fff", color: "#1a1a14", outline: "none" }}
                         />
                         {search && (
@@ -456,6 +475,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining }) {
                                             {order.topic || "Без теми"}
                                         </div>
                                         <div style={{ fontSize: 12, color: "#888", display: "flex", gap: 12, flexWrap: "wrap" }}>
+                                            {isAdmin && order.managerName && <span style={{ background: "#e8f0ff", color: "#1a3a8a", padding: "1px 8px", borderRadius: 8, fontSize: 11, fontWeight: 600 }}>👤 {order.managerName}</span>}
                                             {isSmall && <span style={{ background: "#f0e4ff", color: "#5a1a8a", padding: "1px 8px", borderRadius: 8, fontSize: 11 }}>📝 Мала</span>}
                                             {order.type && <span>{order.type}</span>}
                                             {order.pages && <span>{order.pages} стор.</span>}
