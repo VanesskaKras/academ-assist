@@ -1,23 +1,8 @@
 import { useState } from "react";
-import { lookupDoiMetadata } from "../../lib/sourcesSearch.js";
+import { lookupDoiMetadata, paperToCitation } from "../../lib/sourcesSearch.js";
 import { TA_WHITE } from "../../shared.jsx";
 import { Heading, NavBtn, PrimaryBtn, GreenBtn } from "../Buttons.jsx";
 import { SpinDot } from "../SpinDot.jsx";
-
-// ── Форматує об'єкт паперу в рядок для textarea ──
-function paperToCitation(paper) {
-  const authorsList = Array.isArray(paper.authors) ? paper.authors : [];
-  const authors = authorsList.length ? authorsList.join(', ') : 'Автор невідомий';
-  const isDomainLike = paper.venue && /^[\w.-]+\.[a-zA-Z]{2,}$/.test(paper.venue.trim());
-  const venue = (paper.venue && !isDomainLike) ? ` ${paper.venue}.` : '';
-  const pages = paper.pages
-    ? ` ${paper.lang === 'en' ? 'P.' : 'С.'} ${paper.pages}.`
-    : '';
-  const urlPart = paper.url
-    ? ` ${paper.url}`
-    : paper.doi ? ` https://doi.org/${paper.doi}` : '';
-  return `${authors}. ${paper.title}.${venue} ${paper.year}.${pages}${urlPart}`.replace(/\.\s*\./g, '.').replace(/\s{2,}/g, ' ').trim();
-}
 
 // ── Картка одного знайденого джерела ──
 function SourceCard({ paper, checked, onToggle }) {

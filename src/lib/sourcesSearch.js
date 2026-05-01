@@ -697,6 +697,20 @@ ${items}
 }
 
 // ── Gemini генерує 4 точних академічних пошукових фрази для підрозділу ──
+export function paperToCitation(paper) {
+  const authorsList = Array.isArray(paper.authors) ? paper.authors : [];
+  const authors = authorsList.length ? authorsList.join(', ') : 'Автор невідомий';
+  const isDomainLike = paper.venue && /^[\w.-]+\.[a-zA-Z]{2,}$/.test(paper.venue.trim());
+  const venue = (paper.venue && !isDomainLike) ? ` ${paper.venue}.` : '';
+  const pages = paper.pages
+    ? ` ${paper.lang === 'en' ? 'P.' : 'С.'} ${paper.pages}.`
+    : '';
+  const urlPart = paper.url
+    ? ` ${paper.url}`
+    : paper.doi ? ` https://doi.org/${paper.doi}` : '';
+  return `${authors}. ${paper.title}.${venue} ${paper.year}.${pages}${urlPart}`.replace(/\.\s*\./g, '.').replace(/\s{2,}/g, ' ').trim();
+}
+
 export async function generateSearchPhrases(sectionLabel, topic, direction = '', subject = '') {
   const domainCtx = [direction, subject].filter(Boolean).join(', ');
   const prompt = `Тема наукової роботи: "${topic}"${domainCtx ? `\nГалузь: ${domainCtx}` : ''}
