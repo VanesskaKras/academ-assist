@@ -5,7 +5,7 @@ import {
     signOut,
     onAuthStateChanged,
 } from "firebase/auth";
-import { doc, onSnapshot, setDoc, updateDoc, addDoc, collection } from "firebase/firestore";
+import { doc, onSnapshot, setDoc, updateDoc, getDoc, addDoc, collection } from "firebase/firestore";
 
 const SESSION_KEY = "academ_session_id";
 export const KICKED_KEY = "academ_kicked";
@@ -45,21 +45,7 @@ export function AuthProvider({ children }) {
 
                         setProfile(data);
                     } else {
-                        const newProfile = {
-                            email: u.email,
-                            name: u.email.split("@")[0],
-                            role: "user",
-                            approved: true,
-                            blocked: false,
-                            createdAt: new Date().toISOString(),
-                        };
-                        try {
-                            await setDoc(ref, newProfile);
-                            setProfile(newProfile);
-                        } catch (e) {
-                            console.error("Auto-create profile error:", e);
-                            setProfile(null);
-                        }
+                        setProfile(null);
                     }
 
                     if (!initialized) {
@@ -91,10 +77,20 @@ export function AuthProvider({ children }) {
         localStorage.setItem(SESSION_KEY, sessionId);
         localStorage.removeItem(KICKED_KEY);
 
-        try {
-            await updateDoc(doc(db, "users", cred.user.uid), { sessionId });
-        } catch {
-            await setDoc(doc(db, "users", cred.user.uid), { sessionId }, { merge: true });
+        const userRef = doc(db, "users", cred.user.uid);
+        const userSnap = await getDoc(userRef);
+        if (userSnap.exists()) {
+            await updateDoc(userRef, { sessionId });
+        } else {
+            await setDoc(userRef, {
+                email: cred.user.email,
+                name: cred.user.email.split("@")[0],
+                role: "user",
+                approved: true,
+                blocked: false,
+                createdAt: new Date().toISOString(),
+                sessionId,
+            });
         }
 
         try {

@@ -23,9 +23,103 @@ export async function exportSimpleDocx({ title, sections, info }) {
       document.head.appendChild(s);
     });
   }
-  const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel } = window.docx;
+  const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel, ExternalHyperlink, InternalHyperlink, Bookmark } = window.docx;
   const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
   const L = 1701, R = 851, T = 1134, B = 1134, INDENT = 709, LINE = 360;
+
+  // [N] → внутрішнє гіперпосилання на закладку джерела
+  function parseTextWithCitations(text, bold = false) {
+    const CITE_RE = /\[(\d+)\]/g;
+    const result = [];
+    let lastIndex = 0, match;
+    while ((match = CITE_RE.exec(text)) !== null) {
+      if (match.index > lastIndex)
+        result.push(new TextRun({ text: text.slice(lastIndex, match.index), font: FONT, size: SIZE, bold, color: "000000" }));
+      result.push(new InternalHyperlink({
+        anchor: `ref_${match[1]}`,
+        children: [new TextRun({ text: match[0], font: FONT, size: SIZE, color: "000000" })],
+      }));
+      lastIndex = match.index + match[0].length;
+    }
+    if (lastIndex < text.length)
+      result.push(new TextRun({ text: text.slice(lastIndex), font: FONT, size: SIZE, bold, color: "000000" }));
+    return result.length ? result : [new TextRun({ text, font: FONT, size: SIZE, bold, color: "000000" })];
+  }
+
+  // **жирний** inline + [N] для абзаців тексту
+  function parseBodyLine(text) {
+    const BOLD_RE = /\*\*(.+?)\*\*/g;
+    const parts = [];
+    let last = 0, m;
+    while ((m = BOLD_RE.exec(text)) !== null) {
+      if (m.index > last) parts.push({ text: text.slice(last, m.index), bold: false });
+      parts.push({ text: m[1], bold: true });
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) parts.push({ text: text.slice(last), bold: false });
+    if (!parts.length) parts.push({ text, bold: false });
+    return parts.flatMap(p => parseTextWithCitations(p.text, p.bold));
+  }
+
+  // URL → зовнішній гіперлінк, *курсив* → курсив (для рядків джерел)
+  function sourceParaChildren(text) {
+    const URL_RE = /(https?:\/\/[^\s]+)/;
+    return text.split(URL_RE).flatMap(part => {
+      if (URL_RE.test(part)) {
+        const cleanUrl = part.replace(/[.,;:!?)]+$/, "");
+        const tail = part.slice(cleanUrl.length);
+        const link = new ExternalHyperlink({
+          link: cleanUrl,
+          children: [new TextRun({ text: cleanUrl, font: FONT, size: SIZE, color: "0563C1", underline: {} })],
+        });
+        return tail ? [link, new TextRun({ text: tail, font: FONT, size: SIZE, color: "000000" })] : [link];
+      }
+      const runs = [];
+      const italicRe = /\*([^*]+)\*/g;
+      let last2 = 0, m2;
+      while ((m2 = italicRe.exec(part)) !== null) {
+        if (m2.index > last2) runs.push(new TextRun({ text: part.slice(last2, m2.index), font: FONT, size: SIZE, color: "000000" }));
+        runs.push(new TextRun({ text: m2[1], font: FONT, size: SIZE, italics: true, color: "000000" }));
+        last2 = m2.index + m2[0].length;
+      }
+      if (last2 < part.length) runs.push(new TextRun({ text: part.slice(last2), font: FONT, size: SIZE, color: "000000" }));
+      return runs;
+    });
+  }
+
+  function sourcePara(text) {
+    const cleaned = text.replace(/\*\*(.+?)\*\*/g, "$1").trim();
+    if (!cleaned) return null;
+    return new Paragraph({
+      spacing: { line: LINE, lineRule: "auto", before: 0, after: Math.round(LINE * 0.3) },
+      alignment: AlignmentType.BOTH,
+      indent: { firstLine: INDENT },
+      children: sourceParaChildren(cleaned),
+    });
+  }
+
+  function sourceParaWithBookmark(text, refNum) {
+    const cleaned = text.replace(/\*\*(.+?)\*\*/g, "$1").trim();
+    if (!cleaned) return null;
+    const numMatch = cleaned.match(/^(\d+[\.\)]\s*)/);
+    const children = numMatch
+      ? [
+          new Bookmark({ id: `ref_${refNum}`, children: [new TextRun({ text: numMatch[1], font: FONT, size: SIZE, color: "000000" })] }),
+          ...sourceParaChildren(cleaned.slice(numMatch[1].length)),
+        ]
+      : sourceParaChildren(cleaned);
+    return new Paragraph({
+      spacing: { line: LINE, lineRule: "auto", before: 0, after: Math.round(LINE * 0.3) },
+      alignment: AlignmentType.BOTH,
+      indent: { firstLine: INDENT },
+      children,
+    });
+  }
+
+  const SOURCES_HEADER_RE = /^(список використаних джерел|список літератури|використані джерела|references?)\s*[:\.]?\s*$/i;
+  const FIG_CAPTION_RE = /^рис\.?\s+\d/i;
+  const FIG_INLINE_RE = /рис(?:унок)?\.?\s*\d+/i;
+  const FIG_MARKER_RE = /^\[🔍 Рисунок \d+:/;
 
   const children = [];
   for (let i = 0; i < sections.length; i++) {
@@ -40,14 +134,57 @@ export async function exportSimpleDocx({ title, sections, info }) {
         children: [new TextRun({ text: sec.label.toUpperCase(), font: FONT, size: SIZE, bold: true, color: "000000" })],
       }));
     }
+    let inSources = false;
     sec.text.split("\n").forEach(line => {
-      const raw = line.replace(/^#{1,6}\s+/, "").replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1").replace(/^[-*]\s+/, "").trim();
-      if (!raw) return;
+      const trimmed = line.trim();
+
+      // Маркери пошуку рисунків — не потрапляють у docx
+      if (FIG_MARKER_RE.test(trimmed)) return;
+
+      // Підпис рисунку: "Рис. N — Назва"
+      if (FIG_CAPTION_RE.test(trimmed)) {
+        children.push(new Paragraph({
+          alignment: AlignmentType.CENTER,
+          indent: { firstLine: 0 },
+          spacing: { line: LINE, lineRule: "auto", before: 0, after: Math.round(LINE * 0.5) },
+          children: [new TextRun({ text: trimmed.replace(/\*\*(.+?)\*\*/g, "$1"), font: FONT, size: SIZE, color: "B85C00" })],
+        }));
+        return;
+      }
+
+      // Заголовок списку джерел
+      if (SOURCES_HEADER_RE.test(trimmed)) {
+        inSources = true;
+        children.push(new Paragraph({
+          spacing: { line: LINE, lineRule: "auto", before: LINE, after: Math.round(LINE * 0.5) },
+          alignment: AlignmentType.CENTER, indent: { firstLine: 0 },
+          children: [new TextRun({ text: trimmed.toUpperCase(), font: FONT, size: SIZE, bold: true, color: "000000" })],
+        }));
+        return;
+      }
+
+      // Рядки списку джерел
+      if (inSources) {
+        if (!trimmed) return;
+        const numMatch = trimmed.replace(/\*\*(.+?)\*\*/g, "$1").match(/^(\d+)[\.\)]/);
+        const p = numMatch ? sourceParaWithBookmark(trimmed, parseInt(numMatch[1])) : sourcePara(trimmed);
+        if (p) children.push(p);
+        return;
+      }
+
+      // Звичайний абзац тексту
+      const raw = trimmed.replace(/^#{1,6}\s+/, "").replace(/^[-*]\s+/, "");
+      const plain = raw.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1");
+      if (!plain) return;
+      // Абзаци зі згадкою рисунку — помаранчевий текст
+      const hasFig = FIG_INLINE_RE.test(plain);
       children.push(new Paragraph({
         indent: { firstLine: INDENT },
         spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
         alignment: AlignmentType.BOTH,
-        children: [new TextRun({ text: raw, font: FONT, size: SIZE, color: "000000" })],
+        children: hasFig
+          ? [new TextRun({ text: plain, font: FONT, size: SIZE, color: "B85C00" })]
+          : parseBodyLine(raw),
       }));
     });
   }
