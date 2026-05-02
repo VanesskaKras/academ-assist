@@ -158,7 +158,7 @@ export async function exportSimpleDocx({ title, sections, info }) {
         children.push(new Paragraph({
           spacing: { line: LINE, lineRule: "auto", before: LINE, after: Math.round(LINE * 0.5) },
           alignment: AlignmentType.CENTER, indent: { firstLine: 0 },
-          children: [new TextRun({ text: trimmed.toUpperCase(), font: FONT, size: SIZE, bold: true, color: "000000" })],
+          children: [new TextRun({ text: trimmed.replace(/:$/, ""), font: FONT, size: SIZE, bold: true, color: "000000" })],
         }));
         return;
       }
