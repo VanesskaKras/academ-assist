@@ -23,6 +23,10 @@ const DATE_RANGES = [
 
 function getStatStatus(o) {
     const s = o.status || "new";
+    if (o.mode === "small") {
+        if (o.stage === "sources") return "sources";
+        return s;
+    }
     if (o.stage === "sources" || (s === "done" && (!o.refList || o.refList.length === 0))) return "sources";
     return s;
 }
@@ -308,7 +312,9 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining }) {
         setOrders(p => p.filter(o => o.id !== id));
     };
 
-    const needsSources = (o) => o.stage === "sources" || (o.status === "done" && (!o.refList || o.refList.length === 0));
+    const needsSources = (o) => o.mode === "small"
+        ? o.stage === "sources"
+        : o.stage === "sources" || (o.status === "done" && (!o.refList || o.refList.length === 0));
 
     const filtered = useMemo(() => {
         let result = orders;
