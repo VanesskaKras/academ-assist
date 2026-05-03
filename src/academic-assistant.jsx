@@ -368,7 +368,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
         { type: "text", text: METHODOLOGY_READING_PROMPT },
       ];
       try {
-        const raw = await callGemini([{ role: "user", content: methodMsgs }], null, SYS_JSON_SHORT, 8000, (s) => setLoadMsg(`Читаю методичку... зачекайте ${s}с`), "gemini-2.5-flash-lite", true);
+        const raw = await callGemini([{ role: "user", content: methodMsgs }], null, SYS_JSON_SHORT, 8000, (s) => setLoadMsg(`Читаю методичку... зачекайте ${s}с`), "gemini-2.5-flash", true);
         const jsonMatch = raw.match(/\{[\s\S]*\}/);
         const parsed = JSON.parse(jsonMatch?.[0] || raw.replace(/```json|```/g, "").trim());
         setMethodInfo(parsed);
