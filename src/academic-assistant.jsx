@@ -370,7 +370,8 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
         const structMsgs = [docPart, { type: "text", text: STRUCTURE_READING_PROMPT }];
         const structRaw = await callGemini([{ role: "user", content: structMsgs }], null, SYS_JSON_SHORT, 2000, null, "gemini-2.5-flash", true);
         const structMatch = structRaw.match(/\{[\s\S]*\}/);
-        const structureInfo = structMatch ? JSON.parse(structMatch[0]) : null;
+        let structureInfo = null;
+        try { structureInfo = structMatch ? JSON.parse(structMatch[0]) : null; } catch (e) { console.warn("[methodology] structure step parse error:", e.message); }
         console.log("[methodology] structure step:", structureInfo);
 
         // Крок 2: повне читання методички з заблокованою структурою
