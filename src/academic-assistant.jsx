@@ -9,7 +9,7 @@ import { exportToDocx, exportPlanToDocx, exportAppendixToDocx, exportSpeechToDoc
 import { exportToPptxFile } from "./lib/exportPptx.js";
 import { callClaude, callGemini, MODEL, MODEL_FAST } from "./lib/api.js";
 import { playDoneSound } from "./lib/audio.js";
-import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, METHODOLOGY_READING_PROMPT, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildCorrectionsAnalysisPrompt, buildCorrectionRewritePrompt } from "./lib/prompts.js";
+import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildCorrectionsAnalysisPrompt, buildCorrectionRewritePrompt } from "./lib/prompts.js";
 import { FIELD_LABELS, isPsychoPed, isEcon, hasEmpiricalResearch, getEmpiricalSections, getEconSections, STAGES_TEXT_FIRST, STAGE_KEYS_TEXT_FIRST, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { searchByPhrase, filterSourcesWithGemini } from "./lib/sourcesSearch.js";
@@ -363,14 +363,32 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
       setApiError("");
       setLoadMsg("Читаю методичку...");
       await new Promise(r => setTimeout(r, 2000)); // пауза між двома API-викликами
-      const methodMsgs = [
-        { type: "document", source: { type: "base64", media_type: fileType || "application/pdf", data: fileB64 } },
-        { type: "text", text: METHODOLOGY_READING_PROMPT },
-      ];
+      const docPart = { type: "document", source: { type: "base64", media_type: fileType || "application/pdf", data: fileB64 } };
       try {
-        const raw = await callGemini([{ role: "user", content: methodMsgs }], null, SYS_JSON_SHORT, 8000, (s) => setLoadMsg(`Читаю методичку... зачекайте ${s}с`), "gemini-2.5-flash", true);
+        // Крок 1: витягуємо тільки структуру з chain-of-thought
+        setLoadMsg("Читаю методичку... крок 1/2");
+        const structMsgs = [docPart, { type: "text", text: STRUCTURE_READING_PROMPT }];
+        const structRaw = await callGemini([{ role: "user", content: structMsgs }], null, SYS_JSON_SHORT, 2000, null, "gemini-2.5-flash", true);
+        const structMatch = structRaw.match(/\{[\s\S]*\}/);
+        const structureInfo = structMatch ? JSON.parse(structMatch[0]) : null;
+        console.log("[methodology] structure step:", structureInfo);
+
+        // Крок 2: повне читання методички з заблокованою структурою
+        await new Promise(r => setTimeout(r, 1500));
+        const methodMsgs = [docPart, { type: "text", text: buildMethodologyReadingPrompt(structureInfo) }];
+        const raw = await callGemini([{ role: "user", content: methodMsgs }], null, SYS_JSON_SHORT, 8000, (s) => setLoadMsg(`Читаю методичку... крок 2/2, зачекайте ${s}с`), "gemini-2.5-flash", true);
         const jsonMatch = raw.match(/\{[\s\S]*\}/);
         const parsed = JSON.parse(jsonMatch?.[0] || raw.replace(/```json|```/g, "").trim());
+        // Якщо крок 1 дав структуру — пріоритет її значень над кроком 2
+        if (structureInfo) {
+          if (structureInfo.chaptersCount != null) parsed.chaptersCount = structureInfo.chaptersCount;
+          if (structureInfo.subsectionsPerChapter != null) parsed.subsectionsPerChapter = structureInfo.subsectionsPerChapter;
+          parsed.hasChapterConclusions = structureInfo.hasChapterConclusions;
+          if (structureInfo.chapterTypes?.length) parsed.chapterTypes = structureInfo.chapterTypes;
+          if (structureInfo.totalPages != null) parsed.totalPages = structureInfo.totalPages;
+          if (structureInfo.introPages != null) parsed.introPages = structureInfo.introPages;
+          if (structureInfo.conclusionsPages != null) parsed.conclusionsPages = structureInfo.conclusionsPages;
+        }
         setMethodInfo(parsed);
         if (parsed.titlePageTemplate) {
           const currentYear = new Date().getFullYear().toString();
