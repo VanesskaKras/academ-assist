@@ -14,7 +14,7 @@ export function parsePagesAvg(str) {
 }
 
 // ── Simple docx export для малих робіт (плоский текст без підрозділів) ──
-export async function exportSimpleDocx({ title, sections, info }) {
+export async function exportSimpleDocx({ title, sections, info, citations }) {
   if (!window.docx) {
     await new Promise((resolve, reject) => {
       const s = document.createElement("script");
@@ -137,9 +137,14 @@ export async function exportSimpleDocx({ title, sections, info }) {
     let inSources = false;
     sec.text.split("\n").forEach(line => {
       const trimmed = line.trim();
+      const trimmedClean = trimmed.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1");
 
       // Маркери пошуку рисунків — не потрапляють у docx
       if (FIG_MARKER_RE.test(trimmed)) return;
+
+      // Якщо citations передано явно — пропускаємо вбудований блок джерел з тексту
+      if (citations !== undefined && SOURCES_HEADER_RE.test(trimmedClean)) { inSources = true; return; }
+      if (citations !== undefined && inSources) return;
 
       // Підпис рисунку: "Рис. N — Назва"
       if (FIG_CAPTION_RE.test(trimmed)) {
@@ -147,26 +152,26 @@ export async function exportSimpleDocx({ title, sections, info }) {
           alignment: AlignmentType.CENTER,
           indent: { firstLine: 0 },
           spacing: { line: LINE, lineRule: "auto", before: 0, after: Math.round(LINE * 0.5) },
-          children: [new TextRun({ text: trimmed.replace(/\*\*(.+?)\*\*/g, "$1"), font: FONT, size: SIZE, color: "B85C00" })],
+          children: [new TextRun({ text: trimmedClean, font: FONT, size: SIZE, color: "B85C00" })],
         }));
         return;
       }
 
-      // Заголовок списку джерел
-      if (SOURCES_HEADER_RE.test(trimmed)) {
+      // Заголовок списку джерел (парсинг з тексту — лише якщо citations не передано)
+      if (SOURCES_HEADER_RE.test(trimmedClean)) {
         inSources = true;
         children.push(new Paragraph({
           spacing: { line: LINE, lineRule: "auto", before: LINE, after: Math.round(LINE * 0.5) },
           alignment: AlignmentType.CENTER, indent: { firstLine: 0 },
-          children: [new TextRun({ text: trimmed.replace(/:$/, ""), font: FONT, size: SIZE, bold: true, color: "000000" })],
+          children: [new TextRun({ text: trimmedClean.replace(/[:\.]$/, ""), font: FONT, size: SIZE, bold: true, color: "000000" })],
         }));
         return;
       }
 
-      // Рядки списку джерел
+      // Рядки списку джерел (парсинг з тексту)
       if (inSources) {
         if (!trimmed) return;
-        const numMatch = trimmed.replace(/\*\*(.+?)\*\*/g, "$1").match(/^(\d+)[\.\)]/);
+        const numMatch = trimmedClean.match(/^(\d+)[\.\)]/);
         const p = numMatch ? sourceParaWithBookmark(trimmed, parseInt(numMatch[1])) : sourcePara(trimmed);
         if (p) children.push(p);
         return;
@@ -186,6 +191,20 @@ export async function exportSimpleDocx({ title, sections, info }) {
           ? [new TextRun({ text: plain, font: FONT, size: SIZE, color: "B85C00" })]
           : parseBodyLine(raw),
       }));
+    });
+  }
+
+  // Явний список джерел (для тез — передається tezyCitations)
+  if (citations && citations.length > 0) {
+    children.push(new Paragraph({
+      spacing: { line: LINE, lineRule: "auto", before: LINE, after: Math.round(LINE * 0.5) },
+      alignment: AlignmentType.CENTER, indent: { firstLine: 0 },
+      children: [new TextRun({ text: "Список використаних джерел", font: FONT, size: SIZE, bold: true, color: "000000" })],
+    }));
+    citations.forEach((citation, idx) => {
+      const refNum = idx + 1;
+      const p = sourceParaWithBookmark(`${refNum}. ${citation}`, refNum);
+      if (p) children.push(p);
     });
   }
 
