@@ -383,6 +383,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
         if (structureInfo) {
           if (structureInfo.chaptersCount != null) parsed.chaptersCount = structureInfo.chaptersCount;
           if (structureInfo.subsectionsPerChapter != null) parsed.subsectionsPerChapter = structureInfo.subsectionsPerChapter;
+          parsed.subsectionsPerChapterOverrides = structureInfo.subsectionsPerChapterOverrides ?? null;
           parsed.hasChapterConclusions = structureInfo.hasChapterConclusions;
           if (structureInfo.chapterTypes?.length) parsed.chapterTypes = structureInfo.chapterTypes;
           if (structureInfo.totalPages != null) parsed.totalPages = structureInfo.totalPages;
@@ -632,15 +633,20 @@ Return ONLY JSON without markdown:
       const chapConclP = hasConcl ? chapCount : 0;
 
       const subsPerChapter = methodInfo.subsectionsPerChapter || 3;
-      const totalSubsCount = chapCount * subsPerChapter;
+      const subsOverrides = methodInfo.subsectionsPerChapterOverrides || {};
+      const chapSubsCounts = Array.from({ length: chapCount }, (_, i) => subsOverrides[String(i + 1)] ?? subsPerChapter);
+      const totalSubsCount = chapSubsCounts.reduce((a, b) => a + b, 0);
       const pagesPerSub = Math.max(3, Math.round((totalPages - introP - conclP - chapConclP) / totalSubsCount));
+      const subsCountLine = chapSubsCounts.every(c => c === subsPerChapter)
+        ? `- Subsections per chapter: ${subsPerChapter}`
+        : chapSubsCounts.map((c, i) => `- Chapter ${i + 1} subsections: ${c}`).join('\n');
 
       const planPrompt = `Create a plan for ${d.type} on topic: "${d.topic}". Field: ${d.subject}. Pages: ${totalPages}.
 Language of work: ${d.language || "Ukrainian"} — all labels and titles must be in this language.
 ${commentAnalysis?.planHints ? `\nCLIENT HINTS:\n${commentAnalysis.planHints}\n` : ""}
 GUIDE REQUIREMENTS:
 - Chapters: ${chapCount}
-- Subsections per chapter: ${subsPerChapter}
+${subsCountLine}
 - Chapter conclusions: ${hasConcl ? "YES — add after last subsection of each chapter" : "NO — do not add"}
 - Chapter types: ${chTypes.join(", ")}
 ${methodInfo.otherRequirements ? `- Other requirements: ${methodInfo.otherRequirements}` : ""}
