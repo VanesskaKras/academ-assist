@@ -78,7 +78,7 @@ export function SourcesStage({
   allRefs, refList, showMissingSources, citInputsSnapshot, allCitLoading, info,
   suggestedSources, phraseGroups, sourcesSearchLoading, sourcesSearchError, doSearchSources, doRegenSectionSources,
   doGenKeywords, doAddAllCitations, onAddAbstracts, onFinish, onProceedToWriting, setStage, workflowMode,
-  onRegenWithNewSources,
+  onRegenWithNewSources, hasGeneratedContent,
 }) {
   const [selectedSugg, setSelectedSugg] = useState({});
   const [suggOpen, setSuggOpen] = useState({});
@@ -526,11 +526,11 @@ export function SourcesStage({
         <NavBtn onClick={() => setStage(workflowMode === "sources-first" ? "plan" : "writing")}>
           {workflowMode === "sources-first" ? "← До плану" : "← До тексту"}
         </NavBtn>
-        {workflowMode === "sources-first"
+        {workflowMode === "sources-first" || hasGeneratedContent
           ? <button
               onClick={onRegenWithNewSources}
               style={{ background: "#1a1a14", color: "#e8ff47", border: "1.5px solid #e8ff47", borderRadius: 6, padding: "8px 20px", fontFamily: "'Spectral',serif", fontSize: 13, cursor: "pointer" }}>
-              ↺ Генерувати текст з цими джерелами
+              ↺ Переписати всю роботу
             </button>
           : <PrimaryBtn onClick={onFinish} label="Завершити роботу →" />
         }
