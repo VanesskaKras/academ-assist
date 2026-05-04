@@ -527,11 +527,16 @@ export function SourcesStage({
           {workflowMode === "sources-first" ? "← До плану" : "← До тексту"}
         </NavBtn>
         {workflowMode === "sources-first" || hasGeneratedContent
-          ? <button
-              onClick={onRegenWithNewSources}
-              style={{ background: "#1a1a14", color: "#e8ff47", border: "1.5px solid #e8ff47", borderRadius: 6, padding: "8px 20px", fontFamily: "'Spectral',serif", fontSize: 13, cursor: "pointer" }}>
-              ↺ Переписати всю роботу
-            </button>
+          ? <>
+              <button
+                onClick={onRegenWithNewSources}
+                style={{ background: "#1a1a14", color: "#e8ff47", border: "1.5px solid #e8ff47", borderRadius: 6, padding: "8px 20px", fontFamily: "'Spectral',serif", fontSize: 13, cursor: "pointer" }}>
+                ↺ Переписати всю роботу
+              </button>
+              {hasGeneratedContent && (
+                <PrimaryBtn onClick={() => setStage("done")} label="До готового тексту →" />
+              )}
+            </>
           : <PrimaryBtn onClick={onFinish} label="Завершити роботу →" />
         }
       </div>
