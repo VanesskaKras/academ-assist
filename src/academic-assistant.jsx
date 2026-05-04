@@ -30,6 +30,65 @@ import { DoneStage } from "./components/stages/DoneStage.jsx";
 import { ChecklistStage } from "./components/stages/ChecklistStage.jsx";
 import { CorrectionsStage } from "./components/stages/CorrectionsStage.jsx";
 
+// ── Helpers for section reordering ──
+
+function renumberSections(sections) {
+  const chapterTitles = [];
+  sections.forEach(s => {
+    if (!["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type) && s.sectionTitle) {
+      if (!chapterTitles.includes(s.sectionTitle)) chapterTitles.push(s.sectionTitle);
+    }
+  });
+  const chNumMap = {};
+  chapterTitles.forEach((title, idx) => { chNumMap[title] = idx + 1; });
+  const chTitleMap = {};
+  chapterTitles.forEach(title => {
+    const newN = chNumMap[title];
+    const match = title.match(/^РОЗДІЛ\s+\d+[.:]?\s*(.*)/i);
+    const rest = match ? match[1] : title;
+    chTitleMap[title] = `РОЗДІЛ ${newN}. ${rest}`.trimEnd();
+  });
+  const subCount = {};
+  let lastChNum = 1;
+  return sections.map(s => {
+    if (["intro", "conclusions", "sources"].includes(s.type)) return s;
+    if (s.type === "chapter_conclusion") {
+      const newTitle = chTitleMap[s.sectionTitle] || s.sectionTitle;
+      return { ...s, id: `${lastChNum}.conclusions`, sectionTitle: newTitle };
+    }
+    const cn = chNumMap[s.sectionTitle] || 1;
+    lastChNum = cn;
+    if (!subCount[cn]) subCount[cn] = 0;
+    subCount[cn]++;
+    const newId = `${cn}.${subCount[cn]}`;
+    const newTitle = chTitleMap[s.sectionTitle] || s.sectionTitle;
+    const labelBody = s.label.replace(/^\d+\.\d+\s*/, "");
+    return { ...s, id: newId, sectionTitle: newTitle, label: `${newId} ${labelBody}` };
+  });
+}
+
+function rebuildWithChapterConclusions(prev, newMainSecs) {
+  const intro = prev.filter(s => s.type === "intro");
+  const conclusions = prev.filter(s => s.type === "conclusions");
+  const sources = prev.filter(s => s.type === "sources");
+  const chapConcs = prev
+    .filter(s => s.type === "chapter_conclusion")
+    .sort((a, b) => (parseInt(a.id) || 0) - (parseInt(b.id) || 0));
+  const chapTitles = [];
+  const chapSecs = {};
+  newMainSecs.forEach(s => {
+    if (!chapSecs[s.sectionTitle]) { chapTitles.push(s.sectionTitle); chapSecs[s.sectionTitle] = []; }
+    chapSecs[s.sectionTitle].push(s);
+  });
+  const result = [...intro];
+  chapTitles.forEach((title, i) => {
+    result.push(...chapSecs[title]);
+    if (chapConcs[i]) result.push(chapConcs[i]);
+  });
+  result.push(...conclusions, ...sources);
+  return result;
+}
+
 export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const { user } = useAuth();
 
@@ -70,6 +129,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [showManualPlanInput, setShowManualPlanInput] = useState(false);
   const [manualPlanText, setManualPlanText] = useState("");
   const [namingLoading, setNamingLoading] = useState(false);
+  const [singleNamingId, setSingleNamingId] = useState(null);
   const [allCitLoading, setAllCitLoading] = useState(false);
   const [refList, setRefList] = useState([]);
   const [citInputsSnapshot, setCitInputsSnapshot] = useState(null);
@@ -775,6 +835,67 @@ Order: subsections grouped by chapter, then intro, conclusions, sources.`;
     });
   };
 
+  // ── Переміщення підрозділів ──
+  const _applyMove = (prev, newMainSecs) => {
+    const rebuilt = rebuildWithChapterConclusions(prev, newMainSecs);
+    const renumbered = renumberSections(rebuilt);
+    setPlanDisplay(buildPlanText(renumbered));
+    const { dist, total } = calcSourceDist(renumbered);
+    setSourceDist(dist); setSourceTotal(total);
+    return renumbered;
+  };
+
+  const moveSectionUp = (sectionId) => {
+    setSections(prev => {
+      const movable = prev.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
+      const idx = movable.findIndex(s => s.id === sectionId);
+      if (idx <= 0) return prev;
+      const newMovable = [...movable];
+      const moved = { ...newMovable[idx] };
+      const above = newMovable[idx - 1];
+      if (moved.sectionTitle !== above.sectionTitle) moved.sectionTitle = above.sectionTitle;
+      newMovable.splice(idx, 1);
+      newMovable.splice(idx - 1, 0, moved);
+      return _applyMove(prev, newMovable);
+    });
+  };
+
+  const moveSectionDown = (sectionId) => {
+    setSections(prev => {
+      const movable = prev.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
+      const idx = movable.findIndex(s => s.id === sectionId);
+      if (idx < 0 || idx >= movable.length - 1) return prev;
+      const newMovable = [...movable];
+      const moved = { ...newMovable[idx] };
+      const below = newMovable[idx + 1];
+      if (moved.sectionTitle !== below.sectionTitle) moved.sectionTitle = below.sectionTitle;
+      newMovable.splice(idx, 1);
+      newMovable.splice(idx + 1, 0, moved);
+      return _applyMove(prev, newMovable);
+    });
+  };
+
+  const moveSectionToPosition = (sectionId, targetChapterTitle, targetPosition) => {
+    setSections(prev => {
+      const movable = prev.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
+      const idx = movable.findIndex(s => s.id === sectionId);
+      if (idx < 0) return prev;
+      const newMovable = [...movable];
+      const [moved] = newMovable.splice(idx, 1);
+      const updatedMoved = { ...moved, sectionTitle: targetChapterTitle };
+      let insertIdx = newMovable.length;
+      let count = 0;
+      for (let i = 0; i <= newMovable.length; i++) {
+        if (newMovable[i]?.sectionTitle === targetChapterTitle) {
+          if (count === targetPosition - 1) { insertIdx = i; break; }
+          count++;
+        } else if (count > 0) { insertIdx = i; break; }
+      }
+      newMovable.splice(insertIdx, 0, updatedMoved);
+      return _applyMove(prev, newMovable);
+    });
+  };
+
   // ── Придумати назви для заглушок ──
   const doNamePlaceholders = async () => {
     setNamingLoading(true);
@@ -831,6 +952,47 @@ Return ONLY JSON without markdown:
       console.warn("naming failed:", e.message);
     }
     setNamingLoading(false);
+  };
+
+  // ── Придумати назву для одного підрозділу-заглушки ──
+  const doNameSinglePlaceholder = async (sectionId) => {
+    setSingleNamingId(sectionId);
+    const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
+    const target = mainSecs.find(s => s.id === sectionId);
+    if (!target) { setSingleNamingId(null); return; }
+    const isChapPlaceholder = /\[Назва розділу/i.test(target.sectionTitle);
+    const chNum = sectionId.split(".")[0];
+    const planContext = mainSecs.map(s => `${s.id} — ${s.label}`).join("\n");
+    const prompt = `Academic work. Topic: "${info?.topic}". Type: ${info?.type}. Field: ${info?.subject}.
+Language: ${info?.language || "Ukrainian"} — all titles must be in this language.
+
+CURRENT PLAN:
+${planContext}
+
+Generate a title for ONE placeholder section: ${sectionId} (currently: "${target.label}"). It must fit the topic and not repeat existing sections.
+${isChapPlaceholder ? `Also generate a chapter title for РОЗДІЛ ${chNum}.` : ""}
+Return ONLY JSON:
+{"subsections":{"${sectionId}":"subsection title"}${isChapPlaceholder ? `,"chapters":{"${chNum}":"chapter title (without РОЗДІЛ N. prefix)"}` : ""}}`;
+    try {
+      const raw = await callClaude([{ role: "user", content: prompt }], null, SYS_JSON_SHORT, 600, null, MODEL_FAST);
+      const match = raw.match(/\{[\s\S]*\}/);
+      const parsed = JSON.parse(match?.[0] || raw);
+      const subTitles = parsed.subsections || {};
+      const chapTitles = parsed.chapters || {};
+      setSections(prev => {
+        const next = prev.map(s => {
+          const cn = s.id.split(".")[0];
+          const newSectionTitle = chapTitles[cn] ? `РОЗДІЛ ${cn}. ${chapTitles[cn]}` : s.sectionTitle;
+          const newLabel = subTitles[s.id] ? `${s.id} ${subTitles[s.id]}` : s.label;
+          return { ...s, label: newLabel, sectionTitle: newSectionTitle };
+        });
+        setPlanDisplay(buildPlanText(next));
+        return next;
+      });
+    } catch (e) {
+      console.warn("single naming failed:", e.message);
+    }
+    setSingleNamingId(null);
   };
 
   const startGen = async (mode) => {
@@ -3201,6 +3363,9 @@ ${refLines2.join("\n")}`;
               startGen={startGen} setStage={setStage} workflowMode={workflowMode}
               setSourceDist={setSourceDist} setSourceTotal={setSourceTotal}
               addNewChapter={addNewChapter} recalcPages={recalcPages}
+              moveSectionUp={moveSectionUp} moveSectionDown={moveSectionDown}
+              moveSectionToPosition={moveSectionToPosition}
+              doNameSinglePlaceholder={doNameSinglePlaceholder} singleNamingId={singleNamingId}
             />
           )}
           {stage === "writing" && (

@@ -4,12 +4,36 @@ import { SpinDot } from "../SpinDot.jsx";
 import { Heading, NavBtn, PrimaryBtn, GreenBtn } from "../Buttons.jsx";
 import { PlanLoadingSkeleton } from "../PlanLoadingSkeleton.jsx";
 
+function getPositionOptions(currentSec, sections) {
+  const movable = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
+  const chapTitles = [];
+  const chapSecs = {};
+  movable.forEach(s => {
+    if (!chapSecs[s.sectionTitle]) { chapTitles.push(s.sectionTitle); chapSecs[s.sectionTitle] = []; }
+    chapSecs[s.sectionTitle].push(s);
+  });
+  const opts = [];
+  chapTitles.forEach(title => {
+    const secs = chapSecs[title];
+    const chapNum = (title.match(/РОЗДІЛ\s+(\d+)/i) || [])[1] || "?";
+    const label = `Р${chapNum}`;
+    for (let pos = 1; pos <= secs.length + 1; pos++) {
+      const isCurrent = title === currentSec.sectionTitle &&
+        secs.findIndex(s => s.id === currentSec.id) === pos - 1;
+      if (!isCurrent) opts.push({ value: `${title}|||${pos}`, label: `${label} → поз. ${pos}` });
+    }
+  });
+  return opts;
+}
+
 export function PlanStage({
   sections, setSections, planDisplay, setPlanDisplay, planLoading, clientPlan,
   showManualPlanInput, setShowManualPlanInput, manualPlanText, setManualPlanText,
   planDocxLoading, setPlanDocxLoading, namingLoading, totalPagesNum,
   info, methodInfo, content, doGenPlan, doNamePlaceholders, startGen, setStage,
   setSourceDist, setSourceTotal, addNewChapter, recalcPages, workflowMode,
+  moveSectionUp, moveSectionDown, moveSectionToPosition,
+  doNameSinglePlaceholder, singleNamingId,
 }) {
   return (
     <div className="fade">
@@ -81,8 +105,8 @@ export function PlanStage({
             ✏️ Редагуй назви та сторінки прямо в таблиці. Кнопка <strong>+</strong> — додати підрозділ, <strong>✕</strong> — видалити.
           </div>
           <div style={{ border: "1.5px solid #d4cfc4", borderRadius: 8, overflow: "hidden", marginBottom: 22 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "36px 1fr 70px 54px 36px", background: "#1a1a14", color: "#e8ff47", padding: "9px 14px", fontSize: 11, letterSpacing: "1.5px", textTransform: "uppercase" }}>
-              <div>#</div><div>Підрозділ</div><div style={{ textAlign: "center" }}>Стор.</div><div style={{ textAlign: "center" }}>Промти</div><div />
+            <div style={{ display: "grid", gridTemplateColumns: "36px 1fr 70px 54px 84px 36px", background: "#1a1a14", color: "#e8ff47", padding: "9px 14px", fontSize: 11, letterSpacing: "1.5px", textTransform: "uppercase" }}>
+              <div>#</div><div>Підрозділ</div><div style={{ textAlign: "center" }}>Стор.</div><div style={{ textAlign: "center" }}>Промти</div><div style={{ textAlign: "center" }}>Перем.</div><div />
             </div>
             {(() => {
               let lastChapterTitle = null;
@@ -95,19 +119,58 @@ export function PlanStage({
                 if (isMainSub && s.sectionTitle !== lastChapterTitle) {
                   lastChapterTitle = s.sectionTitle;
                   rows.push(
-                    <div key={`chhead-${s.sectionTitle}`} style={{ display: "grid", gridTemplateColumns: "36px 1fr 70px 54px 36px", borderBottom: "1px solid #e4dfd4", background: "#ddd8c8", alignItems: "center" }}>
+                    <div key={`chhead-${s.sectionTitle}`} style={{ display: "grid", gridTemplateColumns: "36px 1fr 70px 54px 84px 36px", borderBottom: "1px solid #e4dfd4", background: "#ddd8c8", alignItems: "center" }}>
                       <div style={{ padding: "8px 10px" }} />
-                      <div style={{ padding: "8px 8px", fontSize: 12, fontWeight: "bold", color: "#1a1a14", letterSpacing: "0.5px", gridColumn: "2 / 6", textTransform: "uppercase" }}>{s.sectionTitle}</div>
+                      <div style={{ padding: "8px 8px", fontSize: 12, fontWeight: "bold", color: "#1a1a14", letterSpacing: "0.5px", gridColumn: "2 / 7", textTransform: "uppercase" }}>{s.sectionTitle}</div>
                     </div>
                   );
                 }
                 rowNum++;
+                const isMovable = !isSpecial && !isChapterConclusion;
+                const isPlaceholder = isMovable && /\[|\bновий\b/i.test(s.label);
+                const posOpts = isMovable ? getPositionOptions(s, sections) : [];
+                const movable = sections.filter(x => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(x.type));
+                const movIdx = movable.findIndex(x => x.id === s.id);
+                const canUp = isMovable && movIdx > 0;
+                const canDown = isMovable && movIdx < movable.length - 1;
                 rows.push(
-                  <div key={s.id} className="sec-row" style={{ display: "grid", gridTemplateColumns: "36px 1fr 70px 54px 36px", borderBottom: i < sections.length - 1 ? "1px solid #e4dfd4" : "none", background: isSpecial ? "#ede9e0" : rowNum % 2 === 0 ? "#f5f2eb" : "#f0ece2", alignItems: "center", transition: "background .15s" }}>
+                  <div key={s.id} className="sec-row" style={{ display: "grid", gridTemplateColumns: "36px 1fr 70px 54px 84px 36px", borderBottom: i < sections.length - 1 ? "1px solid #e4dfd4" : "none", background: isSpecial ? "#ede9e0" : rowNum % 2 === 0 ? "#f5f2eb" : "#f0ece2", alignItems: "center", transition: "background .15s" }}>
                     <div style={{ padding: "9px 10px", fontSize: 12, color: "#bbb" }}>{rowNum}</div>
-                    <input value={s.label} onChange={e => { const val = e.target.value; setSections(p => { const next = p.map((x, j) => j === i ? { ...x, label: val } : x); setPlanDisplay(buildPlanText(next)); return next; }); }} style={{ background: "transparent", border: "none", fontSize: 13, padding: "9px 8px", color: isSpecial ? "#888" : "#1a1a14", fontStyle: isSpecial ? "italic" : "normal", width: "100%", fontFamily: "'Spectral',serif" }} />
+                    <div style={{ display: "flex", alignItems: "center", overflow: "hidden" }}>
+                      <input value={s.label} onChange={e => { const val = e.target.value; setSections(p => { const next = p.map((x, j) => j === i ? { ...x, label: val } : x); setPlanDisplay(buildPlanText(next)); return next; }); }} style={{ background: "transparent", border: "none", fontSize: 13, padding: "9px 8px", color: isSpecial ? "#888" : "#1a1a14", fontStyle: isSpecial ? "italic" : "normal", flex: 1, minWidth: 0, fontFamily: "'Spectral',serif" }} />
+                      {isPlaceholder && (
+                        <button
+                          onClick={() => doNameSinglePlaceholder(s.id)}
+                          disabled={singleNamingId === s.id}
+                          title="Згенерувати назву"
+                          style={{ background: "transparent", border: "none", fontSize: 14, cursor: singleNamingId === s.id ? "wait" : "pointer", padding: "2px 6px", color: singleNamingId === s.id ? "#ccc" : "#b8a020", flexShrink: 0 }}
+                        >{singleNamingId === s.id ? "…" : "✨"}</button>
+                      )}
+                    </div>
                     <input type="number" min="1" value={s.pages} onChange={e => { const v = parseInt(e.target.value) || 1; setSections(p => { const next = p.map((x, j) => j === i ? { ...x, pages: v, prompts: x.type === "sources" ? 0 : Math.max(1, Math.ceil(v / 3)) } : x); setPlanDisplay(buildPlanText(next)); const { dist, total } = calcSourceDist(next); setSourceDist(dist); setSourceTotal(total); return next; }); }} style={{ background: "transparent", border: "none", fontSize: 13, padding: "9px 4px", color: "#1a1a14", textAlign: "center", width: "100%", fontFamily: "'Spectral',serif" }} />
                     <div style={{ textAlign: "center", fontSize: 12, color: "#888", padding: "9px" }}>{s.type === "sources" ? "—" : s.prompts}</div>
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, padding: "4px 2px" }}>
+                      {isMovable ? (
+                        <>
+                          <div style={{ display: "flex", gap: 2 }}>
+                            <button onClick={() => moveSectionUp(s.id)} disabled={!canUp} title="Вгору" style={{ background: "transparent", border: "none", fontSize: 12, cursor: canUp ? "pointer" : "default", color: canUp ? "#555" : "#ddd", padding: "1px 4px", lineHeight: 1 }}>↑</button>
+                            <button onClick={() => moveSectionDown(s.id)} disabled={!canDown} title="Вниз" style={{ background: "transparent", border: "none", fontSize: 12, cursor: canDown ? "pointer" : "default", color: canDown ? "#555" : "#ddd", padding: "1px 4px", lineHeight: 1 }}>↓</button>
+                          </div>
+                          <select
+                            value=""
+                            onChange={e => {
+                              if (!e.target.value) return;
+                              const [title, pos] = e.target.value.split("|||");
+                              moveSectionToPosition(s.id, title, parseInt(pos));
+                            }}
+                            style={{ fontSize: 9, border: "1px solid #ccc", borderRadius: 3, background: "#faf8f3", color: "#555", padding: "1px 2px", width: "100%", cursor: "pointer", fontFamily: "'Spectral',serif" }}
+                          >
+                            <option value="">⇅</option>
+                            {posOpts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                          </select>
+                        </>
+                      ) : null}
+                    </div>
                     <div style={{ display: "flex", justifyContent: "center" }}>
                       <button onClick={() => setSections(p => { const next = p.filter((_, j) => j !== i); setPlanDisplay(buildPlanText(next)); const { dist, total } = calcSourceDist(next); setSourceDist(dist); setSourceTotal(total); return next; })} style={{ background: "transparent", border: "none", color: "#bbb", fontSize: 15, cursor: "pointer", padding: "2px 4px", borderRadius: 4 }} onMouseEnter={e => e.currentTarget.style.color = "#c03030"} onMouseLeave={e => e.currentTarget.style.color = "#bbb"}>✕</button>
                     </div>
