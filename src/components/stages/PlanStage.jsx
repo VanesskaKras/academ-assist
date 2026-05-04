@@ -4,27 +4,6 @@ import { SpinDot } from "../SpinDot.jsx";
 import { Heading, NavBtn, PrimaryBtn, GreenBtn } from "../Buttons.jsx";
 import { PlanLoadingSkeleton } from "../PlanLoadingSkeleton.jsx";
 
-function getPositionOptions(currentSec, sections) {
-  const movable = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
-  const chapTitles = [];
-  const chapSecs = {};
-  movable.forEach(s => {
-    if (!chapSecs[s.sectionTitle]) { chapTitles.push(s.sectionTitle); chapSecs[s.sectionTitle] = []; }
-    chapSecs[s.sectionTitle].push(s);
-  });
-  const opts = [];
-  chapTitles.forEach(title => {
-    const secs = chapSecs[title];
-    const chapNum = (title.match(/РОЗДІЛ\s+(\d+)/i) || [])[1] || "?";
-    const label = `Р${chapNum}`;
-    for (let pos = 1; pos <= secs.length + 1; pos++) {
-      const isCurrent = title === currentSec.sectionTitle &&
-        secs.findIndex(s => s.id === currentSec.id) === pos - 1;
-      if (!isCurrent) opts.push({ value: `${title}|||${pos}`, label: `${label} → поз. ${pos}` });
-    }
-  });
-  return opts;
-}
 
 export function PlanStage({
   sections, setSections, planDisplay, setPlanDisplay, planLoading, clientPlan,
@@ -32,7 +11,7 @@ export function PlanStage({
   planDocxLoading, setPlanDocxLoading, namingLoading, totalPagesNum,
   info, methodInfo, content, doGenPlan, doNamePlaceholders, startGen, setStage,
   setSourceDist, setSourceTotal, addNewChapter, recalcPages, workflowMode,
-  moveSectionUp, moveSectionDown, moveSectionToPosition,
+  moveSectionUp, moveSectionDown,
   doNameSinglePlaceholder, singleNamingId,
 }) {
   return (
@@ -128,7 +107,6 @@ export function PlanStage({
                 rowNum++;
                 const isMovable = !isSpecial && !isChapterConclusion;
                 const isPlaceholder = isMovable && /\[|\bновий\b/i.test(s.label);
-                const posOpts = isMovable ? getPositionOptions(s, sections) : [];
                 const movable = sections.filter(x => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(x.type));
                 const movIdx = movable.findIndex(x => x.id === s.id);
                 const canUp = isMovable && movIdx > 0;
@@ -151,24 +129,10 @@ export function PlanStage({
                     <div style={{ textAlign: "center", fontSize: 12, color: "#888", padding: "9px" }}>{s.type === "sources" ? "—" : s.prompts}</div>
                     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, padding: "4px 2px" }}>
                       {isMovable ? (
-                        <>
-                          <div style={{ display: "flex", gap: 2 }}>
-                            <button onClick={() => moveSectionUp(s.id)} disabled={!canUp} title="Вгору" style={{ background: "transparent", border: "none", fontSize: 12, cursor: canUp ? "pointer" : "default", color: canUp ? "#555" : "#ddd", padding: "1px 4px", lineHeight: 1 }}>↑</button>
-                            <button onClick={() => moveSectionDown(s.id)} disabled={!canDown} title="Вниз" style={{ background: "transparent", border: "none", fontSize: 12, cursor: canDown ? "pointer" : "default", color: canDown ? "#555" : "#ddd", padding: "1px 4px", lineHeight: 1 }}>↓</button>
-                          </div>
-                          <select
-                            value=""
-                            onChange={e => {
-                              if (!e.target.value) return;
-                              const [title, pos] = e.target.value.split("|||");
-                              moveSectionToPosition(s.id, title, parseInt(pos));
-                            }}
-                            style={{ fontSize: 9, border: "1px solid #ccc", borderRadius: 3, background: "#faf8f3", color: "#555", padding: "1px 2px", width: "100%", cursor: "pointer", fontFamily: "'Spectral',serif" }}
-                          >
-                            <option value="">⇅</option>
-                            {posOpts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                          </select>
-                        </>
+                        <div style={{ display: "flex", gap: 2 }}>
+                          <button onClick={() => moveSectionUp(s.id)} disabled={!canUp} title="Вгору" style={{ background: "transparent", border: "none", fontSize: 12, cursor: canUp ? "pointer" : "default", color: canUp ? "#555" : "#ddd", padding: "1px 4px", lineHeight: 1 }}>↑</button>
+                          <button onClick={() => moveSectionDown(s.id)} disabled={!canDown} title="Вниз" style={{ background: "transparent", border: "none", fontSize: 12, cursor: canDown ? "pointer" : "default", color: canDown ? "#555" : "#ddd", padding: "1px 4px", lineHeight: 1 }}>↓</button>
+                        </div>
                       ) : null}
                     </div>
                     <div style={{ display: "flex", justifyContent: "center" }}>
