@@ -313,6 +313,17 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   // Синхронізуємо ref з state для використання всередині async-функцій
   useEffect(() => { maxStageIdxRef.current = maxStageIdx; }, [maxStageIdx]);
 
+  // ── Авто-збереження sections при ручному редагуванні плану ──
+  const planSaveTimer = useRef(null);
+  useEffect(() => {
+    if (stage !== "plan" || !sections.length) return;
+    clearTimeout(planSaveTimer.current);
+    planSaveTimer.current = setTimeout(() => {
+      saveToFirestore({ sections, planDisplay });
+    }, 1500);
+    return () => clearTimeout(planSaveTimer.current);
+  }, [sections]); // eslint-disable-line
+
   // ── Авто-збереження citInputs на стейджі джерел ──
   const citSaveTimer = useRef(null);
   useEffect(() => {
