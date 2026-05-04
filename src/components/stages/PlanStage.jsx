@@ -106,7 +106,7 @@ export function PlanStage({
                 }
                 rowNum++;
                 const isMovable = !isSpecial && !isChapterConclusion;
-                const isPlaceholder = isMovable && /\[|\bновий\b/i.test(s.label);
+                const isPlaceholder = isMovable && /\[|новий/i.test(s.label);
                 const movable = sections.filter(x => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(x.type));
                 const movIdx = movable.findIndex(x => x.id === s.id);
                 const canUp = isMovable && movIdx > 0;
@@ -169,7 +169,7 @@ export function PlanStage({
             </div>
           </div>
 
-          {sections.some(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type) && /\[|\bновий\b/i.test(s.label)) && (
+          {sections.some(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type) && /\[|новий/i.test(s.label)) && (
             <div style={{ marginBottom: 14 }}>
               <GreenBtn
                 onClick={doNamePlaceholders}

@@ -900,7 +900,7 @@ Order: subsections grouped by chapter, then intro, conclusions, sources.`;
   const doNamePlaceholders = async () => {
     setNamingLoading(true);
     const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
-    const placeholderSubs = mainSecs.filter(s => /\[|\bновий\b/i.test(s.label));
+    const placeholderSubs = mainSecs.filter(s => /\[|новий/i.test(s.label));
     // Розділи чиї sectionTitle ще заглушки
     const placeholderChapNums = [...new Set(
       mainSecs.filter(s => /\[Назва розділу/i.test(s.sectionTitle)).map(s => s.id.split(".")[0])
