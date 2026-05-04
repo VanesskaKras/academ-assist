@@ -3408,6 +3408,17 @@ ${refLines2.join("\n")}`;
               onFinish={async () => { await saveToFirestore({ stage: "done", status: "done", content, citInputs, citStructured, abstractsMap, refList }); setStage("done"); }}
               onProceedToWriting={() => setStage("writing")}
               setStage={setStage} workflowMode={workflowMode}
+              onRegenWithNewSources={() => {
+                if (Object.keys(content).length > 0) {
+                  if (!window.confirm("Переписати всю роботу з нуля з новими джерелами? Поточний текст буде замінено.")) return;
+                  contentRef.current = {};
+                  setContent({});
+                  setGenIdx(0);
+                  writingDoneRef.current = false;
+                  setPaused(false);
+                }
+                setStage("writing");
+              }}
             />
           )}
           {stage === "done" && (
