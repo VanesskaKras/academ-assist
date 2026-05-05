@@ -11,6 +11,7 @@ import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
 import { FieldBox, Heading, NavBtn, PrimaryBtn, GreenBtn, SaveIndicator } from "./components/Buttons.jsx";
 import { DropZone } from "./components/DropZone.jsx";
 import { parsePagesAvg, exportSimpleDocx, TA, TA_WHITE, SHARED_STYLES } from "./shared.jsx";
+import { exportToDocx } from "./lib/exportDocx.js";
 import { ChecklistStage } from "./components/stages/ChecklistStage.jsx";
 
 // ── Рендер тексту з markdown-таблицями ──
@@ -64,8 +65,8 @@ const WORK_TYPES = {
     label: "Реферат",
     icon: "📄",
     hasplan: true,
-    stages: ["Дані", "План", "Текст", "Готово", "Чек-лист"],
-    stageKeys: ["input", "plan", "writing", "done", "checklist"],
+    stages: ["Дані", "План", "Джерела", "Генерація", "Готово", "Чек-лист"],
+    stageKeys: ["input", "plan", "sources", "writing", "done", "checklist"],
     color: "#1a5a8a",
     bg: "#e4f0ff",
   },
@@ -268,16 +269,16 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
     setMaxStageIdx(prev => Math.max(prev, idx));
   }, [stage, workType]);
 
-  // ── Автозапуск пошуку джерел для тез/статті/есе ──
+  // ── Автозапуск пошуку джерел для тез/статті/есе/реферату ──
   useEffect(() => {
-    if (["tezy", "stattia", "ese"].includes(workType) && stage === "sources" && tezyPapers.length === 0 && !tezySearchLoading && info?.topic) {
+    if (["tezy", "stattia", "ese", "referat"].includes(workType) && stage === "sources" && tezyPapers.length === 0 && !tezySearchLoading && info?.topic) {
       doSearchTezyPapers();
     }
   }, [workType, stage, info?.topic]);
 
   // ── Авто-збереження вибраних джерел ──
   useEffect(() => {
-    if (!["tezy", "stattia", "ese"].includes(workType) || stage !== "sources") return;
+    if (!["tezy", "stattia", "ese", "referat"].includes(workType) || stage !== "sources") return;
     const t = setTimeout(() => {
       saveToFirestore({ selectedTezyIds });
     }, 1000);
@@ -286,7 +287,7 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
 
   // ── Авто-збереження текстового поля джерел ──
   useEffect(() => {
-    if (!["tezy", "stattia", "ese"].includes(workType) || stage !== "sources") return;
+    if (!["tezy", "stattia", "ese", "referat"].includes(workType) || stage !== "sources") return;
     const t = setTimeout(() => {
       saveToFirestore({ citText });
     }, 1500);
@@ -332,8 +333,10 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
 
       const isTezy = workType === "tezy";
       const isSimpleWithSources = ["stattia", "ese"].includes(workType);
+      const isReferat = workType === "referat";
       const tezyFields = isTezy ? `,"needsSources":true,"sourceCount":3,"authorFormat":"center","bodyStructure":"linear","needsEmail":false,"needsUDK":false,"needsFigures":false,"figureCount":0` : "";
       const simpleFields = isSimpleWithSources ? `,"sourceCount":${workType === "stattia" ? 5 : 3},"citStyle":"ДСТУ","needsFigures":false,"figureCount":0,"sortAlpha":false` : "";
+      const referatFields = isReferat ? `,"sourceCount":10,"sortAlpha":true` : "";
       const tezyHints = isTezy ? `
 needsSources — чи конференція вимагає список джерел (true/false).
 sourceCount — скільки джерел (число, зазвичай 3-5).
@@ -349,8 +352,11 @@ citStyle — стиль цитування: "ДСТУ" або "APA" або ін�
 needsFigures — чи потрібні рисунки/схеми (true/false).
 figureCount — скільки рисунків (зазвичай 1-3).
 sortAlpha — чи сортувати список літератури за алфавітом (true/false).` : "";
+      const referatHints = isReferat ? `
+sourceCount — мінімальна кількість джерел (зазвичай = кількість сторінок; якщо вказано у методичці — бери звідти).
+sortAlpha — чи сортувати список літератури за алфавітом (true/false).` : "";
 
-      const materialHint = ((isTezy || isSimpleWithSources) && materialText.trim())
+      const materialHint = ((isTezy || isSimpleWithSources || isReferat) && materialText.trim())
         ? `\nМАТЕРІАЛ (фрагмент для розуміння теми):\n${materialText.trim().slice(0, 1500)}`
         : "";
 
@@ -361,21 +367,21 @@ ${tplText}
 ${comment ? `\nКОМЕНТАР: ${comment}` : ""}${materialHint}
 
 Поверни ТІЛЬКИ JSON (без markdown):
-{"type":"${WORK_TYPES[workType]?.label || workType}","pages":"","topic":"","subject":"","direction":"","uniqueness":"","language":"Українська","deadline":"","orderNumber":"","requirements":""${tezyFields}${simpleFields}}
+{"type":"${WORK_TYPES[workType]?.label || workType}","pages":"","topic":"","subject":"","direction":"","uniqueness":"","language":"Українська","deadline":"","orderNumber":"","requirements":""${tezyFields}${simpleFields}${referatFields}}
 
 orderNumber — номер замовлення якщо є (наприклад "37808.2"), інакше порожній рядок.
-requirements — якщо є рекомендації у файлах, стисло опиши ключові вимоги до структури та оформлення.${tezyHints}${simpleHints}`;
+requirements — якщо є рекомендації у файлах, стисло опиши ключові вимоги до структури та оформлення.${tezyHints}${simpleHints}${referatHints}`;
 
       const msgs = [{ role: "user", content: [...fileContext, ...matFileContext, { type: "text", text: prompt }] }];
-      // Для тез/статті/есе з файлами — Sonnet (краще читає зображення), інакше Haiku
-      const model = ((isTezy || isSimpleWithSources) && (files.length > 0 || materialFiles.length > 0)) ? MODEL : MODEL_FAST;
+      // Для тез/статті/есе/реферату з файлами — Sonnet (краще читає зображення), інакше Haiku
+      const model = ((isTezy || isSimpleWithSources || isReferat) && (files.length > 0 || materialFiles.length > 0)) ? MODEL : MODEL_FAST;
       const raw = await callClaude(msgs, null, "Respond only with valid JSON. No markdown.", 1500, null, model);
       const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || raw);
       const newInfo = { ...parsed, workType };
       setInfo(newInfo);
 
       if (workType === "referat") {
-        await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, stage: "plan", status: "new" });
+        await saveToFirestore({ tplText, comment, clientPlan, materialText, info: newInfo, stage: "plan", status: "new" });
         setStage("plan");
       } else if (isTezy && newInfo.needsSources !== false) {
         await saveToFirestore({ tplText, comment, materialText, authorData, info: newInfo, stage: "sources", status: "new" });
@@ -428,8 +434,9 @@ requirements — якщо є рекомендації у файлах, стис�
     setTezyCitations(citations);
     await saveToFirestore({ tezyCitations: citations, citText, stage: "writing", status: "sources_done" });
     setStage("writing");
+    // Реферат: useEffect для writing бере керування і генерує посекційно
     if (workType === "tezy") await doGenerateTezy(citations);
-    else await doGenerateSimple(citations);
+    else if (workType !== "referat") await doGenerateSimple(citations);
   };
 
   const doConfirmTezyPapers = async () => {
@@ -593,41 +600,54 @@ ${supervisorBlock}`;
     setRunning(true); setLoadMsg("Генерую план...");
     const totalPages = parsePagesAvg(info?.pages);
     const chapCount = totalPages < 10 ? 2 : 3;
+    const pagesPerChap = Math.max(2, Math.round((totalPages - 2) / chapCount));
 
     try {
       let newSections = [];
 
       if (clientPlan?.trim()) {
-        // Парсимо план клієнта
         const lines = clientPlan.split("\n").map(l => l.trim()).filter(Boolean);
         const chapSecs = lines
           .filter(l => /^(розділ|chapter|\d+\.?\s+[А-ЯҐЄІЇа-яґєії])/i.test(l))
-          .map((l, i) => ({ id: `ch${i + 1}`, label: l, text: "" }));
+          .map((l, i) => ({ id: `ch${i + 1}`, label: l, text: "", pages: pagesPerChap }));
         if (chapSecs.length > 0) {
           newSections = [
-            { id: "intro", label: "ВСТУП", text: "" },
+            { id: "intro", label: "ВСТУП", text: "", pages: 1 },
             ...chapSecs,
-            { id: "conclusions", label: "ВИСНОВКИ", text: "" },
-            { id: "sources", label: "СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ", text: "" },
+            { id: "conclusions", label: "ВИСНОВКИ", text: "", pages: 1 },
+            { id: "sources", label: "СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ", text: "", pages: 0 },
           ];
         }
       }
 
       if (newSections.length === 0) {
-        // Генеруємо план через API
-        const prompt = `Склади план реферату на тему: "${info?.topic}". Галузь: ${info?.subject || ""}. Обсяг: ${totalPages} стор.
-К-сть розділів: ${chapCount}.
-${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
+        const toClaudeFile = f => ({ type: f.type.startsWith("image/") ? "image" : "document", source: { type: "base64", media_type: f.type, data: f.b64 } });
+        const fileContext = files.map(toClaudeFile);
+
+        const chapEntries = Array.from({ length: chapCount }, (_, i) =>
+          `  {"id":"ch${i + 1}","label":"РОЗДІЛ ${i + 1}. Назва","pages":${pagesPerChap}}`
+        ).join(",\n");
+
+        const prompt = `Склади план реферату.
+Тема: "${info?.topic}". Галузь: ${info?.subject || ""}. Обсяг: ${totalPages} стор.
+Кількість основних розділів: ${chapCount}.
+${info?.requirements ? `Вимоги методички: ${info.requirements}` : ""}
+
+Назви розділів мають відповідати темі. Якщо у методичці є конкретна структура — використай її.
 
 Поверни ТІЛЬКИ JSON:
 {"sections":[
-  {"id":"intro","label":"ВСТУП"},
-  {"id":"ch1","label":"РОЗДІЛ 1. Назва"},
-  {"id":"ch2","label":"РОЗДІЛ 2. Назва"},
-  {"id":"conclusions","label":"ВИСНОВКИ"},
-  {"id":"sources","label":"СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ"}
+  {"id":"intro","label":"ВСТУП","pages":1},
+${chapEntries},
+  {"id":"conclusions","label":"ВИСНОВКИ","pages":1},
+  {"id":"sources","label":"СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ","pages":0}
 ]}`;
-        const raw = await callClaude([{ role: "user", content: prompt }], null, "Respond only with valid JSON.", 1000, null, MODEL_FAST);
+
+        const msgs = fileContext.length > 0
+          ? [{ role: "user", content: [...fileContext, { type: "text", text: prompt }] }]
+          : [{ role: "user", content: prompt }];
+        const model = fileContext.length > 0 ? MODEL : MODEL_FAST;
+        const raw = await callClaude(msgs, null, "Respond only with valid JSON. No markdown.", 1200, null, model);
         const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || raw);
         newSections = (parsed.sections || []).map(s => ({ ...s, text: "" }));
       }
@@ -652,9 +672,10 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
     if (sec.text) { setGenIdx(g => g + 1); return; }
     if (sec.id === "sources") {
       const totalPages = parsePagesAvg(info?.pages);
-      const sourceCount = totalPages;
-      const autoSources = `Список використаних джерел формується за кількістю сторінок (${sourceCount} джерел). Додайте джерела вручну.`;
-      setSections(p => p.map((s, i) => i === genIdx ? { ...s, text: autoSources } : s));
+      const sourcesText = tezyCitations.length > 0
+        ? tezyCitations.map((c, i) => `${i + 1}. ${c}`).join("\n")
+        : citText.trim() || `Список використаних джерел формується за кількістю сторінок (${totalPages} джерел). Додайте джерела вручну.`;
+      setSections(p => p.map((s, i) => i === genIdx ? { ...s, text: sourcesText } : s));
       setGenIdx(g => g + 1);
       return;
     }
@@ -667,30 +688,53 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
     const lang = info?.language || "Українська";
     const totalPages = parsePagesAvg(info?.pages);
     const chapCount = sections.filter(s => !["intro", "conclusions", "sources"].includes(s.id)).length;
-    const pagesPerSec = sec.id === "intro" || sec.id === "conclusions"
-      ? Math.max(1, Math.round(totalPages * 0.07))
-      : Math.max(2, Math.round(totalPages * 0.8 / chapCount));
+    const pagesPerSec = sec.pages != null
+      ? sec.pages
+      : (sec.id === "intro" || sec.id === "conclusions"
+          ? Math.max(1, Math.round(totalPages * 0.07))
+          : Math.max(2, Math.round(totalPages * 0.8 / chapCount)));
     const approxParas = Math.max(3, Math.round(pagesPerSec * 3));
+
+    // ── Джерела ──
+    const hasSources = tezyCitations.length > 0;
+    const sourcesBlock = hasSources
+      ? `\nДЖЕРЕЛА ДЛЯ РОБОТИ (${tezyCitations.length} шт.) — спирайся на них, вставляй [N] після відповідних тверджень:\n${tezyCitations.map((s, i) => `[${i + 1}] ${s}`).join("\n")}\n`
+      : "";
+    const citNote = hasSources
+      ? "Вставляй [N] у текст після тверджень, що спираються на джерела. Безособові конструкції: 'встановлено [N]', 'зазначається [N]'. ЗАБОРОНЕНО об'єднувати [1, 2] — ставь окремо [1] [2]."
+      : "Без посилань [N].";
+
+    // ── Матеріал ──
+    const materialContext = materialText.trim()
+      ? `\nМАТЕРІАЛ ДЛЯ РОБОТИ (використай як основу для змісту):\n${materialText.trim().slice(0, 2000)}\n`
+      : "";
+
+    const toClaudeFile = f => ({ type: f.type.startsWith("image/") ? "image" : "document", source: { type: "base64", media_type: f.type, data: f.b64 } });
+    const matFileContext = materialFiles.length > 0
+      ? [{ type: "text", text: "Матеріал для роботи (файли):" }, ...materialFiles.map(toClaudeFile)]
+      : [];
 
     let instruction = "";
     if (sec.id === "intro") {
       instruction = `Напиши ВСТУП для реферату на тему "${info?.topic}".
-Структура: актуальність теми, мета роботи, завдання, структура реферату.
+${materialContext}Структура: актуальність теми, мета роботи, завдання, структура реферату.
 ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
-Обсяг: ~${approxParas} абзаців. Без посилань. Без жирного.`;
+Обсяг: ~${approxParas} абзаців (~${pagesPerSec} стор.). Без цитат. Без жирного.`;
     } else if (sec.id === "conclusions") {
       instruction = `Напиши ВИСНОВКИ для реферату на тему "${info?.topic}".
-Підсумуй основні результати по кожному розділу. Конкретні висновки без загальних фраз.
-Обсяг: ~${approxParas} абзаців. Без посилань. Без жирного. Без нумерації. Пиши суцільними абзацами.`;
+${materialContext}Підсумуй основні результати по кожному розділу. Конкретні висновки без загальних фраз.
+Обсяг: ~${approxParas} абзаців (~${pagesPerSec} стор.). Без цитат. Без жирного. Без нумерації. Пиши суцільними абзацами.`;
     } else {
       instruction = `Напиши розділ "${sec.label}" для реферату на тему "${info?.topic}". Галузь: ${info?.subject || ""}.
-${info?.requirements ? `Вимоги до оформлення: ${info.requirements}` : ""}
-Обсяг: ~${approxParas} абзаців (~${pagesPerSec} стор.).
-Без посилань у тексті. Без жирного. Завершуй підсумковим реченням.`;
+${materialContext}${sourcesBlock}${info?.requirements ? `Вимоги до оформлення: ${info.requirements}\n` : ""}Обсяг: ~${approxParas} абзаців (~${pagesPerSec} стор.). ${citNote} Без жирного. Завершуй підсумковим реченням.`;
     }
 
+    const msgs = matFileContext.length > 0
+      ? [{ role: "user", content: [...matFileContext, { type: "text", text: instruction }] }]
+      : [{ role: "user", content: instruction }];
+
     try {
-      const result = await callClaude([{ role: "user", content: instruction }], null, buildSYSSmall(lang), 6000);
+      const result = await callClaude(msgs, null, buildSYSSmall(lang), 6000);
       setSections(p => {
         const next = p.map((s, i) => i === genIdx ? { ...s, text: result } : s);
         saveToFirestore({ sections: next, stage: "writing", status: "writing", genIdx: genIdx + 1 });
@@ -887,9 +931,9 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
 
             {workType !== "tezy" && (
               <FieldBox label={
-                ["stattia", "ese"].includes(workType)
+                ["stattia", "ese", "referat"].includes(workType)
                   ? "Методичка (необов'язково)"
-                  : `Рекомендації / методичка / скріни (до 3 файлів)${workType !== "referat" ? " — необов'язково" : ""}`
+                  : "Рекомендації / методичка / скріни (до 3 файлів) — необов'язково"
               }>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {files.map((f, i) => (
@@ -905,13 +949,13 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
               </FieldBox>
             )}
 
-            {/* Матеріал для роботи — для тез, статті, есе */}
-            {["tezy", "stattia", "ese"].includes(workType) && (
-              <FieldBox label={`Матеріал для роботи — текст або файли/фото до ${["stattia", "ese"].includes(workType) ? 8 : 6} (необов'язково)`}>
+            {/* Матеріал для роботи — для тез, статті, есе, реферату */}
+            {["tezy", "stattia", "ese", "referat"].includes(workType) && (
+              <FieldBox label={`Матеріал для роботи — текст або файли/фото до ${["stattia", "ese", "referat"].includes(workType) ? 8 : 6} (необов'язково)`}>
                 <textarea
                   value={materialText}
                   onChange={e => setMaterialText(e.target.value)}
-                  placeholder="Вставте текст, конспект, реферат або будь-який матеріал для аналізу..."
+                  placeholder="Вставте текст, конспект або будь-який матеріал що має лягти в основу роботи..."
                   style={{ ...TA, minHeight: 100 }}
                 />
                 <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
@@ -921,8 +965,8 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
                       <button onClick={() => setMaterialFiles(p => p.filter((_, j) => j !== i))} style={{ marginLeft: "auto", background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: 14 }}>✕</button>
                     </div>
                   ))}
-                  {materialFiles.length < (["stattia", "ese"].includes(workType) ? 8 : 6) && (
-                    <DropZone fileLabel={null} onFile={(name, b64, type) => { const lim = ["stattia", "ese"].includes(workType) ? 8 : 6; setMaterialFiles(p => p.length >= lim ? [...p.slice(1), { name, b64, type }] : [...p, { name, b64, type }]); }} accept=".pdf,.docx,.jpg,.jpeg,.png" />
+                  {materialFiles.length < (["stattia", "ese", "referat"].includes(workType) ? 8 : 6) && (
+                    <DropZone fileLabel={null} onFile={(name, b64, type) => { const lim = ["stattia", "ese", "referat"].includes(workType) ? 8 : 6; setMaterialFiles(p => p.length >= lim ? [...p.slice(1), { name, b64, type }] : [...p, { name, b64, type }]); }} accept=".pdf,.docx,.jpg,.jpeg,.png" />
                   )}
                 </div>
                 {(materialText.trim() || materialFiles.length > 0) && (
@@ -979,30 +1023,43 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
 
             {sections.length === 0 ? (
               <>
-                <p style={{ fontSize: 13, color: "#888", marginBottom: 20 }}>
-                  {clientPlan?.trim() ? "Використовується план клієнта." : "Автоматично згенерую план."}
+                <p style={{ fontSize: 13, color: "#888", marginBottom: 8 }}>
+                  {clientPlan?.trim()
+                    ? "Знайдено готовий план від клієнта — розберу його структуру."
+                    : files.length > 0
+                      ? "Є методичка — витягну структуру з неї."
+                      : "Згенерую стандартний план за темою та кількістю сторінок."}
                 </p>
+                <p style={{ fontSize: 12, color: "#aaa", marginBottom: 20 }}>Стандарт: Вступ 1 стор. → Розділ 1 → Розділ 2 → Розділ 3 → Висновки 1 стор. → Список джерел</p>
                 <PrimaryBtn onClick={doGenPlan} loading={running} msg={loadMsg} label="Згенерувати план →" />
               </>
             ) : (
               <>
-                <p style={{ fontSize: 13, color: "#888", marginBottom: 16 }}>Перевірте та відредагуйте план. Після підтвердження — генерація тексту.</p>
+                <p style={{ fontSize: 13, color: "#888", marginBottom: 16 }}>Перевірте та відредагуйте план. Після підтвердження — збір джерел.</p>
                 <div style={{ border: "1.5px solid #d4cfc4", borderRadius: 8, overflow: "hidden", marginBottom: 20 }}>
                   {sections.map((sec, i) => (
                     <div key={sec.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 16px", borderBottom: i < sections.length - 1 ? "1px solid #e4dfd4" : "none", background: ["intro", "conclusions", "sources"].includes(sec.id) ? "#ede9e0" : "#faf8f3" }}>
                       <span style={{ fontSize: 11, color: "#bbb", width: 20 }}>{i + 1}</span>
                       <input value={sec.label} onChange={e => setSections(p => p.map((s, j) => j === i ? { ...s, label: e.target.value } : s))}
                         style={{ flex: 1, background: "transparent", border: "none", fontSize: 13, fontFamily: "'Spectral',serif", color: "#1a1a14" }} />
-                      <button onClick={() => setSections(p => p.filter((_, j) => j !== i))}
-                        style={{ background: "none", border: "none", color: "#ccc", cursor: "pointer", fontSize: 14 }}
-                        onMouseEnter={e => e.currentTarget.style.color = "#c00"}
-                        onMouseLeave={e => e.currentTarget.style.color = "#ccc"}>✕</button>
+                      {sec.pages > 0 && (
+                        <span style={{ fontSize: 11, color: "#aaa", whiteSpace: "nowrap" }}>{sec.pages} стор.</span>
+                      )}
+                      {sec.id === "sources" && (
+                        <span style={{ fontSize: 11, color: "#aaa", whiteSpace: "nowrap" }}>авто</span>
+                      )}
+                      {!["intro", "conclusions", "sources"].includes(sec.id) && (
+                        <button onClick={() => setSections(p => p.filter((_, j) => j !== i))}
+                          style={{ background: "none", border: "none", color: "#ccc", cursor: "pointer", fontSize: 14 }}
+                          onMouseEnter={e => e.currentTarget.style.color = "#c00"}
+                          onMouseLeave={e => e.currentTarget.style.color = "#ccc"}>✕</button>
+                      )}
                     </div>
                   ))}
                 </div>
                 <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                   <NavBtn onClick={() => setSections([])}>Перегенерувати</NavBtn>
-                  <PrimaryBtn onClick={() => { setStage("writing"); saveToFirestore({ sections, stage: "writing" }); }} label="Розпочати написання →" />
+                  <PrimaryBtn onClick={() => { setStage("sources"); saveToFirestore({ sections, stage: "sources" }); }} label="До джерел →" />
                 </div>
               </>
             )}
@@ -1040,7 +1097,7 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
         )}
 
         {/* ══ ДЖЕРЕЛА ══ */}
-        {["tezy", "stattia", "ese"].includes(workType) && stage === "sources" && (() => {
+        {["tezy", "stattia", "ese", "referat"].includes(workType) && stage === "sources" && (() => {
           const minSrc = info?.sourceCount || parsePagesAvg(info?.pages || "3");
           const citLines = citText.split("\n").map(s => s.trim()).filter(Boolean);
           const scholaUrl = `https://scholar.google.com/scholar?hl=uk&as_sdt=0%2C5&as_ylo=2021&q=${encodeURIComponent(info?.topic || "")}&btnG=`;
@@ -1187,7 +1244,13 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
 
               {/* Кнопки дій */}
               <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                <NavBtn onClick={() => { setCitText(""); saveToFirestore({ citText: "", stage: "writing", status: "new" }); setStage("writing"); workType === "tezy" ? doGenerateTezy([]) : doGenerateSimple([]); }}>
+                <NavBtn onClick={() => {
+                  setCitText(""); setTezyCitations([]);
+                  saveToFirestore({ citText: "", tezyCitations: [], stage: "writing", status: "new" });
+                  setStage("writing");
+                  if (workType === "tezy") doGenerateTezy([]);
+                  else if (workType !== "referat") doGenerateSimple([]);
+                }}>
                   Пропустити без джерел →
                 </NavBtn>
                 <PrimaryBtn
@@ -1323,7 +1386,16 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
                   <button disabled={docxLoading} onClick={async () => {
                     setDocxLoading(true);
                     try {
-                      await exportSimpleDocx({ title: info?.topic, sections: sections.map(s => ({ label: s.label, text: s.text })), info, orderId: currentIdRef.current });
+                      const content = Object.fromEntries(sections.map(s => [s.id, s.text]));
+                      const displayOrder = sections.map(s => ({
+                        id: s.id,
+                        label: s.label,
+                        type: s.id === "intro" ? "intro"
+                          : s.id === "conclusions" ? "conclusions"
+                          : s.id === "sources" ? "sources"
+                          : "body",
+                      }));
+                      await exportToDocx({ content, info, displayOrder, appendicesText: "", titlePage: null, titlePageLines: null, methodInfo: null, orderId: currentIdRef.current });
                     } catch (e) { setError(e.message); }
                     setDocxLoading(false);
                   }} style={{ background: docxLoading ? "#aaa" : "#1a4a1a", color: docxLoading ? "#eee" : "#a8e060", border: "none", borderRadius: 7, padding: "11px 24px", fontFamily: "'Spectral',serif", fontSize: 13, cursor: docxLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
