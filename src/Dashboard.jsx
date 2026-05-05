@@ -523,9 +523,9 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining }) {
                                         <div style={{ position: "relative", flexShrink: 0 }} onClick={e => e.stopPropagation()}>
                                             <button
                                                 onClick={e => { e.stopPropagation(); setTransferOrderId(transferOrderId === order.id ? null : order.id); }}
-                                                style={{ background: "transparent", border: "1px solid #eee", color: "#aac", borderRadius: 6, padding: "5px 10px", fontSize: 12, cursor: "pointer" }}
-                                                onMouseEnter={e => { e.currentTarget.style.borderColor = "#99f"; e.currentTarget.style.color = "#55c"; }}
-                                                onMouseLeave={e => { e.currentTarget.style.borderColor = "#eee"; e.currentTarget.style.color = "#aac"; }}
+                                                style={{ background: "#f0eeff", border: "1px solid #c4b0ff", color: "#5533cc", borderRadius: 6, padding: "5px 10px", fontSize: 12, cursor: "pointer", fontWeight: 600 }}
+                                                onMouseEnter={e => { e.currentTarget.style.background = "#e0d8ff"; }}
+                                                onMouseLeave={e => { e.currentTarget.style.background = "#f0eeff"; }}
                                                 title="Передати менеджеру">
                                                 ↪
                                             </button>
