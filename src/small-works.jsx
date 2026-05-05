@@ -408,18 +408,24 @@ requirements — якщо є рекомендації у файлах, стис�
       const subject = info?.subject || "";
       const needed = info?.sourceCount || (workType === "stattia" ? 5 : 3);
 
-      const [phrases, ukKw] = await Promise.all([
+      const [allPhrases, ukKw] = await Promise.all([
         generateSearchPhrases(topic, topic, direction, subject),
         Promise.resolve(buildSemanticKeywords(topic, topic, direction, subject)),
       ]);
 
-      const { flat } = await searchSourcesForSection(ukKw, [], needed + 6, topic, topic, 1, [], [], phrases);
+      // Перші 4 — українські, наступні 4 — англійські
+      const ukPhrases = allPhrases.length ? allPhrases.slice(0, 4) : ukKw.slice(0, 4);
+      const enPhrases = allPhrases.slice(4, 8);
+      // Fallback: якщо generateSearchPhrases не повернув нічого — беремо семантичні ключові слова
+      const displayPhrases = allPhrases.length ? allPhrases : ukKw.slice(0, 6);
+
+      const { flat } = await searchSourcesForSection(ukKw, enPhrases, needed + 6, topic, topic, 1, [], [], ukPhrases);
       const papers = (flat || []).slice(0, 10);
       setTezyPapers(papers);
       setTezyPage(1);
       setSelectedTezyIds([]);
-      setSearchPhrases(phrases || []);
-      await saveToFirestore({ tezyPapers: papers, selectedTezyIds: [], searchPhrases: phrases || [] });
+      setSearchPhrases(displayPhrases);
+      await saveToFirestore({ tezyPapers: papers, selectedTezyIds: [], searchPhrases: displayPhrases });
     } catch (e) {
       setError(e.message);
     }
