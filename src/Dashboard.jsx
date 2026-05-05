@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { db } from "./firebase";
-import { collection, query, where, orderBy, getDocs, deleteDoc, doc } from "firebase/firestore";
+import { collection, query, where, orderBy, getDocs, deleteDoc, doc, setDoc } from "firebase/firestore";
 import { useAuth } from "./AuthContext";
 
 const STAT_META = [
@@ -265,6 +265,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining }) {
     const [showHelp, setShowHelp] = useState(false);
     const [showStats, setShowStats] = useState(false);
     const [showMyStats, setShowMyStats] = useState(false);
+    const [transferOrderId, setTransferOrderId] = useState(null);
 
     const isAdmin = profile?.role === "admin";
 
@@ -305,11 +306,28 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining }) {
         load();
     }, [user.uid, isAdmin]);
 
+    useEffect(() => {
+        if (!transferOrderId) return;
+        const close = () => setTransferOrderId(null);
+        document.addEventListener("click", close);
+        return () => document.removeEventListener("click", close);
+    }, [transferOrderId]);
+
     const deleteOrder = async (id, e) => {
         e.stopPropagation();
         if (!window.confirm("Видалити замовлення?")) return;
         await deleteDoc(doc(db, "orders", id));
         setOrders(p => p.filter(o => o.id !== id));
+    };
+
+    const transferOrder = async (orderId, newUid, e) => {
+        e.stopPropagation();
+        await setDoc(doc(db, "orders", orderId), { uid: newUid }, { merge: true });
+        setOrders(p => p.map(o => o.id === orderId
+            ? { ...o, uid: newUid, managerName: userMap[newUid]?.name || newUid }
+            : o
+        ));
+        setTransferOrderId(null);
     };
 
     const needsSources = (o) => o.mode === "small"
@@ -501,6 +519,35 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining }) {
                                     </div>
 
                                     {/* Delete */}
+                                    {isAdmin && (
+                                        <div style={{ position: "relative", flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+                                            <button
+                                                onClick={e => { e.stopPropagation(); setTransferOrderId(transferOrderId === order.id ? null : order.id); }}
+                                                style={{ background: "transparent", border: "1px solid #eee", color: "#aac", borderRadius: 6, padding: "5px 10px", fontSize: 12, cursor: "pointer" }}
+                                                onMouseEnter={e => { e.currentTarget.style.borderColor = "#99f"; e.currentTarget.style.color = "#55c"; }}
+                                                onMouseLeave={e => { e.currentTarget.style.borderColor = "#eee"; e.currentTarget.style.color = "#aac"; }}
+                                                title="Передати менеджеру">
+                                                ↪
+                                            </button>
+                                            {transferOrderId === order.id && (
+                                                <div style={{ position: "absolute", right: 0, top: "110%", background: "#fff", border: "1px solid #ddd", borderRadius: 8, boxShadow: "0 4px 16px rgba(0,0,0,0.12)", zIndex: 100, minWidth: 180, padding: "6px 0" }}>
+                                                    <div style={{ fontSize: 11, color: "#888", padding: "4px 14px 6px", borderBottom: "1px solid #f0f0f0" }}>Передати замовлення:</div>
+                                                    {Object.entries(userMap)
+                                                        .filter(([uid, u]) => u.role === "manager" || u.role === "admin")
+                                                        .map(([uid, u]) => (
+                                                            <div key={uid}
+                                                                onClick={e => transferOrder(order.id, uid, e)}
+                                                                style={{ padding: "7px 14px", fontSize: 13, cursor: "pointer", color: order.uid === uid ? "#1a5a8a" : "#222", fontWeight: order.uid === uid ? 700 : 400 }}
+                                                                onMouseEnter={e => e.currentTarget.style.background = "#f5f5ff"}
+                                                                onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                                                                {u.name || u.email}
+                                                                {order.uid === uid && " ✓"}
+                                                            </div>
+                                                        ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
                                     <button onClick={e => deleteOrder(order.id, e)}
                                         style={{ background: "transparent", border: "1px solid #eee", color: "#ccc", borderRadius: 6, padding: "5px 10px", fontSize: 12, cursor: "pointer", flexShrink: 0 }}
                                         onMouseEnter={e => { e.currentTarget.style.borderColor = "#f99"; e.currentTarget.style.color = "#c55"; }}

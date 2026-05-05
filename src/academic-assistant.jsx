@@ -360,7 +360,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
       }
       const ref = doc(db, "orders", id);
       const base = {
-        uid: user.uid,
+        ...(isNew ? { uid: user.uid } : {}),
         updatedAt: new Date().toISOString(),
         topic: patch.info?.topic || info?.topic || "",
         type: patch.info?.type || info?.type || "",

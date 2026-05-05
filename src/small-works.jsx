@@ -304,7 +304,7 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
       if (isNew) { currentIdRef.current = id; onOrderCreated?.(id); }
       const ref = doc(db, "orders", id);
       const base = {
-        uid: user.uid, mode: "small", workType,
+        ...(isNew ? { uid: user.uid } : {}), mode: "small", workType,
         updatedAt: new Date().toISOString(),
         topic: patch.info?.topic || info?.topic || "",
         type: patch.info?.type || info?.type || workType || "",
