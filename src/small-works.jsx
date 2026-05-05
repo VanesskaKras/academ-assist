@@ -3,7 +3,7 @@ import { db } from "./firebase";
 import { useAuth } from "./AuthContext";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { MODEL, MODEL_FAST, callClaude, callGemini } from "./lib/api.js";
-import { buildSYS } from "./lib/prompts.js";
+import { buildSYSSmall } from "./lib/prompts.js";
 import { searchSourcesForSection, buildSemanticKeywords, generateSearchPhrases, lookupDoiMetadata, paperToCitation } from "./lib/sourcesSearch.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { playDoneSound } from "./lib/audio.js";
@@ -558,7 +558,7 @@ ${supervisorBlock}`;
 
     try {
       const msgs = [{ role: "user", content: [...fileContext, ...matFileContext, { type: "text", text: prompt }] }];
-      const text = await callClaude(msgs, null, buildSYS(lang), 6000);
+      const text = await callClaude(msgs, null, buildSYSSmall(lang), 6000);
       setResult(text);
       playDoneSound();
       await saveToFirestore({ result: text, authorData, tezyCitations: activeCitations, stage: "done", status: "done" });
@@ -669,7 +669,7 @@ ${info?.requirements ? `Вимоги до оформлення: ${info.requireme
     }
 
     try {
-      const result = await callClaude([{ role: "user", content: instruction }], null, buildSYS(lang), 6000);
+      const result = await callClaude([{ role: "user", content: instruction }], null, buildSYSSmall(lang), 6000);
       setSections(p => {
         const next = p.map((s, i) => i === genIdx ? { ...s, text: result } : s);
         saveToFirestore({ sections: next, stage: "writing", status: "writing", genIdx: genIdx + 1 });
@@ -738,7 +738,7 @@ ${sourcesList ? `\nПісля основного тексту додай (збе
 
     try {
       const msgs = [{ role: "user", content: [...matFileContext, ...fileContext, { type: "text", text: prompt }] }];
-      const text = await callClaude(msgs, null, buildSYS(lang), 6000);
+      const text = await callClaude(msgs, null, buildSYSSmall(lang), 6000);
       setResult(text);
       playDoneSound();
       await saveToFirestore({ result: text, tezyCitations: activeCitations, stage: "done", status: "done" });
@@ -772,7 +772,7 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
 
     try {
       const msgs = [{ role: "user", content: [...fileContext, { type: "text", text: prompt }] }];
-      const raw = await callClaude(msgs, null, buildSYS(lang), 4000, null, MODEL_FAST);
+      const raw = await callClaude(msgs, null, buildSYSSmall(lang), 4000, null, MODEL_FAST);
       const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || raw);
       const newSlides = parsed.slides || [];
       setSlides(newSlides);
