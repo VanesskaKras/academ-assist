@@ -481,7 +481,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
 
     if (!isSubsection) {
       children.push(heading1(sec.label));
-      if (sec.type === "intro" || sec.type === "conclusions") {
+      if (sec.type === "intro" || sec.type === "conclusions" || (isMain && !isSubsection)) {
         children.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
       }
     } else {
