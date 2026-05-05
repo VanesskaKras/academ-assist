@@ -892,7 +892,7 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
       <style>{SHARED_STYLES}</style>
 
       {/* Header */}
-      <div style={{ background: "#1a1a14", color: "#f5f2eb", padding: "15px 32px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+      <div style={{ position: "sticky", top: 0, zIndex: 100, background: "#1a1a14", color: "#f5f2eb", padding: "15px 32px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         {onBack && (
           <button onClick={onBack} style={{ background: "transparent", border: "1px solid #555", color: "#aaa", borderRadius: 6, padding: "5px 14px", cursor: "pointer", fontFamily: "inherit", fontSize: 12, marginRight: 4 }}>
             ← Замовлення
@@ -901,7 +901,8 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
         <div style={{ fontFamily: "'Spectral SC',serif", fontSize: 19, letterSpacing: 5, color: "#e8ff47" }}>ACADEM</div>
         <div style={{ fontFamily: "'Spectral SC',serif", fontSize: 19, letterSpacing: 5 }}>SMALL</div>
         {cfg && <div style={{ fontSize: 12, color: "#888", marginLeft: 4 }}>{cfg.icon} {cfg.label}</div>}
-        {info?.topic && <div style={{ fontSize: 12, color: "#555", flex: 1, minWidth: 0 }}>{info.topic}</div>}
+        {info?.orderNumber && <div style={{ fontSize: 11, color: "#888", whiteSpace: "nowrap", flexShrink: 0 }}>#{info.orderNumber}</div>}
+        {info?.topic && <div style={{ fontSize: 12, color: "#555", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{info.topic}</div>}
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
           <SaveIndicator saving={saving} saved={saved} />
           {workType && <StagePills stage={stage} workType={workType} onNavigate={setStage} maxStageIdx={maxStageIdx} />}
