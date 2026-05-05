@@ -2305,6 +2305,12 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
   const doGenKeywords = async () => {
     setKwLoading(true);
     const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
+    // Відображення: label-префікс ("3.2.1") → реальний internal id ("3.3")
+    const labelToId = {};
+    for (const s of mainSecs) {
+      const m = s.label.match(/^(\d+(?:\.\d+)*)/);
+      if (m) labelToId[m[1]] = s.id;
+    }
     const secBlocks = mainSecs.map(s => {
       const txt = content[s.id]
         ? `\n${content[s.id].substring(0, 1200).replace(/["\\]/g, " ").replace(/\n+/g, " ")}`
@@ -2348,7 +2354,7 @@ ${secBlocks}
       const thesesRaw = parsed.theses || {};
       const anchorsRaw = parsed.searchAnchors || {};
 
-      const normalizeKey = (k) => k.match(/^(\d+\.\d+)/)?.[1] || k;
+      const normalizeKey = (k) => labelToId[k] || k.match(/^(\d+\.\d+)/)?.[1] || k;
 
       const anchorsNorm = Object.fromEntries(
         Object.entries(anchorsRaw).map(([k, v]) => [
