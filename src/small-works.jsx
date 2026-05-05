@@ -1039,20 +1039,29 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
                 <div style={{ border: "1.5px solid #d4cfc4", borderRadius: 8, overflow: "hidden", marginBottom: 20 }}>
                   {sections.map((sec, i) => (
                     <div key={sec.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 16px", borderBottom: i < sections.length - 1 ? "1px solid #e4dfd4" : "none", background: ["intro", "conclusions", "sources"].includes(sec.id) ? "#ede9e0" : "#faf8f3" }}>
-                      <span style={{ fontSize: 11, color: "#bbb", width: 20 }}>{i + 1}</span>
+                      <span style={{ fontSize: 11, color: "#bbb", width: 20, flexShrink: 0 }}>{i + 1}</span>
                       <input value={sec.label} onChange={e => setSections(p => p.map((s, j) => j === i ? { ...s, label: e.target.value } : s))}
-                        style={{ flex: 1, background: "transparent", border: "none", fontSize: 13, fontFamily: "'Spectral',serif", color: "#1a1a14" }} />
-                      {sec.pages > 0 && (
-                        <span style={{ fontSize: 11, color: "#aaa", whiteSpace: "nowrap" }}>{sec.pages} стор.</span>
+                        style={{ flex: 1, background: "transparent", border: "none", fontSize: 13, fontFamily: "'Spectral',serif", color: "#1a1a14", minWidth: 0 }} />
+                      {sec.id !== "sources" ? (
+                        <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+                          <input
+                            type="number" min="0.5" max="30" step="0.5"
+                            value={sec.pages ?? 1}
+                            onChange={e => setSections(p => p.map((s, j) => j === i ? { ...s, pages: parseFloat(e.target.value) || 1 } : s))}
+                            style={{ width: 42, textAlign: "center", padding: "2px 4px", border: "1px solid #d4cfc4", borderRadius: 4, fontSize: 12, fontFamily: "'Spectral',serif", background: "#fff", color: "#555" }}
+                          />
+                          <span style={{ fontSize: 11, color: "#aaa" }}>стор.</span>
+                        </div>
+                      ) : (
+                        <span style={{ fontSize: 11, color: "#aaa", whiteSpace: "nowrap", flexShrink: 0 }}>авто</span>
                       )}
-                      {sec.id === "sources" && (
-                        <span style={{ fontSize: 11, color: "#aaa", whiteSpace: "nowrap" }}>авто</span>
-                      )}
-                      {!["intro", "conclusions", "sources"].includes(sec.id) && (
+                      {!["intro", "conclusions", "sources"].includes(sec.id) ? (
                         <button onClick={() => setSections(p => p.filter((_, j) => j !== i))}
-                          style={{ background: "none", border: "none", color: "#ccc", cursor: "pointer", fontSize: 14 }}
+                          style={{ background: "none", border: "none", color: "#ccc", cursor: "pointer", fontSize: 14, flexShrink: 0 }}
                           onMouseEnter={e => e.currentTarget.style.color = "#c00"}
                           onMouseLeave={e => e.currentTarget.style.color = "#ccc"}>✕</button>
+                      ) : (
+                        <span style={{ width: 18, flexShrink: 0 }} />
                       )}
                     </div>
                   ))}
