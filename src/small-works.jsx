@@ -202,6 +202,12 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
 
   const [sourcesFormatted, setSourcesFormatted] = useState(false);
   const [methodInfo, setMethodInfo] = useState(null);
+  // Per-section джерела для реферату
+  const [refSecPapers, setRefSecPapers] = useState({});
+  const [refSecPhrases, setRefSecPhrases] = useState({});
+  const [refSecLoading, setRefSecLoading] = useState({});
+  const [refSecSelected, setRefSecSelected] = useState({});
+  const [refSecOpen, setRefSecOpen] = useState({});
 
   const [loadMsg, setLoadMsg] = useState("");
   const [saving, setSaving] = useState(false);
@@ -258,6 +264,8 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
           if (d.materialText) setMaterialText(d.materialText);
           if (d.sourcesFormatted) setSourcesFormatted(d.sourcesFormatted);
           if (d.methodInfo) setMethodInfo(d.methodInfo);
+          if (d.refSecPapers) setRefSecPapers(d.refSecPapers);
+          if (d.refSecPhrases) setRefSecPhrases(d.refSecPhrases);
           if (d.totalInTok !== undefined) {
             tokenAccRef.current = { inTok: d.totalInTok || 0, outTok: d.totalOutTok || 0, costUsd: d.totalCostUsd || 0 };
           }
@@ -461,6 +469,73 @@ requirements — якщо є рекомендації у файлах, стис�
     setTezySearchLoading(false);
   };
 
+  // ── Пошук джерел для конкретної секції реферату ──
+  const doSearchForSection = async (secId, secLabel) => {
+    setRefSecLoading(prev => ({ ...prev, [secId]: true }));
+    try {
+      const topic = info?.topic || tplText.slice(0, 120);
+      const direction = info?.direction || "";
+      const subject = info?.subject || "";
+      const refSecs = sections.filter(s => s.id !== "sources");
+      const needed = Math.ceil((info?.sourceCount || parsePagesAvg(info?.pages || "15")) / Math.max(refSecs.length, 1)) + 4;
+      const [allPhrases, ukKw] = await Promise.all([
+        generateSearchPhrases(topic, secLabel, direction, subject),
+        Promise.resolve(buildSemanticKeywords(topic, secLabel, direction, subject)),
+      ]);
+      const ukPhrases = allPhrases.length ? allPhrases.slice(0, 4) : ukKw.slice(0, 4);
+      const enPhrases = allPhrases.slice(4, 8);
+      const displayPhrases = allPhrases.length ? allPhrases : ukKw.slice(0, 6);
+      const { flat } = await searchSourcesForSection(ukKw, enPhrases, needed, topic, secLabel, 1, [], [], ukPhrases);
+      const papers = (flat || []).slice(0, 15);
+      setRefSecPapers(prev => {
+        const next = { ...prev, [secId]: papers };
+        saveToFirestore({ refSecPapers: next });
+        return next;
+      });
+      setRefSecPhrases(prev => {
+        const next = { ...prev, [secId]: displayPhrases };
+        saveToFirestore({ refSecPhrases: next });
+        return next;
+      });
+      setRefSecOpen(prev => ({ ...prev, [secId]: true }));
+      setRefSecSelected(prev => ({ ...prev, [secId]: [] }));
+    } catch (e) { setError(e.message); }
+    setRefSecLoading(prev => ({ ...prev, [secId]: false }));
+  };
+
+  // ── Додавання вибраних джерел для секції реферату ──
+  const doAddForSection = async (secId) => {
+    const selected = (refSecPapers[secId] || []).filter(p => (refSecSelected[secId] || []).includes(p.id));
+    if (!selected.length) return;
+    setRunning(true); setLoadMsg("Оформлюю джерела...");
+    try {
+      const enriched = await Promise.all(selected.map(async p => {
+        if (!p.doi) return p;
+        const meta = await lookupDoiMetadata(p.doi);
+        if (!meta) return p;
+        return {
+          ...p,
+          ...(meta.authorsStructured?.length ? { authorsStructured: meta.authorsStructured } : {}),
+          ...(meta.authors?.length ? { authors: meta.authors } : {}),
+          ...(meta.pages && !p.pages ? { pages: meta.pages } : {}),
+          ...(meta.volume ? { volume: meta.volume } : {}),
+          ...(meta.issue ? { issue: meta.issue } : {}),
+          ...(meta.journal && (!p.venue || /^[\w.-]+\.[a-zA-Z]{2,}$/.test(p.venue.trim())) ? { venue: meta.journal } : {}),
+        };
+      }));
+      const rawCitations = enriched.map(paperToCitation).filter(Boolean);
+      setCitInputs(prev => {
+        const existing = (prev[secId] || "").trim();
+        const toAdd = rawCitations.filter(c => !existing.includes(c.slice(0, 40)));
+        const next = { ...prev, [secId]: existing ? existing + "\n" + toAdd.join("\n") : toAdd.join("\n") };
+        saveToFirestore({ citInputs: next });
+        return next;
+      });
+      setRefSecSelected(prev => ({ ...prev, [secId]: [] }));
+    } catch (e) { setError(e.message); }
+    setRunning(false); setLoadMsg("");
+  };
+
   // ── Форматування списку джерел через Gemini (ДСТУ або APA) ──
   const formatCitationsList = async (rawCitations) => {
     if (!rawCitations.length) return rawCitations;
@@ -577,30 +652,15 @@ ${refLines}`;
       }));
       const rawCitations = enriched.map(paperToCitation).filter(Boolean);
 
-      // Для реферату — не форматуємо одразу (форматування відбудеться окремим кроком після генерації)
-      let citations = rawCitations;
-      if (workType !== "referat") {
-        setLoadMsg("Форматую джерела...");
-        citations = await formatCitationsList(rawCitations);
-      }
-
-      if (workType === "referat" && activeSecId) {
-        setCitInputs(prev => {
-          const existing = (prev[activeSecId] || "").trim();
-          const toAdd = citations.filter(c => !existing.includes(c.slice(0, 40)));
-          const next = { ...prev, [activeSecId]: existing ? existing + "\n" + toAdd.join("\n") : toAdd.join("\n") };
-          saveToFirestore({ citInputs: next });
-          return next;
-        });
-      } else {
-        setCitText(prev => {
-          const existing = prev.trim();
-          const toAdd = citations.filter(c => !existing.includes(c.slice(0, 40)));
-          const next = existing ? existing + "\n" + toAdd.join("\n") : toAdd.join("\n");
-          saveToFirestore({ citText: next });
-          return next;
-        });
-      }
+      setLoadMsg("Форматую джерела...");
+      const citations = await formatCitationsList(rawCitations);
+      setCitText(prev => {
+        const existing = prev.trim();
+        const toAdd = citations.filter(c => !existing.includes(c.slice(0, 40)));
+        const next = existing ? existing + "\n" + toAdd.join("\n") : toAdd.join("\n");
+        saveToFirestore({ citText: next });
+        return next;
+      });
       setSelectedTezyIds([]);
     } catch (e) { setError(e.message); }
     setRunning(false); setLoadMsg("");
@@ -1285,47 +1345,165 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
           const isReferat = workType === "referat";
           const minSrc = info?.sourceCount || parsePagesAvg(info?.pages || "3");
           const citLines = citText.split("\n").map(s => s.trim()).filter(Boolean);
-          // Для реферату — сумарна к-сть унікальних джерел по всіх секціях
           const allRefCitations = isReferat
             ? [...new Set(sections.filter(s => s.id !== "sources").flatMap(s =>
                 (citInputs[s.id] || "").split("\n").map(l => l.trim()).filter(Boolean)
               ))]
             : citLines;
-          const activeSecLines = isReferat && activeSecId
-            ? (citInputs[activeSecId] || "").split("\n").map(s => s.trim()).filter(Boolean)
-            : [];
           const totalCitCount = isReferat ? allRefCitations.length : citLines.length;
+
+          // ── РЕФЕРАТ: per-section cards ──
+          if (isReferat) {
+            const refSections = sections.filter(s => s.id !== "sources");
+            const perSec = Math.ceil(minSrc / Math.max(refSections.length, 1));
+            let runIdx = 0;
+            return (
+              <div className="fade">
+                <Heading>📚 Джерела</Heading>
+                {refSections.map(sec => {
+                  const secLines = (citInputs[sec.id] || "").split("\n").map(l => l.trim()).filter(Boolean);
+                  const startIdx = runIdx + 1; runIdx += secLines.length;
+                  const hasSources = secLines.length > 0;
+                  const papers = refSecPapers[sec.id] || [];
+                  const alreadyAdded = (citInputs[sec.id] || "").toLowerCase();
+                  const filteredPapers = papers.filter(p => !alreadyAdded.includes((p.title || "").toLowerCase().slice(0, 60)));
+                  const phrases = refSecPhrases[sec.id] || [];
+                  const isLoadingSec = refSecLoading[sec.id] || false;
+                  const isOpen = refSecOpen[sec.id] ?? filteredPapers.length > 0;
+                  const selected = refSecSelected[sec.id] || [];
+                  const ukCount = filteredPapers.filter(p => p.lang === "uk").length;
+                  return (
+                    <div key={sec.id} style={{ border: `1.5px solid ${hasSources ? "#d4cfc4" : "#e8a050"}`, borderRadius: 8, overflow: "hidden", marginBottom: 14 }}>
+                      <div style={{ background: "#1a1a14", padding: "11px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ width: 8, height: 8, borderRadius: "50%", background: hasSources ? "#5ad060" : "#e8a050", flexShrink: 0, display: "inline-block" }} />
+                          <span style={{ fontSize: 13, fontWeight: 600, color: "#f5f2eb" }}>{sec.label}</span>
+                        </div>
+                        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                          {secLines.length > 0 && <div style={{ fontSize: 11, color: "#888" }}>джерела [{startIdx}–{startIdx + secLines.length - 1}]</div>}
+                          <div style={{ fontSize: 12, color: "#e8ff47", background: "#2a2a1a", padding: "2px 10px", borderRadius: 10 }}>потрібно: {perSec} дж.</div>
+                        </div>
+                      </div>
+                      <div style={{ padding: "12px 16px", background: "#faf8f3" }}>
+                        <div style={{ background: "#eef5e4", padding: "8px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", borderRadius: 6, marginBottom: 10 }}
+                             onClick={() => setRefSecOpen(prev => ({ ...prev, [sec.id]: !isOpen }))}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            {isLoadingSec
+                              ? <><SpinDot size={12} /><span style={{ fontSize: 12, color: "#5a8a2a" }}>Шукаю джерела...</span></>
+                              : <>
+                                  <span style={{ fontSize: 12, fontWeight: 600, color: "#3a6010" }}>Знайдені джерела ({filteredPapers.length})</span>
+                                  <span style={{ fontSize: 11, color: "#5a7a3a" }}>🇺🇦 {ukCount} укр.</span>
+                                </>
+                            }
+                          </div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <button onClick={e => { e.stopPropagation(); doSearchForSection(sec.id, sec.label); }} disabled={isLoadingSec}
+                              style={{ fontSize: 11, background: "#fff", border: "1px solid #b8dfa0", borderRadius: 5, padding: "2px 10px", cursor: isLoadingSec ? "default" : "pointer", color: "#3a6010" }}>
+                              ОНОВИТИ
+                            </button>
+                            <span style={{ fontSize: 12, color: "#888" }}>{isOpen ? "▲" : "▼"}</span>
+                          </div>
+                        </div>
+                        {phrases.length > 0 && (
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 10 }}>
+                            {phrases.map((ph, i) => (
+                              <span key={i} onClick={() => navigator.clipboard.writeText(ph)} title="Клікни щоб скопіювати"
+                                style={{ fontSize: 11, background: "#eef5e4", color: "#3a6010", padding: "2px 9px", borderRadius: 10, border: "1px solid #c8dfa0", cursor: "pointer", userSelect: "none", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                                🔍 {ph}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {isOpen && filteredPapers.length > 0 && (
+                          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
+                            {filteredPapers.map(paper => {
+                              const isChecked = selected.includes(paper.id);
+                              const authorsList = Array.isArray(paper.authors) ? paper.authors : [];
+                              const authLine = authorsList.length > 2 ? `${authorsList.slice(0, 2).join(", ")} та ін.` : authorsList.join(", ") || "Автор невідомий";
+                              const isUk = paper.lang === "uk";
+                              return (
+                                <label key={paper.id} style={{ display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer", padding: "9px 12px", borderRadius: 7, background: isChecked ? "#f0f8e8" : "#faf8f3", border: `1.5px solid ${isChecked ? "#8cc84b" : "#e0ddd5"}`, transition: "all 0.15s" }}>
+                                  <input type="checkbox" checked={isChecked}
+                                    onChange={() => setRefSecSelected(prev => ({ ...prev, [sec.id]: isChecked ? (prev[sec.id] || []).filter(id => id !== paper.id) : [...(prev[sec.id] || []), paper.id] }))}
+                                    style={{ marginTop: 3, accentColor: "#5a9a1a", flexShrink: 0 }} />
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 2, alignItems: "center" }}>
+                                      <span style={{ fontSize: 11, fontWeight: 600, color: "#3a6010" }}>{authLine}</span>
+                                      {paper.year && <span style={{ fontSize: 11, color: "#888" }}>{paper.year}</span>}
+                                      <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 8, background: isUk ? "#e8f5e0" : "#e8f0ff", color: isUk ? "#3a6010" : "#1a4a8a", border: `1px solid ${isUk ? "#b8dfa0" : "#b0c8f0"}` }}>
+                                        {isUk ? "🇺🇦 укр." : "🌐 зарубіж."}
+                                      </span>
+                                    </div>
+                                    <div style={{ fontSize: 12, color: "#1a1a14", lineHeight: "1.4" }}>
+                                      {paper.title.length > 120 ? paper.title.slice(0, 120) + "…" : paper.title}
+                                    </div>
+                                    {paper.venue && <div style={{ fontSize: 11, color: "#777", fontStyle: "italic", marginTop: 2 }}>{paper.venue}</div>}
+                                    {paper.url && <a href={paper.url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ display: "inline-block", marginTop: 4, fontSize: 11, color: "#1a5a8a", textDecoration: "none" }}>🔗 Відкрити джерело →</a>}
+                                  </div>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
+                        {isOpen && filteredPapers.length > 0 && (
+                          <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
+                            <button onClick={() => setRefSecSelected(prev => ({ ...prev, [sec.id]: (refSecPapers[sec.id] || []).map(p => p.id) }))}
+                              style={{ fontSize: 11, background: "#f5f3ef", border: "1px solid #d4cfc4", borderRadius: 5, padding: "4px 12px", cursor: "pointer", color: "#555" }}>
+                              вибрати всі
+                            </button>
+                            {selected.length > 0 && (
+                              <PrimaryBtn onClick={() => doAddForSection(sec.id)} loading={running} msg={loadMsg}
+                                label={`Додати вибрані (${selected.length}) →`} />
+                            )}
+                          </div>
+                        )}
+                        <div style={{ marginTop: 8 }}>
+                          <div style={{ fontSize: 11, color: "#888", letterSpacing: "1px", textTransform: "uppercase", marginBottom: 5, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <span>або додайте джерела вручну (кожне з нового рядка):</span>
+                            {(citInputs[sec.id] || "").trim() && (
+                              <button onClick={() => setCitInputs(prev => ({ ...prev, [sec.id]: "" }))}
+                                style={{ fontSize: 11, background: "transparent", border: "1px solid #e0b0b0", color: "#a04040", borderRadius: 5, padding: "2px 8px", cursor: "pointer" }}>
+                                × Очистити
+                              </button>
+                            )}
+                          </div>
+                          <textarea data-secid={sec.id} value={citInputs[sec.id] || ""}
+                            onChange={e => setCitInputs(prev => ({ ...prev, [sec.id]: e.target.value }))}
+                            placeholder="Петренко В.І. Психологія навчання. Київ: Наука, 2020. 245 с."
+                            style={{ ...TA, width: "100%", minHeight: 80, resize: "vertical", boxSizing: "border-box", fontSize: 12, lineHeight: "1.7", fontFamily: "'Spectral',serif" }} />
+                          {secLines.length > 0 && (
+                            <div style={{ fontSize: 11, color: "#3a6010", marginTop: 4 }}>
+                              ✓ {secLines.length} джерело(а) введено → [{startIdx}–{startIdx + secLines.length - 1}]
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+                <div style={{ background: "#f0f8e8", border: "1px solid #c8dfa0", borderRadius: 8, padding: "12px 16px", marginBottom: 16, fontSize: 13, color: "#3a6010" }}>
+                  <b>Загальна к-сть джерел: {totalCitCount}</b>
+                  {" · "}
+                  <span style={{ color: totalCitCount >= minSrc ? "#3a6010" : "#c07000" }}>
+                    Мінімум: {minSrc} {totalCitCount < minSrc ? `(ще ${minSrc - totalCitCount})` : "✓"}
+                  </span>
+                </div>
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                  <NavBtn onClick={() => { setCitInputs({}); saveToFirestore({ citInputs: {}, stage: "writing", status: "new" }); setStage("writing"); }}>
+                    Пропустити без джерел →
+                  </NavBtn>
+                  <PrimaryBtn onClick={doGenerateFromCitInputs} disabled={totalCitCount === 0} loading={running} msg={loadMsg}
+                    label={`Генерувати (${totalCitCount} джерел) →`} />
+                </div>
+              </div>
+            );
+          }
+
+          // ── ТЕЗИ / СТАТТЯ / ЕСЕ: існуючий UI ──
           const scholaUrl = `https://scholar.google.com/scholar?hl=uk&as_sdt=0%2C5&as_ylo=2021&q=${encodeURIComponent(info?.topic || "")}&btnG=`;
-          const activeSecLabel = isReferat ? sections.find(s => s.id === activeSecId)?.label || "" : "";
           return (
             <div className="fade">
               <Heading>📚 Джерела</Heading>
-
-              {/* Вкладки секцій для реферату */}
-              {isReferat && sections.filter(s => s.id !== "sources").length > 0 && (
-                <div style={{ marginBottom: 16 }}>
-                  <div style={{ fontSize: 12, color: "#555", marginBottom: 8, fontWeight: 600 }}>Додайте джерела до кожного розділу:</div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                    {sections.filter(s => s.id !== "sources").map(s => {
-                      const cnt = (citInputs[s.id] || "").split("\n").filter(Boolean).length;
-                      const isActive = activeSecId === s.id;
-                      return (
-                        <button key={s.id} onClick={() => setActiveSecId(s.id)}
-                          style={{
-                            padding: "6px 14px", borderRadius: 20, fontSize: 12, cursor: "pointer",
-                            background: isActive ? "#1a1a14" : cnt > 0 ? "#f0f8e8" : "#f5f3ef",
-                            color: isActive ? "#e8ff47" : cnt > 0 ? "#3a6010" : "#666",
-                            border: `1.5px solid ${isActive ? "#1a1a14" : cnt > 0 ? "#8cc84b" : "#d4cfc4"}`,
-                            fontWeight: isActive ? 600 : 400, transition: "all 0.15s",
-                          }}>
-                          {s.label.length > 28 ? s.label.slice(0, 28) + "…" : s.label}
-                          {cnt > 0 && <span style={{ marginLeft: 5, fontSize: 11, opacity: 0.85 }}>({cnt})</span>}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
 
               {/* Інфо-блок */}
               <div style={{ background: "#f0f8e8", border: "1px solid #c8dfa0", borderRadius: 8, padding: "12px 16px", marginBottom: 18, fontSize: 13, color: "#3a6010" }}>
@@ -1335,16 +1513,9 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
                   <span style={{ color: totalCitCount >= minSrc ? "#3a6010" : "#c07000" }}>
                     Мінімум: {minSrc} {totalCitCount < minSrc ? `(ще ${minSrc - totalCitCount})` : "✓"}
                   </span>
-                  {isReferat && activeSecId && (
-                    <span style={{ marginLeft: 10, color: "#555", fontSize: 12 }}>
-                      · Для «{activeSecLabel.length > 25 ? activeSecLabel.slice(0, 25) + "…" : activeSecLabel}»: {activeSecLines.length} дж.
-                    </span>
-                  )}
                 </div>
                 <div style={{ fontSize: 12, color: "#555", marginBottom: 10 }}>
-                  {isReferat
-                    ? "Оберіть розділ вгорі, знайдіть джерела і натисніть «Додати вибрані». Повторіть для кожного розділу. Потім натисніть «Генерувати»."
-                    : "Натисніть «Знайти джерела автоматично» — програма згенерує ключові слова і знайде відповідні джерела. Виберіть потрібні галочкою та натисніть «Додати вибрані». Після заповнення натисніть «Генерувати»."}
+                  {"Натисніть «Знайти джерела автоматично» — програма згенерує ключові слова і знайде відповідні джерела. Виберіть потрібні галочкою та натисніть «Додати вибрані». Після заповнення натисніть «Генерувати»."}
                 </div>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
                   <GreenBtn onClick={doSearchTezyPapers} loading={tezySearchLoading} msg="Шукаю..." label="Знайти джерела автоматично →" />
@@ -1436,9 +1607,7 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
                         {selectedTezyIds.length > 0 && (
                           <div style={{ marginBottom: 16 }}>
                             <PrimaryBtn onClick={doConfirmTezyPapers} loading={running} msg={loadMsg}
-                              label={isReferat && activeSecId
-                                ? `Додати вибрані (${selectedTezyIds.length}) до «${activeSecLabel.length > 20 ? activeSecLabel.slice(0, 20) + "…" : activeSecLabel}» →`
-                                : `Додати вибрані (${selectedTezyIds.length}) до списку →`} />
+                              label={`Додати вибрані (${selectedTezyIds.length}) до списку →`} />
                           </div>
                         )}
                       </>
@@ -1449,79 +1618,42 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
 
               {/* Текстове поле джерел */}
               <div style={{ marginTop: 16, marginBottom: 16 }}>
-                {isReferat && activeSecId ? (
-                  <>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                      <div style={{ fontSize: 12, color: "#555", fontWeight: 600 }}>
-                        Джерела для «{activeSecLabel.length > 35 ? activeSecLabel.slice(0, 35) + "…" : activeSecLabel}» ({activeSecLines.length} введено — кожне з нового рядка):
-                      </div>
-                      {(citInputs[activeSecId] || "").trim() && (
-                        <button onClick={() => setCitInputs(p => ({ ...p, [activeSecId]: "" }))}
-                          style={{ fontSize: 11, background: "transparent", border: "1px solid #e0b0b0", color: "#a04040", borderRadius: 5, padding: "2px 8px", cursor: "pointer" }}>
-                          × Очистити
-                        </button>
-                      )}
-                    </div>
-                    <textarea
-                      value={citInputs[activeSecId] || ""}
-                      onChange={e => setCitInputs(p => ({ ...p, [activeSecId]: e.target.value }))}
-                      placeholder={"Петренко В.І. Психологія навчання. Київ: Наука, 2020. 245 с.\nSmirnova O. Child development. Oxford: OUP, 2019."}
-                      style={{ ...TA, width: "100%", minHeight: 100, resize: "vertical", boxSizing: "border-box", fontSize: 12, lineHeight: "1.7", fontFamily: "'Spectral',serif" }}
-                    />
-                    {info?.sortAlpha && activeSecLines.length > 1 && (
-                      <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>
-                        ℹ Джерела буде відсортовано за алфавітом перед генерацією.
-                      </div>
-                    )}
-                  </>
-                ) : !isReferat ? (
-                  <>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                      <div style={{ fontSize: 12, color: "#555", fontWeight: 600 }}>
-                        Список джерел ({citLines.length} введено — кожне з нового рядка):
-                      </div>
-                      {citText.trim() && (
-                        <button onClick={() => setCitText("")}
-                          style={{ fontSize: 11, background: "transparent", border: "1px solid #e0b0b0", color: "#a04040", borderRadius: 5, padding: "2px 8px", cursor: "pointer" }}>
-                          × Очистити
-                        </button>
-                      )}
-                    </div>
-                    <textarea
-                      value={citText}
-                      onChange={e => setCitText(e.target.value)}
-                      placeholder={"Петренко В.І. Психологія навчання. Київ: Наука, 2020. 245 с.\nSmirnova O. Child development. Oxford: OUP, 2019."}
-                      style={{ ...TA, width: "100%", minHeight: 120, resize: "vertical", boxSizing: "border-box", fontSize: 12, lineHeight: "1.7", fontFamily: "'Spectral',serif" }}
-                    />
-                    {info?.sortAlpha && citLines.length > 1 && (
-                      <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>
-                        ℹ Джерела буде відсортовано за алфавітом перед генерацією.
-                      </div>
-                    )}
-                  </>
-                ) : null}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                  <div style={{ fontSize: 12, color: "#555", fontWeight: 600 }}>
+                    Список джерел ({citLines.length} введено — кожне з нового рядка):
+                  </div>
+                  {citText.trim() && (
+                    <button onClick={() => setCitText("")}
+                      style={{ fontSize: 11, background: "transparent", border: "1px solid #e0b0b0", color: "#a04040", borderRadius: 5, padding: "2px 8px", cursor: "pointer" }}>
+                      × Очистити
+                    </button>
+                  )}
+                </div>
+                <textarea
+                  value={citText}
+                  onChange={e => setCitText(e.target.value)}
+                  placeholder={"Петренко В.І. Психологія навчання. Київ: Наука, 2020. 245 с.\nSmirnova O. Child development. Oxford: OUP, 2019."}
+                  style={{ ...TA, width: "100%", minHeight: 120, resize: "vertical", boxSizing: "border-box", fontSize: 12, lineHeight: "1.7", fontFamily: "'Spectral',serif" }}
+                />
+                {info?.sortAlpha && citLines.length > 1 && (
+                  <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>
+                    ℹ Джерела буде відсортовано за алфавітом перед генерацією.
+                  </div>
+                )}
               </div>
 
               {/* Кнопки дій */}
               <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                 <NavBtn onClick={() => {
-                  setCitText(""); setTezyCitations([]); setCitInputs({});
-                  saveToFirestore({ citText: "", tezyCitations: [], citInputs: {}, stage: "writing", status: "new" });
+                  setCitText(""); setTezyCitations([]);
+                  saveToFirestore({ citText: "", tezyCitations: [], stage: "writing", status: "new" });
                   setStage("writing");
                   if (workType === "tezy") doGenerateTezy([]);
-                  else if (workType !== "referat") doGenerateSimple([]);
+                  else doGenerateSimple([]);
                 }}>
                   Пропустити без джерел →
                 </NavBtn>
-                {isReferat ? (
-                  <PrimaryBtn
-                    onClick={doGenerateFromCitInputs}
-                    disabled={totalCitCount === 0}
-                    loading={running}
-                    msg={loadMsg}
-                    label={`Генерувати (${totalCitCount} джерел) →`}
-                  />
-                ) : (
+                {(
                   <PrimaryBtn
                     onClick={doGenerateFromCitText}
                     disabled={citLines.length === 0}
