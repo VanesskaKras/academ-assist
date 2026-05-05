@@ -178,11 +178,13 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
   const [authorDataOpen, setAuthorDataOpen] = useState(false);
 
   // Тези — джерела
-  const [tezyPapers, setTezyPapers] = useState([]);         // знайдені папери
-  const [selectedTezyIds, setSelectedTezyIds] = useState([]); // обрані id
+  const [tezyPapers, setTezyPapers] = useState([]);
+  const [selectedTezyIds, setSelectedTezyIds] = useState([]);
   const [tezySearchLoading, setTezySearchLoading] = useState(false);
-  const [tezyCitations, setTezyCitations] = useState([]);    // відформатовані рядки джерел
-  const [tezyPage, setTezyPage] = useState(1);               // поточна сторінка джерел
+  const [tezyCitations, setTezyCitations] = useState([]);
+  const [tezyPage, setTezyPage] = useState(1);
+  const [citText, setCitText] = useState("");        // текстове поле джерел
+  const [searchPhrases, setSearchPhrases] = useState([]); // фрази для Google Scholar
 
   // Реферат — секції з текстом
   const [sections, setSections] = useState([]); // [{id, label, text}]
@@ -244,6 +246,8 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
           if (d.tezyCitations?.length) setTezyCitations(d.tezyCitations);
           if (d.tezyPapers?.length) setTezyPapers(d.tezyPapers);
           if (d.selectedTezyIds?.length) setSelectedTezyIds(d.selectedTezyIds);
+          if (d.citText) setCitText(d.citText);
+          if (d.searchPhrases?.length) setSearchPhrases(d.searchPhrases);
           if (d.materialText) setMaterialText(d.materialText);
           if (d.totalInTok !== undefined) {
             tokenAccRef.current = { inTok: d.totalInTok || 0, outTok: d.totalOutTok || 0, costUsd: d.totalCostUsd || 0 };
@@ -279,6 +283,15 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
     }, 1000);
     return () => clearTimeout(t);
   }, [selectedTezyIds]);
+
+  // ── Авто-збереження текстового поля джерел ──
+  useEffect(() => {
+    if (!["tezy", "stattia", "ese"].includes(workType) || stage !== "sources") return;
+    const t = setTimeout(() => {
+      saveToFirestore({ citText });
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [citText]);
 
   // ── Збереження ──
   const saveToFirestore = async (patch) => {
@@ -399,7 +412,8 @@ requirements — якщо є рекомендації у файлах, стис�
       setTezyPapers(papers);
       setTezyPage(1);
       setSelectedTezyIds([]);
-      await saveToFirestore({ tezyPapers: papers, selectedTezyIds: [] });
+      setSearchPhrases(phrases || []);
+      await saveToFirestore({ tezyPapers: papers, selectedTezyIds: [], searchPhrases: phrases || [] });
     } catch (e) {
       setError(e.message);
     }
@@ -407,6 +421,17 @@ requirements — якщо є рекомендації у файлах, стис�
   };
 
   // ── Підтвердження вибраних джерел ──
+  // ── Генерація із текстового поля джерел ──
+  const doGenerateFromCitText = async () => {
+    let citations = citText.split("\n").map(s => s.trim()).filter(Boolean);
+    if (info?.sortAlpha) citations.sort((a, b) => a.localeCompare(b, "uk"));
+    setTezyCitations(citations);
+    await saveToFirestore({ tezyCitations: citations, citText, stage: "writing", status: "sources_done" });
+    setStage("writing");
+    if (workType === "tezy") await doGenerateTezy(citations);
+    else await doGenerateSimple(citations);
+  };
+
   const doConfirmTezyPapers = async () => {
     setRunning(true); setLoadMsg("Оформлюю джерела...");
     try {
@@ -466,18 +491,14 @@ ${refLines}`;
         if (formatted.length === rawCitations.length) citations = formatted;
       } catch { /* fallback to raw */ }
 
-      if (info?.sortAlpha) {
-        citations.sort((a, b) => a.localeCompare(b, "uk"));
-      }
-
-      setTezyCitations(citations);
-      await saveToFirestore({ tezyCitations: citations, stage: "writing", status: "sources_done" });
-      setStage("writing");
-      if (workType === "tezy") {
-        await doGenerateTezy(citations);
-      } else {
-        await doGenerateSimple(citations);
-      }
+      setCitText(prev => {
+        const existing = prev.trim();
+        const toAdd = citations.filter(c => !existing.includes(c.slice(0, 40)));
+        const next = existing ? existing + "\n" + toAdd.join("\n") : toAdd.join("\n");
+        saveToFirestore({ citText: next });
+        return next;
+      });
+      setSelectedTezyIds([]);
     } catch (e) { setError(e.message); }
     setRunning(false); setLoadMsg("");
   };
@@ -1019,117 +1040,167 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
         )}
 
         {/* ══ ДЖЕРЕЛА ══ */}
-        {["tezy", "stattia", "ese"].includes(workType) && stage === "sources" && (
-          <div className="fade">
-            <Heading>📚 Джерела</Heading>
-            <p style={{ fontSize: 13, color: "#888", marginBottom: 20 }}>
-              Оберіть {info?.sourceCount || (workType === "stattia" ? 5 : 3)}–{(info?.sourceCount || (workType === "stattia" ? 5 : 3)) + 3} джерела зі знайдених.
-              Їх буде передано Claude для написання з посиланнями [N].
-            </p>
+        {["tezy", "stattia", "ese"].includes(workType) && stage === "sources" && (() => {
+          const minSrc = info?.sourceCount || parsePagesAvg(info?.pages || "3");
+          const citLines = citText.split("\n").map(s => s.trim()).filter(Boolean);
+          const scholaUrl = `https://scholar.google.com/scholar?hl=uk&as_sdt=0%2C5&as_ylo=2021&q=${encodeURIComponent(info?.topic || "")}&btnG=`;
+          return (
+            <div className="fade">
+              <Heading>📚 Джерела</Heading>
 
-            {tezyPapers.length === 0 && !tezySearchLoading && (
-              <div style={{ textAlign: "center", padding: "30px 0" }}>
-                <PrimaryBtn onClick={doSearchTezyPapers} loading={tezySearchLoading} msg="Шукаю джерела..." label="Знайти джерела →" />
-                <p style={{ marginTop: 16, fontSize: 12, color: "#aaa" }}>Пошук займе 10–20 секунд</p>
-              </div>
-            )}
-
-            {tezySearchLoading && (
-              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "20px 0", color: "#888", fontSize: 13 }}>
-                <SpinDot /> Шукаю в наукових базах...
-              </div>
-            )}
-
-            {tezyPapers.length > 0 && (
-              <>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                  <div style={{ fontSize: 12, color: "#888" }}>Знайдено: {tezyPapers.length} · Обрано: {selectedTezyIds.length}</div>
-                  <button onClick={doSearchTezyPapers} disabled={tezySearchLoading}
-                    style={{ background: "transparent", border: "1px solid #ccc", borderRadius: 6, padding: "4px 12px", fontSize: 11, cursor: "pointer", color: "#666" }}>
-                    ↺ Шукати ще
-                  </button>
+              {/* Інфо-блок */}
+              <div style={{ background: "#f0f8e8", border: "1px solid #c8dfa0", borderRadius: 8, padding: "12px 16px", marginBottom: 18, fontSize: 13, color: "#3a6010" }}>
+                <div style={{ marginBottom: 6 }}>
+                  <b>Загальна к-сть джерел: {citLines.length}</b>
+                  {" · "}
+                  <span style={{ color: citLines.length >= minSrc ? "#3a6010" : "#c07000" }}>
+                    Мінімум: {minSrc} {citLines.length < minSrc ? `(ще ${minSrc - citLines.length})` : "✓"}
+                  </span>
                 </div>
+                <div style={{ fontSize: 12, color: "#555", marginBottom: 10 }}>
+                  Натисніть «Знайти джерела автоматично» — програма згенерує ключові слова і знайде відповідні джерела. Виберіть потрібні галочкою та натисніть «Додати вибрані». Після заповнення натисніть «Генерувати».
+                </div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                  <GreenBtn onClick={doSearchTezyPapers} loading={tezySearchLoading} msg="Шукаю..." label="Знайти джерела автоматично →" />
+                  <a href={scholaUrl} target="_blank" rel="noopener noreferrer"
+                    style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "#1a5a8a", textDecoration: "none", background: "#e4f0ff", padding: "6px 12px", borderRadius: 6, border: "1px solid #b0d0f0" }}>
+                    🎓 Шукати додатково на Google Scholar →
+                  </a>
+                </div>
+                {searchPhrases.length > 0 && (
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ fontSize: 11, color: "#888", letterSpacing: "1px", textTransform: "uppercase", marginBottom: 5 }}>Шукайте за фразами:</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                      {searchPhrases.map((ph, i) => (
+                        <span key={i} onClick={() => navigator.clipboard.writeText(ph)} title="Клікни щоб скопіювати"
+                          style={{ fontSize: 11, background: "#eef5e4", color: "#3a6010", padding: "2px 9px", borderRadius: 10, border: "1px solid #c8dfa0", cursor: "pointer", userSelect: "none" }}>
+                          {ph}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
 
-                {(() => {
-                  const PAGE_SIZE = 5;
-                  const totalPages = Math.ceil(tezyPapers.length / PAGE_SIZE);
-                  const pagePapers = tezyPapers.slice((tezyPage - 1) * PAGE_SIZE, tezyPage * PAGE_SIZE);
-                  return (
-                    <>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
-                        {pagePapers.map(paper => {
-                          const authorsList = Array.isArray(paper.authors) ? paper.authors : [];
-                          const authLine = authorsList.length > 2 ? `${authorsList.slice(0, 2).join(", ")} та ін.` : authorsList.join(", ") || "Автор невідомий";
-                          const isUk = paper.lang === "uk";
-                          const isChecked = selectedTezyIds.includes(paper.id);
-                          return (
-                            <label key={paper.id} style={{
-                              display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer",
-                              padding: "10px 12px", borderRadius: 7,
-                              background: isChecked ? "#f0f8e8" : "#faf8f3",
-                              border: `1.5px solid ${isChecked ? "#8cc84b" : "#e0ddd5"}`,
-                              transition: "all 0.15s",
-                            }}>
-                              <input type="checkbox" checked={isChecked}
-                                onChange={() => setSelectedTezyIds(p => isChecked ? p.filter(id => id !== paper.id) : [...p, paper.id])}
-                                style={{ marginTop: 3, accentColor: "#5a9a1a", flexShrink: 0 }} />
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 2, alignItems: "center" }}>
-                                  <span style={{ fontSize: 11, fontWeight: 600, color: "#3a6010" }}>{authLine}</span>
-                                  {paper.year && <span style={{ fontSize: 11, color: "#888" }}>{paper.year}</span>}
-                                  <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 8, background: isUk ? "#e8f5e0" : "#e8f0ff", color: isUk ? "#3a6010" : "#1a4a8a", border: `1px solid ${isUk ? "#b8dfa0" : "#b0c8f0"}` }}>
-                                    {isUk ? "🇺🇦 укр." : "🌐 зарубіж."}
-                                  </span>
+              {/* Список знайдених */}
+              {tezySearchLoading && (
+                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "16px 0", color: "#888", fontSize: 13 }}>
+                  <SpinDot /> Шукаю в наукових базах...
+                </div>
+              )}
+
+              {tezyPapers.length > 0 && (
+                <>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                    <div style={{ fontSize: 12, color: "#888" }}>Знайдено: {tezyPapers.length} · Обрано: {selectedTezyIds.length}</div>
+                    <button onClick={doSearchTezyPapers} disabled={tezySearchLoading}
+                      style={{ background: "transparent", border: "1px solid #ccc", borderRadius: 6, padding: "4px 12px", fontSize: 11, cursor: "pointer", color: "#666" }}>
+                      ↺ Шукати ще
+                    </button>
+                  </div>
+                  {(() => {
+                    const PAGE_SIZE = 5;
+                    const totalPgs = Math.ceil(tezyPapers.length / PAGE_SIZE);
+                    const pagePapers = tezyPapers.slice((tezyPage - 1) * PAGE_SIZE, tezyPage * PAGE_SIZE);
+                    return (
+                      <>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
+                          {pagePapers.map(paper => {
+                            const authorsList = Array.isArray(paper.authors) ? paper.authors : [];
+                            const authLine = authorsList.length > 2 ? `${authorsList.slice(0, 2).join(", ")} та ін.` : authorsList.join(", ") || "Автор невідомий";
+                            const isUk = paper.lang === "uk";
+                            const isChecked = selectedTezyIds.includes(paper.id);
+                            return (
+                              <label key={paper.id} style={{ display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer", padding: "10px 12px", borderRadius: 7, background: isChecked ? "#f0f8e8" : "#faf8f3", border: `1.5px solid ${isChecked ? "#8cc84b" : "#e0ddd5"}`, transition: "all 0.15s" }}>
+                                <input type="checkbox" checked={isChecked}
+                                  onChange={() => setSelectedTezyIds(p => isChecked ? p.filter(id => id !== paper.id) : [...p, paper.id])}
+                                  style={{ marginTop: 3, accentColor: "#5a9a1a", flexShrink: 0 }} />
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 2, alignItems: "center" }}>
+                                    <span style={{ fontSize: 11, fontWeight: 600, color: "#3a6010" }}>{authLine}</span>
+                                    {paper.year && <span style={{ fontSize: 11, color: "#888" }}>{paper.year}</span>}
+                                    <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 8, background: isUk ? "#e8f5e0" : "#e8f0ff", color: isUk ? "#3a6010" : "#1a4a8a", border: `1px solid ${isUk ? "#b8dfa0" : "#b0c8f0"}` }}>
+                                      {isUk ? "🇺🇦 укр." : "🌐 зарубіж."}
+                                    </span>
+                                  </div>
+                                  <div style={{ fontSize: 12, color: "#1a1a14", lineHeight: "1.4" }}>
+                                    {paper.title.length > 120 ? paper.title.slice(0, 120) + "…" : paper.title}
+                                  </div>
+                                  {paper.venue && <div style={{ fontSize: 11, color: "#777", fontStyle: "italic", marginTop: 2 }}>{paper.venue}</div>}
                                 </div>
-                                <div style={{ fontSize: 12, color: "#1a1a14", lineHeight: "1.4" }}>
-                                  {paper.title.length > 120 ? paper.title.slice(0, 120) + "…" : paper.title}
-                                </div>
-                                {paper.venue && <div style={{ fontSize: 11, color: "#777", fontStyle: "italic", marginTop: 2 }}>{paper.venue}</div>}
-                              </div>
-                            </label>
-                          );
-                        })}
-                      </div>
-                      {totalPages > 1 && (
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 20 }}>
-                          <button
-                            onClick={() => setTezyPage(p => Math.max(1, p - 1))}
-                            disabled={tezyPage === 1}
-                            style={{ background: "transparent", border: "1px solid #d4cfc4", borderRadius: 6, padding: "4px 12px", fontSize: 12, cursor: tezyPage === 1 ? "default" : "pointer", color: tezyPage === 1 ? "#ccc" : "#555" }}
-                          >←</button>
-                          {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
-                            <button key={p} onClick={() => setTezyPage(p)}
-                              style={{ background: p === tezyPage ? "#1a1a14" : "transparent", border: "1px solid #d4cfc4", borderRadius: 6, padding: "4px 10px", fontSize: 12, cursor: "pointer", color: p === tezyPage ? "#e8ff47" : "#555", fontWeight: p === tezyPage ? 600 : 400 }}
-                            >{p}</button>
-                          ))}
-                          <button
-                            onClick={() => setTezyPage(p => Math.min(totalPages, p + 1))}
-                            disabled={tezyPage === totalPages}
-                            style={{ background: "transparent", border: "1px solid #d4cfc4", borderRadius: 6, padding: "4px 12px", fontSize: 12, cursor: tezyPage === totalPages ? "default" : "pointer", color: tezyPage === totalPages ? "#ccc" : "#555" }}
-                          >→</button>
-                          <span style={{ fontSize: 11, color: "#aaa", marginLeft: 4 }}>{tezyPage} / {totalPages}</span>
+                              </label>
+                            );
+                          })}
                         </div>
-                      )}
-                    </>
-                  );
-                })()}
+                        {totalPgs > 1 && (
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                            <button onClick={() => setTezyPage(p => Math.max(1, p - 1))} disabled={tezyPage === 1}
+                              style={{ background: "transparent", border: "1px solid #d4cfc4", borderRadius: 6, padding: "4px 12px", fontSize: 12, cursor: tezyPage === 1 ? "default" : "pointer", color: tezyPage === 1 ? "#ccc" : "#555" }}>←</button>
+                            {Array.from({ length: totalPgs }, (_, i) => i + 1).map(p => (
+                              <button key={p} onClick={() => setTezyPage(p)}
+                                style={{ background: p === tezyPage ? "#1a1a14" : "transparent", border: "1px solid #d4cfc4", borderRadius: 6, padding: "4px 10px", fontSize: 12, cursor: "pointer", color: p === tezyPage ? "#e8ff47" : "#555", fontWeight: p === tezyPage ? 600 : 400 }}>
+                                {p}
+                              </button>
+                            ))}
+                            <button onClick={() => setTezyPage(p => Math.min(totalPgs, p + 1))} disabled={tezyPage === totalPgs}
+                              style={{ background: "transparent", border: "1px solid #d4cfc4", borderRadius: 6, padding: "4px 12px", fontSize: 12, cursor: tezyPage === totalPgs ? "default" : "pointer", color: tezyPage === totalPgs ? "#ccc" : "#555" }}>→</button>
+                            <span style={{ fontSize: 11, color: "#aaa", marginLeft: 4 }}>{tezyPage} / {totalPgs}</span>
+                          </div>
+                        )}
+                        {selectedTezyIds.length > 0 && (
+                          <div style={{ marginBottom: 16 }}>
+                            <PrimaryBtn onClick={doConfirmTezyPapers} loading={running} msg={loadMsg}
+                              label={`Додати вибрані (${selectedTezyIds.length}) до списку →`} />
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
+                </>
+              )}
 
-                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                  <NavBtn onClick={() => { setTezyCitations([]); saveToFirestore({ stage: "writing", status: "new" }); setStage("writing"); workType === "tezy" ? doGenerateTezy([]) : doGenerateSimple([]); }}>
-                    Пропустити без джерел →
-                  </NavBtn>
-                  <PrimaryBtn
-                    onClick={doConfirmTezyPapers}
-                    disabled={selectedTezyIds.length === 0}
-                    loading={running}
-                    msg={loadMsg}
-                    label={`Підтвердити ${selectedTezyIds.length} джерел → Генерація`}
-                  />
+              {/* Текстове поле джерел */}
+              <div style={{ marginTop: 16, marginBottom: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                  <div style={{ fontSize: 12, color: "#555", fontWeight: 600 }}>
+                    Список джерел ({citLines.length} введено — кожне з нового рядка):
+                  </div>
+                  {citText.trim() && (
+                    <button onClick={() => setCitText("")}
+                      style={{ fontSize: 11, background: "transparent", border: "1px solid #e0b0b0", color: "#a04040", borderRadius: 5, padding: "2px 8px", cursor: "pointer" }}>
+                      × Очистити
+                    </button>
+                  )}
                 </div>
-              </>
-            )}
-          </div>
-        )}
+                <textarea
+                  value={citText}
+                  onChange={e => setCitText(e.target.value)}
+                  placeholder={"Петренко В.І. Психологія навчання. Київ: Наука, 2020. 245 с.\nSmirnova O. Child development. Oxford: OUP, 2019."}
+                  style={{ ...TA, width: "100%", minHeight: 120, resize: "vertical", boxSizing: "border-box", fontSize: 12, lineHeight: "1.7", fontFamily: "'Spectral',serif" }}
+                />
+                {info?.sortAlpha && citLines.length > 1 && (
+                  <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>
+                    ℹ Джерела буде відсортовано за алфавітом перед генерацією.
+                  </div>
+                )}
+              </div>
+
+              {/* Кнопки дій */}
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                <NavBtn onClick={() => { setCitText(""); saveToFirestore({ citText: "", stage: "writing", status: "new" }); setStage("writing"); workType === "tezy" ? doGenerateTezy([]) : doGenerateSimple([]); }}>
+                  Пропустити без джерел →
+                </NavBtn>
+                <PrimaryBtn
+                  onClick={doGenerateFromCitText}
+                  disabled={citLines.length === 0}
+                  loading={running}
+                  msg={loadMsg}
+                  label={`Генерувати (${citLines.length} джерел) →`}
+                />
+              </div>
+            </div>
+          );
+        })()}
 
         {/* ══ ГЕНЕРАЦІЯ тез ══ */}
         {workType === "tezy" && stage === "writing" && (
