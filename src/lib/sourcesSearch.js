@@ -125,36 +125,63 @@ function extractPagesFromDoi(doi = '') {
  */
 export async function lookupDoiMetadata(doi) {
   if (!doi) return null;
+  let result = null;
   try {
     const r = await fetch(`https://api.crossref.org/works/${encodeURIComponent(doi)}`, {
       headers: { 'User-Agent': 'AcademAssist/1.0 (mailto:support@academ-assist.vercel.app)' },
     });
-    if (!r.ok) return null;
-    const d = await r.json();
-    const p = d.message;
-    if (!p) return null;
-    const authorsStructured = (p.author || []).slice(0, 3)
-      .map(a => ({ family: a.family || '', given: a.given || '' }))
-      .filter(a => a.family);
-    const authors = authorsStructured
-      .map(a => [a.family, a.given?.[0]].filter(Boolean).join(' '))
-      .filter(Boolean);
-    const pages = p.page
-      ? p.page.replace('-', '–')
-      : extractPagesFromDoi(doi);
-    return {
-      authorsStructured,
-      authors,
-      pages,
-      volume: p.volume || '',
-      issue: p.issue || '',
-      journal: p['container-title']?.[0] || '',
-      publisher: p.publisher || '',
-      publisherLocation: p['publisher-location'] || '',
-    };
-  } catch {
-    return null;
+    if (r.ok) {
+      const d = await r.json();
+      const p = d.message;
+      if (p) {
+        const authorsStructured = (p.author || []).slice(0, 3)
+          .map(a => ({ family: a.family || '', given: a.given || '' }))
+          .filter(a => a.family);
+        const authors = authorsStructured
+          .map(a => [a.family, a.given?.[0]].filter(Boolean).join(' '))
+          .filter(Boolean);
+        result = {
+          authorsStructured,
+          authors,
+          pages: p.page ? p.page.replace('-', '–') : extractPagesFromDoi(doi),
+          volume: p.volume || '',
+          issue: p.issue || '',
+          journal: p['container-title']?.[0] || '',
+          publisher: p.publisher || '',
+          publisherLocation: p['publisher-location'] || '',
+        };
+      }
+    }
+  } catch { /* fallthrough to OpenAlex */ }
+
+  // Якщо CrossRef не повернув авторів — пробуємо OpenAlex
+  if (!result?.authors?.length) {
+    try {
+      const oaUrl = `https://api.openalex.org/works/https://doi.org/${encodeURIComponent(doi)}?select=authorships,biblio`;
+      const r2 = await fetch(oaUrl);
+      if (r2.ok) {
+        const w = await r2.json();
+        const oaAuthors = (w.authorships || []).slice(0, 3)
+          .map(a => a.author?.display_name || '').filter(Boolean);
+        const oaPages = w.biblio?.first_page && w.biblio?.last_page
+          ? `${w.biblio.first_page}–${w.biblio.last_page}`
+          : w.biblio?.first_page || null;
+        if (oaAuthors.length) {
+          result = {
+            ...(result || {}),
+            authors: oaAuthors,
+            authorsStructured: oaAuthors.map(n => {
+              const parts = n.trim().split(/\s+/);
+              return { family: parts[0] || '', given: parts.slice(1).join(' ') };
+            }),
+            pages: result?.pages || oaPages || extractPagesFromDoi(doi),
+          };
+        }
+      }
+    } catch { /* ignore */ }
   }
+
+  return result;
 }
 
 // ── Декодування abstract_inverted_index OpenAlex → plain text ──
@@ -708,7 +735,8 @@ function normTitle(str) {
 
 export function paperToCitation(paper) {
   const authorsList = Array.isArray(paper.authors) ? paper.authors : [];
-  const authors = authorsList.length ? authorsList.join(', ') : 'Автор невідомий';
+  // ДСТУ: коли автор невідомий — починаємо з назви (без "Автор невідомий")
+  const authorsPart = authorsList.length ? `${authorsList.join(', ')}. ` : '';
   const isDomainLike = paper.venue && /^[\w.-]+\.[a-zA-Z]{2,}$/.test(paper.venue.trim());
   const venue = (paper.venue && !isDomainLike) ? ` *${paper.venue}*.` : '';
   const pages = paper.pages
@@ -717,7 +745,7 @@ export function paperToCitation(paper) {
   const urlPart = paper.url
     ? ` ${paper.url}`
     : paper.doi ? ` https://doi.org/${paper.doi}` : '';
-  return `${authors}. ${normTitle(paper.title)}.${venue} ${paper.year}.${pages}${urlPart}`.replace(/\.\s*\./g, '.').replace(/\s{2,}/g, ' ').trim();
+  return `${authorsPart}${normTitle(paper.title)}.${venue} ${paper.year}.${pages}${urlPart}`.replace(/\.\s*\./g, '.').replace(/\s{2,}/g, ' ').trim();
 }
 
 export async function generateSearchPhrases(sectionLabel, topic, direction = '', subject = '') {
@@ -725,14 +753,14 @@ export async function generateSearchPhrases(sectionLabel, topic, direction = '',
   const prompt = `Тема наукової роботи: "${topic}"${domainCtx ? `\nГалузь: ${domainCtx}` : ''}
 Підрозділ: "${sectionLabel}"
 
-Згенеруй рівно 4 пошукові фрази для пошуку в наукових базах (OpenAlex, CrossRef).
-Вимоги:
-- 3–5 слів, називний відмінок
-- Реальні наукові формулювання (як пишуть у заголовках статей)
-- Українська мова
-- Кожна фраза — інший аспект підрозділу
+Згенеруй пошукові фрази для пошуку в наукових базах (OpenAlex, CrossRef, Semantic Scholar).
+Потрібно:
+- 4 фрази УКРАЇНСЬКОЮ (3–5 слів, реальні академічні формулювання)
+- 4 фрази АНГЛІЙСЬКОЮ (3–5 слів, academic English equivalents)
+- Кожна фраза — різний аспект підрозділу
+- Лише ключові слова, без прийменників і сполучників
 
-Поверни JSON: {"phrases":["фраза 1","фраза 2","фраза 3","фраза 4"]}`;
+Поверни JSON: {"phrases":["укр 1","укр 2","укр 3","укр 4","en 1","en 2","en 3","en 4"]}`;
   try {
     const res = await fetch('/api/gemini', {
       method: 'POST',
@@ -740,14 +768,14 @@ export async function generateSearchPhrases(sectionLabel, topic, direction = '',
       body: JSON.stringify({
         _model: 'gemini-2.5-flash-lite',
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: { maxOutputTokens: 200, responseMimeType: 'application/json' },
+        generationConfig: { maxOutputTokens: 400, responseMimeType: 'application/json' },
       }),
     });
     if (!res.ok) return [];
     const data = await res.json();
     const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     const parsed = JSON.parse(raw);
-    return (parsed.phrases || []).filter(p => typeof p === 'string' && p.trim().length > 3).slice(0, 4);
+    return (parsed.phrases || []).filter(p => typeof p === 'string' && p.trim().length > 3).slice(0, 8);
   } catch {
     return [];
   }

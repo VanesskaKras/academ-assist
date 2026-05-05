@@ -496,7 +496,16 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
       children.push(headingSubsection(sec.label));
       children.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
     }
-    const processedTxt = isChapterConc ? txt.replace(/^\s*#{1,6}\s+[^\n]*\n?/, "").trimStart() : txt;
+    let processedTxt = txt;
+    if (isChapterConc) {
+      processedTxt = txt.replace(/^\s*#{1,6}\s+[^\n]*\n?/, "").trimStart();
+    } else if (isMain && !isSubsection) {
+      // Стрипаємо перший рядок якщо AI дублює заголовок розділу (РОЗДІЛ N. або # Назва)
+      processedTxt = txt
+        .replace(/^\s*(?:#{1,6}\s*)?розділ\s+\d+[^\n]*\n?/i, "")
+        .replace(/^\s*#{1,6}\s+[^\n]*\n?/, "")
+        .trimStart();
+    }
     children.push(...makeBlocks(processedTxt, sec.label, sec.type === "intro"));
   }
 
