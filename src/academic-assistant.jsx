@@ -3458,6 +3458,7 @@ ${refLines2.join("\n")}`;
               copyAll={copyAll} resetAll={resetAll}
               generatePresentation={generatePresentation} generateSpeech={generateSpeech}
               doScanAndGenFigures={doScanAndGenFigures} setStage={setStage}
+              orderId={currentIdRef.current}
             />
           )}
           {stage === "checklist" && (

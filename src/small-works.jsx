@@ -13,6 +13,49 @@ import { DropZone } from "./components/DropZone.jsx";
 import { parsePagesAvg, exportSimpleDocx, TA, TA_WHITE, SHARED_STYLES } from "./shared.jsx";
 import { ChecklistStage } from "./components/stages/ChecklistStage.jsx";
 
+// ── Рендер тексту з markdown-таблицями ──
+function renderWithTables(text) {
+  if (!text) return null;
+  const lines = text.split("\n");
+  const segments = [];
+  let i = 0;
+  while (i < lines.length) {
+    if (/^\s*\|/.test(lines[i])) {
+      const tableLines = [];
+      while (i < lines.length && /^\s*\|/.test(lines[i])) { tableLines.push(lines[i]); i++; }
+      segments.push({ type: "table", lines: tableLines });
+    } else {
+      const textLines = [];
+      while (i < lines.length && !/^\s*\|/.test(lines[i])) { textLines.push(lines[i]); i++; }
+      segments.push({ type: "text", content: textLines.join("\n") });
+    }
+  }
+  return segments.map((seg, si) => {
+    if (seg.type === "text") {
+      return <span key={si} style={{ whiteSpace: "pre-wrap" }}>{seg.content}</span>;
+    }
+    const dataLines = seg.lines.filter(l => !/^\s*\|[-:| ]+\|\s*$/.test(l));
+    const rows = dataLines.map(l => l.replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.trim()));
+    if (!rows.length) return null;
+    return (
+      <div key={si} style={{ overflowX: "auto", margin: "6px 0" }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12, fontFamily: "'Spectral',serif" }}>
+          <tbody>
+            {rows.map((cells, ri) => (
+              <tr key={ri}>
+                {cells.map((cell, ci) => ri === 0
+                  ? <th key={ci} style={{ border: "1px solid #c4bfb4", padding: "5px 8px", textAlign: "center", background: "#ede9e0", fontWeight: 600 }}>{cell}</th>
+                  : <td key={ci} style={{ border: "1px solid #c4bfb4", padding: "5px 8px", textAlign: "left" }}>{cell}</td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  });
+}
+
 // ─────────────────────────────────────────────
 // Конфіг типів робіт
 // ─────────────────────────────────────────────
@@ -305,8 +348,9 @@ ${tplText}
 ${comment ? `\nКОМЕНТАР: ${comment}` : ""}${materialHint}
 
 Поверни ТІЛЬКИ JSON (без markdown):
-{"type":"${WORK_TYPES[workType]?.label || workType}","pages":"","topic":"","subject":"","direction":"","uniqueness":"","language":"Українська","deadline":"","requirements":""${tezyFields}${simpleFields}}
+{"type":"${WORK_TYPES[workType]?.label || workType}","pages":"","topic":"","subject":"","direction":"","uniqueness":"","language":"Українська","deadline":"","orderNumber":"","requirements":""${tezyFields}${simpleFields}}
 
+orderNumber — номер замовлення якщо є (наприклад "37808.2"), інакше порожній рядок.
 requirements — якщо є рекомендації у файлах, стисло опиши ключові вимоги до структури та оформлення.${tezyHints}${simpleHints}`;
 
       const msgs = [{ role: "user", content: [...fileContext, ...matFileContext, { type: "text", text: prompt }] }];
@@ -1095,10 +1139,10 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
               <>
                 <div style={{ border: "1.5px solid #aaa49a", borderRadius: 8, overflow: "hidden", marginBottom: 16 }}>
                   <div style={{ background: "#1a1a14", padding: "10px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ fontSize: 13, color: "#f5f2eb", fontWeight: 600 }}>Тези: {info?.topic}</span>
+                    <span style={{ fontSize: 13, color: "#f5f2eb", fontWeight: 600 }}>{info?.topic}</span>
                     <button onClick={() => navigator.clipboard.writeText(result)} style={{ background: "transparent", border: "1px solid #555", color: "#999", borderRadius: 5, padding: "3px 10px", fontSize: 10, cursor: "pointer" }}>COPY</button>
                   </div>
-                  <div style={{ padding: "16px 20px", fontSize: 13, lineHeight: "1.85", color: "#2a2a1e", whiteSpace: "pre-wrap", maxHeight: 400, overflowY: "auto", background: "#faf8f3" }}>{result}</div>
+                  <div style={{ padding: "16px 20px", fontSize: 13, lineHeight: "1.85", color: "#2a2a1e", maxHeight: 400, overflowY: "auto", background: "#faf8f3" }}>{renderWithTables(result)}</div>
                 </div>
                 <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                   <NavBtn onClick={() => setResult("")}>Перегенерувати</NavBtn>
@@ -1129,10 +1173,10 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
               <>
                 <div style={{ border: "1.5px solid #aaa49a", borderRadius: 8, overflow: "hidden", marginBottom: 16 }}>
                   <div style={{ background: "#1a1a14", padding: "10px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ fontSize: 13, color: "#f5f2eb", fontWeight: 600 }}>{cfg.label}: {info?.topic}</span>
+                    <span style={{ fontSize: 13, color: "#f5f2eb", fontWeight: 600 }}>{info?.topic}</span>
                     <button onClick={() => navigator.clipboard.writeText(result)} style={{ background: "transparent", border: "1px solid #555", color: "#999", borderRadius: 5, padding: "3px 10px", fontSize: 10, cursor: "pointer" }}>COPY</button>
                   </div>
-                  <div style={{ padding: "16px 20px", fontSize: 13, lineHeight: "1.85", color: "#2a2a1e", whiteSpace: "pre-wrap", maxHeight: 400, overflowY: "auto", background: "#faf8f3" }}>{result}</div>
+                  <div style={{ padding: "16px 20px", fontSize: 13, lineHeight: "1.85", color: "#2a2a1e", maxHeight: 400, overflowY: "auto", background: "#faf8f3" }}>{renderWithTables(result)}</div>
                 </div>
                 <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                   <NavBtn onClick={() => { setResult(""); }}>Перегенерувати</NavBtn>
@@ -1208,7 +1252,7 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
                   <button disabled={docxLoading} onClick={async () => {
                     setDocxLoading(true);
                     try {
-                      await exportSimpleDocx({ title: info?.topic, sections: sections.map(s => ({ label: s.label, text: s.text })), info });
+                      await exportSimpleDocx({ title: info?.topic, sections: sections.map(s => ({ label: s.label, text: s.text })), info, orderId: currentIdRef.current });
                     } catch (e) { setError(e.message); }
                     setDocxLoading(false);
                   }} style={{ background: docxLoading ? "#aaa" : "#1a4a1a", color: docxLoading ? "#eee" : "#a8e060", border: "none", borderRadius: 7, padding: "11px 24px", fontFamily: "'Spectral',serif", fontSize: 13, cursor: docxLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
@@ -1223,10 +1267,10 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
               <>
                 <div style={{ border: "1.5px solid #aaa49a", borderRadius: 8, overflow: "hidden", marginBottom: 16 }}>
                   <div style={{ background: "#1a1a14", padding: "10px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ fontSize: 13, color: "#f5f2eb", fontWeight: 600 }}>{cfg.label}: {info?.topic}</span>
+                    <span style={{ fontSize: 13, color: "#f5f2eb", fontWeight: 600 }}>{info?.topic}</span>
                     <button onClick={() => navigator.clipboard.writeText(result)} style={{ background: "transparent", border: "1px solid #555", color: "#999", borderRadius: 5, padding: "3px 10px", fontSize: 10, cursor: "pointer" }}>COPY</button>
                   </div>
-                  <div style={{ padding: "16px 20px", fontSize: 13, lineHeight: "1.85", color: "#2a2a1e", whiteSpace: "pre-wrap", maxHeight: 400, overflowY: "auto", background: "#faf8f3" }}>{result}</div>
+                  <div style={{ padding: "16px 20px", fontSize: 13, lineHeight: "1.85", color: "#2a2a1e", maxHeight: 400, overflowY: "auto", background: "#faf8f3" }}>{renderWithTables(result)}</div>
                 </div>
 
                 {/* Рекомендації щодо рисунків */}
@@ -1273,7 +1317,7 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
                   <button disabled={docxLoading} onClick={async () => {
                     setDocxLoading(true);
                     try {
-                      await exportSimpleDocx({ title: info?.topic, sections: [{ label: cfg.label.toUpperCase(), text: result }], info, citations: workType === "tezy" ? tezyCitations : undefined });
+                      await exportSimpleDocx({ title: info?.topic, sections: [{ label: cfg.label.toUpperCase(), text: result }], info, citations: workType === "tezy" ? tezyCitations : undefined, orderId: currentIdRef.current });
                     } catch (e) { setError(e.message); }
                     setDocxLoading(false);
                   }} style={{ background: docxLoading ? "#aaa" : "#1a4a1a", color: docxLoading ? "#eee" : "#a8e060", border: "none", borderRadius: 7, padding: "11px 24px", fontFamily: "'Spectral',serif", fontSize: 13, cursor: docxLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>

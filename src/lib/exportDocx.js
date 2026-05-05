@@ -67,7 +67,7 @@ export function renumberTablesAndFigures(content, displayOrder) {
 // ─────────────────────────────────────────────
 // Word export (основний документ)
 // ─────────────────────────────────────────────
-export async function exportToDocx({ content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo }) {
+export async function exportToDocx({ content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo, orderId }) {
   if (!window.docx) {
     await new Promise((resolve, reject) => {
       const s = document.createElement("script");
@@ -496,7 +496,8 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
       children.push(headingSubsection(sec.label));
       children.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
     }
-    children.push(...makeBlocks(txt, sec.label, sec.type === "intro"));
+    const processedTxt = isChapterConc ? txt.replace(/^\s*#{1,6}\s+[^\n]*\n?/, "").trimStart() : txt;
+    children.push(...makeBlocks(processedTxt, sec.label, sec.type === "intro"));
   }
 
   if (normAppendices && normAppendices.trim()) {
@@ -549,7 +550,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
   const url = URL.createObjectURL(blob);
   try {
     const a = document.createElement("a");
-    const prefix = info?.orderNumber ? info.orderNumber + "_" : "";
+    const prefix = orderId ? orderId + "_" : (info?.orderNumber ? info.orderNumber + "_" : "");
     const safeName = prefix + (info?.topic || "робота").replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
     a.href = url; a.download = safeName + ".docx";
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
@@ -637,7 +638,7 @@ export async function exportPlanToDocx({ sections, info, methodInfo }) {
 // ─────────────────────────────────────────────
 // Додатки (.docx)
 // ─────────────────────────────────────────────
-export async function exportAppendixToDocx(text, info, methodInfo) {
+export async function exportAppendixToDocx(text, info, methodInfo, orderId) {
   if (!window.docx) {
     await new Promise((resolve, reject) => {
       const s = document.createElement("script");
@@ -790,7 +791,7 @@ export async function exportAppendixToDocx(text, info, methodInfo) {
   const url = URL.createObjectURL(blob);
   try {
     const a = document.createElement("a");
-    const prefix = info?.orderNumber ? info.orderNumber + "_" : "";
+    const prefix = orderId ? orderId + "_" : (info?.orderNumber ? info.orderNumber + "_" : "");
     const safeName = prefix + (info?.topic || "додатки").replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
     a.href = url; a.download = safeName + " - додатки.docx";
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
@@ -802,7 +803,7 @@ export async function exportAppendixToDocx(text, info, methodInfo) {
 // ─────────────────────────────────────────────
 // Доповідь (.docx)
 // ─────────────────────────────────────────────
-export async function exportSpeechToDocx(text, info, methodInfo) {
+export async function exportSpeechToDocx(text, info, methodInfo, orderId) {
   if (!window.docx) {
     await new Promise((resolve, reject) => {
       const s = document.createElement("script");
@@ -853,7 +854,7 @@ export async function exportSpeechToDocx(text, info, methodInfo) {
   const url = URL.createObjectURL(blob);
   try {
     const a = document.createElement("a");
-    const prefix = info?.orderNumber ? info.orderNumber + "_" : "";
+    const prefix = orderId ? orderId + "_" : (info?.orderNumber ? info.orderNumber + "_" : "");
     const safeName = prefix + (info?.topic || "доповідь").replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
     a.href = url; a.download = safeName + " - доповідь.docx";
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
