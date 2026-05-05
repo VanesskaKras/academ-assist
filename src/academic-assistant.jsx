@@ -2633,7 +2633,12 @@ ${refLines.join("\n")}`;
       setRefList(fmtResult.split("\n").filter(Boolean));
       const srcSec = sections.find(s => s.type === "sources");
       if (srcSec) newContent[srcSec.id] = fmtResult;
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      const srcSecFallback = sections.find(s => s.type === "sources");
+      if (srcSecFallback && allRefs.length > 0)
+        newContent[srcSecFallback.id] = allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n");
+    }
 
     // Будуємо карту "номер → текст посилання" з ВІДФОРМАТОВАНОГО списку (щоб мати точні номери сторінок)
     // Якщо Gemini не повернув результат — fallback на raw
@@ -3111,7 +3116,7 @@ ${refLines2.join("\n")}`;
 
     // ── 9. Оновлення секції "Список літератури" і стану ──
     const srcSec = sections.find(s => s.type === "sources");
-    if (srcSec && fmtResult) newContent[srcSec.id] = fmtResult;
+    if (srcSec) newContent[srcSec.id] = fmtResult || allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n");
     const newRefList = (fmtResult || allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n"))
       .split("\n").filter(Boolean);
 

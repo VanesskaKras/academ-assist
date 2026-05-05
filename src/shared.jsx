@@ -14,7 +14,7 @@ export function parsePagesAvg(str) {
 }
 
 // ── Simple docx export для малих робіт (плоский текст без підрозділів) ──
-export async function exportSimpleDocx({ title, sections, info, citations, orderId }) {
+export async function exportSimpleDocx({ title, sections, info, citations, orderId, methodInfo }) {
   if (!window.docx) {
     await new Promise((resolve, reject) => {
       const s = document.createElement("script");
@@ -23,9 +23,15 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
       document.head.appendChild(s);
     });
   }
-  const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel, ExternalHyperlink, InternalHyperlink, Bookmark } = window.docx;
+  const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel, ExternalHyperlink, InternalHyperlink, Bookmark, Table, TableRow, TableCell, WidthType, BorderStyle } = window.docx;
   const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
-  const L = 1701, R = 851, T = 1134, B = 1134, INDENT = 709, LINE = 360;
+  const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
+  const marg = methodInfo?.formatting?.margins || {};
+  const L = mmToTwip(marg.left   || 30);
+  const R = mmToTwip(marg.right  || 15);
+  const T = mmToTwip(marg.top    || 20);
+  const B = mmToTwip(marg.bottom || 20);
+  const INDENT = 709, LINE = 360;
 
   // [N] → внутрішнє гіперпосилання на закладку джерела
   function parseTextWithCitations(text, bold = false) {
@@ -121,6 +127,29 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
   const FIG_INLINE_RE = /рис(?:унок)?\.?\s*\d+/i;
   const FIG_MARKER_RE = /^\[🔍 Рисунок \d+:/;
 
+  function makeSimpleTableDocx(tableLines) {
+    const border = { style: BorderStyle.SINGLE, size: 1, color: "000000" };
+    const cellBorders = { top: border, bottom: border, left: border, right: border };
+    const dataLines = tableLines.filter(l => !/^\s*\|[-:| ]+\|\s*$/.test(l));
+    if (!dataLines.length) return null;
+    const rows = dataLines.map((l, rowIdx) => {
+      const cells = l.replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.trim());
+      const isHeader = rowIdx === 0;
+      return new TableRow({
+        children: cells.map(cellText => new TableCell({
+          borders: cellBorders,
+          margins: { left: 57, right: 57, top: 57, bottom: 57 },
+          children: [new Paragraph({
+            alignment: isHeader ? AlignmentType.CENTER : AlignmentType.LEFT,
+            spacing: { line: 240, lineRule: "exact", before: 0, after: 0 },
+            children: [new TextRun({ text: cellText, font: FONT, size: 24, color: "000000", bold: isHeader })],
+          })],
+        })),
+      });
+    });
+    return new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows });
+  }
+
   const children = [];
   for (let i = 0; i < sections.length; i++) {
     const sec = sections[i];
@@ -135,26 +164,40 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
       }));
     }
     let inSources = false;
-    sec.text.split("\n").forEach(line => {
+    const lines = sec.text.split("\n");
+    let li = 0;
+    while (li < lines.length) {
+      const line = lines[li];
       const trimmed = line.trim();
       const trimmedClean = trimmed.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1");
 
       // Маркери пошуку рисунків — не потрапляють у docx
-      if (FIG_MARKER_RE.test(trimmed)) return;
+      if (FIG_MARKER_RE.test(trimmed)) { li++; continue; }
 
       // Якщо citations передано явно — пропускаємо вбудований блок джерел з тексту
-      if (citations !== undefined && SOURCES_HEADER_RE.test(trimmedClean)) { inSources = true; return; }
-      if (citations !== undefined && inSources) return;
+      if (citations !== undefined && SOURCES_HEADER_RE.test(trimmedClean)) { inSources = true; li++; continue; }
+      if (citations !== undefined && inSources) { li++; continue; }
+
+      // Таблиця markdown (рядки що починаються з |)
+      if (/^\s*\|/.test(trimmed)) {
+        const tableLines = [];
+        while (li < lines.length && /^\s*\|/.test(lines[li].trim())) { tableLines.push(lines[li]); li++; }
+        const tbl = makeSimpleTableDocx(tableLines);
+        if (tbl) {
+          children.push(tbl);
+          children.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
+        }
+        continue;
+      }
 
       // Підпис рисунку: "Рис. N — Назва"
       if (FIG_CAPTION_RE.test(trimmed)) {
         children.push(new Paragraph({
-          alignment: AlignmentType.CENTER,
-          indent: { firstLine: 0 },
+          alignment: AlignmentType.CENTER, indent: { firstLine: 0 },
           spacing: { line: LINE, lineRule: "auto", before: 0, after: Math.round(LINE * 0.5) },
           children: [new TextRun({ text: trimmedClean, font: FONT, size: SIZE, color: "B85C00" })],
         }));
-        return;
+        li++; continue;
       }
 
       // Заголовок списку джерел (парсинг з тексту — лише якщо citations не передано)
@@ -165,23 +208,22 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
           alignment: AlignmentType.CENTER, indent: { firstLine: 0 },
           children: [new TextRun({ text: trimmedClean.replace(/[:\.]$/, ""), font: FONT, size: SIZE, bold: true, color: "000000" })],
         }));
-        return;
+        li++; continue;
       }
 
       // Рядки списку джерел (парсинг з тексту)
       if (inSources) {
-        if (!trimmed) return;
+        if (!trimmed) { li++; continue; }
         const numMatch = trimmedClean.match(/^(\d+)[\.\)]/);
         const p = numMatch ? sourceParaWithBookmark(trimmed, parseInt(numMatch[1])) : sourcePara(trimmed);
         if (p) children.push(p);
-        return;
+        li++; continue;
       }
 
       // Звичайний абзац тексту
       const raw = trimmed.replace(/^#{1,6}\s+/, "").replace(/^[-*]\s+/, "");
       const plain = raw.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1");
-      if (!plain) return;
-      // Абзаци зі згадкою рисунку — помаранчевий текст
+      if (!plain) { li++; continue; }
       const hasFig = FIG_INLINE_RE.test(plain);
       children.push(new Paragraph({
         indent: { firstLine: INDENT },
@@ -191,7 +233,8 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
           ? [new TextRun({ text: plain, font: FONT, size: SIZE, color: "B85C00" })]
           : parseBodyLine(raw),
       }));
-    });
+      li++;
+    }
   }
 
   // Явний список джерел (для тез — передається tezyCitations)

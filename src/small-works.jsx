@@ -201,6 +201,7 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
   const [slides, setSlides] = useState([]); // [{title, content}] для презентації
 
   const [sourcesFormatted, setSourcesFormatted] = useState(false);
+  const [methodInfo, setMethodInfo] = useState(null);
 
   const [loadMsg, setLoadMsg] = useState("");
   const [saving, setSaving] = useState(false);
@@ -256,6 +257,7 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
           if (d.searchPhrases?.length) setSearchPhrases(d.searchPhrases);
           if (d.materialText) setMaterialText(d.materialText);
           if (d.sourcesFormatted) setSourcesFormatted(d.sourcesFormatted);
+          if (d.methodInfo) setMethodInfo(d.methodInfo);
           if (d.totalInTok !== undefined) {
             tokenAccRef.current = { inTok: d.totalInTok || 0, outTok: d.totalOutTok || 0, costUsd: d.totalCostUsd || 0 };
           }
@@ -1790,7 +1792,7 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
                   <button disabled={docxLoading} onClick={async () => {
                     setDocxLoading(true);
                     try {
-                      await exportSimpleDocx({ title: info?.topic, sections: [{ label: cfg.label.toUpperCase(), text: result }], info, citations: workType === "tezy" ? tezyCitations : undefined, orderId: currentIdRef.current });
+                      await exportSimpleDocx({ title: info?.topic, sections: [{ label: cfg.label.toUpperCase(), text: result }], info, citations: workType === "tezy" ? tezyCitations : undefined, orderId: currentIdRef.current, methodInfo });
                     } catch (e) { setError(e.message); }
                     setDocxLoading(false);
                   }} style={{ background: docxLoading ? "#aaa" : "#1a4a1a", color: docxLoading ? "#eee" : "#a8e060", border: "none", borderRadius: 7, padding: "11px 24px", fontFamily: "'Spectral',serif", fontSize: 13, cursor: docxLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
