@@ -264,6 +264,7 @@ function CostsTab({ users }) {
         let grandIn = 0, grandOut = 0, grandCost = 0;
         let grandClaudeIn = 0, grandClaudeOut = 0, grandClaudeCost = 0;
         let grandGeminiIn = 0, grandGeminiOut = 0, grandGeminiCost = 0;
+        let grandDurationSec = 0;
         orders.forEach(o => {
             grandIn += o.totalInTok || 0;
             grandOut += o.totalOutTok || 0;
@@ -274,8 +275,9 @@ function CostsTab({ users }) {
             grandGeminiIn += o.geminiInTok || 0;
             grandGeminiOut += o.geminiOutTok || 0;
             grandGeminiCost += o.geminiCostUsd || 0;
+            grandDurationSec += o.generationDurationSec || 0;
             const uid = o.uid || "—";
-            if (!byManager[uid]) byManager[uid] = { inTok: 0, outTok: 0, costUsd: 0, claudeInTok: 0, claudeOutTok: 0, claudeCostUsd: 0, geminiInTok: 0, geminiOutTok: 0, geminiCostUsd: 0, count: 0 };
+            if (!byManager[uid]) byManager[uid] = { inTok: 0, outTok: 0, costUsd: 0, claudeInTok: 0, claudeOutTok: 0, claudeCostUsd: 0, geminiInTok: 0, geminiOutTok: 0, geminiCostUsd: 0, count: 0, durationSec: 0 };
             byManager[uid].inTok += o.totalInTok || 0;
             byManager[uid].outTok += o.totalOutTok || 0;
             byManager[uid].costUsd += o.totalCostUsd || 0;
@@ -285,9 +287,10 @@ function CostsTab({ users }) {
             byManager[uid].geminiInTok += o.geminiInTok || 0;
             byManager[uid].geminiOutTok += o.geminiOutTok || 0;
             byManager[uid].geminiCostUsd += o.geminiCostUsd || 0;
+            byManager[uid].durationSec += o.generationDurationSec || 0;
             byManager[uid].count++;
         });
-        return { grandIn, grandOut, grandCost, grandClaudeIn, grandClaudeOut, grandClaudeCost, grandGeminiIn, grandGeminiOut, grandGeminiCost, byManager };
+        return { grandIn, grandOut, grandCost, grandClaudeIn, grandClaudeOut, grandClaudeCost, grandGeminiIn, grandGeminiOut, grandGeminiCost, grandDurationSec, byManager };
     }, [orders]);
 
     const fmt = iso => iso ? new Date(iso).toLocaleDateString("uk-UA", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—";
@@ -374,6 +377,7 @@ function CostsTab({ users }) {
                                     <th colSpan={3} style={{ textAlign: "center", padding: "6px 10px", color: "#5a6a5a", fontWeight: 700, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", borderBottom: "1px solid #e0ece0", background: "#f5faf5" }}>Claude</th>
                                     <th colSpan={3} style={{ textAlign: "center", padding: "6px 10px", color: "#5a5a6a", fontWeight: 700, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", borderBottom: "1px solid #e0e0ec", background: "#f5f5fa" }}>Gemini</th>
                                     <th colSpan={3} style={{ textAlign: "center", padding: "6px 10px", color: "#888", fontWeight: 700, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", borderBottom: "1px solid #f0ece2" }}>Разом</th>
+                                    <th rowSpan={2} style={{ textAlign: "center", padding: "6px 10px", color: "#888", fontWeight: 600, fontSize: 11, letterSpacing: 1, textTransform: "uppercase", verticalAlign: "bottom", whiteSpace: "nowrap" }}>Час</th>
                                 </tr>
                                 <tr style={{ borderBottom: "2px solid #f0ece2" }}>
                                     {["Вхід","Вихід","$","Вхід","Вихід","$","Вхід","Вихід","$"].map((h, i) => (
@@ -398,6 +402,7 @@ function CostsTab({ users }) {
                                         <td style={{ textAlign: "center", color: "#555", fontFamily: "monospace", fontSize: 12 }}>{fmtTok(row.inTok)}</td>
                                         <td style={{ textAlign: "center", color: "#555", fontFamily: "monospace", fontSize: 12 }}>{fmtTok(row.outTok)}</td>
                                         <td style={{ textAlign: "center", fontWeight: 700, color: "#1a6a1a" }}>{fmtCost(row.costUsd)}</td>
+                                        <td style={{ textAlign: "center", color: "#555", fontFamily: "monospace", fontSize: 12, whiteSpace: "nowrap" }}>{fmtDur(row.durationSec)}</td>
                                     </tr>
                                 ))}
                                 <tr style={{ borderTop: "2px solid #1a1a14", background: "#1a1a14" }}>
@@ -412,6 +417,7 @@ function CostsTab({ users }) {
                                     <td style={{ textAlign: "center", color: "#aaa", fontFamily: "monospace", fontSize: 12 }}>{fmtTok(totals.grandIn)}</td>
                                     <td style={{ textAlign: "center", color: "#aaa", fontFamily: "monospace", fontSize: 12 }}>{fmtTok(totals.grandOut)}</td>
                                     <td style={{ textAlign: "center", color: "#e8ff47", fontWeight: 700, fontSize: 15 }}>{fmtCost(totals.grandCost)}</td>
+                                    <td style={{ textAlign: "center", color: "#e8ff47", fontWeight: 700, whiteSpace: "nowrap" }}>{fmtDur(totals.grandDurationSec)}</td>
                                 </tr>
                             </tbody>
                         </table>
