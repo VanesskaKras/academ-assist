@@ -9,7 +9,7 @@ import { exportToDocx, exportPlanToDocx, exportAppendixToDocx, exportSpeechToDoc
 import { exportToPptxFile } from "./lib/exportPptx.js";
 import { callClaude, callGemini, MODEL, MODEL_FAST } from "./lib/api.js";
 import { playDoneSound } from "./lib/audio.js";
-import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildCorrectionsAnalysisPrompt, buildCorrectionRewritePrompt } from "./lib/prompts.js";
+import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildClientMaterialsAnalysisPrompt, buildCorrectionsAnalysisPrompt, buildCorrectionRewritePrompt } from "./lib/prompts.js";
 import { FIELD_LABELS, isPsychoPed, isEcon, hasEmpiricalResearch, getEmpiricalSections, getEconSections, STAGES_TEXT_FIRST, STAGE_KEYS_TEXT_FIRST, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { searchByPhrase, filterSourcesWithGemini } from "./lib/sourcesSearch.js";
@@ -21,6 +21,7 @@ import { PlanLoadingSkeleton } from "./components/PlanLoadingSkeleton.jsx";
 import { DropZone } from "./components/DropZone.jsx";
 import { PhotoDropZone } from "./components/PhotoDropZone.jsx";
 import { ClientPlanInput } from "./components/ClientPlanInput.jsx";
+import { ClientMaterialsZone } from "./components/ClientMaterialsZone.jsx";
 import { InputStage } from "./components/stages/InputStage.jsx";
 import { ParsedStage } from "./components/stages/ParsedStage.jsx";
 import { PlanStage } from "./components/stages/PlanStage.jsx";
@@ -107,6 +108,9 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [methodInfo, setMethodInfo] = useState(null); // структурна інфо з методички
   const [commentAnalysis, setCommentAnalysis] = useState(null); // {planHints, writingHints}
   const [photos, setPhotos] = useState([]); // [{name, b64, type}] — додаткові фото
+  const [clientMaterials, setClientMaterials] = useState([]); // [{name, text}] — файли клієнта
+  const [clientMaterialsText, setClientMaterialsText] = useState(""); // ручний ввід
+  const [clientMaterialsSummary, setClientMaterialsSummary] = useState(null); // {rawText, keyFacts, tablesMd, sectionHints}
   const [info, setInfo] = useState(null);
   const [sections, setSections] = useState([]);
   const [planDisplay, setPlanDisplay] = useState("");
@@ -243,6 +247,8 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
           if (d.methodInfo) setMethodInfo(d.methodInfo);
           if (d.fileLabel) setFileLabel(d.fileLabel);
           if (d.commentAnalysis) setCommentAnalysis(d.commentAnalysis);
+          if (d.clientMaterialsSummary) setClientMaterialsSummary(d.clientMaterialsSummary);
+          if (d.clientMaterialsText) setClientMaterialsText(d.clientMaterialsText);
           if (d.content) setContent(d.content);
           if (d.citInputs) setCitInputs(d.citInputs);
           if (d.citStructured) setCitStructured(d.citStructured);
@@ -537,6 +543,32 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
       }
     } else {
       setCommentAnalysis(null);
+    }
+
+    // КРОК 4: Аналіз матеріалів клієнта (файли + ручний текст)
+    const combinedMaterialsText = [
+      ...clientMaterials.map(m => `=== ${m.name} ===\n${m.text}`),
+      clientMaterialsText?.trim() || "",
+    ].filter(Boolean).join("\n\n");
+
+    if (combinedMaterialsText.trim()) {
+      setLoadMsg("Аналізую матеріали клієнта...");
+      await new Promise(r => setTimeout(r, 500));
+      try {
+        const cmRaw = await callClaude(
+          [{ role: "user", content: buildClientMaterialsAnalysisPrompt({ topic: newInfo?.topic, materialsText: combinedMaterialsText.slice(0, 40000) }) }],
+          null, SYS_JSON_SHORT, 2000, null, MODEL_FAST
+        );
+        const cmMatch = cmRaw.match(/\{[\s\S]*\}/);
+        const cmParsed = JSON.parse(cmMatch?.[0] || cmRaw);
+        setClientMaterialsSummary(cmParsed);
+        await saveToFirestore({ clientMaterialsSummary: cmParsed, clientMaterialsText: clientMaterialsText?.trim() || null });
+      } catch (e) {
+        console.warn("clientMaterialsSummary failed:", e.message);
+        setClientMaterialsSummary(null);
+      }
+    } else {
+      setClientMaterialsSummary(null);
     }
 
     setRunning(false); runningRef.current = false; setLoadMsg(""); setStage("parsed");
@@ -1408,6 +1440,13 @@ ${planSummary}
       commentAnalysis?.textStructureHints,
     ].filter(Boolean).join("\n");
     if (clientWritingReqs) instruction += `\n\nВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО виконати при написанні):\n${clientWritingReqs}`;
+    if (clientMaterialsSummary) {
+      const matBlock = [];
+      if (clientMaterialsSummary.rawText) matBlock.push(`МАТЕРІАЛИ КЛІЄНТА (використовуй ці дані — не вигадуй, не замінюй):\n${clientMaterialsSummary.rawText.slice(0, 12000)}`);
+      if (clientMaterialsSummary.keyFacts?.length) matBlock.push(`КОНКРЕТНІ ЦИФРИ І ФАКТИ (зберігай дослівно — не округлюй, не змінюй):\n${clientMaterialsSummary.keyFacts.join("\n")}`);
+      if (clientMaterialsSummary.tablesMd) matBlock.push(`ТАБЛИЦІ З ДАНИМИ (відтвори точно якщо стосуються розділу):\n${clientMaterialsSummary.tablesMd}`);
+      if (matBlock.length) instruction += `\n\n${matBlock.join("\n\n")}`;
+    }
     const sectionMaxTokens = Math.min(60000, Math.max(8000, Math.round((sec.pages || 1) * 3000)));
     try {
       const raw = await callClaude(buildMessages(instruction), ctrl.signal, buildSYS(lang, methodInfo), sectionMaxTokens, (s) => setLoadMsg(`Генерую: ${sec.label}... зачекайте ${s}с`));
@@ -1596,10 +1635,18 @@ ${empHintRegen ? `ВИМОГА: ${empHintRegen}\n` : ""}Рекомендації
         commentAnalysis?.writingHints,
         commentAnalysis?.textStructureHints,
       ].filter(Boolean).join("\n");
+      const clientMaterialsBlockRegen = (() => {
+        if (!clientMaterialsSummary) return "";
+        const parts = [];
+        if (clientMaterialsSummary.rawText) parts.push(`МАТЕРІАЛИ КЛІЄНТА (використовуй ці дані):\n${clientMaterialsSummary.rawText.slice(0, 12000)}`);
+        if (clientMaterialsSummary.keyFacts?.length) parts.push(`КОНКРЕТНІ ЦИФРИ І ФАКТИ (зберігай дослівно):\n${clientMaterialsSummary.keyFacts.join("\n")}`);
+        if (clientMaterialsSummary.tablesMd) parts.push(`ТАБЛИЦІ З ДАНИМИ:\n${clientMaterialsSummary.tablesMd}`);
+        return parts.length ? `\n\n${parts.join("\n\n")}` : "";
+      })();
       instruction = `Перепиши підрозділ "${sec.label}" для ${d.type} на тему "${d.topic}". Галузь: ${d.subject}.
 ${empiricalBlockRegen}${econBlockRegen}
 ${clientReqsRegen ? `ВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО виконати):\n${clientReqsRegen}\n` : ""}Обсяг: ~${Math.round((sec.pages || 1) * 250)} слів (~${sec.pages} стор.). Не перевищуй вказаний обсяг.
-Не обривай текст. Завершуй підсумковим абзацом. Без посилань. Без жирного.${customInstructions}`;
+Не обривай текст. Завершуй підсумковим абзацом. Без посилань. Без жирного.${customInstructions}${clientMaterialsBlockRegen}`;
     }
     const regenMaxTokens = Math.min(60000, Math.max(8000, Math.round((sec.pages || 1) * 3000)));
     try {
@@ -3360,6 +3407,10 @@ ${refLines2.join("\n")}`;
               appendicesText={appendicesText} setAppendicesText={setAppendicesText}
               fileLabel={fileLabel} fileB64={fileB64} methodInfo={methodInfo}
               photos={photos} setPhotos={setPhotos} info={info}
+              clientMaterials={clientMaterials}
+              onAddClientMaterial={m => setClientMaterials(prev => [...prev, m])}
+              onRemoveClientMaterial={i => setClientMaterials(prev => prev.filter((_, idx) => idx !== i))}
+              clientMaterialsText={clientMaterialsText} setClientMaterialsText={setClientMaterialsText}
               running={running} loadMsg={loadMsg}
               handleFile={handleFile} doAnalyze={doAnalyze} setStage={setStage}
             />

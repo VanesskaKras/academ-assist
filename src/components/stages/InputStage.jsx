@@ -3,11 +3,15 @@ import { FieldBox, Heading, PrimaryBtn } from "../Buttons.jsx";
 import { DropZone } from "../DropZone.jsx";
 import { PhotoDropZone } from "../PhotoDropZone.jsx";
 import { ClientPlanInput } from "../ClientPlanInput.jsx";
+import { ClientMaterialsZone } from "../ClientMaterialsZone.jsx";
 
 export function InputStage({
   tplText, setTplText, clientPlan, setClientPlan, comment, setComment,
   appendicesText, setAppendicesText,
-  fileLabel, fileB64, methodInfo, photos, setPhotos, info, running, loadMsg,
+  fileLabel, fileB64, methodInfo, photos, setPhotos,
+  clientMaterials, onAddClientMaterial, onRemoveClientMaterial,
+  clientMaterialsText, setClientMaterialsText,
+  info, running, loadMsg,
   handleFile, doAnalyze, setStage,
 }) {
   return (
@@ -52,6 +56,15 @@ export function InputStage({
           photos={photos}
           onAdd={p => setPhotos(prev => [...prev, p])}
           onRemove={i => setPhotos(prev => prev.filter((_, idx) => idx !== i))}
+        />
+      </FieldBox>
+      <FieldBox label="Матеріали клієнта — PDF, TXT або текст (необов'язково, до 10 файлів)">
+        <ClientMaterialsZone
+          materials={clientMaterials}
+          onAdd={onAddClientMaterial}
+          onRemove={onRemoveClientMaterial}
+          manualText={clientMaterialsText}
+          onManualText={setClientMaterialsText}
         />
       </FieldBox>
       <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
