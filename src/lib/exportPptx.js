@@ -16,7 +16,7 @@ export async function exportToPptxFile(slideData, info) {
     forest: { bg: "2C5F2D", accent: "97BC62", light: "F0F7F0", text: "1A3A1B" },
     coral: { bg: "B85042", accent: "F5C6C0", light: "FDF8F5", text: "5A1A0F" },
     slate: { bg: "36454F", accent: "C8D8E4", light: "F5F5F5", text: "2A3540" },
-    warm: { bg: "1A1A14", accent: "D4CF80", light: "FAF8F3", text: "1A1A14" },
+    warm: { bg: "0D1B3E", accent: "4A7CBF", light: "EEF3FF", text: "0D1B3E" },
   };
 
   const detectTheme = (info) => {
