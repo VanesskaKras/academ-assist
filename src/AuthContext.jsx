@@ -68,13 +68,13 @@ export function AuthProvider({ children }) {
     }, []);
 
     const login = async (email, password) => {
+        localStorage.removeItem(SESSION_KEY);
         const cred = await signInWithEmailAndPassword(auth, email, password);
 
         const sessionId = crypto.randomUUID
             ? crypto.randomUUID()
             : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-        localStorage.setItem(SESSION_KEY, sessionId);
         localStorage.removeItem(KICKED_KEY);
 
         const userRef = doc(db, "users", cred.user.uid);
@@ -105,6 +105,7 @@ export function AuthProvider({ children }) {
             console.error("Login log error:", e);
         }
 
+        localStorage.setItem(SESSION_KEY, sessionId);
         return cred;
     };
 
