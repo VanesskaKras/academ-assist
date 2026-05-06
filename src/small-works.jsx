@@ -404,18 +404,25 @@ ${tplText}
 ${comment ? `\nКОМЕНТАР: ${comment}` : ""}${materialHint}
 
 Поверни ТІЛЬКИ JSON (без markdown):
-{"type":"${WORK_TYPES[workType]?.label || workType}","pages":"","topic":"","subject":"","direction":"","uniqueness":"","language":"Українська","deadline":"","orderNumber":"","requirements":""${tezyFields}${simpleFields}${referatFields}}
+{"type":"${WORK_TYPES[workType]?.label || workType}","pages":"","topic":"","subject":"","direction":"","uniqueness":"","language":"Українська","deadline":"","orderNumber":"","requirements":"","formatting":{"left":null,"right":null,"top":null,"bottom":null}${tezyFields}${simpleFields}${referatFields}}
 
 orderNumber — номер замовлення якщо є (наприклад "37808.2"), інакше порожній рядок.
-requirements — якщо є рекомендації у файлах, стисло опиши ключові вимоги до структури та оформлення.${tezyHints}${simpleHints}${referatHints}`;
+requirements — якщо є рекомендації у файлах, стисло опиши ключові вимоги до структури та оформлення.
+formatting — поля сторінки в мм якщо явно вказані у файлах або коментарі: left (ліве), right (праве), top (верхнє), bottom (нижнє). Якщо написано "зі всіх сторін X см" — постав X*10 у всі чотири поля. null для кожного поля якщо не вказано.${tezyHints}${simpleHints}${referatHints}`;
 
       const msgs = [{ role: "user", content: [...fileContext, ...matFileContext, { type: "text", text: prompt }] }];
       // Для тез/статті/есе/реферату з файлами — Sonnet (краще читає зображення), інакше Haiku
       const model = ((isTezy || isSimpleWithSources || isReferat) && (files.length > 0 || materialFiles.length > 0)) ? MODEL : MODEL_FAST;
       const raw = await callClaude(msgs, null, "Respond only with valid JSON. No markdown.", 1500, null, model);
       const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || raw);
+      const extractedFormatting = parsed.formatting;
+      delete parsed.formatting;
       const newInfo = { ...parsed, workType };
       setInfo(newInfo);
+      if (extractedFormatting?.left || extractedFormatting?.right || extractedFormatting?.top || extractedFormatting?.bottom) {
+        const toNum = v => (v != null && v !== "" ? Number(v) : null);
+        setMethodInfo(prev => ({ ...(prev || {}), formatting: { ...(prev?.formatting || {}), margins: { left: toNum(extractedFormatting.left), right: toNum(extractedFormatting.right), top: toNum(extractedFormatting.top), bottom: toNum(extractedFormatting.bottom) } } }));
+      }
 
       if (workType === "referat") {
         await saveToFirestore({ tplText, comment, clientPlan, materialText, info: newInfo, stage: "plan", status: "new" });
@@ -559,7 +566,8 @@ ${refLines}`
 Правила:
 - Стаття: Прізвище І. І. Назва статті. *Назва журналу*. рік. № номер. С. xx–xx.
 - Онлайн: Прізвище І. І. Назва. URL (дата звернення: ${accessDate}).
-- Ініціали ПІСЛЯ прізвища без ком.
+- КАТЕГОРИЧНО ЗАБОРОНЕНО ставити ініціали ПЕРЕД прізвищем. НЕ "В. Андріяш" — лише "Андріяш В.". Ініціали ЗАВЖДИ після прізвища.
+- Між ініціалами — пробіл: "М. В." а не "М.В.".
 - КУРСИВ: назву журналу обгортай в *зірочки*.
 - Назви ВЕЛИКИМИ ЛІТЕРАМИ переводь у sentence case (перша велика, решта малі).
 Збережи номери. Поверни ТІЛЬКИ список без заголовка.
@@ -1859,7 +1867,7 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
                         lines.push({ text: `${tpi.city || ""}${tpi.city ? " – " : ""}${yr}`, align: "center", bold: false, spaceBefore: 0 });
                         return lines;
                       })() : null;
-                      await exportToDocx({ content, info, displayOrder, appendicesText: "", titlePage: null, titlePageLines: refTitlePageLines, methodInfo: null, orderId: currentIdRef.current });
+                      await exportToDocx({ content, info, displayOrder, appendicesText: "", titlePage: null, titlePageLines: refTitlePageLines, methodInfo, orderId: currentIdRef.current });
                     } catch (e) { setError(e.message); }
                     setDocxLoading(false);
                   }} style={{ background: docxLoading ? "#aaa" : "#1a4a1a", color: docxLoading ? "#eee" : "#a8e060", border: "none", borderRadius: 7, padding: "11px 24px", fontFamily: "'Spectral',serif", fontSize: 13, cursor: docxLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
