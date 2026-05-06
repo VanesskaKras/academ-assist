@@ -109,7 +109,7 @@ export async function callClaude(messages, signal, systemPrompt, maxTokens, onWa
 
 export async function callGemini(messages, signal, systemPrompt, maxTokens, onWait, model, jsonMode) {
   const MAX_RETRIES = 5;
-  const FALLBACK_MODEL = "gemini-1.5-flash";
+  const FALLBACK_MODEL = "gemini-2.0-flash";
   const FALLBACK_AFTER_503 = 2;
   let delay = 12000;
   let currentModel = model || "gemini-2.5-flash-lite";
