@@ -3,10 +3,43 @@ import { useState, useRef } from "react";
 const MAX_FILES = 10;
 const MAX_TEXT_CHARS = 8000; // per file, to avoid enormous payloads
 
+const XLSX_CDN = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
+
 export function ClientMaterialsZone({ materials, onAdd, onRemove, manualText, onManualText }) {
   const fileRef = useRef();
   const [dragging, setDragging] = useState(false);
   const [extracting, setExtracting] = useState(false);
+
+  async function loadXlsx() {
+    if (window.XLSX) return window.XLSX;
+    await new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = XLSX_CDN; s.onload = resolve; s.onerror = reject;
+      document.head.appendChild(s);
+    });
+    return window.XLSX;
+  }
+
+  async function extractXlsxText(arrayBuffer) {
+    const XLSX = await loadXlsx();
+    const wb = XLSX.read(arrayBuffer, { type: "array" });
+    const parts = [];
+    for (const sheetName of wb.SheetNames) {
+      const ws = wb.Sheets[sheetName];
+      const csv = XLSX.utils.sheet_to_csv(ws, { blankrows: false });
+      if (!csv.trim()) continue;
+      // Конвертуємо CSV → markdown-таблицю
+      const rows = csv.split("\n").filter(r => r.trim());
+      const mdRows = rows.map((r, i) => {
+        const cells = r.split(",").map(c => c.trim().replace(/^"|"$/g, ""));
+        const line = "| " + cells.join(" | ") + " |";
+        if (i === 0) return line + "\n|" + cells.map(() => "---").join("|") + "|";
+        return line;
+      });
+      parts.push(`=== Аркуш: ${sheetName} ===\n${mdRows.join("\n")}`);
+    }
+    return parts.join("\n\n").slice(0, MAX_TEXT_CHARS);
+  }
 
   async function extractPdfText(b64) {
     if (!window.pdfjsLib) {
@@ -42,7 +75,13 @@ export function ClientMaterialsZone({ materials, onAdd, onRemove, manualText, on
     setExtracting(true);
     for (const f of toProcess) {
       try {
-        if (f.type === "text/plain") {
+        const isText = f.type === "text/plain" || f.name.endsWith(".txt") || f.name.endsWith(".csv");
+        const isPdf = f.type === "application/pdf" || f.name.endsWith(".pdf");
+        const isXlsx = f.name.endsWith(".xlsx") || f.name.endsWith(".xls") ||
+          f.type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+          f.type === "application/vnd.ms-excel";
+
+        if (isText) {
           const text = await new Promise((res, rej) => {
             const r = new FileReader();
             r.onload = ev => res(ev.target.result.slice(0, MAX_TEXT_CHARS));
@@ -50,7 +89,7 @@ export function ClientMaterialsZone({ materials, onAdd, onRemove, manualText, on
             r.readAsText(f, "utf-8");
           });
           onAdd({ name: f.name, text });
-        } else if (f.type === "application/pdf") {
+        } else if (isPdf) {
           const b64 = await new Promise((res, rej) => {
             const r = new FileReader();
             r.onload = ev => res(ev.target.result.split(",")[1]);
@@ -58,6 +97,15 @@ export function ClientMaterialsZone({ materials, onAdd, onRemove, manualText, on
             r.readAsDataURL(f);
           });
           const text = await extractPdfText(b64);
+          onAdd({ name: f.name, text });
+        } else if (isXlsx) {
+          const arrayBuffer = await new Promise((res, rej) => {
+            const r = new FileReader();
+            r.onload = ev => res(ev.target.result);
+            r.onerror = rej;
+            r.readAsArrayBuffer(f);
+          });
+          const text = await extractXlsxText(arrayBuffer);
           onAdd({ name: f.name, text });
         }
       } catch (e) {
@@ -90,14 +138,14 @@ export function ClientMaterialsZone({ materials, onAdd, onRemove, manualText, on
           {extracting
             ? "Витягую текст..."
             : canAdd
-              ? `Перетягніть або клікніть — PDF або TXT (${materials.length}/${MAX_FILES})`
+              ? `Перетягніть або клікніть — PDF, TXT, CSV, XLSX (${materials.length}/${MAX_FILES})`
               : `Максимум ${MAX_FILES} файлів завантажено`}
         </div>
       </div>
       <input
         ref={fileRef}
         type="file"
-        accept=".pdf,.txt,text/plain,application/pdf"
+        accept=".pdf,.txt,.csv,.xlsx,.xls,text/plain,application/pdf,text/csv"
         multiple
         style={{ display: "none" }}
         onChange={e => { processFiles(e.target.files); e.target.value = ""; }}
