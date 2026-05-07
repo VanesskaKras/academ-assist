@@ -2306,6 +2306,12 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
       const globalSeen = new Set(isFirstSearch ? [] : (seenSourceKeys[secId] || []));
       const updatedGroups = isFirstSearch ? [] : [...(phraseGroups[secId] || [])];
 
+      // Для розділів без підрозділів label містить "РОЗДІЛ N. НАЗВА РОЗДІЛУ" —
+      // обрізаємо структурний префікс щоб Gemini-фільтр орієнтувався на зміст, а не на "напрями удосконалення"
+      const filterLabel = sectionLabel
+        .replace(/^РОЗДІЛ\s+[IVXivxІVХ\d]+[.\s:]+/i, '')
+        .trim() || sectionLabel;
+
       // Нормалізація: підтримка як [{thesis, phrases}], так і старого плоского рядкового масиву
       const normalizedTheses = Array.isArray(thesesData) && thesesData.length > 0 && typeof thesesData[0] === 'string'
         ? [{ thesis: '', phrases: thesesData }]
@@ -2322,7 +2328,7 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
           });
           if (!fresh.length) continue;
 
-          const top15 = await filterSourcesWithGemini(fresh.slice(0, 15), sectionLabel, topicCtx, 15, thesis);
+          const top15 = await filterSourcesWithGemini(fresh.slice(0, 15), filterLabel, topicCtx, 15, thesis);
           top15.forEach(p => globalSeen.add((p.title || '').toLowerCase().slice(0, 60)));
 
           const existingIdx = updatedGroups.findIndex(g => g.phrase === phrase);
