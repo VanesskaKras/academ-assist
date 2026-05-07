@@ -67,7 +67,7 @@ export function renumberTablesAndFigures(content, displayOrder) {
 // ─────────────────────────────────────────────
 // Word export (основний документ)
 // ─────────────────────────────────────────────
-export async function exportToDocx({ content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo, orderId }) {
+export async function exportToDocx({ content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo, commentAnalysis, orderId }) {
   if (!window.docx) {
     await new Promise((resolve, reject) => {
       const s = document.createElement("script");
@@ -83,11 +83,12 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
   const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel, TableOfContents, Table, TableRow, TableCell, WidthType, BorderStyle, ExternalHyperlink, InternalHyperlink, Bookmark } = window.docx;
   const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
   const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
-  const marg = methodInfo?.formatting?.margins || {};
-  const L = mmToTwip(marg.left   || 30);
-  const R = mmToTwip(marg.right  || 15);
-  const T = mmToTwip(marg.top    || 20);
-  const B = mmToTwip(marg.bottom || 20);
+  const marg = methodInfo?.formatting?.margins || commentAnalysis?.formattingHints?.margins || {};
+  const toMm = v => (v != null && Number(v) > 0 ? Number(v) : null);
+  const L = mmToTwip(toMm(marg.left)   ?? 30);
+  const R = mmToTwip(toMm(marg.right)  ?? 15);
+  const T = mmToTwip(toMm(marg.top)    ?? 20);
+  const B = mmToTwip(toMm(marg.bottom) ?? 20);
   const INDENT = 709, LINE = 360;
   const LINE_SINGLE = 240;
 
@@ -584,10 +585,11 @@ export async function exportPlanToDocx({ sections, info, methodInfo }) {
   const FONT = "Times New Roman", SIZE = 28, LINE = 360, INDENT = 709;
   const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
   const marg = methodInfo?.formatting?.margins || {};
-  const L = mmToTwip(marg.left   || 30);
-  const R = mmToTwip(marg.right  || 15);
-  const T = mmToTwip(marg.top    || 20);
-  const B = mmToTwip(marg.bottom || 20);
+  const toMm = v => (v != null && Number(v) > 0 ? Number(v) : null);
+  const L = mmToTwip(toMm(marg.left)   ?? 30);
+  const R = mmToTwip(toMm(marg.right)  ?? 15);
+  const T = mmToTwip(toMm(marg.top)    ?? 20);
+  const B = mmToTwip(toMm(marg.bottom) ?? 20);
 
   const intro = sections.find(s => s.type === "intro");
   const concs = sections.find(s => s.type === "conclusions");
@@ -660,10 +662,11 @@ export async function exportAppendixToDocx(text, info, methodInfo, orderId) {
   const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
   const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
   const marg = methodInfo?.formatting?.margins || {};
-  const L = mmToTwip(marg.left   || 30);
-  const R = mmToTwip(marg.right  || 15);
-  const T = mmToTwip(marg.top    || 20);
-  const B = mmToTwip(marg.bottom || 20);
+  const toMm = v => (v != null && Number(v) > 0 ? Number(v) : null);
+  const L = mmToTwip(toMm(marg.left)   ?? 30);
+  const R = mmToTwip(toMm(marg.right)  ?? 15);
+  const T = mmToTwip(toMm(marg.top)    ?? 20);
+  const B = mmToTwip(toMm(marg.bottom) ?? 20);
   const INDENT = 709, LINE = 360;
 
   function cleanMarkdown(line) {
@@ -825,10 +828,11 @@ export async function exportSpeechToDocx(text, info, methodInfo, orderId) {
   const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
   const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
   const marg = methodInfo?.formatting?.margins || {};
-  const L = mmToTwip(marg.left   || 30);
-  const R = mmToTwip(marg.right  || 15);
-  const T = mmToTwip(marg.top    || 20);
-  const B = mmToTwip(marg.bottom || 20);
+  const toMm = v => (v != null && Number(v) > 0 ? Number(v) : null);
+  const L = mmToTwip(toMm(marg.left)   ?? 30);
+  const R = mmToTwip(toMm(marg.right)  ?? 15);
+  const T = mmToTwip(toMm(marg.top)    ?? 20);
+  const B = mmToTwip(toMm(marg.bottom) ?? 20);
   const INDENT = 709, LINE = 360;
   if (text) text = text.replace(/'/g, '\u2019');
 

@@ -163,7 +163,7 @@ export async function exportToPptxFile(slideData, info) {
       });
       s.addText(String(icon), {
         x: CONTENT_X, y: ty + (itemH - circSize) / 2, w: circSize, h: circSize,
-        fontSize: 14, align: "center", valign: "middle",
+        fontSize: 14, align: "center", valign: "middle", color: "FFFFFF",
       });
       const textX = CONTENT_X + circSize + 0.14;
       const textW = CONTENT_W - circSize - 0.14;

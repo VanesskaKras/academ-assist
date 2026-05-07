@@ -263,6 +263,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
             setSeenSourceKeys(seen);
           }
           if (d.phraseGroups) setPhraseGroups(d.phraseGroups);
+          if (d.keywords) setKeywords(d.keywords);
           if (d.speechText) setSpeechText(d.speechText);
           if (d.appendicesText) setAppendicesText(d.appendicesText.replace(/\n{2,}/g, '\n'));
           if (d.titlePage) setTitlePage(d.titlePage);
@@ -345,13 +346,13 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const sourcesSaveTimer = useRef(null);
   useEffect(() => {
     if (stage !== "sources") return;
-    if (!Object.keys(suggestedSources).length && !Object.keys(phraseGroups).length) return;
+    if (!Object.keys(suggestedSources).length && !Object.keys(phraseGroups).length && !Object.keys(keywords).length) return;
     clearTimeout(sourcesSaveTimer.current);
     sourcesSaveTimer.current = setTimeout(() => {
-      saveToFirestore({ suggestedSources, phraseGroups });
+      saveToFirestore({ suggestedSources, phraseGroups, keywords });
     }, 2000);
     return () => clearTimeout(sourcesSaveTimer.current);
-  }, [suggestedSources, phraseGroups]); // eslint-disable-line
+  }, [suggestedSources, phraseGroups, keywords]); // eslint-disable-line
 
   // ── Збереження в Firestore ──
   const saveToFirestore = async (patch) => {
@@ -2355,6 +2356,7 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
     // Відображення: label-префікс ("3.2.1") → реальний internal id ("3.3")
     const labelToId = {};
     for (const s of mainSecs) {
+      labelToId[s.id] = s.id;
       const m = s.label.match(/^(\d+(?:\.\d+)*)/);
       if (m) labelToId[m[1]] = s.id;
     }
@@ -2362,7 +2364,7 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
       const txt = content[s.id]
         ? `\n${content[s.id].substring(0, 1200).replace(/["\\]/g, " ").replace(/\n+/g, " ")}`
         : "";
-      return `### ${s.label} (потрібно ${sourceDist[s.id] || 3} джерела)${txt}`;
+      return `### [${s.id}] ${s.label} (потрібно ${sourceDist[s.id] || 3} джерела)${txt}`;
     }).join("\n\n");
     const domainCtx = [info?.direction, info?.subject].filter(Boolean).join(', ');
     const commentCtx = [commentAnalysis?.planHints, commentAnalysis?.writingHints].filter(Boolean).join(' ').slice(0, 400);
@@ -2382,8 +2384,8 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
 ${secBlocks}
 
 Поверни валідний JSON з двома полями:
-- "theses": об'єкт, ключ = номер підрозділу ("1.1", "1.2" тощо), значення = масив об'єктів {"thesis": рядок, "phrases": масив рядків}
-- "searchAnchors": об'єкт, ключ = номер підрозділу, значення = масив з 2–3 якірних фраз (рядки)`;
+- "theses": об'єкт, ключ = ідентифікатор підрозділу з квадратних дужок ("1.1", "1.2", "3" тощо), значення = масив об'єктів {"thesis": рядок, "phrases": масив рядків}
+- "searchAnchors": об'єкт, ключ = ідентифікатор підрозділу з квадратних дужок, значення = масив з 2–3 якірних фраз (рядки)`;
     try {
       const res = await fetch("/api/gemini", {
         method: "POST",

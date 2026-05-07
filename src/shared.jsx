@@ -14,7 +14,7 @@ export function parsePagesAvg(str) {
 }
 
 // ── Simple docx export для малих робіт (плоский текст без підрозділів) ──
-export async function exportSimpleDocx({ title, sections, info, citations, orderId, methodInfo }) {
+export async function exportSimpleDocx({ title, sections, info, citations, orderId, methodInfo, commentAnalysis }) {
   if (!window.docx) {
     await new Promise((resolve, reject) => {
       const s = document.createElement("script");
@@ -26,11 +26,12 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
   const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel, ExternalHyperlink, InternalHyperlink, Bookmark, Table, TableRow, TableCell, WidthType, BorderStyle } = window.docx;
   const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
   const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
-  const marg = methodInfo?.formatting?.margins || {};
-  const L = mmToTwip(marg.left   || 30);
-  const R = mmToTwip(marg.right  || 15);
-  const T = mmToTwip(marg.top    || 20);
-  const B = mmToTwip(marg.bottom || 20);
+  const marg = methodInfo?.formatting?.margins || commentAnalysis?.formattingHints?.margins || {};
+  const toMm = v => (v != null && Number(v) > 0 ? Number(v) : null);
+  const L = mmToTwip(toMm(marg.left)   ?? 30);
+  const R = mmToTwip(toMm(marg.right)  ?? 15);
+  const T = mmToTwip(toMm(marg.top)    ?? 20);
+  const B = mmToTwip(toMm(marg.bottom) ?? 20);
   const INDENT = 709, LINE = 360;
 
   // [N] → внутрішнє гіперпосилання на закладку джерела
