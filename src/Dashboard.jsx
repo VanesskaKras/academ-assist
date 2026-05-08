@@ -362,6 +362,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining }) {
             );
         }
         if (sortBy !== "default") {
+            result = result.filter(o => !(o.status === "done" && !needsSources(o)));
             const parseDeadline = (d) => {
                 if (!d) return sortBy === "deadline_asc" ? Infinity : -Infinity;
                 const [day, month, year] = d.split(".");
