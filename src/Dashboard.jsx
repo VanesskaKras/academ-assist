@@ -498,23 +498,34 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining }) {
         setTransferOrderId(null);
     };
 
+    const archiveOrder = async (id, archive, e) => {
+        e.stopPropagation();
+        await setDoc(doc(db, "orders", id), { archived: archive }, { merge: true });
+        setOrders(p => p.map(o => o.id === id ? { ...o, archived: archive } : o));
+    };
+
     const needsSources = (o) => o.mode === "small"
         ? o.stage === "sources"
         : o.stage === "sources" || (o.status === "done" && (!o.refList || o.refList.length === 0));
 
     const filtered = useMemo(() => {
         let result = orders;
-        // Фільтр по статусу
-        if (filterStatus) {
-            result = result.filter(o => {
-                const s = o.status || "new";
-                if (filterStatus === "sources") return needsSources(o);
-                if (filterStatus === "writing") return s === "writing" && o.stage !== "sources";
-                if (filterStatus === "plan_ready") return s === "plan_ready" || s === "plan_approved";
-                if (filterStatus === "done") return s === "done" && !needsSources(o);
-                if (filterStatus === "new") return s === "new";
-                return true;
-            });
+        // Архів
+        if (filterStatus === "archived") {
+            result = result.filter(o => o.archived);
+        } else {
+            result = result.filter(o => !o.archived);
+            if (filterStatus) {
+                result = result.filter(o => {
+                    const s = o.status || "new";
+                    if (filterStatus === "sources") return needsSources(o);
+                    if (filterStatus === "writing") return s === "writing" && o.stage !== "sources";
+                    if (filterStatus === "plan_ready") return s === "plan_ready" || s === "plan_approved";
+                    if (filterStatus === "done") return s === "done" && !needsSources(o);
+                    if (filterStatus === "new") return s === "new";
+                    return true;
+                });
+            }
         }
         // Пошук по тексту
         if (search.trim()) {
@@ -543,8 +554,10 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining }) {
     }, [orders, search, filterStatus, dlFrom, dlTo]);
 
     const counts = useMemo(() => {
-        const c = { all: orders.length, done: 0, writing: 0, sources: 0, plan_ready: 0, new: 0 };
+        const c = { all: 0, done: 0, writing: 0, sources: 0, plan_ready: 0, new: 0, archived: 0 };
         orders.forEach(o => {
+            if (o.archived) { c.archived++; return; }
+            c.all++;
             const s = o.status || "new";
             if (needsSources(o)) c.sources++;
             else if (s === "done") c.done++;
@@ -609,6 +622,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining }) {
                             { label: "В роботі", val: counts.writing, color: "#2a7a6a", bg: "#e4f5f2", key: "writing" },
                             { label: "Джерела", val: counts.sources, color: "#8a5a1a", bg: "#fff3e0", key: "sources" },
                             { label: "Готово", val: counts.done, color: "#1a6a1a", bg: "#e4ffe4", key: "done" },
+                            ...(isAdmin && counts.archived > 0 ? [{ label: "Архів", val: counts.archived, color: "#666", bg: "#ebebeb", key: "archived" }] : []),
                         ].map(s => {
                             const isActive = filterStatus === s.key;
                             return (
@@ -628,8 +642,8 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining }) {
                     </div>
                 )}
 
-                {/* Deadline filter (admin only) */}
-                {isAdmin && orders.length > 0 && (
+                {/* Deadline filter (admin only, not in archive view) */}
+                {isAdmin && orders.length > 0 && filterStatus !== "archived" && (
                     <DeadlinePicker dlFrom={dlFrom} dlTo={dlTo} setDlFrom={setDlFrom} setDlTo={setDlTo} />
                 )}
 
@@ -664,7 +678,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining }) {
                     </div>
                 ) : filtered.length === 0 ? (
                     <div style={{ textAlign: "center", padding: 40, color: "#888", fontSize: 14 }}>
-                        Нічого не знайдено за запитом «{search}»
+                        {filterStatus === "archived" ? "Архів порожній" : search ? `Нічого не знайдено за запитом «${search}»` : "Немає замовлень у цьому фільтрі"}
                     </div>
                 ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -731,6 +745,15 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining }) {
                                                 </div>
                                             )}
                                         </div>
+                                    )}
+                                    {isAdmin && (
+                                        <button onClick={e => archiveOrder(order.id, !order.archived, e)}
+                                            title={order.archived ? "Розархівувати" : "Архівувати"}
+                                            style={{ background: "transparent", border: "1px solid #eee", color: "#bbb", borderRadius: 6, padding: "5px 10px", fontSize: 12, cursor: "pointer", flexShrink: 0 }}
+                                            onMouseEnter={e => { e.currentTarget.style.borderColor = "#bbb"; e.currentTarget.style.color = "#555"; }}
+                                            onMouseLeave={e => { e.currentTarget.style.borderColor = "#eee"; e.currentTarget.style.color = "#bbb"; }}>
+                                            {order.archived ? "↩" : "🗄"}
+                                        </button>
                                     )}
                                     <button onClick={e => deleteOrder(order.id, e)}
                                         style={{ background: "transparent", border: "1px solid #eee", color: "#ccc", borderRadius: 6, padding: "5px 10px", fontSize: 12, cursor: "pointer", flexShrink: 0 }}
