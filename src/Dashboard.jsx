@@ -429,6 +429,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining }) {
     const [filterStatus, setFilterStatus] = useState(null); // null = всі
     const [dlFrom, setDlFrom] = useState(null);
     const [dlTo, setDlTo] = useState(null);
+    const [filterManager, setFilterManager] = useState("all");
     const [infoOrder, setInfoOrder] = useState(null); // модалка деталей
     const [showHelp, setShowHelp] = useState(false);
     const [showStats, setShowStats] = useState(false);
@@ -510,6 +511,10 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining }) {
 
     const filtered = useMemo(() => {
         let result = orders;
+        // Фільтр по менеджеру
+        if (filterManager !== "all") {
+            result = result.filter(o => o.uid === filterManager);
+        }
         // Архів
         if (filterStatus === "archived") {
             result = result.filter(o => o.archived);
@@ -551,7 +556,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining }) {
             });
         }
         return result;
-    }, [orders, search, filterStatus, dlFrom, dlTo]);
+    }, [orders, search, filterStatus, dlFrom, dlTo, filterManager]);
 
     const counts = useMemo(() => {
         const c = { all: 0, done: 0, writing: 0, sources: 0, plan_ready: 0, new: 0, archived: 0 };
@@ -642,9 +647,23 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining }) {
                     </div>
                 )}
 
-                {/* Deadline filter (admin only, not in archive view) */}
+                {/* Deadline + Manager filters (admin only, not in archive view) */}
                 {isAdmin && orders.length > 0 && filterStatus !== "archived" && (
-                    <DeadlinePicker dlFrom={dlFrom} dlTo={dlTo} setDlFrom={setDlFrom} setDlTo={setDlTo} />
+                    <div style={{ display: "flex", gap: 16, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 0 }}>
+                        <DeadlinePicker dlFrom={dlFrom} dlTo={dlTo} setDlFrom={setDlFrom} setDlTo={setDlTo} />
+                        <div style={{ marginBottom: 12 }}>
+                            <div style={{ fontSize: 11, color: "#aaa", fontWeight: 600, letterSpacing: 1, textTransform: "uppercase", marginBottom: 4 }}>Менеджер</div>
+                            <select value={filterManager} onChange={e => setFilterManager(e.target.value)}
+                                style={{ padding: "7px 12px", border: `1.5px solid ${filterManager !== "all" ? "#1a1a14" : "#d4cfc4"}`, borderRadius: 8, fontSize: 13, fontFamily: "'Spectral',serif", background: "#fff", color: filterManager !== "all" ? "#1a1a14" : "#aaa", outline: "none", cursor: "pointer" }}>
+                                <option value="all">Всі менеджери</option>
+                                {Object.entries(userMap)
+                                    .filter(([, u]) => u.role === "manager" || u.role === "admin")
+                                    .map(([uid, u]) => (
+                                        <option key={uid} value={uid}>{u.name || u.email}</option>
+                                    ))}
+                            </select>
+                        </div>
+                    </div>
                 )}
 
                 {/* Search */}
