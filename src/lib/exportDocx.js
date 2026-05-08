@@ -803,7 +803,7 @@ export async function exportAppendixToDocx(text, info, methodInfo, orderId) {
   const url = URL.createObjectURL(blob);
   try {
     const a = document.createElement("a");
-    const prefix = orderId ? orderId + "_" : (info?.orderNumber ? info.orderNumber + "_" : "");
+    const prefix = info?.orderNumber ? info.orderNumber + "_" : (orderId ? orderId + "_" : "");
     const safeName = prefix + (info?.topic || "додатки").replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
     a.href = url; a.download = safeName + " - додатки.docx";
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
@@ -867,7 +867,7 @@ export async function exportSpeechToDocx(text, info, methodInfo, orderId) {
   const url = URL.createObjectURL(blob);
   try {
     const a = document.createElement("a");
-    const prefix = orderId ? orderId + "_" : (info?.orderNumber ? info.orderNumber + "_" : "");
+    const prefix = info?.orderNumber ? info.orderNumber + "_" : (orderId ? orderId + "_" : "");
     const safeName = prefix + (info?.topic || "доповідь").replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
     a.href = url; a.download = safeName + " - доповідь.docx";
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
