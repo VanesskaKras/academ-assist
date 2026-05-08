@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { db } from "./firebase";
 import { collection, query, where, orderBy, getDocs, deleteDoc, doc, setDoc } from "firebase/firestore";
 import { useAuth } from "./AuthContext";
@@ -254,6 +254,172 @@ const STATUS_LABELS = {
     done: { label: "Готово", color: "#1a6a1a", bg: "#e4ffe4", dot: "#4aba4a" },
 };
 
+const MONTH_NAMES = ["Січень","Лютий","Березень","Квітень","Травень","Червень","Липень","Серпень","Вересень","Жовтень","Листопад","Грудень"];
+
+function DeadlinePicker({ dlFrom, dlTo, setDlFrom, setDlTo }) {
+    const [calOpen, setCalOpen] = useState(false);
+    const [calLeft, setCalLeft] = useState(() => { const n = new Date(); return { y: n.getFullYear(), m: n.getMonth() }; });
+    const [picking, setPicking] = useState(null);
+    const [calHov, setCalHov] = useState(null);
+    const calRef = useRef(null);
+
+    useEffect(() => {
+        if (!calOpen) { setPicking(null); setCalHov(null); return; }
+        const h = e => { if (calRef.current && !calRef.current.contains(e.target)) setCalOpen(false); };
+        document.addEventListener("mousedown", h);
+        return () => document.removeEventListener("mousedown", h);
+    }, [calOpen]);
+
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const sameDay = (a, b) => a && b && a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate();
+
+    const monthDays = (y, m) => {
+        const startDow = (new Date(y, m, 1).getDay() + 6) % 7;
+        const days = [];
+        for (let i = 0; i < startDow; i++) days.push({ date: new Date(y, m, 1-startDow+i), cur: false });
+        const cnt = new Date(y, m+1, 0).getDate();
+        for (let d = 1; d <= cnt; d++) days.push({ date: new Date(y, m, d), cur: true });
+        while (days.length % 7 !== 0) days.push({ date: new Date(y, m+1, days.length-cnt-startDow+1), cur: false });
+        return days;
+    };
+
+    let rFrom = dlFrom, rTo = dlTo;
+    if (picking) {
+        const end = calHov || null;
+        if (end) { rFrom = picking <= end ? picking : end; rTo = picking <= end ? end : picking; }
+        else { rFrom = picking; rTo = null; }
+    }
+
+    const clickDay = d => {
+        const nd = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+        if (!picking) { setPicking(nd); }
+        else {
+            const [a, b] = nd < picking ? [nd, new Date(picking)] : [new Date(picking), nd];
+            setDlFrom(a); setDlTo(b); setPicking(null); setCalOpen(false);
+        }
+    };
+
+    const presets = [
+        { label: "Скинути", fn: () => { setDlFrom(null); setDlTo(null); setCalOpen(false); } },
+        { label: "Сьогодні", fn: () => { setDlFrom(new Date(today)); setDlTo(new Date(today)); setCalOpen(false); } },
+        { label: "Поточний тиждень", fn: () => {
+            const mon = new Date(today); mon.setDate(today.getDate()-(today.getDay()+6)%7);
+            const sun = new Date(mon); sun.setDate(mon.getDate()+6);
+            setDlFrom(mon); setDlTo(sun); setCalOpen(false);
+        }},
+        { label: "Поточний місяць", fn: () => {
+            setDlFrom(new Date(today.getFullYear(), today.getMonth(), 1));
+            setDlTo(new Date(today.getFullYear(), today.getMonth()+1, 0));
+            setCalOpen(false);
+        }},
+    ];
+
+    const rightM = calLeft.m === 11 ? 0 : calLeft.m+1;
+    const rightY = calLeft.m === 11 ? calLeft.y+1 : calLeft.y;
+    const NB = { background:"transparent", border:"none", cursor:"pointer", fontSize:16, color:"#888", padding:"2px 5px", lineHeight:1, fontFamily:"inherit" };
+
+    const renderMonth = (y, m) => {
+        const days = monthDays(y, m);
+        const isSingle = rFrom && rTo && sameDay(rFrom, rTo);
+        return (
+            <div style={{ width:224 }}>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(7,32px)" }}>
+                    {["Пн","Вт","Ср","Чт","Пт","Сб","Нд"].map(l => (
+                        <div key={l} style={{ textAlign:"center", fontSize:11, color:"#aaa", fontWeight:600, height:28, lineHeight:"28px" }}>{l}</div>
+                    ))}
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(7,32px)" }}>
+                    {days.map((cell, i) => {
+                        const d = cell.date;
+                        const nd = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+                        const isStart = sameDay(d, rFrom);
+                        const isEnd = rTo && sameDay(d, rTo);
+                        const selected = isStart || isEnd;
+                        const rangeOn = rFrom && rTo && !isSingle;
+                        const inR = rangeOn && !selected && nd > rFrom && nd < rTo;
+                        const isT = sameDay(d, today);
+                        return (
+                            <div key={i} style={{ position:"relative", height:32, display:"flex", alignItems:"center", justifyContent:"center", cursor:cell.cur?"pointer":"default" }}
+                                onClick={() => cell.cur && clickDay(d)}
+                                onMouseEnter={() => { if (picking && cell.cur) setCalHov(new Date(d.getFullYear(), d.getMonth(), d.getDate())); }}
+                                onMouseLeave={() => { if (picking) setCalHov(null); }}>
+                                {isStart && rangeOn && <div style={{ position:"absolute", top:4, bottom:4, left:"50%", right:0, background:"#dbeafe", zIndex:0 }} />}
+                                {isEnd && rangeOn && <div style={{ position:"absolute", top:4, bottom:4, left:0, right:"50%", background:"#dbeafe", zIndex:0 }} />}
+                                {inR && <div style={{ position:"absolute", top:4, bottom:4, left:0, right:0, background:"#dbeafe", zIndex:0 }} />}
+                                <div style={{ position:"relative", zIndex:1, width:28, height:28, borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center",
+                                    background: selected ? "#1a72e5" : "transparent",
+                                    color: !cell.cur ? "#ccc" : selected ? "#fff" : inR ? "#1a4a9a" : "#1a1a14",
+                                    fontWeight: isT ? 700 : 400, fontSize:13,
+                                    boxShadow: isT && !selected ? "inset 0 0 0 1.5px #1a72e5" : "none",
+                                }}>
+                                    {d.getDate()}
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+        );
+    };
+
+    const fmtD = d => d ? d.toLocaleDateString("uk-UA", { day:"2-digit", month:"2-digit", year:"numeric" }) : null;
+
+    return (
+        <div style={{ marginBottom:12, position:"relative" }} ref={calRef}>
+            <div style={{ fontSize:11, color:"#aaa", fontWeight:600, letterSpacing:1, textTransform:"uppercase", marginBottom:4 }}>Дедлайн</div>
+            <div onClick={() => setCalOpen(o => !o)}
+                style={{ display:"inline-flex", alignItems:"center", gap:8, padding:"7px 14px", border:`1.5px solid ${dlFrom?"#1a1a14":"#d4cfc4"}`, borderRadius:8, background:"#fff", cursor:"pointer", fontSize:13, fontFamily:"'Spectral',serif", color:dlFrom?"#1a1a14":"#aaa", userSelect:"none", minWidth:240 }}>
+                <span style={{ fontSize:14 }}>📅</span>
+                <span style={{ flex:1 }}>
+                    {fmtD(dlFrom) ? (fmtD(dlTo) ? `${fmtD(dlFrom)} — ${fmtD(dlTo)}` : fmtD(dlFrom)) : "Дата від — Дата до"}
+                </span>
+                {(dlFrom || dlTo) && (
+                    <span onClick={e => { e.stopPropagation(); setDlFrom(null); setDlTo(null); }} style={{ color:"#bbb", fontSize:14, cursor:"pointer", lineHeight:1 }}>✕</span>
+                )}
+            </div>
+
+            {calOpen && (
+                <div style={{ position:"absolute", top:"calc(100% + 6px)", left:0, zIndex:1000, background:"#fff", borderRadius:12, boxShadow:"0 8px 40px rgba(0,0,0,0.16)", border:"1px solid #e8e4d8", display:"flex", overflow:"hidden" }}>
+                    <div style={{ padding:"16px 0", borderRight:"1px solid #f0ece2", minWidth:160 }}>
+                        {presets.map(p => (
+                            <div key={p.label} onClick={p.fn}
+                                style={{ padding:"9px 20px", fontSize:13, cursor:"pointer", color:"#1a72e5", whiteSpace:"nowrap" }}
+                                onMouseEnter={e => e.currentTarget.style.background="#f0f4ff"}
+                                onMouseLeave={e => e.currentTarget.style.background="transparent"}>
+                                {p.label}
+                            </div>
+                        ))}
+                    </div>
+                    <div style={{ padding:"16px 20px", display:"flex", gap:20 }}>
+                        <div>
+                            <div style={{ display:"flex", alignItems:"center", marginBottom:10 }}>
+                                <div>
+                                    <button onClick={() => setCalLeft(p => ({y:p.y-1,m:p.m}))} style={NB}>«</button>
+                                    <button onClick={() => setCalLeft(p => p.m===0?{y:p.y-1,m:11}:{y:p.y,m:p.m-1})} style={NB}>‹</button>
+                                </div>
+                                <span style={{ fontSize:14, fontWeight:600, color:"#1a1a14", flex:1, textAlign:"center" }}>{calLeft.y} {MONTH_NAMES[calLeft.m]}</span>
+                                <div style={{ width:44 }} />
+                            </div>
+                            {renderMonth(calLeft.y, calLeft.m)}
+                        </div>
+                        <div>
+                            <div style={{ display:"flex", alignItems:"center", marginBottom:10 }}>
+                                <div style={{ width:44 }} />
+                                <span style={{ fontSize:14, fontWeight:600, color:"#1a1a14", flex:1, textAlign:"center" }}>{rightY} {MONTH_NAMES[rightM]}</span>
+                                <div>
+                                    <button onClick={() => setCalLeft(p => p.m===11?{y:p.y+1,m:0}:{y:p.y,m:p.m+1})} style={NB}>›</button>
+                                    <button onClick={() => setCalLeft(p => ({y:p.y+1,m:p.m}))} style={NB}>»</button>
+                                </div>
+                            </div>
+                            {renderMonth(rightY, rightM)}
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
 export default function Dashboard({ onOpen, onNew, onAdmin, onTraining }) {
     const { user, profile, logout } = useAuth();
     const [orders, setOrders] = useState([]);
@@ -261,7 +427,8 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining }) {
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState("");
     const [filterStatus, setFilterStatus] = useState(null); // null = всі
-    const [sortBy, setSortBy] = useState("default"); // "default" | "deadline_asc" | "deadline_desc"
+    const [dlFrom, setDlFrom] = useState(null);
+    const [dlTo, setDlTo] = useState(null);
     const [infoOrder, setInfoOrder] = useState(null); // модалка деталей
     const [showHelp, setShowHelp] = useState(false);
     const [showStats, setShowStats] = useState(false);
@@ -361,21 +528,19 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining }) {
                 (isAdmin && o.managerName?.toLowerCase().includes(q))
             );
         }
-        if (sortBy !== "default") {
-            result = result.filter(o => !(o.status === "done" && !needsSources(o)));
-            const parseDeadline = (d) => {
-                if (!d) return sortBy === "deadline_asc" ? Infinity : -Infinity;
-                const [day, month, year] = d.split(".");
-                return new Date(year, month - 1, day).getTime();
-            };
-            result = [...result].sort((a, b) =>
-                sortBy === "deadline_asc"
-                    ? parseDeadline(a.deadline) - parseDeadline(b.deadline)
-                    : parseDeadline(b.deadline) - parseDeadline(a.deadline)
-            );
+        if (dlFrom || dlTo) {
+            result = result.filter(o => {
+                if (o.status === "done" && !needsSources(o)) return false;
+                if (!o.deadline) return false;
+                const [dd, mm, yy] = o.deadline.split(".");
+                const d = new Date(+yy, +mm-1, +dd);
+                if (dlFrom && d < dlFrom) return false;
+                if (dlTo && d > dlTo) return false;
+                return true;
+            });
         }
         return result;
-    }, [orders, search, filterStatus, sortBy]);
+    }, [orders, search, filterStatus, dlFrom, dlTo]);
 
     const counts = useMemo(() => {
         const c = { all: orders.length, done: 0, writing: 0, sources: 0, plan_ready: 0, new: 0 };
@@ -463,30 +628,9 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining }) {
                     </div>
                 )}
 
-                {/* Sort (admin only) */}
+                {/* Deadline filter (admin only) */}
                 {isAdmin && orders.length > 0 && (
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-                        <span style={{ fontSize: 11, color: "#aaa", fontWeight: 600, letterSpacing: 1, textTransform: "uppercase" }}>Сортування:</span>
-                        {[
-                            { key: "deadline_asc", label: "Дедлайн ↑" },
-                            { key: "deadline_desc", label: "Дедлайн ↓" },
-                        ].map(s => {
-                            const active = sortBy === s.key;
-                            return (
-                                <button key={s.key}
-                                    onClick={() => setSortBy(active ? "default" : s.key)}
-                                    style={{
-                                        padding: "5px 14px", borderRadius: 16, fontSize: 12, fontWeight: 600,
-                                        fontFamily: "inherit", cursor: "pointer", transition: "all .15s",
-                                        background: active ? "#1a1a14" : "#e8e4d8",
-                                        color: active ? "#e8ff47" : "#666",
-                                        border: "none",
-                                    }}>
-                                    {s.label}
-                                </button>
-                            );
-                        })}
-                    </div>
+                    <DeadlinePicker dlFrom={dlFrom} dlTo={dlTo} setDlFrom={setDlFrom} setDlTo={setDlTo} />
                 )}
 
                 {/* Search */}
