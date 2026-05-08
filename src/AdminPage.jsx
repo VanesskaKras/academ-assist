@@ -225,6 +225,7 @@ function CostsTab({ users }) {
     const [customFrom, setCustomFrom] = useState("");
     const [customTo, setCustomTo] = useState("");
     const [filterUid, setFilterUid] = useState("all");
+    const [searchNum, setSearchNum] = useState("");
 
     useEffect(() => {
         const load = async () => {
@@ -250,8 +251,12 @@ function CostsTab({ users }) {
                 return true;
             });
         }
+        if (searchNum.trim()) {
+            const q = searchNum.trim().toLowerCase();
+            result = result.filter(o => o.info?.orderNumber?.toString().toLowerCase().includes(q));
+        }
         return result.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
-    }, [allOrders, customFrom, customTo, filterUid]);
+    }, [allOrders, customFrom, customTo, filterUid, searchNum]);
 
     const userMap = useMemo(() => {
         const m = {};
@@ -355,8 +360,20 @@ function CostsTab({ users }) {
                         <option value="all">Всі менеджери</option>
                         {users.map(u => <option key={u.id} value={u.id}>{u.name || u.email}</option>)}
                     </select>
-                    {(customFrom || customTo || filterUid !== "all") && (
-                        <button onClick={() => { setCustomFrom(""); setCustomTo(""); setFilterUid("all"); }}
+                    <div style={{ position: "relative" }}>
+                        <input
+                            value={searchNum}
+                            onChange={e => setSearchNum(e.target.value)}
+                            placeholder="№ замовлення"
+                            style={{ padding: "6px 28px 6px 10px", border: `1.5px solid ${searchNum ? "#1a1a14" : "#e0ddd4"}`, borderRadius: 7, fontSize: 13, fontFamily: "inherit", outline: "none", width: 140 }}
+                        />
+                        {searchNum && (
+                            <button onClick={() => setSearchNum("")}
+                                style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", fontSize: 13, color: "#aaa", lineHeight: 1 }}>✕</button>
+                        )}
+                    </div>
+                    {(customFrom || customTo || filterUid !== "all" || searchNum) && (
+                        <button onClick={() => { setCustomFrom(""); setCustomTo(""); setFilterUid("all"); setSearchNum(""); }}
                             style={{ padding: "6px 12px", borderRadius: 7, border: "1.5px solid #e0ddd4", background: "transparent", color: "#888", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
                             Скинути ✕
                         </button>

@@ -261,6 +261,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining }) {
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState("");
     const [filterStatus, setFilterStatus] = useState(null); // null = всі
+    const [sortBy, setSortBy] = useState("default"); // "default" | "deadline_asc" | "deadline_desc"
     const [infoOrder, setInfoOrder] = useState(null); // модалка деталей
     const [showHelp, setShowHelp] = useState(false);
     const [showStats, setShowStats] = useState(false);
@@ -360,8 +361,20 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining }) {
                 (isAdmin && o.managerName?.toLowerCase().includes(q))
             );
         }
+        if (sortBy !== "default") {
+            const parseDeadline = (d) => {
+                if (!d) return sortBy === "deadline_asc" ? Infinity : -Infinity;
+                const [day, month, year] = d.split(".");
+                return new Date(year, month - 1, day).getTime();
+            };
+            result = [...result].sort((a, b) =>
+                sortBy === "deadline_asc"
+                    ? parseDeadline(a.deadline) - parseDeadline(b.deadline)
+                    : parseDeadline(b.deadline) - parseDeadline(a.deadline)
+            );
+        }
         return result;
-    }, [orders, search, filterStatus]);
+    }, [orders, search, filterStatus, sortBy]);
 
     const counts = useMemo(() => {
         const c = { all: orders.length, done: 0, writing: 0, sources: 0, plan_ready: 0, new: 0 };
@@ -444,6 +457,32 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining }) {
                                     }}>
                                     {s.val} {s.label}
                                 </div>
+                            );
+                        })}
+                    </div>
+                )}
+
+                {/* Sort (admin only) */}
+                {isAdmin && orders.length > 0 && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                        <span style={{ fontSize: 11, color: "#aaa", fontWeight: 600, letterSpacing: 1, textTransform: "uppercase" }}>Сортування:</span>
+                        {[
+                            { key: "deadline_asc", label: "Дедлайн ↑" },
+                            { key: "deadline_desc", label: "Дедлайн ↓" },
+                        ].map(s => {
+                            const active = sortBy === s.key;
+                            return (
+                                <button key={s.key}
+                                    onClick={() => setSortBy(active ? "default" : s.key)}
+                                    style={{
+                                        padding: "5px 14px", borderRadius: 16, fontSize: 12, fontWeight: 600,
+                                        fontFamily: "inherit", cursor: "pointer", transition: "all .15s",
+                                        background: active ? "#1a1a14" : "#e8e4d8",
+                                        color: active ? "#e8ff47" : "#666",
+                                        border: "none",
+                                    }}>
+                                    {s.label}
+                                </button>
                             );
                         })}
                     </div>
