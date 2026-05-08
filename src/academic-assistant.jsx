@@ -276,13 +276,15 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
             const keys = d.workflowMode === "sources-first" ? STAGE_KEYS_SOURCES_FIRST : STAGE_KEYS_TEXT_FIRST;
             const stageIdx = keys.indexOf(d.stage);
             setStage(d.stage);
-            // Відновлюємо maxStageIdx: беремо збережений максимум або хоча б індекс поточної стадії
-            const savedMax = d.maxStageIdx !== undefined ? d.maxStageIdx : stageIdx;
-            setMaxStageIdx(Math.max(0, savedMax));
-            // Якщо написання вже завершено — позначаємо, щоб useEffect не перезапускав генерацію
+            // Якщо написання вже завершено — позначаємо і розблоковуємо всі стадії
             const writingIdx = keys.indexOf("writing");
-            if (stageIdx > writingIdx || (d.genIdx !== undefined && (d.sections?.length ?? 0) > 0 && d.genIdx >= d.sections.length)) {
+            const writingIsDone = stageIdx > writingIdx || (d.genIdx !== undefined && (d.sections?.length ?? 0) > 0 && d.genIdx >= d.sections.length);
+            if (writingIsDone) {
               writingDoneRef.current = true;
+              setMaxStageIdx(keys.length - 1);
+            } else {
+              const savedMax = d.maxStageIdx !== undefined ? d.maxStageIdx : stageIdx;
+              setMaxStageIdx(Math.max(0, savedMax));
             }
           }
           if (d.genIdx !== undefined) setGenIdx(d.genIdx);
@@ -1116,11 +1118,12 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
       if (!writingDoneRef.current) {
         writingDoneRef.current = true;
         playDoneSound();
+        const allUnlocked = activeStageKeys.length - 1;
         if (workflowMode === "sources-first") {
           // Джерела зібрані, текст написаний — чекаємо на remapCitations
-          saveToFirestore({ stage: "writing", status: "writing", content, citInputs });
+          saveToFirestore({ stage: "writing", status: "writing", content, citInputs, maxStageIdx: allUnlocked });
         } else {
-          setStage("sources"); saveToFirestore({ stage: "sources", status: "writing", content, citInputs });
+          setStage("sources"); saveToFirestore({ stage: "sources", status: "writing", content, citInputs, maxStageIdx: allUnlocked });
         }
       }
       return;

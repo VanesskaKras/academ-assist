@@ -534,7 +534,7 @@ export function SourcesStage({
                 ↺ Переписати всю роботу
               </button>
               {hasGeneratedContent && (
-                <PrimaryBtn onClick={() => setStage("done")} label="До готового тексту →" />
+                <PrimaryBtn onClick={onFinish} label="До готового тексту →" />
               )}
             </>
           : <PrimaryBtn onClick={onFinish} label="Завершити роботу →" />
