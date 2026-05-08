@@ -55,7 +55,9 @@ export const getEmpiricalSections = (sections, info, commentAnalysis, methodInfo
     return { anchorId: null, chapterSectionIds: ids };
   }
 
-  // Варіант 1: ключових слів немає → один найкращий підрозділ
+  // Варіант 1: ключових слів у назвах немає — anchor лише якщо є реальні ознаки емпіричного дослідження
+  // (не просто "педагогічна робота" — без коментаря/методички, що підтверджує анкетування/опитування)
+  if (!hasEmpiricalResearch(commentAnalysis, methodInfo)) return empty;
   const practicalSecs = mainSecs.filter(s => ["analysis", "recommendations"].includes(s.type));
   if (!practicalSecs.length) return empty;
   const softRe = /практичн|аналіз|результат|застосуванн/i;
