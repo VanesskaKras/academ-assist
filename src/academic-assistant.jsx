@@ -632,11 +632,11 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
 
     if (clientPlan?.trim()) {
       const parsed = parseClientPlan(clientPlan.trim(), totalPages);
-      if (parsed?.length > 3) { await finalizeSections(parsed); return; }
+      if (parsed) { await finalizeSections(parsed); return; }
     }
 
-    // Якщо на фото є готовий план — використати його структуру як шаблон
-    if (commentAnalysis?.photoTOC && typeof commentAnalysis.photoTOC === "string" && commentAnalysis.photoTOC.length > 20) {
+    // Якщо на фото є готовий план — використати його структуру як шаблон (тільки якщо план клієнта не надано)
+    if (!clientPlan?.trim() && commentAnalysis?.photoTOC && typeof commentAnalysis.photoTOC === "string" && commentAnalysis.photoTOC.length > 20) {
       try {
         const toc = commentAnalysis.photoTOC;
         const subsMatches = toc.match(/^\s*\d+\.\d+/gm) || [];
@@ -667,8 +667,8 @@ Return ONLY JSON without markdown:
       } catch (e) { console.warn("photoTOC plan failed:", e.message); }
     }
 
-    // Якщо коментар містить приклад структури плану — використати як шаблон, адаптувати назви під тему
-    if (comment?.trim() && /розділ\s*\d+/i.test(comment)) {
+    // Якщо коментар містить приклад структури плану — використати як шаблон, адаптувати назви під тему (тільки якщо план клієнта не надано)
+    if (!clientPlan?.trim() && comment?.trim() && /розділ\s*\d+/i.test(comment)) {
       try {
         // Рахуємо розділи, підрозділи та висновки до розділів з прикладу
         const chapNums = [...new Set((comment.match(/розділ\s*(\d+)/gi) || []).map(m => m.match(/\d+/)[0]))];
@@ -748,7 +748,7 @@ Return ONLY JSON without markdown:
 
       const planPrompt = `Create a plan for ${d.type} on topic: "${d.topic}". Field: ${d.subject}. Pages: ${totalPages}.
 Language of work: ${d.language || "Ukrainian"} — all labels and titles must be in this language.
-${commentAnalysis?.planHints ? `\nCLIENT HINTS:\n${commentAnalysis.planHints}\n` : ""}
+${clientPlan?.trim() ? `\nCLIENT'S REQUIRED CHAPTER TITLES — use these EXACTLY as sectionTitle values, in this exact order, do NOT rename or reorder them:\n${clientPlan}\n` : (commentAnalysis?.planHints ? `\nCLIENT HINTS:\n${commentAnalysis.planHints}\n` : "")}
 GUIDE REQUIREMENTS:
 - Chapters: ${chapCount}
 ${subsCountLine}
