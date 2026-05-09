@@ -244,6 +244,10 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     const lines = text.split("\n");
     let firstContentLine = true;
     let i = 0;
+    let taskMode = false;
+    let taskNum = 0;
+    const TASK_HEADER_RE = /^(Завдання дослідження|Для досягнення мети|Для вирішення поставлених)/i;
+    const INTRO_KEYWORD_RE = /^(Актуальн|Мета[\s.–—]|Метою|Завдання|Для досягн|Для вирішен|Об.єкт|Предмет|Метод(?:и|ологічн)|Наукова|Практична|Апробац|Структур|Теоретико|Матеріал|Хронологічн)/i;
     while (i < lines.length) {
       const line = lines[i];
       if (/^\s*\|/.test(line)) {
@@ -309,6 +313,14 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
       const numMatchRaw = isNumberedList ? line.trim().match(/^(\d+[.)]\s*)(.*)/) : null;
       const raw = cleanMarkdown(line);
       if (!raw) { i++; continue; }
+      if (isIntro) {
+        if (TASK_HEADER_RE.test(raw)) {
+          taskMode = true;
+          taskNum = 0;
+        } else if (taskMode && INTRO_KEYWORD_RE.test(raw)) {
+          taskMode = false;
+        }
+      }
       if (firstContentLine && isDuplicateTitle(line, secLabel)) { firstContentLine = false; i++; continue; }
       firstContentLine = false;
       if (/^#{1,6}\s/.test(line.trim()) && raw) {
@@ -323,9 +335,15 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
         i++; continue;
       }
       if (isNumberedList && numMatchRaw) {
+        if (taskMode) taskNum++;
         const numPrefix = numMatchRaw[1].trimEnd();
         const numBody = cleanMarkdown(numMatchRaw[2] || "");
         result.push(numberedListPara(`${numPrefix} ${numBody}`));
+        i++; continue;
+      }
+      if (isIntro && taskMode && !TASK_HEADER_RE.test(raw)) {
+        taskNum++;
+        result.push(numberedListPara(`${taskNum}. ${raw}`));
         i++; continue;
       }
       result.push(isIntro ? introBoldPara(raw) : bodyPara(raw));
