@@ -187,6 +187,14 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
       children: parseTextWithCitations(text, "000000"),
     });
   }
+  function numberedListPara(text) {
+    return new Paragraph({
+      indent: { left: INDENT, hanging: 360 },
+      spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
+      alignment: AlignmentType.BOTH,
+      children: parseTextWithCitations(text, "000000"),
+    });
+  }
   function heading1(text) {
     return new Paragraph({
       heading: HeadingLevel.HEADING_1,
@@ -297,6 +305,8 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
         continue;
       }
       const isHyphenList = /^[-*]\s+/.test(line.trim());
+      const isNumberedList = /^\s*\d+[.)]\s+/.test(line);
+      const numMatchRaw = isNumberedList ? line.trim().match(/^(\d+[.)]\s*)(.*)/) : null;
       const raw = cleanMarkdown(line);
       if (!raw) { i++; continue; }
       if (firstContentLine && isDuplicateTitle(line, secLabel)) { firstContentLine = false; i++; continue; }
@@ -310,6 +320,12 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
       if (/^[–—]\s/.test(raw) || isHyphenList) {
         const listText = /^[–—]\s/.test(raw) ? raw : `– ${raw}`;
         result.push(listPara(listText));
+        i++; continue;
+      }
+      if (isNumberedList && numMatchRaw) {
+        const numPrefix = numMatchRaw[1].trimEnd();
+        const numBody = cleanMarkdown(numMatchRaw[2] || "");
+        result.push(numberedListPara(`${numPrefix} ${numBody}`));
         i++; continue;
       }
       result.push(isIntro ? introBoldPara(raw) : bodyPara(raw));
