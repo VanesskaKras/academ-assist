@@ -143,7 +143,8 @@ export function PlanStage({
               });
               return rows;
             })()}
-            <div style={{ padding: "10px 14px", background: "#f5f2eb", borderTop: "1px solid #e4dfd4", display: "flex", gap: 8 }}>
+            <div style={{ padding: "10px 14px", background: "#f5f2eb", borderTop: "1px solid #e4dfd4", display: "flex", gap: 8, alignItems: "center" }}>
+              {(() => { const total = sections.reduce((s, x) => s + (x.pages || 0), 0); const ok = total === totalPagesNum; return <span style={{ fontSize: 12, fontFamily: "'Spectral',serif", color: ok ? "#5a8a2a" : "#c03030", fontWeight: "bold", marginRight: 4 }}>{total} / {totalPagesNum} стор. {ok ? "✓" : "⚠"}</span>; })()}
               <button onClick={() => {
                 const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
                 const lastId = mainSecs.length ? mainSecs[mainSecs.length - 1].id : "1.0";

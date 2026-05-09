@@ -616,14 +616,38 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
       : { intro: "ВСТУП", conclusions: "ВИСНОВКИ", sources: "СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ", chapConclLabel: (n) => `Висновки до розділу ${n}`, chapterWord: "РОЗДІЛ", subsWord: "підрозділ" };
 
     const finalizeSections = async (secs) => {
-      const withPrompts = secs.map(s => {
-        // Якщо підрозділ не має номера на початку label — додаємо з id
+      const mapped = secs.map(s => {
         let label = s.label;
         if (s.id && /^\d+\.\d+$/.test(s.id) && !label.startsWith(s.id)) {
           label = `${s.id} ${label}`;
         }
         return { ...s, label, prompts: s.type === "sources" ? 0 : Math.max(1, Math.ceil((s.pages || 1) / 3)) };
       });
+
+      // Нормалізація: масштабуємо підрозділи до точної суми totalPages
+      const withPrompts = (() => {
+        const currentTotal = mapped.reduce((sum, s) => sum + (s.pages || 0), 0);
+        if (currentTotal === totalPages) return mapped;
+        const mainIdxs = mapped.reduce((acc, s, i) => {
+          if (!["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type)) acc.push(i);
+          return acc;
+        }, []);
+        const fixedTotal = mapped.reduce((sum, s, i) => mainIdxs.includes(i) ? sum : sum + (s.pages || 0), 0);
+        const pagesForMain = Math.max(mainIdxs.length, totalPages - fixedTotal);
+        const currentMainTotal = mainIdxs.reduce((sum, i) => sum + (mapped[i].pages || 1), 0);
+        const result = [...mapped];
+        let assigned = 0;
+        mainIdxs.forEach((idx, j) => {
+          const isLast = j === mainIdxs.length - 1;
+          const p = isLast
+            ? Math.max(1, pagesForMain - assigned)
+            : Math.max(1, Math.round((mapped[idx].pages / currentMainTotal) * pagesForMain));
+          result[idx] = { ...result[idx], pages: p, prompts: Math.max(1, Math.ceil(p / 3)) };
+          if (!isLast) assigned += p;
+        });
+        return result;
+      })();
+
       setSections(withPrompts); setPlanDisplay(buildPlanText(withPrompts));
       const { dist, total } = calcSourceDist(withPrompts, parsePagesAvg(d?.pages));
       setSourceDist(dist); setSourceTotal(total);
