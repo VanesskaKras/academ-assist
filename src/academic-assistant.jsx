@@ -2581,7 +2581,7 @@ ${secBlock}
       const lines = raw.split("\n").map(l => l.trim()).filter(Boolean);
       secRefMapRaw[sec.id] = [];
       lines.forEach(line => {
-        const normalized = line.toLowerCase().replace(/\s*(url\s*:|https?:\/\/\S+|\(дата звернення[^)]*\))/gi, "").replace(/\s+/g, " ").replace(/[.,;:]/g, "").trim();
+        const normalized = line.toLowerCase().replace(/\s*(url\s*:|https?:\/\/\S+|\(дата звернення[^)]*\))/gi, "").replace(/[.,;:&–—\-«»"'()[\]]/g, "").replace(/\s+/g, " ").trim();
         const hasUrl = /https?:\/\/\S+/i.test(line);
         if (!seenRefs.has(normalized)) {
           rawRefs.push(line); seenRefs.set(normalized, rawRefs.length - 1);
@@ -2980,7 +2980,7 @@ ${secsSummary}
     // ── 2. Глобальна дедуплікація (та сама логіка що в buildGlobalRefList) ──
     const normalize = str => str.toLowerCase()
       .replace(/\s*(url\s*:|https?:\/\/\S+|\(дата звернення[^)]*\))/gi, "")
-      .replace(/\s+/g, " ").replace(/[.,;:]/g, "").trim();
+      .replace(/[.,;:&–—\-«»"'()[\]]/g, "").replace(/\s+/g, " ").trim();
 
     const rawRefs = [], seenRefs = new Map();
     mainSecs.forEach(sec => {
