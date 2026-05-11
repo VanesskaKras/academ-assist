@@ -12,6 +12,7 @@ import { FieldBox, Heading, NavBtn, PrimaryBtn, GreenBtn, SaveIndicator } from "
 import { DropZone } from "./components/DropZone.jsx";
 import { parsePagesAvg, exportSimpleDocx, TA, TA_WHITE, SHARED_STYLES } from "./shared.jsx";
 import { exportToDocx } from "./lib/exportDocx.js";
+import { exportToPptxFile } from "./lib/exportPptx.js";
 import { ChecklistStage } from "./components/stages/ChecklistStage.jsx";
 
 // ── Рендер тексту з markdown-таблицями ──
@@ -101,8 +102,8 @@ const WORK_TYPES = {
     label: "Презентація",
     icon: "🎞️",
     hasplan: false,
-    stages: ["Дані", "Генерація", "Готово", "Чек-лист"],
-    stageKeys: ["input", "writing", "done", "checklist"],
+    stages: ["Дані", "Джерела", "Генерація", "Готово", "Чек-лист"],
+    stageKeys: ["input", "sources", "writing", "done", "checklist"],
     color: "#8a1a1a",
     bg: "#ffe4e4",
   },
@@ -199,6 +200,7 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
   // Прості роботи — один блок тексту або слайди
   const [result, setResult] = useState(""); // для тез/статті/есе
   const [slides, setSlides] = useState([]); // [{title, content}] для презентації
+  const [presTheme, setPresTheme] = useState(""); // тема дизайну презентації
 
   const [sourcesFormatted, setSourcesFormatted] = useState(false);
   const [methodInfo, setMethodInfo] = useState(null);
@@ -285,16 +287,16 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
     setMaxStageIdx(prev => Math.max(prev, idx));
   }, [stage, workType]);
 
-  // ── Автозапуск пошуку джерел для тез/статті/есе/реферату ──
+  // ── Автозапуск пошуку джерел для тез/статті/есе/реферату/презентації ──
   useEffect(() => {
-    if (["tezy", "stattia", "ese", "referat"].includes(workType) && stage === "sources" && tezyPapers.length === 0 && !tezySearchLoading && info?.topic) {
+    if (["tezy", "stattia", "ese", "referat", "prezentatsiya"].includes(workType) && stage === "sources" && tezyPapers.length === 0 && !tezySearchLoading && info?.topic) {
       doSearchTezyPapers();
     }
   }, [workType, stage, info?.topic]);
 
   // ── Авто-збереження вибраних джерел ──
   useEffect(() => {
-    if (!["tezy", "stattia", "ese", "referat"].includes(workType) || stage !== "sources") return;
+    if (!["tezy", "stattia", "ese", "referat", "prezentatsiya"].includes(workType) || stage !== "sources") return;
     const t = setTimeout(() => {
       saveToFirestore({ selectedTezyIds });
     }, 1000);
@@ -303,7 +305,7 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
 
   // ── Авто-збереження текстового поля джерел ──
   useEffect(() => {
-    if (!["tezy", "stattia", "ese", "referat"].includes(workType) || stage !== "sources") return;
+    if (!["tezy", "stattia", "ese", "referat", "prezentatsiya"].includes(workType) || stage !== "sources") return;
     const t = setTimeout(() => {
       saveToFirestore({ citText });
     }, 1500);
@@ -431,6 +433,9 @@ formatting — поля сторінки в мм якщо явно вказан�
         await saveToFirestore({ tplText, comment, materialText, authorData, info: newInfo, stage: "sources", status: "new" });
         setStage("sources");
       } else if (isSimpleWithSources) {
+        await saveToFirestore({ tplText, comment, materialText, info: newInfo, stage: "sources", status: "new" });
+        setStage("sources");
+      } else if (workType === "prezentatsiya") {
         await saveToFirestore({ tplText, comment, materialText, info: newInfo, stage: "sources", status: "new" });
         setStage("sources");
       } else {
@@ -593,8 +598,8 @@ ${refLines}`;
     setTezyCitations(citations);
     await saveToFirestore({ tezyCitations: citations, citText, stage: "writing", status: "sources_done" });
     setStage("writing");
-    // Реферат: useEffect для writing бере керування і генерує посекційно
     if (workType === "tezy") await doGenerateTezy(citations);
+    else if (workType === "prezentatsiya") await doGeneratePresentation(citations);
     else if (workType !== "referat") await doGenerateSimple(citations);
   };
 
@@ -1057,36 +1062,69 @@ ${sourcesList ? `\nПісля основного тексту додай (збе
   };
 
   // ── Генерація презентації ──
-  const doGeneratePresentation = async () => {
+  const doGeneratePresentation = async (citationsOverride) => {
     setRunning(true); setLoadMsg("Генерую презентацію...");
     const lang = info?.language || "Українська";
-    const totalSlides = Math.max(10, Math.min(20, parsePagesAvg(info?.pages || "15")));
+    const totalSlides = Math.max(8, Math.min(20, parsePagesAvg(info?.pages || "15")));
+    const activeCitations = citationsOverride ?? tezyCitations;
+    const hasSources = activeCitations.length > 0;
+    const citStyle = info?.citStyle || "ДСТУ 8302:2015";
 
     const fileContext = files.length > 0
       ? files.map(f => ({ type: f.type.startsWith("image/") ? "image" : "document", source: { type: "base64", media_type: f.type, data: f.b64 } }))
       : [];
 
-    const prompt = `Створи презентацію на тему "${info?.topic}". Галузь: ${info?.subject || ""}.
-К-сть слайдів: ${totalSlides}.
-${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
+    const materialContext = materialText.trim()
+      ? `\nМАТЕРІАЛ ДЛЯ РОБОТИ (використай як основу змісту):\n${materialText.trim().slice(0, 2000)}\n`
+      : "";
 
-Поверни ТІЛЬКИ JSON:
+    const prompt = `Створи структуру презентації на тему "${info?.topic}". Галузь: ${info?.subject || ""}.
+К-сть слайдів: ${totalSlides} (включно з титульним і завершальним).
+${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
+Мова: ${lang}.
+${materialContext}
+${comment ? `Коментар замовника: ${comment}` : ""}
+
+Поверни ТІЛЬКИ JSON без markdown:
 {"slides":[
-  {"title":"Назва слайду","content":"Текст слайду (2-5 коротких тез, кожна з нового рядка через \\n)"},
-  ...
+  {"layout":"hero","title":"Назва теми","subtitle":"Виконав: [якщо відомо]"},
+  {"layout":"icon_list","title":"Мета та завдання","visual":{"items":[{"icon":"🎯","header":"Мета","text":"..."},{"icon":"📋","header":"Завдання 1","text":"..."}]}},
+  {"layout":"highlight_box","title":"Назва розділу","content":"Теза 1\\nТеза 2\\nТеза 3"},
+  {"layout":"two_column","title":"...","left":"Текст ліворуч...","right":"Ключовий факт або статистика"},
+  {"layout":"numbered_steps","title":"Методологія","visual":{"items":[{"num":"1","title":"Крок","text":"..."}]}},
+  {"layout":"hero","title":"Висновки","subtitle":"Підсумок..."},
+  {"layout":"hero","title":"Дякую за увагу!","subtitle":""}
 ]}
 
-Перший слайд — титульний (тема + автор), останній — висновки/дякую.
-Мова: ${lang}.`;
+Правила layout:
+- hero — темний повноекранний (тільки для 1-го, завершального та ключових слайдів)
+- icon_list — для переліків 3-5 пунктів з емодзі (мета, висновки, особливості)
+- numbered_steps — для процесів/методів (3-4 кроки)
+- two_column — для порівнянь; left=текст, right=короткий ключовий факт
+- stat_callout — для статистики: "visual":{"stats":[{"value":"72%","label":"..."}]}
+- highlight_box — для основних положень (2-4 тези через \\n) — використовуй як default
+- НЕ додавай слайд зі списком джерел — він буде доданий окремо.
+Використовуй різні layouts для різноманітності. Слайд 1: layout=hero. Останній: layout=hero, title="Дякую за увагу!".`;
 
     try {
       const msgs = [{ role: "user", content: [...fileContext, { type: "text", text: prompt }] }];
-      const raw = await callClaude(msgs, null, buildSYSSmall(lang), 4000, null, MODEL_FAST);
+      const raw = await callClaude(msgs, null, buildSYSSmall(lang), 6000, null, MODEL_FAST);
       const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || raw);
-      const newSlides = parsed.slides || [];
+      let newSlides = parsed.slides || [];
+
+      // Слайд зі списком джерел якщо є
+      if (hasSources) {
+        const sourcesContent = activeCitations.map((c, i) => `${i + 1}. ${c}`).join("\n");
+        newSlides = [...newSlides, {
+          layout: "highlight_box",
+          title: `Список використаних джерел (${citStyle})`,
+          content: sourcesContent,
+        }];
+      }
+
       setSlides(newSlides);
       playDoneSound();
-      await saveToFirestore({ slides: newSlides, stage: "done", status: "done" });
+      await saveToFirestore({ slides: newSlides, tezyCitations: activeCitations, stage: "done", status: "done" });
       setStage("done");
     } catch (e) { setError(e.message); }
     setRunning(false); setLoadMsg("");
@@ -1194,9 +1232,9 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
               </FieldBox>
             )}
 
-            {/* Матеріал для роботи — для тез, статті, есе, реферату */}
-            {["tezy", "stattia", "ese", "referat"].includes(workType) && (
-              <FieldBox label={`Матеріал для роботи — текст або файли/фото до ${["stattia", "ese", "referat"].includes(workType) ? 8 : 6} (необов'язково)`}>
+            {/* Матеріал для роботи — для тез, статті, есе, реферату, презентації */}
+            {["tezy", "stattia", "ese", "referat", "prezentatsiya"].includes(workType) && (
+              <FieldBox label={workType === "prezentatsiya" ? "Матеріал до презентації (текст або файли) — необов'язково" : `Матеріал для роботи — текст або файли/фото до ${["stattia", "ese", "referat"].includes(workType) ? 8 : 6} (необов'язково)`}>
                 <textarea
                   value={materialText}
                   onChange={e => setMaterialText(e.target.value)}
@@ -1351,9 +1389,11 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
         )}
 
         {/* ══ ДЖЕРЕЛА ══ */}
-        {["tezy", "stattia", "ese", "referat"].includes(workType) && stage === "sources" && (() => {
+        {["tezy", "stattia", "ese", "referat", "prezentatsiya"].includes(workType) && stage === "sources" && (() => {
           const isReferat = workType === "referat";
-          const minSrc = info?.sourceCount || parsePagesAvg(info?.pages || "3");
+          const minSrc = workType === "prezentatsiya"
+            ? (info?.sourceCount || 5)
+            : (info?.sourceCount || parsePagesAvg(info?.pages || "3"));
           const citLines = citText.split("\n").map(s => s.trim()).filter(Boolean);
           const allRefCitations = isReferat
             ? [...new Set(sections.filter(s => s.id !== "sources").flatMap(s =>
@@ -1659,19 +1699,18 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
                   saveToFirestore({ citText: "", tezyCitations: [], stage: "writing", status: "new" });
                   setStage("writing");
                   if (workType === "tezy") doGenerateTezy([]);
+                  else if (workType === "prezentatsiya") doGeneratePresentation([]);
                   else doGenerateSimple([]);
                 }}>
                   Пропустити без джерел →
                 </NavBtn>
-                {(
-                  <PrimaryBtn
-                    onClick={doGenerateFromCitText}
-                    disabled={citLines.length === 0}
-                    loading={running}
-                    msg={loadMsg}
-                    label={`Генерувати (${citLines.length} джерел) →`}
-                  />
-                )}
+                <PrimaryBtn
+                  onClick={doGenerateFromCitText}
+                  disabled={citLines.length === 0}
+                  loading={running}
+                  msg={loadMsg}
+                  label={`Генерувати (${citLines.length} джерел) →`}
+                />
               </div>
             </div>
           );
@@ -1738,9 +1777,36 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
           <div className="fade">
             <Heading>🎞️ Генерація презентації</Heading>
             {slides.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "40px 0" }}>
+              <div style={{ padding: "20px 0" }}>
+                {/* Вибір теми дизайну */}
+                <div style={{ border: "1.5px solid #d4cfc4", borderRadius: 8, padding: "16px", marginBottom: 20, background: "#faf8f3" }}>
+                  <div style={{ fontSize: 12, color: "#888", letterSpacing: "1px", textTransform: "uppercase", marginBottom: 10 }}>Тема дизайну</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {[
+                      { key: "", label: "Авто", desc: "за галуззю", colors: ["#1E2761", "#0D1B3E"] },
+                      { key: "midnight", label: "Midnight", desc: "синій (IT, техн.)", colors: ["#1E2761", "#CADCFC"] },
+                      { key: "forest", label: "Forest", desc: "зелений (медицина, біол.)", colors: ["#2C5F2D", "#97BC62"] },
+                      { key: "coral", label: "Coral", desc: "теракот (право, гуманіт.)", colors: ["#B85042", "#F5C6C0"] },
+                      { key: "slate", label: "Slate", desc: "сірий (економіка, бізнес)", colors: ["#36454F", "#C8D8E4"] },
+                      { key: "warm", label: "Warm", desc: "темно-синій", colors: ["#0D1B3E", "#4A7CBF"] },
+                    ].map(({ key, label, desc, colors }) => (
+                      <button key={key} onClick={() => setPresTheme(key)}
+                        style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 8, border: `2px solid ${presTheme === key ? "#e8ff47" : "#d4cfc4"}`, background: presTheme === key ? "#1a1a14" : "#fff", cursor: "pointer", fontFamily: "inherit" }}>
+                        <div style={{ display: "flex", gap: 2 }}>
+                          {colors.map((c, i) => <div key={i} style={{ width: 12, height: 22, borderRadius: 3, background: `#${c}` }} />)}
+                        </div>
+                        <div style={{ textAlign: "left" }}>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: presTheme === key ? "#e8ff47" : "#1a1a14" }}>{label}</div>
+                          <div style={{ fontSize: 10, color: presTheme === key ? "#aaa" : "#888" }}>{desc}</div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <p style={{ fontSize: 14, color: "#888", marginBottom: 24 }}>
-                  {files.length > 0 ? `Завантажено ${files.length} файл(ів). ` : ""}
+                  {tezyCitations.length > 0 ? `${tezyCitations.length} джерел. ` : ""}
+                  {files.length > 0 ? `${files.length} файл(ів). ` : ""}
+                  {materialText.trim() ? "Матеріал є. " : ""}
                   Генеруватиму структуру та текст для кожного слайду.
                 </p>
                 <PrimaryBtn onClick={doGeneratePresentation} loading={running} msg={loadMsg} label="Генерувати презентацію →" />
@@ -1753,17 +1819,28 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
                     <div key={i} style={{ border: "1.5px solid #d4cfc4", borderRadius: 8, overflow: "hidden" }}>
                       <div style={{ background: "#1a1a14", padding: "9px 16px", display: "flex", alignItems: "center", gap: 10 }}>
                         <span style={{ fontSize: 11, color: "#e8ff47", background: "#2a2a1a", padding: "1px 8px", borderRadius: 10 }}>{i + 1}</span>
+                        <span style={{ fontSize: 11, color: "#666", background: "#2a2a2a", padding: "1px 7px", borderRadius: 8, textTransform: "uppercase", letterSpacing: "0.5px" }}>{slide.layout || "slide"}</span>
                         <span style={{ fontSize: 13, fontWeight: 600, color: "#f5f2eb", flex: 1 }}>{slide.title}</span>
                       </div>
-                      <div style={{ padding: "12px 16px", fontSize: 13, color: "#444", lineHeight: "1.7", whiteSpace: "pre-wrap", background: "#faf8f3" }}>{slide.content}</div>
+                      <div style={{ padding: "12px 16px", fontSize: 13, color: "#444", lineHeight: "1.7", whiteSpace: "pre-wrap", background: "#faf8f3" }}>
+                        {slide.content || (slide.visual?.items ? slide.visual.items.map(it => `${it.icon || "•"} ${it.header ? it.header + ": " : ""}${it.text || ""}`).join("\n") : slide.subtitle || "")}
+                      </div>
                     </div>
                   ))}
                 </div>
                 <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                   <NavBtn onClick={() => setSlides([])}>Перегенерувати</NavBtn>
-                  <button onClick={() => navigator.clipboard.writeText(slides.map((s, i) => `СЛАЙД ${i + 1}: ${s.title}\n${s.content}`).join("\n\n"))}
+                  <button onClick={() => navigator.clipboard.writeText(slides.map((s, i) => `СЛАЙД ${i + 1}: ${s.title}\n${s.content || ""}`).join("\n\n"))}
                     style={{ background: "#1a1a14", color: "#e8ff47", border: "none", borderRadius: 7, padding: "11px 24px", fontFamily: "'Spectral',serif", fontSize: 13, cursor: "pointer" }}>
                     Скопіювати все
+                  </button>
+                  <button disabled={docxLoading} onClick={async () => {
+                    setDocxLoading(true);
+                    try { await exportToPptxFile({ slides, theme: presTheme || undefined }, info); }
+                    catch (e) { setError(e.message); }
+                    setDocxLoading(false);
+                  }} style={{ background: docxLoading ? "#aaa" : "#1a4a1a", color: docxLoading ? "#eee" : "#a8e060", border: "none", borderRadius: 7, padding: "11px 24px", fontFamily: "'Spectral',serif", fontSize: 13, cursor: docxLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
+                    {docxLoading ? <><SpinDot light />Генерую...</> : "⬇ Завантажити .pptx"}
                   </button>
                   <PrimaryBtn onClick={() => { saveToFirestore({ slides, stage: "done", status: "done" }); setStage("done"); }} label="Завершити →" />
                 </div>
@@ -1952,16 +2029,29 @@ ${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
                     <div key={i} style={{ border: "1.5px solid #d4cfc4", borderRadius: 8, overflow: "hidden" }}>
                       <div style={{ background: "#1a1a14", padding: "9px 16px", display: "flex", alignItems: "center", gap: 10 }}>
                         <span style={{ fontSize: 11, color: "#e8ff47", background: "#2a2a1a", padding: "1px 8px", borderRadius: 10 }}>{i + 1}</span>
+                        {slide.layout && <span style={{ fontSize: 11, color: "#666", background: "#2a2a2a", padding: "1px 7px", borderRadius: 8, textTransform: "uppercase", letterSpacing: "0.5px" }}>{slide.layout}</span>}
                         <span style={{ fontSize: 13, fontWeight: 600, color: "#f5f2eb", flex: 1 }}>{slide.title}</span>
                       </div>
-                      <div style={{ padding: "12px 16px", fontSize: 13, color: "#444", lineHeight: "1.7", whiteSpace: "pre-wrap", background: "#faf8f3" }}>{slide.content}</div>
+                      <div style={{ padding: "12px 16px", fontSize: 13, color: "#444", lineHeight: "1.7", whiteSpace: "pre-wrap", background: "#faf8f3" }}>
+                        {slide.content || (slide.visual?.items ? slide.visual.items.map(it => `${it.icon || "•"} ${it.header ? it.header + ": " : ""}${it.text || ""}`).join("\n") : slide.subtitle || "")}
+                      </div>
                     </div>
                   ))}
                 </div>
-                <button onClick={() => navigator.clipboard.writeText(slides.map((s, i) => `СЛАЙД ${i + 1}: ${s.title}\n${s.content}`).join("\n\n"))}
-                  style={{ background: "#1a1a14", color: "#e8ff47", border: "none", borderRadius: 7, padding: "11px 24px", fontFamily: "'Spectral',serif", fontSize: 13, cursor: "pointer" }}>
-                  Скопіювати все
-                </button>
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                  <button onClick={() => navigator.clipboard.writeText(slides.map((s, i) => `СЛАЙД ${i + 1}: ${s.title}\n${s.content || ""}`).join("\n\n"))}
+                    style={{ background: "#1a1a14", color: "#e8ff47", border: "none", borderRadius: 7, padding: "11px 24px", fontFamily: "'Spectral',serif", fontSize: 13, cursor: "pointer" }}>
+                    Скопіювати все
+                  </button>
+                  <button disabled={docxLoading} onClick={async () => {
+                    setDocxLoading(true);
+                    try { await exportToPptxFile({ slides, theme: presTheme || undefined }, info); }
+                    catch (e) { setError(e.message); }
+                    setDocxLoading(false);
+                  }} style={{ background: docxLoading ? "#aaa" : "#1a4a1a", color: docxLoading ? "#eee" : "#a8e060", border: "none", borderRadius: 7, padding: "11px 24px", fontFamily: "'Spectral',serif", fontSize: 13, cursor: docxLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
+                    {docxLoading ? <><SpinDot light />Генерую...</> : "⬇ Завантажити .pptx"}
+                  </button>
+                </div>
               </>
             )}
 
