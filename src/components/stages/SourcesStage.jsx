@@ -247,21 +247,6 @@ export function SourcesStage({
         </div>
       )}
 
-      {/* ── Попередній список всіх джерел ── */}
-      {allRefs.length > 0 && (
-        <div style={{ border: "1.5px solid #d4cfc4", borderRadius: 8, overflow: "hidden", marginBottom: 20 }}>
-          <div style={{ background: "#2a3a1a", color: "#a8d060", padding: "9px 16px", fontFamily: "'Spectral SC',serif", fontSize: 11, letterSpacing: 2 }}>
-            ПОПЕРЕДНІЙ СПИСОК ДЖЕРЕЛ ({allRefs.length} позицій)
-          </div>
-          <div style={{ padding: "12px 16px", background: "#faf8f3", maxHeight: 180, overflowY: "auto" }}>
-            {allRefs.map((r, i) => (
-              <div key={i} style={{ fontSize: 12, color: "#444", marginBottom: 4, lineHeight: "1.5" }}>
-                <span style={{ color: "#e8ff47", background: "#1a1a14", padding: "1px 6px", borderRadius: 4, marginRight: 8, fontSize: 11 }}>{i + 1}</span>{r}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* ── Підрозділи ── */}
       {visibleSections.map(sec => {
@@ -490,37 +475,10 @@ export function SourcesStage({
         );
       })}
 
-      {/* ── Розставлення посилань ── */}
-      <div style={{ padding: "16px 18px", background: "#f0f5e8", border: "1.5px solid #c8dfa0", borderRadius: 8, marginBottom: 16 }}>
-        <div style={{ fontSize: 13, color: "#3a6010", marginBottom: 12 }}>
-          Всього введено: <strong>{allRefs.length}</strong> з {sourceTotal} рекомендованих.
-        </div>
-        {(() => {
-          const alreadyDone = refList.length > 0 && citInputsSnapshot !== null;
-          const sourcesChanged = alreadyDone && JSON.stringify(citInputs) !== citInputsSnapshot;
-          if (!alreadyDone) return <GreenBtn onClick={doAddAllCitations} disabled={allRefs.length === 0} loading={allCitLoading} msg="Обробляю підрозділи..." label="Розставити всі посилання та сформувати список літератури →" />;
-          if (sourcesChanged) return <GreenBtn onClick={doAddAllCitations} disabled={allRefs.length === 0} loading={allCitLoading} msg="Обробляю підрозділи..." label="Джерела змінились — перерозставити посилання →" />;
-          return null;
-        })()}
+      {/* ── Лічильник джерел ── */}
+      <div style={{ padding: "12px 18px", background: "#f0f5e8", border: "1.5px solid #c8dfa0", borderRadius: 8, marginBottom: 16, fontSize: 13, color: "#3a6010" }}>
+        Всього введено: <strong>{allRefs.length}</strong> з {sourceTotal} рекомендованих.
       </div>
-
-      {/* ── Фінальний список літератури ── */}
-      {refList.length > 0 && (
-        <div style={{ border: "1.5px solid #2a3a1a", borderRadius: 8, overflow: "hidden", marginBottom: 16 }}>
-          <div style={{ background: "#2a3a1a", color: "#a8d060", padding: "9px 16px", fontFamily: "'Spectral SC',serif", fontSize: 11, letterSpacing: 2, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span>СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ ({methodInfo?.sourcesStyle || "ДСТУ 8302:2015"})</span>
-            <button
-              onClick={() => navigator.clipboard.writeText(refList.join("\n"))}
-              style={{ background: "transparent", border: "1px solid #5a7a3a", color: "#a8d060", borderRadius: 5, padding: "3px 10px", fontSize: 10, cursor: "pointer", fontFamily: "'Spectral',serif" }}
-            >COPY</button>
-          </div>
-          <div style={{ padding: "14px 18px", background: "#faf8f3", maxHeight: 300, overflowY: "auto" }}>
-            {refList.map((r, i) => (
-              <div key={i} style={{ fontSize: 13, color: "#2a2a1e", marginBottom: 6, lineHeight: "1.7" }}>{r}</div>
-            ))}
-          </div>
-        </div>
-      )}
 
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 8 }}>
         <NavBtn onClick={() => setStage(workflowMode === "sources-first" ? "plan" : "writing")}>
