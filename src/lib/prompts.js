@@ -216,7 +216,7 @@ conclusionsPages: ${s.conclusionsPages ?? 'null'}
   "chapterConclusionRequirements": "коротка суть результатів, до 1 сторінки",
   "conclusionsRequirements": "пронумерований список конкретних результатів, без загальних формулювань",
   "sourcesMinCount": null,
-  "sourcesStyle": "APA",
+  "sourcesStyle": "ДСТУ 8302:2015",
   "sourcesOrder": "alphabetical",
   "sourcesGrouping": "спочатку українські, потім англійські/польські/чеські, наприкінці східною мовою",
   "citationStyle": "(Автор, рік) або (Автор, рік, с. 25)",
