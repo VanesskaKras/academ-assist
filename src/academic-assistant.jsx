@@ -10,7 +10,7 @@ import { exportToPptxFile } from "./lib/exportPptx.js";
 import { callClaude, callGemini, MODEL, MODEL_FAST } from "./lib/api.js";
 import { playDoneSound } from "./lib/audio.js";
 import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildClientMaterialsAnalysisPrompt, buildCorrectionsAnalysisPrompt, buildCorrectionRewritePrompt } from "./lib/prompts.js";
-import { FIELD_LABELS, isPsychoPed, isEcon, hasEmpiricalResearch, getEmpiricalSections, getEconSections, STAGES_TEXT_FIRST, STAGE_KEYS_TEXT_FIRST, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan } from "./lib/planUtils.js";
+import { FIELD_LABELS, isPsychoPed, isEcon, hasEmpiricalResearch, getEmpiricalSections, getEconSections, STAGES_TEXT_FIRST, STAGE_KEYS_TEXT_FIRST, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, getLangLabels } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { searchByPhrase, filterSourcesWithGemini } from "./lib/sourcesSearch.js";
 import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
@@ -579,7 +579,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
 
   // ── Парсинг плану клієнта ──
   const buildDefaultPlan = (totalPages, lang = "Українська") => {
-    const isEn = /англ|english/i.test(lang || "");
+    const lc = getLangLabels(lang);
     const needThirdChapter = totalPages >= 40;
     const mainPages = Math.round(totalPages * 0.80);
     const chapCount = needThirdChapter ? 3 : 2;
@@ -587,19 +587,16 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     const pagesPerSub = Math.max(1, Math.round(pagesPerCh / 3));
     const introPages = 2;
     const concPages = totalPages > 40 ? 3 : 2;
-    const chapterNames = isEn
-      ? [`CHAPTER 1. THEORETICAL FOUNDATIONS`, `CHAPTER 2. ANALYSIS AND PRACTICAL PART`, ...(needThirdChapter ? [`CHAPTER 3. RECOMMENDATIONS AND PROPOSALS`] : [])]
-      : [`РОЗДІЛ 1. ТЕОРЕТИЧНІ ОСНОВИ ДОСЛІДЖЕННЯ`, `РОЗДІЛ 2. АНАЛІЗ ТА ПРАКТИЧНА ЧАСТИНА`, ...(needThirdChapter ? [`РОЗДІЛ 3. РЕКОМЕНДАЦІЇ ТА ПРОПОЗИЦІЇ`] : [])];
+    const chapterNames = lc.chapterTemplate.slice(0, chapCount);
     const chTypes = ["theory", "analysis", "recommendations"];
     const sections = [];
     chapterNames.forEach((chName, ci) => {
       const chapNum = ci + 1;
-      const subLabel = isEn ? `subsection ${chapNum}.` : `підрозділ ${chapNum}.`;
-      for (let i = 1; i <= 3; i++) sections.push({ id: `${chapNum}.${i}`, label: `${chapNum}.${i} [${subLabel}${i}]`, sectionTitle: chName, pages: pagesPerSub, type: chTypes[ci] });
+      for (let i = 1; i <= 3; i++) sections.push({ id: `${chapNum}.${i}`, label: `${chapNum}.${i} [${lc.subsWord} ${chapNum}.${i}]`, sectionTitle: chName, pages: pagesPerSub, type: chTypes[ci] });
     });
-    sections.push({ id: "intro", label: isEn ? "INTRODUCTION" : "ВСТУП", pages: introPages, type: "intro" });
-    sections.push({ id: "conclusions", label: isEn ? "CONCLUSIONS" : "ВИСНОВКИ", pages: concPages, type: "conclusions" });
-    sections.push({ id: "sources", label: isEn ? "REFERENCES" : "СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ", pages: 1, type: "sources" });
+    sections.push({ id: "intro", label: lc.intro, pages: introPages, type: "intro" });
+    sections.push({ id: "conclusions", label: lc.conclusions, pages: concPages, type: "conclusions" });
+    sections.push({ id: "sources", label: lc.sources, pages: 1, type: "sources" });
     return sections;
   };
 
@@ -610,10 +607,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     const wc = buildWorkConfig({ info: d, methodInfo, commentAnalysis });
     const introP = wc.introPages;
     const conclP = wc.conclusionsPages;
-    const isEnglish = /англ|english/i.test(d?.language || "");
-    const L = isEnglish
-      ? { intro: "INTRODUCTION", conclusions: "CONCLUSIONS", sources: "REFERENCES", chapConclLabel: (n) => `Conclusions to Chapter ${n}`, chapterWord: "CHAPTER", subsWord: "subsection" }
-      : { intro: "ВСТУП", conclusions: "ВИСНОВКИ", sources: "СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ", chapConclLabel: (n) => `Висновки до розділу ${n}`, chapterWord: "РОЗДІЛ", subsWord: "підрозділ" };
+    const L = getLangLabels(d?.language);
 
     const finalizeSections = async (secs) => {
       const mapped = secs.map(s => {
@@ -657,7 +651,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     };
 
     if (clientPlan?.trim()) {
-      const parsed = parseClientPlan(clientPlan.trim(), totalPages);
+      const parsed = parseClientPlan(clientPlan.trim(), totalPages, d?.language);
       if (parsed) { await finalizeSections(parsed); return; }
     }
 
@@ -886,10 +880,11 @@ Order: subsections grouped by chapter, then intro, conclusions, sources.`;
     const chTypes = ["theory", "analysis", "recommendations"];
     const chType = chTypes[Math.min(chapNum - 1, chTypes.length - 1)];
     const pagesPerSub = Math.max(3, Math.round(parsePagesAvg(info?.pages) * 0.10));
-    const sectionTitle = `РОЗДІЛ ${chapNum}. [Назва розділу ${chapNum}]`;
+    const lc = getLangLabels(info?.language);
+    const sectionTitle = `${lc.chapterWord} ${chapNum}. [${lc.subsWord}]`;
     const newSubs = [1, 2, 3].map(i => ({
       id: `${chapNum}.${i}`,
-      label: `${chapNum}.${i} [Новий підрозділ]`,
+      label: `${chapNum}.${i} [${lc.subsWord}]`,
       sectionTitle,
       pages: pagesPerSub,
       prompts: Math.max(1, Math.ceil(pagesPerSub / 3)),

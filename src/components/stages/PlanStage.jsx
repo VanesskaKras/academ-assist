@@ -1,4 +1,4 @@
-import { parseClientPlan, buildPlanText, calcSourceDist } from "../../lib/planUtils.js";
+import { parseClientPlan, buildPlanText, calcSourceDist, getLangLabels } from "../../lib/planUtils.js";
 import { exportPlanToDocx } from "../../lib/exportDocx.js";
 import { SpinDot } from "../SpinDot.jsx";
 import { Heading, NavBtn, PrimaryBtn, GreenBtn } from "../Buttons.jsx";
@@ -59,7 +59,7 @@ export function PlanStage({
               <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
                 <button
                   onClick={() => {
-                    const parsed = parseClientPlan(manualPlanText.trim(), totalPagesNum);
+                    const parsed = parseClientPlan(manualPlanText.trim(), totalPagesNum, info?.language);
                     if (!parsed || !parsed.length) { alert("Не вдалося розпізнати план. Перевірте формат."); return; }
                     const withPrompts = parsed.map(s => ({ ...s, prompts: s.type === "sources" ? 0 : Math.max(1, Math.ceil((s.pages || 3) / 3)) }));
                     setSections(withPrompts);
@@ -150,7 +150,8 @@ export function PlanStage({
                 const lastId = mainSecs.length ? mainSecs[mainSecs.length - 1].id : "1.0";
                 const [ch, sub] = lastId.split(".").map(Number);
                 const newId = `${ch}.${(sub || 0) + 1}`;
-                const newSec = { id: newId, label: `${newId} Новий підрозділ`, sectionTitle: mainSecs[mainSecs.length - 1]?.sectionTitle || "", pages: Math.max(1, Math.round(totalPagesNum * 0.1)), prompts: 1, type: mainSecs[mainSecs.length - 1]?.type || "theory" };
+                const newSubWord = getLangLabels(info?.language).subsWord;
+                const newSec = { id: newId, label: `${newId} [${newSubWord}]`, sectionTitle: mainSecs[mainSecs.length - 1]?.sectionTitle || "", pages: Math.max(1, Math.round(totalPagesNum * 0.1)), prompts: 1, type: mainSecs[mainSecs.length - 1]?.type || "theory" };
                 setSections(p => { const introIdx = p.findIndex(s => s.type === "intro"); const next = introIdx >= 0 ? [...p.slice(0, introIdx), newSec, ...p.slice(introIdx)] : [...p, newSec]; setPlanDisplay(buildPlanText(next)); return next; });
               }} style={{ background: "transparent", border: "1.5px dashed #bbb4a0", color: "#888", borderRadius: 6, padding: "7px 20px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer", flex: 1, letterSpacing: "1px" }}
                 onMouseEnter={e => { e.currentTarget.style.borderColor = "#1a1a14"; e.currentTarget.style.color = "#1a1a14"; }}

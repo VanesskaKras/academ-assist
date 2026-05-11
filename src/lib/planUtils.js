@@ -1,3 +1,16 @@
+export function getLangLabels(lang = "Українська") {
+  const l = (lang || "").toLowerCase();
+  // latinScript: true = мова використовує латиницю (не забороняємо її в тексті)
+  if (/англ|english/.test(l))      return { intro: "INTRODUCTION",  conclusions: "CONCLUSIONS",      sources: "REFERENCES",                 chapConclLabel: n => `Conclusions to Chapter ${n}`,       chapterWord: "CHAPTER",   subsWord: "subsection",  chapterTemplate: ["CHAPTER 1. THEORETICAL FOUNDATIONS", "CHAPTER 2. ANALYSIS AND PRACTICAL PART", "CHAPTER 3. RECOMMENDATIONS AND PROPOSALS"],  tableWord: "Table",    figWord: "Fig.",   tableRef: "shown in Table",            figRef: "shown in Fig.",            forbiddenWords: "aspect, important, special, significant, key, critical, fundamental",  latinScript: true  };
+  if (/польськ|polish/.test(l))    return { intro: "WSTĘP",         conclusions: "WNIOSKI",          sources: "BIBLIOGRAFIA",               chapConclLabel: n => `Wnioski do rozdziału ${n}`,          chapterWord: "ROZDZIAŁ",  subsWord: "podrozdział", chapterTemplate: ["ROZDZIAŁ 1. PODSTAWY TEORETYCZNE BADANIA", "ROZDZIAŁ 2. ANALIZA I CZĘŚĆ PRAKTYCZNA", "ROZDZIAŁ 3. WNIOSKI I ZALECENIA"],             tableWord: "Tabela",   figWord: "Rys.",   tableRef: "przedstawiono w Tabeli",    figRef: "pokazano na Rys.",         forbiddenWords: "aspekt, ważny, szczególny, znaczący, kluczowy, krytyczny, fundamentalny", latinScript: true  };
+  if (/іспан|spanish|español|espanol/.test(l)) return { intro: "INTRODUCCIÓN", conclusions: "CONCLUSIONES", sources: "BIBLIOGRAFÍA",        chapConclLabel: n => `Conclusiones del capítulo ${n}`,    chapterWord: "CAPÍTULO",  subsWord: "sección",     chapterTemplate: ["CAPÍTULO 1. FUNDAMENTOS TEÓRICOS DE LA INVESTIGACIÓN", "CAPÍTULO 2. ANÁLISIS Y PARTE PRÁCTICA", "CAPÍTULO 3. RECOMENDACIONES Y PROPUESTAS"], tableWord: "Tabla",    figWord: "Fig.",   tableRef: "se muestra en la Tabla",    figRef: "se muestra en la Fig.",    forbiddenWords: "aspecto, importante, especial, significativo, clave, crítico, fundamental", latinScript: true };
+  if (/нім|german|deutsch/.test(l)) return { intro: "EINLEITUNG",   conclusions: "SCHLUSSFOLGERUNGEN", sources: "LITERATURVERZEICHNIS",     chapConclLabel: n => `Schlussfolgerungen zu Kapitel ${n}`, chapterWord: "KAPITEL",   subsWord: "Unterkapitel",chapterTemplate: ["KAPITEL 1. THEORETISCHE GRUNDLAGEN DER UNTERSUCHUNG", "KAPITEL 2. ANALYSE UND PRAKTISCHER TEIL", "KAPITEL 3. EMPFEHLUNGEN UND VORSCHLÄGE"],       tableWord: "Tabelle",  figWord: "Abb.",   tableRef: "in Tabelle dargestellt",    figRef: "in Abb. gezeigt",          forbiddenWords: "Aspekt, wichtig, besonders, bedeutend, entscheidend, kritisch, grundlegend", latinScript: true };
+  if (/чеськ|czech/.test(l))       return { intro: "ÚVOD",          conclusions: "ZÁVĚR",            sources: "SEZNAM POUŽITÉ LITERATURY",  chapConclLabel: n => `Závěry ke kapitole ${n}`,           chapterWord: "KAPITOLA",  subsWord: "podkapitola", chapterTemplate: ["KAPITOLA 1. TEORETICKÉ ZÁKLADY VÝZKUMU", "KAPITOLA 2. ANALÝZA A PRAKTICKÁ ČÁST", "KAPITOLA 3. DOPORUČENÍ A NÁVRHY"],                     tableWord: "Tabulka",  figWord: "Obr.",   tableRef: "uvedeno v Tabulce",         figRef: "znázorněno na Obr.",       forbiddenWords: "aspekt, důležitý, zvláštní, významný, klíčový, kritický, základní",        latinScript: true  };
+  if (/словацьк|slovak/.test(l))   return { intro: "ÚVOD",          conclusions: "ZÁVER",            sources: "ZOZNAM POUŽITEJ LITERATÚRY", chapConclLabel: n => `Závery ku kapitole ${n}`,           chapterWord: "KAPITOLA",  subsWord: "podkapitola", chapterTemplate: ["KAPITOLA 1. TEORETICKÉ ZÁKLADY VÝSKUMU", "KAPITOLA 2. ANALÝZA A PRAKTICKÁ ČASŤ", "KAPITOLA 3. ODPORÚČANIA A NÁVRHY"],                   tableWord: "Tabuľka",  figWord: "Obr.",   tableRef: "uvedené v Tabuľke",         figRef: "znázornené na Obr.",       forbiddenWords: "aspekt, dôležitý, špeciálny, významný, kľúčový, kritický, základný",      latinScript: true  };
+  if (/китайськ|chinese|中文/.test(l)) return { intro: "引言",      conclusions: "结论",             sources: "参考文献",                    chapConclLabel: n => `第${n}章结论`,                      chapterWord: "第",        subsWord: "小节",        chapterTemplate: ["第1章. 研究的理论基础", "第2章. 分析与实践部分", "第3章. 建议与对策"],                                                                              tableWord: "表",       figWord: "图",     tableRef: "如表所示",                  figRef: "如图所示",                 forbiddenWords: "方面, 重要, 特殊, 显著, 关键, 批判, 基本",                                  latinScript: false };
+  return { intro: "ВСТУП", conclusions: "ВИСНОВКИ", sources: "СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ", chapConclLabel: n => `Висновки до розділу ${n}`, chapterWord: "РОЗДІЛ", subsWord: "підрозділ", chapterTemplate: ["РОЗДІЛ 1. ТЕОРЕТИЧНІ ОСНОВИ ДОСЛІДЖЕННЯ", "РОЗДІЛ 2. АНАЛІЗ ТА ПРАКТИЧНА ЧАСТИНА", "РОЗДІЛ 3. РЕКОМЕНДАЦІЇ ТА ПРОПОЗИЦІЇ"], tableWord: "Таблиця", figWord: "Рис.", tableRef: "наведено в Таблиці", figRef: "показано на Рис.", forbiddenWords: "аспект, важливий, особливий, значущий, ключовий, критичний, фундаментальний", latinScript: false };
+}
+
 export const FIELD_LABELS = {
   type: "Тип роботи", pages: "К-сть сторінок", topic: "Тема роботи",
   subject: "Тематика / предмет", direction: "Галузь / напрям", uniqueness: "Унікальність",
@@ -120,24 +133,59 @@ export function parseTemplate(text) {
   };
 }
 
-export function parseClientPlan(text, totalPages) {
+export function parseClientPlan(text, totalPages, lang = "Українська") {
+  const { intro: introLabel, conclusions: conclLabel, sources: srcLabel, chapConclLabel } = getLangLabels(lang);
+
   const normalized = text
     .replace(/([^\n])\s+(Розділ\s)/gi, "$1\n$2")
     .replace(/([^\n])\s+(Chapter\s)/gi, "$1\n$2")
+    .replace(/([^\n])\s+(Rozdział\s)/gi, "$1\n$2")
+    .replace(/([^\n])\s+(Cap[ií]tulo\s)/gi, "$1\n$2")
+    .replace(/([^\n])\s+(Kapitol[ao]\s)/gi, "$1\n$2")
+    .replace(/([^\n])\s+(Kapitel\s)/gi, "$1\n$2")
     .replace(/([^\n])\s+(висновк\w*)/gi, "$1\n$2")
     .replace(/([^\n])\s+(список\s)/gi, "$1\n$2")
     .replace(/([^\n])\s+(вступ\s|вступ$)/gi, "$1\n$2");
   const lines = normalized.split("\n").map(l => l.trim()).filter(Boolean);
   const chapters = []; let current = null;
+  let expectingChapterTitle = false;
   for (const line of lines) {
-    const isChapter = /^розділ\s/i.test(line) || /^chapter\s/i.test(line) || /^\d+[\.\)]\s+[А-ЯҐЄІЇа-яґєії]/i.test(line);
+    const isChapter = /^розділ\s/i.test(line) || /^chapter\s/i.test(line)
+      || /^rozdział\s/i.test(line) || /^cap[ií]tulo\s/i.test(line)
+      || /^kapitol[ao]\s/i.test(line) || /^kapitel\s/i.test(line)
+      || /^第\d+章/.test(line)
+      || /^\d+[\.\)]\s+[А-ЯҐЄІЇа-яґєіїA-ZÁÉÍÓÚÑÀÈÌÒÙÂÊÎÔÛÄËÏÖÜČŠŽŘÝŮÍÁÉÓÚ]/i.test(line);
     const isSubsection = /^\d+\.\d+/.test(line) || /^[-–•]\s+/.test(line);
-    const isChapterConclusion = /^висновк[^\s]*\s+до\s+/i.test(line);
-    const isSpecial = !isChapterConclusion && /^(вступ[\s,\.!]?$|вступ\s|висновк|список|загальн|практичн|додатк|зміст)/i.test(line);
-    if (isSpecial) continue;
-    if (isChapterConclusion && current) { current.hasConclusion = true; continue; }
-    if (isChapter) { current = { title: line.trim(), subsections: [], hasConclusion: false }; chapters.push(current); }
-    else if (isSubsection && current) current.subsections.push(line.replace(/^[-–•]\s+/, "").trim());
+    const isChapterConclusion = /^висновк[^\s]*\s+до\s+/i.test(line)
+      || /^wnioski\s+do\s+/i.test(line) || /^conclusiones\s+(del|al)\s+/i.test(line)
+      || /^závěry\s+ke\s+/i.test(line) || /^závery\s+ku\s+/i.test(line)
+      || /^schlussfolgerungen\s+zu\s+/i.test(line);
+    const isSpecial = !isChapterConclusion && /^(вступ[\s,\.!]?$|вступ\s|висновк|список|загальн|практичн|додатк|зміст|wstęp|wnioski|zakończenie|bibliografia|spis\s|introducción|introduccion|conclusiones|bibliografía|bibliografia|índice|indice|einleitung|schlussfolgerungen|fazit|literaturverzeichnis|inhaltsverzeichnis|úvod|závěr|záver|seznam\s|zoznam\s|引言|绪论|结论|参考文献|目录)/i.test(line);
+    if (isSpecial) { expectingChapterTitle = false; continue; }
+    if (isChapterConclusion && current) { current.hasConclusion = true; expectingChapterTitle = false; continue; }
+    if (isChapter) {
+      current = { title: line.trim(), subsections: [], hasConclusion: false };
+      chapters.push(current);
+      expectingChapterTitle = true;
+    } else if (isSubsection) {
+      expectingChapterTitle = false;
+      if (current) current.subsections.push(line.replace(/^[-–•]\s+/, "").trim());
+    } else if (expectingChapterTitle && current) {
+      current.title = current.title + ". " + line.trim();
+      expectingChapterTitle = false;
+    }
+  }
+  // Fallback: no chapter headers found but subsections exist — auto-group by leading digit
+  if (!chapters.length) {
+    const subLines = lines.filter(l => /^\d+\.\d+/.test(l));
+    if (!subLines.length) return null;
+    const chapMap = {}; const chapOrder = [];
+    for (const l of subLines) {
+      const chapNum = l.match(/^(\d+)\./)[1];
+      if (!chapMap[chapNum]) { chapMap[chapNum] = { title: chapNum, subsections: [], hasConclusion: false }; chapOrder.push(chapNum); }
+      chapMap[chapNum].subsections.push(l.trim());
+    }
+    for (const n of chapOrder) chapters.push(chapMap[n]);
   }
   if (!chapters.length) return null;
   const mainPages = Math.round(totalPages * 0.80);
@@ -159,12 +207,12 @@ export function parseClientPlan(text, totalPages) {
       }
     }
     if (ch.hasConclusion) {
-      sections.push({ id: `${chapNum}.conclusions`, label: `Висновки до розділу ${chapNum}`, sectionTitle: ch.title.toUpperCase(), pages: 1, type: "chapter_conclusion", chapterNum: String(chapNum) });
+      sections.push({ id: `${chapNum}.conclusions`, label: chapConclLabel(chapNum), sectionTitle: ch.title.toUpperCase(), pages: 1, type: "chapter_conclusion", chapterNum: String(chapNum) });
     }
   }
-  sections.push({ id: "intro", label: "ВСТУП", pages: introPages, type: "intro" });
-  sections.push({ id: "conclusions", label: "ВИСНОВКИ", pages: concPages, type: "conclusions" });
-  sections.push({ id: "sources", label: "СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ", pages: 1, type: "sources" });
+  sections.push({ id: "intro", label: introLabel, pages: introPages, type: "intro" });
+  sections.push({ id: "conclusions", label: conclLabel, pages: concPages, type: "conclusions" });
+  sections.push({ id: "sources", label: srcLabel, pages: 1, type: "sources" });
   return sections;
 }
 
@@ -173,22 +221,30 @@ export function buildPlanText(secs) {
   const concs = secs.find(s => s.type === "conclusions");
   const srcs = secs.find(s => s.type === "sources");
   const main = secs.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
+  // Auto-detect chapter word from existing section titles so we never mix languages
+  const detectedChapWord = (() => {
+    for (const s of main) {
+      const m = (s.sectionTitle || "").match(/^(РОЗДІЛ|CHAPTER|ROZDZIAŁ|CAP[IÍ]TULO|CAPITULO|KAPITEL|KAPITOLA|第\d*章)/i);
+      if (m) return m[1].toUpperCase();
+    }
+    return "РОЗДІЛ";
+  })();
   const lines = [];
-  if (intro) lines.push("ВСТУП\n");
+  if (intro) lines.push((intro.label || "ВСТУП") + "\n");
   const groups = {};
   for (const s of main) { const top = s.id.split(".")[0]; if (!groups[top]) groups[top] = []; groups[top].push(s); }
   for (const [num, items] of Object.entries(groups)) {
     const rawTitle = items[0].sectionTitle || items[0].label.replace(/^\d+\.\d+\s+/, "").split(" ").slice(0, 7).join(" ").toUpperCase();
-    const alreadyHasPrefix = rawTitle.trim().toUpperCase().startsWith(`РОЗДІЛ ${num}`);
-    const secLabel = alreadyHasPrefix ? rawTitle.trim() : `РОЗДІЛ ${num}. ${rawTitle}`;
+    const alreadyHasPrefix = /^(РОЗДІЛ|CHAPTER|ROZDZIAŁ|CAP[IÍ]TULO|CAPITULO|KAPITEL|KAPITOLA|第\d*章)/i.test(rawTitle.trim());
+    const secLabel = alreadyHasPrefix ? rawTitle.trim() : `${detectedChapWord} ${num}. ${rawTitle}`;
     lines.push(secLabel);
     for (const s of items) { if (/^\d+\.\d+/.test(s.id)) lines.push(`    ${s.label}`); }
     const chapConc = secs.find(s => s.type === "chapter_conclusion" && s.id === `${num}.conclusions`);
     if (chapConc) lines.push(`    ${chapConc.label}`);
     lines.push("");
   }
-  if (concs) lines.push("ВИСНОВКИ\n");
-  if (srcs) lines.push("СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ");
+  if (concs) lines.push((concs.label || "ВИСНОВКИ") + "\n");
+  if (srcs) lines.push(srcs.label || "СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ");
   return lines.join("\n");
 }
 
