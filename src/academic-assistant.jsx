@@ -1208,58 +1208,71 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
       const tasksCount = Math.min(mainSecs.length, isLarge ? 8 : 5);
 
       // Будуємо список елементів вступу: стандартні + з методички
-      const defaultComponents = ["актуальність теми", "мета дослідження", "завдання дослідження", "об'єкт дослідження", "предмет дослідження", "методи дослідження", "практичне значення дослідження", "структура роботи"];
+      const lc = getLangLabels(lang);
+      const il = lc.introLabels || {};
+      const defaultComponents = lc.defaultIntroComponents || ["актуальність теми", "мета дослідження", "завдання дослідження", "об'єкт дослідження", "предмет дослідження", "методи дослідження", "практичне значення дослідження", "структура роботи"];
       const allComponents = methodInfo?.introComponents?.length
         ? methodInfo.introComponents
         : defaultComponents;
 
-      // Формуємо рядки структури
+      // Формуємо рядки структури з урахуванням мови роботи
       const componentLines = allComponents.map((comp, i) => {
         const label = comp.charAt(0).toUpperCase() + comp.slice(1);
-        if (/актуальн/i.test(comp)) {
-          return `${label}: абзац починається словами "Актуальність теми." — одразу сильне речення про проблему, чому тема важлива сьогодні. НЕ розбивай на кілька абзаців, НЕ додавай окремий "стан дослідженості".`;
+        if (/актуальн|actuality|aktual|relevance|relevanz|pertine/i.test(comp)) {
+          const phrase = il.actuality || "Актуальність теми.";
+          return `${label}: one paragraph starting with "${phrase}" — immediately introduce why the topic is relevant today. Do not split into multiple paragraphs.`;
         }
-        if (/теоретико|теоретичн.*основ|методологічн.*основ/i.test(comp)) {
-          return `${label}: абзац починається словами "Теоретико-методологічну основу дослідження становлять" — перелічи авторів та наукові праці, нормативно-правові акти, планову та статистичну документацію відповідно до теми.`;
+        if (/теоретико|теоретичн.*основ|методологічн.*основ|podstawy.*teoret|theoretical.*basis/i.test(comp)) {
+          const phrase = il.theoryBasis || "Теоретико-методологічну основу дослідження становлять";
+          return `${label}: one paragraph starting with "${phrase}" — list scholarly works, authors, regulatory sources relevant to the topic.`;
         }
-        if (/мета/i.test(comp) && !/завдання/i.test(comp)) {
-          return `${label}: пиши у форматі "Мета дослідження – [чітко сформульована мета відповідно до теми "${d.topic}", без повторення слова 'мета' після тире]".`;
+        if ((/мета|goal|cel|ziel|objetivo|purpose|účel|cieľ/i.test(comp)) && !/завдання|tasks|zadania|aufgaben|úkoly|úlohy/i.test(comp)) {
+          const phrase = il.goal || "Мета дослідження –";
+          return `${label}: write in format "${phrase} [clearly formulated goal for topic "${d.topic}"]".`;
         }
-        if (/завдання/i.test(comp)) {
-          return `${label} (${tasksCount} завдань): пиши у форматі "Завдання дослідження:" — далі нумерований перелік. Завдання відповідають підрозділам:\n${mainSecs.map((s, j) => `   ${j + 1}) "${s.label}"`).join("\n")}`;
+        if (/завдання|tasks|zadania|aufgaben|tareas|úkoly|úlohy/i.test(comp)) {
+          const phrase = il.tasks || "Завдання дослідження:";
+          return `${label} (${tasksCount}): write in format "${phrase}" — then numbered list matching sections:\n${mainSecs.map((s, j) => `   ${j + 1}) "${s.label}"`).join("\n")}`;
         }
-        if (/об.єкт/i.test(comp)) {
-          return `${label}: пиши у форматі "Об'єкт дослідження – [явище або процес, що досліджується]".`;
+        if (/об.єкт|przedmiot|gegenstand|objeto/i.test(comp) && !/предмет|subject|obiekt/i.test(comp)) {
+          const phrase = il.object || "Об'єкт дослідження –";
+          return `${label}: write in format "${phrase} [phenomenon or process being studied]".`;
         }
-        if (/предмет/i.test(comp)) {
-          return `${label}: пиши у форматі "Предмет дослідження – [конкретний аспект об'єкта, який аналізується]".`;
+        if (/предмет|subject|obiekt/i.test(comp)) {
+          const phrase = il.subject || "Предмет дослідження –";
+          return `${label}: write in format "${phrase} [specific aspect of the object being analyzed]".`;
         }
-        if (/метод/i.test(comp) && !/теоретико|методологічн.*основ/i.test(comp)) {
-          return `${label}: пиши у форматі "Методи дослідження: [перелік методів відповідно до теми через кому]".`;
+        if (/метод|method/i.test(comp) && !/теоретико|методологічн.*основ|podstawy/i.test(comp)) {
+          const phrase = il.methods || "Методи дослідження:";
+          return `${label}: write in format "${phrase} [list of methods, comma-separated]".`;
         }
-        if (/новизн/i.test(comp)) {
-          return `${label}: пиши у форматі "Наукова новизна дослідження – [нові положення або рішення, запропоновані автором, їх відмінність від відомих]".`;
+        if (/новизн|novelty|nowość|neuheit|novedad/i.test(comp)) {
+          const phrase = il.novelty || "Наукова новизна дослідження –";
+          return `${label}: write in format "${phrase} [new positions or solutions proposed by the author]".`;
         }
-        if (/практичн/i.test(comp)) {
-          return `${label}: пиши у форматі "Практична значущість: [як результати дослідження можна застосувати на практиці]".`;
+        if (/практичн|practical|praktyczn|praktisch|přínos|prínos/i.test(comp)) {
+          const phrase = il.practical || "Практична значущість:";
+          return `${label}: write in format "${phrase} [how results can be applied in practice]".`;
         }
-        if (/апробац/i.test(comp)) {
-          return `${label}: пиши у форматі "Апробація результатів дослідження – [де результати були представлені: конференції, статті, семінари]".`;
+        if (/апробац|approbation|aprobata/i.test(comp)) {
+          const phrase = il.approbation || "Апробація результатів дослідження –";
+          return `${label}: write in format "${phrase} [conferences, publications, seminars where results were presented]".`;
         }
-        if (/структура/i.test(comp)) {
-          return `${label}: пиши у форматі "Структура роботи: робота складається з вступу," — далі к-сть розділів, висновки, список джерел, загальний обсяг сторінок.`;
+        if (/структура|structure|struktura|štruktúra/i.test(comp)) {
+          const phrase = il.structure || "Структура роботи:";
+          return `${label}: write in format "${phrase} the work consists of introduction," — number of chapters, conclusions, sources list, total page count.`;
         }
-        return `${label}: пиши у форматі "${label} – [зміст відповідно до теми "${d.topic}"]".`;
+        return `${label}: write in format "${label} – [content relevant to topic "${d.topic}"]".`;
       });
 
       instruction = `Напиши ВСТУП для ${d.type} на тему "${d.topic}". Галузь: ${d.subject}.
 
-СТРУКТУРА ВСТУПУ (дотримуватись суворо, кожен елемент з нового абзацу):
+INTRO STRUCTURE (follow strictly, each element as a new paragraph):
 
 ${componentLines.map((l, i) => `${i + 1}. ${l}`).join("\n\n")}
-${methodInfo?.otherRequirements ? `\nВИМОГИ МЕТОДИЧКИ: ${methodInfo.otherRequirements}` : ""}${commentAnalysis?.textStructureHints ? `\nВИМОГИ КЛІЄНТА ДО СТРУКТУРИ (ОБОВ'ЯЗКОВО): ${commentAnalysis.textStructureHints}` : ""}
+${methodInfo?.otherRequirements ? `\nМЕТОДИЧКА ВИМОГИ: ${methodInfo.otherRequirements}` : ""}${commentAnalysis?.textStructureHints ? `\nКЛІЄНТ ВИМОГИ (ОБОВ'ЯЗКОВО): ${commentAnalysis.textStructureHints}` : ""}
 
-ВАЖЛИВО: використай вже написані розділи роботи (є в контексті) для точного формулювання методів, вибірки, об'єкта — все має збігатись з текстом роботи. Дотримуйся формату кожного елемента суворо. НЕ додавай посилань. НЕ виділяй нічого жирним або курсивом. Пиши суцільним текстом абзацами. ВИНЯТОК: завдання дослідження — пиши нумерованим списком (1. 2. 3. ...), кожне завдання з нового рядка.`;
+IMPORTANT: use already written sections (in context) for exact formulation of methods, sample, object — everything must match the text. Follow each element's format strictly. No citations. No bold or italic. Write in continuous paragraphs. EXCEPTION: research tasks — write as numbered list (1. 2. 3. ...), each task on a new line.`;
 
     } else if (sec.type === "conclusions") {
       const conclReq = methodInfo?.conclusionsRequirements || "";
@@ -1529,31 +1542,66 @@ ${planSummary}
     if (sec.type === "intro") {
       const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
       const tasksCount = Math.min(mainSecs.length, isLarge ? 8 : 5);
-      const defaultComponents = ["актуальність теми", "мета дослідження", "завдання дослідження", "об'єкт дослідження", "предмет дослідження", "методи дослідження", "практичне значення дослідження", "структура роботи"];
+      const lc = getLangLabels(lang);
+      const il = lc.introLabels || {};
+      const defaultComponents = lc.defaultIntroComponents || ["актуальність теми", "мета дослідження", "завдання дослідження", "об'єкт дослідження", "предмет дослідження", "методи дослідження", "практичне значення дослідження", "структура роботи"];
       const allComponents = methodInfo?.introComponents?.length ? methodInfo.introComponents : defaultComponents;
       const componentLines = allComponents.map((comp) => {
         const label = comp.charAt(0).toUpperCase() + comp.slice(1);
-        if (/актуальн/i.test(comp)) return `${label}: абзац починається словами "Актуальність теми." — одразу сильне речення про проблему. НЕ розбивай на кілька абзаців.`;
-        if (/теоретико|теоретичн.*основ|методологічн.*основ/i.test(comp)) return `${label}: абзац починається словами "Теоретико-методологічну основу дослідження становлять" — перелічи авторів, наукові праці, нормативно-правові акти відповідно до теми.`;
-        if (/мета/i.test(comp) && !/завдання/i.test(comp)) return `${label}: пиши у форматі "Мета дослідження – [чітко сформульована мета, без повторення слова 'мета' після тире]".`;
-        if (/завдання/i.test(comp)) return `${label} (${tasksCount} завдань): пиши у форматі "Завдання дослідження:" — нумерований перелік.`;
-        if (/об.єкт/i.test(comp)) return `${label}: пиши у форматі "Об'єкт дослідження – [явище або процес, що досліджується]".`;
-        if (/предмет/i.test(comp)) return `${label}: пиши у форматі "Предмет дослідження – [конкретний аспект об'єкта]".`;
-        if (/метод/i.test(comp) && !/теоретико|методологічн.*основ/i.test(comp)) return `${label}: пиши у форматі "Методи дослідження: [перелік методів через кому]".`;
-        if (/новизн/i.test(comp)) return `${label}: пиши у форматі "Наукова новизна дослідження – [нові положення, їх відмінність від відомих]".`;
-        if (/практичн/i.test(comp)) return `${label}: пиши у форматі "Практична значущість: [практичне застосування результатів]".`;
-        if (/апробац/i.test(comp)) return `${label}: пиши у форматі "Апробація результатів дослідження – [де представлені: конференції, статті, семінари]".`;
-        if (/структура/i.test(comp)) return `${label}: пиши у форматі "Структура роботи: робота складається з вступу," — к-сть розділів, висновки, список джерел.`;
-        return `${label}: пиши у форматі "${label} – [зміст відповідно до теми]".`;
+        if (/актуальн|actuality|aktual|relevance|relevanz|pertine/i.test(comp)) {
+          const phrase = il.actuality || "Актуальність теми.";
+          return `${label}: one paragraph starting with "${phrase}" — strong opening sentence about the problem. Do NOT split into multiple paragraphs.`;
+        }
+        if (/теоретико|теоретичн.*основ|методологічн.*основ|theoretical.*basis|podstawy.*teor/i.test(comp)) {
+          const phrase = il.theoryBasis || "Теоретико-методологічну основу дослідження становлять";
+          return `${label}: paragraph starting with "${phrase}" — list authors, academic works, regulatory acts relevant to the topic.`;
+        }
+        if ((/мета|goal|cel\b|ziel|objetivo|cíl|účel/i.test(comp)) && !/завдання|task|zadani|aufgab/i.test(comp)) {
+          const phrase = il.goal || "Мета дослідження –";
+          return `${label}: write as "${phrase} [clearly formulated goal]".`;
+        }
+        if (/завдання|tasks|zadania|aufgaben|tareas|úkoly/i.test(comp)) {
+          const phrase = il.tasks || "Завдання дослідження:";
+          return `${label} (${tasksCount} tasks): write as "${phrase}" — numbered list.`;
+        }
+        if (/об.єкт|object|przedmiot\s+bad|gegenstand|objeto\s+de/i.test(comp)) {
+          const phrase = il.object || "Об'єкт дослідження –";
+          return `${label}: write as "${phrase} [phenomenon or process under study]".`;
+        }
+        if (/предмет|subject|obiekt\s+bad|subjekt|sujeto/i.test(comp)) {
+          const phrase = il.subject || "Предмет дослідження –";
+          return `${label}: write as "${phrase} [specific aspect of the object]".`;
+        }
+        if ((/метод|methods|metody|methoden|métodos/i.test(comp)) && !/теоретико|методологічн.*основ|teoretyczn|podstawy/i.test(comp)) {
+          const phrase = il.methods || "Методи дослідження:";
+          return `${label}: write as "${phrase} [comma-separated list of methods]".`;
+        }
+        if (/новизн|novelty|nowość|neuheit|novedad/i.test(comp)) {
+          const phrase = il.novelty || "Наукова новизна дослідження –";
+          return `${label}: write as "${phrase} [new propositions, distinction from known]".`;
+        }
+        if (/практичн|practical|praktyczn|praktisch|práctico/i.test(comp)) {
+          const phrase = il.practical || "Практична значущість:";
+          return `${label}: write as "${phrase} [practical application of results]".`;
+        }
+        if (/апробац|approbation|aprobacja/i.test(comp)) {
+          const phrase = il.approbation || "Апробація результатів дослідження –";
+          return `${label}: write as "${phrase} [where presented: conferences, articles, seminars]".`;
+        }
+        if (/структура|structure|struktura|aufbau/i.test(comp)) {
+          const phrase = il.structure || "Структура роботи:";
+          return `${label}: write as "${phrase} the work consists of introduction," — number of chapters, conclusions, bibliography.`;
+        }
+        return `${label}: write in format "${label} – [content relevant to the topic]".`;
       });
 
-      instruction = `Перепиши ВСТУП для ${d.type} на тему "${d.topic}". Галузь: ${d.subject}.
+      instruction = `Rewrite the INTRODUCTION for ${d.type} on the topic "${d.topic}". Field: ${d.subject}.
 
-СТРУКТУРА ВСТУПУ (суворо дотримуватись):
+INTRO STRUCTURE (follow strictly, each element as a new paragraph):
 
-${componentLines.map((l, i) => `${i + 1}. ${l}`).join("\n")}
-${methodInfo?.otherRequirements ? `\nВИМОГИ МЕТОДИЧКИ: ${methodInfo.otherRequirements}` : ""}
-ВАЖЛИВО: використай написані розділи роботи (є в контексті) для точного формулювання методів, вибірки, об'єкта. Дотримуйся формату кожного елемента суворо. НЕ виділяй нічого жирним або курсивом. Без посилань. ВИНЯТОК: завдання дослідження — пиши нумерованим списком (1. 2. 3. ...), кожне завдання з нового рядка.${customInstructions}`;
+${componentLines.map((l, i) => `${i + 1}. ${l}`).join("\n\n")}
+${methodInfo?.otherRequirements ? `\nMETHOD REQUIREMENTS: ${methodInfo.otherRequirements}` : ""}
+IMPORTANT: use the written chapters (provided in context) for precise formulation of methods, sample, object. Follow the format of each element strictly. Do NOT bold or italicize anything. No citations. EXCEPTION: research tasks — write as a numbered list (1. 2. 3. ...), each task on a new line.${customInstructions}`;
 
     } else if (sec.type === "conclusions") {
       instruction = `Перепиши ВИСНОВКИ для ${d.type} на тему "${d.topic}".
@@ -2221,29 +2269,64 @@ ${JSON.stringify(analysis, null, 2)}
       if (sec.type === "intro") {
         const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
         const tasksCount = Math.min(mainSecs.length, isLarge ? 8 : 5);
-        const defaultComponents = ["актуальність теми", "мета дослідження", "завдання дослідження", "об'єкт дослідження", "предмет дослідження", "методи дослідження", "структура роботи"];
+        const lc = getLangLabels(lang);
+        const il = lc.introLabels || {};
+        const defaultComponents = lc.defaultIntroComponents || ["актуальність теми", "мета дослідження", "завдання дослідження", "об'єкт дослідження", "предмет дослідження", "методи дослідження", "структура роботи"];
         const allComponents = methodInfo?.introComponents?.length ? methodInfo.introComponents : defaultComponents;
         const componentLines = allComponents.map((comp) => {
           const label = comp.charAt(0).toUpperCase() + comp.slice(1);
-          if (/актуальн/i.test(comp)) return `${label}: починається "Актуальність теми." — НЕ розбивай на кілька абзаців`;
-          if (/теоретико|теоретичн.*основ|методологічн.*основ/i.test(comp)) return `${label}: починається "Теоретико-методологічну основу дослідження становлять" — автори, праці, нормативно-правові акти`;
-          if (/мета/i.test(comp) && !/завдання/i.test(comp)) return `${label}: починається "Метою роботи є"`;
-          if (/завдання/i.test(comp)) return `${label} (${tasksCount} завдань): починається "Для досягнення мети поставлено такі завдання:" — перелік відповідно до підрозділів:\n${mainSecs.map((s, j) => `  ${j + 1}) "${s.label}"`).join("\n")}`;
-          if (/об.єкт/i.test(comp)) return `${label}: починається "Об'єктом дослідження є"`;
-          if (/предмет/i.test(comp)) return `${label}: починається "Предметом дослідження є"`;
-          if (/метод/i.test(comp) && !/теоретико|методологічн.*основ/i.test(comp)) return `${label}: починається "Для вирішення поставлених завдань використано такі методи:"`;
-          if (/новизн/i.test(comp)) return `${label}: починається "Наукова новизна дослідження полягає в тому, що"`;
-          if (/практичн/i.test(comp)) return `${label}: починається "Практична значущість одержаних результатів полягає в тому, що"`;
-          if (/апробац/i.test(comp)) return `${label}: починається "Апробація результатів дослідження здійснювалась"`;
-          if (/структура/i.test(comp)) return `${label}: починається "Робота складається з вступу,"`;
+          if (/актуальн|actuality|aktual|relevance|relevanz|pertine/i.test(comp)) {
+            const phrase = il.actuality || "Актуальність теми.";
+            return `${label}: starts with "${phrase}" — do NOT split into multiple paragraphs`;
+          }
+          if (/теоретико|теоретичн.*основ|методологічн.*основ|theoretical.*basis|podstawy.*teor/i.test(comp)) {
+            const phrase = il.theoryBasis || "Теоретико-методологічну основу дослідження становлять";
+            return `${label}: starts with "${phrase}" — authors, works, regulatory acts`;
+          }
+          if ((/мета|goal|cel\b|ziel|objetivo|cíl|účel/i.test(comp)) && !/завдання|task|zadani|aufgab/i.test(comp)) {
+            const phrase = il.goal || "Метою роботи є";
+            return `${label}: starts with "${phrase}"`;
+          }
+          if (/завдання|tasks|zadania|aufgaben|tareas|úkoly/i.test(comp)) {
+            const phrase = il.tasks || "Для досягнення мети поставлено такі завдання:";
+            return `${label} (${tasksCount} tasks): starts with "${phrase}" — list according to subsections:\n${mainSecs.map((s, j) => `  ${j + 1}) "${s.label}"`).join("\n")}`;
+          }
+          if (/об.єкт|object|przedmiot\s+bad|gegenstand|objeto\s+de/i.test(comp)) {
+            const phrase = il.object || "Об'єктом дослідження є";
+            return `${label}: starts with "${phrase}"`;
+          }
+          if (/предмет|subject|obiekt\s+bad|subjekt|sujeto/i.test(comp)) {
+            const phrase = il.subject || "Предметом дослідження є";
+            return `${label}: starts with "${phrase}"`;
+          }
+          if ((/метод|methods|metody|methoden|métodos/i.test(comp)) && !/теоретико|методологічн.*основ|teoretyczn|podstawy/i.test(comp)) {
+            const phrase = il.methods || "Для вирішення поставлених завдань використано такі методи:";
+            return `${label}: starts with "${phrase}"`;
+          }
+          if (/новизн|novelty|nowość|neuheit|novedad/i.test(comp)) {
+            const phrase = il.novelty || "Наукова новизна дослідження полягає в тому, що";
+            return `${label}: starts with "${phrase}"`;
+          }
+          if (/практичн|practical|praktyczn|praktisch|práctico/i.test(comp)) {
+            const phrase = il.practical || "Практична значущість одержаних результатів полягає в тому, що";
+            return `${label}: starts with "${phrase}"`;
+          }
+          if (/апробац|approbation|aprobacja/i.test(comp)) {
+            const phrase = il.approbation || "Апробація результатів дослідження здійснювалась";
+            return `${label}: starts with "${phrase}"`;
+          }
+          if (/структура|structure|struktura|aufbau/i.test(comp)) {
+            const phrase = il.structure || "Робота складається з вступу,";
+            return `${label}: starts with "${phrase}"`;
+          }
           return `${label}`;
         });
-        instruction = `Напиши ВСТУП для ${d.type} на тему "${d.topic}". Галузь: ${d.subject}.
-СТРУКТУРА ВСТУПУ (суворо, кожен елемент з нового абзацу):
+        instruction = `Write the INTRODUCTION for ${d.type} on the topic "${d.topic}". Field: ${d.subject}.
+INTRO STRUCTURE (strictly, each element as a new paragraph):
 ${componentLines.map((l, idx) => `${idx + 1}. ${l}`).join("\n")}
-${methodInfo?.otherRequirements ? `\nВИМОГИ МЕТОДИЧКИ: ${methodInfo.otherRequirements}` : ""}
-Використай написані розділи роботи (є в контексті) для точного формулювання вибірки, методів, результатів — все має збігатись.
-НЕ виділяй жирним. НЕ додавай посилань. Пиши суцільним текстом абзацами.`;
+${methodInfo?.otherRequirements ? `\nMETHOD REQUIREMENTS: ${methodInfo.otherRequirements}` : ""}
+Use the written chapters (provided in context) for precise formulation of sample, methods, results — everything must match.
+Do NOT bold anything. Do NOT add citations. Write as continuous prose paragraphs.`;
 
       } else if (sec.type === "conclusions") {
         const conclusionsParas = isLarge ? "10-12" : "7";

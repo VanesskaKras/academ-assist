@@ -1,7 +1,13 @@
+import { getLangLabels } from "./planUtils.js";
+
 // ─────────────────────────────────────────────
 // Перенумерація таблиць і рисунків
 // ─────────────────────────────────────────────
-export function renumberTablesAndFigures(content, displayOrder) {
+export function renumberTablesAndFigures(content, displayOrder, lang) {
+  const lc = getLangLabels(lang);
+  const tw = lc.tableWord;
+  const fw = lc.figWord;
+
   function getChapter(sec) {
     if (!sec?.id) return null;
     const m = sec.id.match(/^(\d+)/);
@@ -22,12 +28,12 @@ export function renumberTablesAndFigures(content, displayOrder) {
     secRenamings[sec.id] = [];
 
     let m;
-    const tableRe = /^Таблиця\s+(\d+\.\d+)/gm;
+    const tableRe = new RegExp(`^${escRe(tw)}\\s+(\\d+\\.\\d+)`, "gm");
     while ((m = tableRe.exec(txt)) !== null) {
       chTableCount[ch]++;
       secRenamings[sec.id].push({ oldRef: m[1], newRef: `${ch}.${chTableCount[ch]}`, type: "table" });
     }
-    const figRe = /^Рис\.\s+(\d+\.\d+)/gm;
+    const figRe = new RegExp(`^${escRe(fw)}\\s+(\\d+\\.\\d+)`, "gm");
     while ((m = figRe.exec(txt)) !== null) {
       chFigCount[ch]++;
       secRenamings[sec.id].push({ oldRef: m[1], newRef: `${ch}.${chFigCount[ch]}`, type: "fig" });
@@ -48,11 +54,15 @@ export function renumberTablesAndFigures(content, displayOrder) {
       const tok = `\x00T${tokI++}\x00`;
       tokMap.set(tok, newRef);
       if (type === "table") {
-        txt = txt.replace(new RegExp(`(^Таблиця\\s+)${escRe(oldRef)}`, "m"), `$1${tok}`);
-        txt = txt.replace(new RegExp(`(Таблиц[яіюю]\\s+)${escRe(oldRef)}(?!\\d)`, "g"), `$1${tok}`);
+        txt = txt.replace(new RegExp(`(^${escRe(tw)}\\s+)${escRe(oldRef)}`, "m"), `$1${tok}`);
+        if (tw === "Таблиця") {
+          txt = txt.replace(new RegExp(`(Таблиц[яіюю]\\s+)${escRe(oldRef)}(?!\\d)`, "g"), `$1${tok}`);
+        } else {
+          txt = txt.replace(new RegExp(`(${escRe(tw)}\\s+)${escRe(oldRef)}(?!\\d)`, "gi"), `$1${tok}`);
+        }
       } else {
-        txt = txt.replace(new RegExp(`(^Рис\\.\\s+)${escRe(oldRef)}`, "m"), `$1${tok}`);
-        txt = txt.replace(new RegExp(`(Рис\\.\\s+)${escRe(oldRef)}(?!\\d)`, "gi"), `$1${tok}`);
+        txt = txt.replace(new RegExp(`(^${escRe(fw)}\\s+)${escRe(oldRef)}`, "m"), `$1${tok}`);
+        txt = txt.replace(new RegExp(`(${escRe(fw)}\\s+)${escRe(oldRef)}(?!\\d)`, "gi"), `$1${tok}`);
       }
     }
 
@@ -76,12 +86,16 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
       document.head.appendChild(s);
     });
   }
-  const numberedContent = renumberTablesAndFigures(content, displayOrder);
+  const lc = getLangLabels(info?.language);
+  const numberedContent = renumberTablesAndFigures(content, displayOrder, info?.language);
   Object.keys(numberedContent).forEach(k => { if (numberedContent[k]) numberedContent[k] = numberedContent[k].replace(/'/g, '\u2019'); });
   const normAppendices = appendicesText ? appendicesText.replace(/'/g, '\u2019') : appendicesText;
 
   const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel, TableOfContents, Table, TableRow, TableCell, WidthType, BorderStyle, ExternalHyperlink, InternalHyperlink, Bookmark } = window.docx;
   const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
+  function _escRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+  const twRe = new RegExp("^" + _escRe(lc.tableWord) + "\\s+\\d");
+  const fwRe = new RegExp("^" + _escRe(lc.figWord) + "\\s+\\d");
   const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
   const marg = methodInfo?.formatting?.margins || commentAnalysis?.formattingHints?.margins || {};
   const toMm = v => (v != null && Number(v) > 0 ? Number(v) : null);
@@ -262,7 +276,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
         }
         continue;
       }
-      if (/^Таблиця\s+\d/.test(line.trim())) {
+      if (twRe.test(line.trim())) {
         const fmt = methodInfo?.formatting || {};
         const tf = fmt.tableFormat || "";
         const tAlignRight = fmt.tableNumberRight ?? /правий|right|справа|верхн.*кут/i.test(tf);
@@ -297,7 +311,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
         i++;
         continue;
       }
-      if (/^Рис\.\s+\d/.test(line.trim())) {
+      if (fwRe.test(line.trim())) {
         const ff = methodInfo?.formatting?.figureFormat || "";
         const fBold = /жирн|bold/i.test(ff);
         result.push(new Paragraph({
@@ -470,7 +484,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     pageBreakBefore: true,
     alignment: AlignmentType.CENTER,
     spacing: { line: LINE_SINGLE, lineRule: "auto", before: 0, after: LINE_SINGLE * 2 },
-    children: [new TextRun({ text: "ЗМІСТ", font: FONT, size: SIZE, bold: true, color: "000000" })],
+    children: [new TextRun({ text: lc.toc, font: FONT, size: SIZE, bold: true, color: "000000" })],
   }));
   children.push(new Paragraph({
     spacing: { line: LINE_SINGLE, lineRule: "auto", before: 0, after: 0 },
@@ -522,9 +536,10 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     } else {
       if (thisChapter !== lastChapter) {
         lastChapter = thisChapter;
-        const rawTitle = sec.sectionTitle || `РОЗДІЛ ${thisChapter}`;
-        const alreadyHasPrefix = rawTitle.trim().toUpperCase().startsWith(`РОЗДІЛ ${thisChapter}`);
-        const chapterLabel = alreadyHasPrefix ? rawTitle.trim() : `РОЗДІЛ ${thisChapter}. ${rawTitle}`;
+        const rawTitle = sec.sectionTitle || `${lc.chapterWord} ${thisChapter}`;
+        const CHAPTER_PREFIX_RE = /^(РОЗДІЛ|CHAPTER|ROZDZIAŁ|CAP[IÍ]TULO|CAPITULO|KAPITEL|KAPITOLA|第)/i;
+        const alreadyHasPrefix = CHAPTER_PREFIX_RE.test(rawTitle.trim());
+        const chapterLabel = alreadyHasPrefix ? rawTitle.trim() : `${lc.chapterWord} ${thisChapter}. ${rawTitle}`;
         children.push(heading1(chapterLabel));
       }
       children.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
@@ -546,7 +561,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
 
   if (normAppendices && normAppendices.trim()) {
     children.push(new Paragraph({ pageBreakBefore: true, spacing: { before: 0, after: 0, line: LINE, lineRule: "auto" }, children: [] }));
-    children.push(heading1("ДОДАТКИ"));
+    children.push(heading1(lc.appendixWord));
     normAppendices.split("\n").forEach(line => {
       const raw = line.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1").trim();
       if (!raw) {
