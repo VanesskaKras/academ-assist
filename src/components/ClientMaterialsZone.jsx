@@ -1,7 +1,7 @@
 import { useState, useRef } from "react";
 
 const MAX_FILES = 10;
-const MAX_TEXT_CHARS = 8000; // per file, to avoid enormous payloads
+const MAX_TEXT_CHARS = 50000;
 
 const XLSX_CDN = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
 
@@ -80,8 +80,9 @@ export function ClientMaterialsZone({ materials, onAdd, onRemove, manualText, on
         const isXlsx = f.name.endsWith(".xlsx") || f.name.endsWith(".xls") ||
           f.type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
           f.type === "application/vnd.ms-excel";
+        const isXml = f.name.endsWith(".xml") || f.type === "text/xml" || f.type === "application/xml";
 
-        if (isText) {
+        if (isText || isXml) {
           const text = await new Promise((res, rej) => {
             const r = new FileReader();
             r.onload = ev => res(ev.target.result.slice(0, MAX_TEXT_CHARS));
@@ -138,14 +139,14 @@ export function ClientMaterialsZone({ materials, onAdd, onRemove, manualText, on
           {extracting
             ? "Витягую текст..."
             : canAdd
-              ? `Перетягніть або клікніть — PDF, TXT, CSV, XLSX (${materials.length}/${MAX_FILES})`
+              ? `Перетягніть або клікніть — PDF, TXT, CSV, XLSX, XML (${materials.length}/${MAX_FILES})`
               : `Максимум ${MAX_FILES} файлів завантажено`}
         </div>
       </div>
       <input
         ref={fileRef}
         type="file"
-        accept=".pdf,.txt,.csv,.xlsx,.xls,text/plain,application/pdf,text/csv"
+        accept=".pdf,.txt,.csv,.xlsx,.xls,.xml,text/plain,application/pdf,text/csv,text/xml,application/xml"
         multiple
         style={{ display: "none" }}
         onChange={e => { processFiles(e.target.files); e.target.value = ""; }}

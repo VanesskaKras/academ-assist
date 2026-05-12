@@ -183,23 +183,26 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [correctionLoading, setCorrectionLoading] = useState(false);
   const [correctionApplyLoading, setCorrectionApplyLoading] = useState(false);
   const [correctionHistory, setCorrectionHistory] = useState([]);
-  const tokenAccRef = useRef({ inTok: 0, outTok: 0, costUsd: 0, claudeInTok: 0, claudeOutTok: 0, claudeCostUsd: 0, geminiInTok: 0, geminiOutTok: 0, geminiCostUsd: 0 });
+  const tokenAccRef = useRef({ inTok: 0, outTok: 0, costUsd: 0, claudeInTok: 0, claudeOutTok: 0, claudeCostUsd: 0, geminiInTok: 0, geminiOutTok: 0, geminiCostUsd: 0, serperCredits: 0, serperCostUsd: 0 });
   useEffect(() => {
     const handler = (e) => {
       const isGemini = e.detail.model?.startsWith("gemini");
+      const isSerper = e.detail.model === "serper";
       const inTok = e.detail.inTok || 0;
       const outTok = e.detail.outTok || 0;
       const cost = e.detail.cost || 0;
       tokenAccRef.current = {
-        inTok: tokenAccRef.current.inTok + inTok,
-        outTok: tokenAccRef.current.outTok + outTok,
+        inTok: tokenAccRef.current.inTok + (isSerper ? 0 : inTok),
+        outTok: tokenAccRef.current.outTok + (isSerper ? 0 : outTok),
         costUsd: tokenAccRef.current.costUsd + cost,
-        claudeInTok: tokenAccRef.current.claudeInTok + (isGemini ? 0 : inTok),
-        claudeOutTok: tokenAccRef.current.claudeOutTok + (isGemini ? 0 : outTok),
-        claudeCostUsd: tokenAccRef.current.claudeCostUsd + (isGemini ? 0 : cost),
+        claudeInTok: tokenAccRef.current.claudeInTok + (!isGemini && !isSerper ? inTok : 0),
+        claudeOutTok: tokenAccRef.current.claudeOutTok + (!isGemini && !isSerper ? outTok : 0),
+        claudeCostUsd: tokenAccRef.current.claudeCostUsd + (!isGemini && !isSerper ? cost : 0),
         geminiInTok: tokenAccRef.current.geminiInTok + (isGemini ? inTok : 0),
         geminiOutTok: tokenAccRef.current.geminiOutTok + (isGemini ? outTok : 0),
         geminiCostUsd: tokenAccRef.current.geminiCostUsd + (isGemini ? cost : 0),
+        serperCredits: tokenAccRef.current.serperCredits + (isSerper ? inTok : 0),
+        serperCostUsd: tokenAccRef.current.serperCostUsd + (isSerper ? cost : 0),
       };
     };
     window.addEventListener("apicost", handler);
@@ -293,6 +296,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
               inTok: d.totalInTok || 0, outTok: d.totalOutTok || 0, costUsd: d.totalCostUsd || 0,
               claudeInTok: d.claudeInTok || 0, claudeOutTok: d.claudeOutTok || 0, claudeCostUsd: d.claudeCostUsd || 0,
               geminiInTok: d.geminiInTok || 0, geminiOutTok: d.geminiOutTok || 0, geminiCostUsd: d.geminiCostUsd || 0,
+              serperCredits: d.serperCredits || 0, serperCostUsd: d.serperCostUsd || 0,
             };
           }
           if (d.generationStartedAt && d.status !== "done") {
@@ -385,6 +389,8 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
         geminiInTok: tokenAccRef.current.geminiInTok,
         geminiOutTok: tokenAccRef.current.geminiOutTok,
         geminiCostUsd: tokenAccRef.current.geminiCostUsd,
+        serperCredits: tokenAccRef.current.serperCredits,
+        serperCostUsd: tokenAccRef.current.serperCostUsd,
         ...(patch.status === "done" ? {
           completedAt: new Date().toISOString(),
           ...(generationStartRef.current ? { generationDurationSec: Math.round((Date.now() - generationStartRef.current) / 1000) } : {}),
@@ -548,28 +554,16 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
       setCommentAnalysis(null);
     }
 
-    // КРОК 4: Аналіз матеріалів клієнта (файли + ручний текст)
+    // КРОК 4: Матеріали клієнта — зберігаємо повний текст без стиснення
     const combinedMaterialsText = [
       ...clientMaterials.map(m => `=== ${m.name} ===\n${m.text}`),
       clientMaterialsText?.trim() || "",
     ].filter(Boolean).join("\n\n");
 
     if (combinedMaterialsText.trim()) {
-      setLoadMsg("Аналізую матеріали клієнта...");
-      await new Promise(r => setTimeout(r, 500));
-      try {
-        const cmRaw = await callClaude(
-          [{ role: "user", content: buildClientMaterialsAnalysisPrompt({ topic: newInfo?.topic, materialsText: combinedMaterialsText.slice(0, 40000) }) }],
-          null, SYS_JSON_SHORT, 2000, null, MODEL_FAST
-        );
-        const cmMatch = cmRaw.match(/\{[\s\S]*\}/);
-        const cmParsed = JSON.parse(cmMatch?.[0] || cmRaw);
-        setClientMaterialsSummary(cmParsed);
-        await saveToFirestore({ clientMaterialsSummary: cmParsed, clientMaterialsText: clientMaterialsText?.trim() || null });
-      } catch (e) {
-        console.warn("clientMaterialsSummary failed:", e.message);
-        setClientMaterialsSummary(null);
-      }
+      const rawSummary = { rawText: combinedMaterialsText };
+      setClientMaterialsSummary(rawSummary);
+      await saveToFirestore({ clientMaterialsSummary: rawSummary, clientMaterialsText: clientMaterialsText?.trim() || null });
     } else {
       setClientMaterialsSummary(null);
     }
@@ -1466,14 +1460,10 @@ ${planSummary}
       commentAnalysis?.textStructureHints,
     ].filter(Boolean).join("\n");
     if (clientWritingReqs) instruction += `\n\nВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО виконати при написанні):\n${clientWritingReqs}`;
-    if (clientMaterialsSummary) {
-      const matBlock = [];
-      if (clientMaterialsSummary.rawText) matBlock.push(`МАТЕРІАЛИ КЛІЄНТА (використовуй ці дані — не вигадуй, не замінюй):\n${clientMaterialsSummary.rawText.slice(0, 12000)}`);
-      if (clientMaterialsSummary.keyFacts?.length) matBlock.push(`КОНКРЕТНІ ЦИФРИ І ФАКТИ (зберігай дослівно — не округлюй, не змінюй):\n${clientMaterialsSummary.keyFacts.join("\n")}`);
-      if (clientMaterialsSummary.tablesMd) matBlock.push(`ТАБЛИЦІ З ДАНИМИ (відтвори точно якщо стосуються розділу):\n${clientMaterialsSummary.tablesMd}`);
-      if (matBlock.length) instruction += `\n\n${matBlock.join("\n\n")}`;
+    if (clientMaterialsSummary?.rawText) {
+      instruction += `\n\nМАТЕРІАЛИ КЛІЄНТА (використовуй ці дані — не вигадуй, не замінюй):\n${clientMaterialsSummary.rawText.slice(0, 80000)}`;
     } else if (clientMaterialsText?.trim()) {
-      instruction += `\n\nМАТЕРІАЛИ КЛІЄНТА (використовуй ці дані — не вигадуй, не замінюй):\n${clientMaterialsText.slice(0, 12000)}`;
+      instruction += `\n\nМАТЕРІАЛИ КЛІЄНТА (використовуй ці дані — не вигадуй, не замінюй):\n${clientMaterialsText.slice(0, 80000)}`;
     }
     const sectionMaxTokens = Math.min(60000, Math.max(8000, Math.round((sec.pages || 1) * 3000)));
     try {
@@ -1667,15 +1657,11 @@ ${empHintRegen ? `ВИМОГА: ${empHintRegen}\n` : ""}Рекомендації
         commentAnalysis?.textStructureHints,
       ].filter(Boolean).join("\n");
       const clientMaterialsBlockRegen = (() => {
-        if (clientMaterialsSummary) {
-          const parts = [];
-          if (clientMaterialsSummary.rawText) parts.push(`МАТЕРІАЛИ КЛІЄНТА (використовуй ці дані):\n${clientMaterialsSummary.rawText.slice(0, 12000)}`);
-          if (clientMaterialsSummary.keyFacts?.length) parts.push(`КОНКРЕТНІ ЦИФРИ І ФАКТИ (зберігай дослівно):\n${clientMaterialsSummary.keyFacts.join("\n")}`);
-          if (clientMaterialsSummary.tablesMd) parts.push(`ТАБЛИЦІ З ДАНИМИ:\n${clientMaterialsSummary.tablesMd}`);
-          return parts.length ? `\n\n${parts.join("\n\n")}` : "";
+        if (clientMaterialsSummary?.rawText) {
+          return `\n\nМАТЕРІАЛИ КЛІЄНТА (використовуй ці дані):\n${clientMaterialsSummary.rawText.slice(0, 80000)}`;
         }
         if (clientMaterialsText?.trim()) {
-          return `\n\nМАТЕРІАЛИ КЛІЄНТА (використовуй ці дані — не вигадуй, не замінюй):\n${clientMaterialsText.slice(0, 12000)}`;
+          return `\n\nМАТЕРІАЛИ КЛІЄНТА (використовуй ці дані — не вигадуй, не замінюй):\n${clientMaterialsText.slice(0, 80000)}`;
         }
         return "";
       })();
