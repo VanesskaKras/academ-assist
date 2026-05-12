@@ -185,7 +185,9 @@ export async function callGemini(messages, signal, systemPrompt, maxTokens, onWa
       throw new Error("Gemini: порожня відповідь" + (finishReason ? ` (${finishReason})` : ""));
     }
     if (data.usageMetadata) {
-      const cost = (data.usageMetadata.promptTokenCount * 0.075 + data.usageMetadata.candidatesTokenCount * 0.30) / 1_000_000;
+      const GEMINI_PRICES = { "gemini-2.5-flash-lite": { in: 0.10, out: 0.40 }, "gemini-2.0-flash": { in: 0.10, out: 0.40 } };
+      const gp = GEMINI_PRICES[currentModel] || { in: 0.10, out: 0.40 };
+      const cost = (data.usageMetadata.promptTokenCount * gp.in + data.usageMetadata.candidatesTokenCount * gp.out) / 1_000_000;
       window.dispatchEvent(new CustomEvent("apicost", { detail: { cost, model: currentModel, inTok: data.usageMetadata.promptTokenCount, outTok: data.usageMetadata.candidatesTokenCount } }));
     }
     return text;
