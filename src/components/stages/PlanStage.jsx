@@ -229,17 +229,6 @@ export function PlanStage({
                   <div style={{ fontWeight: 600, marginBottom: 4 }}>Спочатку джерела →</div>
                   <div style={{ fontSize: 11, color: "#a8d060", opacity: 0.9 }}>Знайдіть джерела, потім AI пише текст спираючись на них і вставляє [1][2] одразу</div>
                 </button>
-                <button
-                  onClick={() => startGen("text-first")}
-                  style={{
-                    flex: 1, minWidth: 200, padding: "12px 16px", borderRadius: 8, cursor: "pointer",
-                    fontFamily: "'Spectral',serif", fontSize: 13, textAlign: "left", lineHeight: 1.5,
-                    background: "#1a1a14", color: "#f5f2eb", border: "2px solid #555",
-                  }}
-                >
-                  <div style={{ fontWeight: 600, marginBottom: 4 }}>Спочатку текст →</div>
-                  <div style={{ fontSize: 11, color: "#aaa", opacity: 0.9 }}>AI генерує текст без посилань, потім ви додаєте джерела і розставляєте їх окремо</div>
-                </button>
               </div>
             </div>
           )}
