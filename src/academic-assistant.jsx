@@ -602,6 +602,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     const introP = wc.introPages;
     const conclP = wc.conclusionsPages;
     const L = getLangLabels(d?.language);
+    const isEnglish = /англ|english/i.test(d?.language || "");
 
     const finalizeSections = async (secs) => {
       const mapped = secs.map(s => {
