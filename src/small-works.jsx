@@ -760,7 +760,7 @@ ${refLines}`;
       : "";
 
     const prompt = `Напиши тези наукової доповіді на тему "${info?.topic}". Галузь: ${[info?.subject, info?.direction].filter(Boolean).join(", ")}.
-${materialContext}
+${materialContext}${comment?.trim() ? `\nКОМЕНТАР ЗАМОВНИКА (виконай обов'язково): ${comment.trim()}\n` : ""}
 БЛОК АВТОРА (${authorFormat === "right" ? "вирівняти по правому краю" : "вирівняти по центру"}):
 ${authorBlockLines}
 
@@ -1064,7 +1064,7 @@ ${materialContext}${methodReqBlock}${commentBlock}${sourcesBlock}${!methodReqBlo
 
     const prompt = `${typePrompts[workType] || `Напиши роботу на тему "${info?.topic}".`}
 ${materialContext}
-${methodRequirements?.trim() ? `\nВИМОГИ ДО РОБОТИ (ОБОВ'ЯЗКОВО дотримуватись):\n${methodRequirements}` : (info?.requirements ? `\nВИМОГИ: ${info.requirements}` : "")}
+${comment?.trim() ? `\nКОМЕНТАР ЗАМОВНИКА (виконай обов'язково): ${comment.trim()}\n` : ""}${methodRequirements?.trim() ? `\nВИМОГИ ДО РОБОТИ (ОБОВ'ЯЗКОВО дотримуватись):\n${methodRequirements}` : (info?.requirements ? `\nВИМОГИ: ${info.requirements}` : "")}
 ${info?.uniqueness ? `Унікальність: ${info.uniqueness}.` : ""}
 Мова: ${lang}.
 ${sourcesContext}
