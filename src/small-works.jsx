@@ -1082,9 +1082,9 @@ ${sourcesList ? `\nПісля основного тексту додай (збе
     setRunning(false); setLoadMsg("");
   };
 
-  // ── Генерація презентації ──
+  // ── Генерація презентації (2 кроки) ──
   const doGeneratePresentation = async (citationsOverride) => {
-    setRunning(true); setLoadMsg("Генерую презентацію...");
+    setRunning(true);
     const lang = info?.language || "Українська";
     const totalSlides = Math.max(8, Math.min(20, parsePagesAvg(info?.pages || "15")));
     const activeCitations = citationsOverride ?? tezyCitations;
@@ -1094,54 +1094,75 @@ ${sourcesList ? `\nПісля основного тексту додай (збе
     const toClaudeFile = f => ({ type: f.type.startsWith("image/") ? "image" : "document", source: { type: "base64", media_type: f.type, data: f.b64 } });
     const fileContext = files.map(toClaudeFile);
     const matFileContext = materialFiles.length > 0
-      ? [{ type: "text", text: "Матеріал для презентації (файли — проаналізуй і використай для наповнення слайдів):" }, ...materialFiles.map(toClaudeFile)]
+      ? [{ type: "text", text: "Матеріал для презентації (проаналізуй і використай для наповнення слайдів):" }, ...materialFiles.map(toClaudeFile)]
       : [];
-
     const materialContext = materialText.trim()
-      ? `\nМАТЕРІАЛ ДЛЯ РОБОТИ (використай як основу змісту):\n${materialText.trim()}\n`
+      ? `\nМАТЕРІАЛ (використай як основу змісту):\n${materialText.trim()}\n`
+      : "";
+    const reqBlock = methodRequirements?.trim()
+      ? `\nВИМОГИ (дотримуватись):\n${methodRequirements}\n`
+      : (info?.requirements ? `\nВимоги: ${info.requirements}\n` : "");
+    const commentBlock = comment?.trim() ? `\nКОМЕНТАР ЗАМОВНИКА (виконай обов'язково): ${comment.trim()}\n` : "";
+    const sourcesBlock = hasSources
+      ? `\nДЖЕРЕЛА — використовуй посилання у тексті слайдів:\n${activeCitations.map((c, i) => `[${i + 1}] ${c}`).join("\n")}\n`
       : "";
 
-    const prompt = `Створи структуру презентації на тему "${info?.topic}". Галузь: ${info?.subject || ""}.
-К-сть слайдів: ${totalSlides} (включно з титульним і завершальним).
-${info?.requirements ? `Вимоги: ${info.requirements}` : ""}
-Мова: ${lang}.
-${materialContext}
-${comment ? `Коментар замовника: ${comment}` : ""}
+    try {
+      // ── КРОК 1: Генерація змісту ──
+      setLoadMsg("Аналізую матеріали та генерую зміст...");
+      const step1Prompt = `Ти готуєш презентацію на тему "${info?.topic}". Галузь: ${info?.subject || ""}. Мова: ${lang}.
+${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
+Створи детальний план змісту для ${totalSlides} слайдів (включно з титульним і завершальним "Дякую за увагу!").
+
+Для КОЖНОГО слайду напиши:
+— Назву слайду
+— Повний текст/зміст (2-5 речень або пунктів з конкретними фактами з матеріалів)
+— Тип подачі: список / порівняння / статистика / кроки / текст
+
+Перший слайд — титульний з назвою теми.
+Останній — "Дякую за увагу!"
+Використовуй конкретні дані, цифри та факти з наданих матеріалів — не загальні фрази.`;
+
+      const step1Msgs = [{ role: "user", content: [...fileContext, ...matFileContext, { type: "text", text: step1Prompt }] }];
+      const contentPlan = await callClaude(step1Msgs, null, `You are a presentation content expert. Write in ${lang}.`, 3000, null, MODEL);
+
+      // ── КРОК 2: Форматування в JSON ──
+      setLoadMsg("Оформлюю слайди...");
+      const step2Prompt = `Перетвори цей план презентації у JSON структуру для рендерингу. Точно ${totalSlides} слайдів.
+
+ПЛАН ЗМІСТУ:
+${contentPlan}
 
 Поверни ТІЛЬКИ JSON без markdown:
 {"slides":[
-  {"layout":"hero","title":"Назва теми","subtitle":"Виконав: [якщо відомо]"},
-  {"layout":"icon_list","title":"Мета та завдання","visual":{"items":[{"icon":"🎯","header":"Мета","text":"..."},{"icon":"📋","header":"Завдання 1","text":"..."}]}},
+  {"layout":"hero","title":"Назва теми","subtitle":"підзаголовок якщо є"},
+  {"layout":"icon_list","title":"Мета та завдання","visual":{"items":[{"icon":"🎯","header":"Мета","text":"..."},{"icon":"📋","header":"Завдання","text":"..."}]}},
   {"layout":"highlight_box","title":"Назва розділу","content":"Теза 1\\nТеза 2\\nТеза 3"},
-  {"layout":"two_column","title":"...","left":"Текст ліворуч...","right":"Ключовий факт або статистика"},
+  {"layout":"two_column","title":"...","left":"Текст ліворуч","right":"Ключовий факт"},
   {"layout":"numbered_steps","title":"Методологія","visual":{"items":[{"num":"1","title":"Крок","text":"..."}]}},
-  {"layout":"hero","title":"Висновки","subtitle":"Підсумок..."},
+  {"layout":"stat_callout","title":"Результати","visual":{"stats":[{"value":"72%","label":"опис"}]}},
+  {"layout":"hero","title":"Висновки","subtitle":"підсумок"},
   {"layout":"hero","title":"Дякую за увагу!","subtitle":""}
 ]}
 
-Правила layout:
-- hero — темний повноекранний (тільки для 1-го, завершального та ключових слайдів)
-- icon_list — для переліків 3-5 пунктів з емодзі (мета, висновки, особливості)
-- numbered_steps — для процесів/методів (3-4 кроки)
-- two_column — для порівнянь; left=текст, right=короткий ключовий факт
-- stat_callout — для статистики: "visual":{"stats":[{"value":"72%","label":"..."}]}
-- highlight_box — для основних положень (2-4 тези через \\n) — використовуй як default
-- НЕ додавай слайд зі списком джерел — він буде доданий окремо.
-Використовуй різні layouts для різноманітності. Слайд 1: layout=hero. Останній: layout=hero, title="Дякую за увагу!".`;
+Правила вибору layout:
+- hero — тільки для 1-го слайду, завершального, та слайдів-розділювачів
+- icon_list — перелік 3-5 пунктів (мета, особливості, висновки)
+- numbered_steps — процес або методологія (3-4 кроки)
+- two_column — порівняння або два аспекти
+- stat_callout — є конкретні числа/відсотки
+- highlight_box — основний текст (default для більшості слайдів)
+НЕ додавай слайд джерел. Слайд 1: hero. Останній: hero, title="Дякую за увагу!".`;
 
-    try {
-      const msgs = [{ role: "user", content: [...fileContext, ...matFileContext, { type: "text", text: prompt }] }];
-      const raw = await callClaude(msgs, null, buildSYSSmall(lang), 6000, null, (files.length > 0 || materialFiles.length > 0) ? MODEL : MODEL_FAST);
-      const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || raw);
+      const step2Raw = await callClaude([{ role: "user", content: step2Prompt }], null, "Respond only with valid JSON. No markdown.", 4000, null, MODEL_FAST);
+      const parsed = JSON.parse(step2Raw.match(/\{[\s\S]*\}/)?.[0] || step2Raw);
       let newSlides = parsed.slides || [];
 
-      // Слайд зі списком джерел якщо є
       if (hasSources) {
-        const sourcesContent = activeCitations.map((c, i) => `${i + 1}. ${c}`).join("\n");
         newSlides = [...newSlides, {
           layout: "highlight_box",
           title: `Список використаних джерел (${citStyle})`,
-          content: sourcesContent,
+          content: activeCitations.map((c, i) => `${i + 1}. ${c}`).join("\n"),
         }];
       }
 
