@@ -330,7 +330,10 @@ async function fetchScholar(query, limit) {
     });
     if (!res.ok) return [];
     const data = await res.json();
-    return (data.sources || []).filter(p => p.title && !isBlocked(p));
+    const sources = (data.sources || []).filter(p => p.title && !isBlocked(p));
+    if (sources.length > 0)
+      window.dispatchEvent(new CustomEvent('apicost', { detail: { cost: 0.001, model: 'serper', inTok: 1, outTok: 0 } }));
+    return sources;
   } catch { return []; }
 }
 
@@ -422,7 +425,10 @@ async function fetchBooksSerper(query, limit) {
     });
     if (!res.ok) return [];
     const data = await res.json();
-    return (data.sources || []).filter(p => p.title && !isBlocked(p));
+    const sources = (data.sources || []).filter(p => p.title && !isBlocked(p));
+    if (sources.length > 0)
+      window.dispatchEvent(new CustomEvent('apicost', { detail: { cost: 0.001, model: 'serper', inTok: 1, outTok: 0 } }));
+    return sources;
   } catch { return []; }
 }
 
@@ -708,6 +714,10 @@ ${items}
     });
     if (!res.ok) return candidates;
     const data = await res.json();
+    if (data.usageMetadata) {
+      const cost = (data.usageMetadata.promptTokenCount * 0.10 + data.usageMetadata.candidatesTokenCount * 0.40) / 1_000_000;
+      window.dispatchEvent(new CustomEvent('apicost', { detail: { cost, model: 'gemini-2.5-flash-lite', inTok: data.usageMetadata.promptTokenCount, outTok: data.usageMetadata.candidatesTokenCount } }));
+    }
     const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     const parsed = JSON.parse(raw);
     const results = parsed.results || [];
@@ -773,6 +783,10 @@ export async function generateSearchPhrases(sectionLabel, topic, direction = '',
     });
     if (!res.ok) return [];
     const data = await res.json();
+    if (data.usageMetadata) {
+      const cost = (data.usageMetadata.promptTokenCount * 0.10 + data.usageMetadata.candidatesTokenCount * 0.40) / 1_000_000;
+      window.dispatchEvent(new CustomEvent('apicost', { detail: { cost, model: 'gemini-2.5-flash-lite', inTok: data.usageMetadata.promptTokenCount, outTok: data.usageMetadata.candidatesTokenCount } }));
+    }
     const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     const parsed = JSON.parse(raw);
     return (parsed.phrases || []).filter(p => typeof p === 'string' && p.trim().length > 3).slice(0, 8);

@@ -269,6 +269,7 @@ function CostsTab({ users }) {
         let grandIn = 0, grandOut = 0, grandCost = 0;
         let grandClaudeIn = 0, grandClaudeOut = 0, grandClaudeCost = 0;
         let grandGeminiIn = 0, grandGeminiOut = 0, grandGeminiCost = 0;
+        let grandSerperCredits = 0, grandSerperCost = 0;
         let grandDurationSec = 0;
         orders.forEach(o => {
             grandIn += o.totalInTok || 0;
@@ -280,9 +281,11 @@ function CostsTab({ users }) {
             grandGeminiIn += o.geminiInTok || 0;
             grandGeminiOut += o.geminiOutTok || 0;
             grandGeminiCost += o.geminiCostUsd || 0;
+            grandSerperCredits += o.serperCredits || 0;
+            grandSerperCost += o.serperCostUsd || 0;
             grandDurationSec += o.generationDurationSec || 0;
             const uid = o.uid || "—";
-            if (!byManager[uid]) byManager[uid] = { inTok: 0, outTok: 0, costUsd: 0, claudeInTok: 0, claudeOutTok: 0, claudeCostUsd: 0, geminiInTok: 0, geminiOutTok: 0, geminiCostUsd: 0, count: 0, durationSec: 0 };
+            if (!byManager[uid]) byManager[uid] = { inTok: 0, outTok: 0, costUsd: 0, claudeInTok: 0, claudeOutTok: 0, claudeCostUsd: 0, geminiInTok: 0, geminiOutTok: 0, geminiCostUsd: 0, serperCredits: 0, serperCostUsd: 0, count: 0, durationSec: 0 };
             byManager[uid].inTok += o.totalInTok || 0;
             byManager[uid].outTok += o.totalOutTok || 0;
             byManager[uid].costUsd += o.totalCostUsd || 0;
@@ -292,10 +295,12 @@ function CostsTab({ users }) {
             byManager[uid].geminiInTok += o.geminiInTok || 0;
             byManager[uid].geminiOutTok += o.geminiOutTok || 0;
             byManager[uid].geminiCostUsd += o.geminiCostUsd || 0;
+            byManager[uid].serperCredits += o.serperCredits || 0;
+            byManager[uid].serperCostUsd += o.serperCostUsd || 0;
             byManager[uid].durationSec += o.generationDurationSec || 0;
             byManager[uid].count++;
         });
-        return { grandIn, grandOut, grandCost, grandClaudeIn, grandClaudeOut, grandClaudeCost, grandGeminiIn, grandGeminiOut, grandGeminiCost, grandDurationSec, byManager };
+        return { grandIn, grandOut, grandCost, grandClaudeIn, grandClaudeOut, grandClaudeCost, grandGeminiIn, grandGeminiOut, grandGeminiCost, grandSerperCredits, grandSerperCost, grandDurationSec, byManager };
     }, [orders]);
 
     const fmt = iso => iso ? new Date(iso).toLocaleDateString("uk-UA", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—";
@@ -393,11 +398,12 @@ function CostsTab({ users }) {
                                     <th rowSpan={2} style={{ textAlign: "center", padding: "8px 10px", color: "#888", fontWeight: 600, fontSize: 11, letterSpacing: 1, textTransform: "uppercase", verticalAlign: "bottom" }}>Замовл.</th>
                                     <th colSpan={3} style={{ textAlign: "center", padding: "6px 10px", color: "#5a6a5a", fontWeight: 700, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", borderBottom: "1px solid #e0ece0", background: "#f5faf5" }}>Claude</th>
                                     <th colSpan={3} style={{ textAlign: "center", padding: "6px 10px", color: "#5a5a6a", fontWeight: 700, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", borderBottom: "1px solid #e0e0ec", background: "#f5f5fa" }}>Gemini</th>
+                                    <th colSpan={2} style={{ textAlign: "center", padding: "6px 10px", color: "#6a4a1a", fontWeight: 700, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", borderBottom: "1px solid #e8d4a0", background: "#fdf8ee" }}>Serper</th>
                                     <th colSpan={3} style={{ textAlign: "center", padding: "6px 10px", color: "#888", fontWeight: 700, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", borderBottom: "1px solid #f0ece2" }}>Разом</th>
                                     <th rowSpan={2} style={{ textAlign: "center", padding: "6px 10px", color: "#888", fontWeight: 600, fontSize: 11, letterSpacing: 1, textTransform: "uppercase", verticalAlign: "bottom", whiteSpace: "nowrap" }}>Час</th>
                                 </tr>
                                 <tr style={{ borderBottom: "2px solid #f0ece2" }}>
-                                    {["Вхід","Вихід","$","Вхід","Вихід","$","Вхід","Вихід","$"].map((h, i) => (
+                                    {["Вхід","Вихід","$","Вхід","Вихід","$","Кред.","$","Вхід","Вихід","$"].map((h, i) => (
                                         <th key={i} style={{ textAlign: "center", padding: "4px 8px", color: "#aaa", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", whiteSpace: "nowrap" }}>{h}</th>
                                     ))}
                                 </tr>
@@ -416,6 +422,8 @@ function CostsTab({ users }) {
                                         <td style={{ textAlign: "center", color: "#555", fontFamily: "monospace", fontSize: 12 }}>{fmtTok(row.geminiInTok)}</td>
                                         <td style={{ textAlign: "center", color: "#555", fontFamily: "monospace", fontSize: 12 }}>{fmtTok(row.geminiOutTok)}</td>
                                         <td style={{ textAlign: "center", fontWeight: 600, color: "#1a6a1a", fontSize: 12 }}>{fmtCost(row.geminiCostUsd)}</td>
+                                        <td style={{ textAlign: "center", color: "#6a4a1a", fontFamily: "monospace", fontSize: 12 }}>{row.serperCredits || 0}</td>
+                                        <td style={{ textAlign: "center", fontWeight: 600, color: "#6a4a1a", fontSize: 12 }}>{fmtCost(row.serperCostUsd)}</td>
                                         <td style={{ textAlign: "center", color: "#555", fontFamily: "monospace", fontSize: 12 }}>{fmtTok(row.inTok)}</td>
                                         <td style={{ textAlign: "center", color: "#555", fontFamily: "monospace", fontSize: 12 }}>{fmtTok(row.outTok)}</td>
                                         <td style={{ textAlign: "center", fontWeight: 700, color: "#1a6a1a" }}>{fmtCost(row.costUsd)}</td>
@@ -431,6 +439,8 @@ function CostsTab({ users }) {
                                     <td style={{ textAlign: "center", color: "#aaa", fontFamily: "monospace", fontSize: 12 }}>{fmtTok(totals.grandGeminiIn)}</td>
                                     <td style={{ textAlign: "center", color: "#aaa", fontFamily: "monospace", fontSize: 12 }}>{fmtTok(totals.grandGeminiOut)}</td>
                                     <td style={{ textAlign: "center", color: "#e8ff47", fontWeight: 700 }}>{fmtCost(totals.grandGeminiCost)}</td>
+                                    <td style={{ textAlign: "center", color: "#e8c870", fontFamily: "monospace", fontSize: 12 }}>{totals.grandSerperCredits}</td>
+                                    <td style={{ textAlign: "center", color: "#e8ff47", fontWeight: 700 }}>{fmtCost(totals.grandSerperCost)}</td>
                                     <td style={{ textAlign: "center", color: "#aaa", fontFamily: "monospace", fontSize: 12 }}>{fmtTok(totals.grandIn)}</td>
                                     <td style={{ textAlign: "center", color: "#aaa", fontFamily: "monospace", fontSize: 12 }}>{fmtTok(totals.grandOut)}</td>
                                     <td style={{ textAlign: "center", color: "#e8ff47", fontWeight: 700, fontSize: 15 }}>{fmtCost(totals.grandCost)}</td>
@@ -469,11 +479,12 @@ function CostsTab({ users }) {
                                     <th rowSpan={2} style={{ textAlign: "center", padding: "8px 6px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", whiteSpace: "nowrap", verticalAlign: "bottom" }}>Стор.</th>
                                     <th colSpan={3} style={{ textAlign: "center", padding: "4px 8px", color: "#5a6a5a", fontWeight: 700, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", borderBottom: "1px solid #e0ece0", background: "#f5faf5" }}>Claude</th>
                                     <th colSpan={3} style={{ textAlign: "center", padding: "4px 8px", color: "#5a5a6a", fontWeight: 700, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", borderBottom: "1px solid #e0e0ec", background: "#f5f5fa" }}>Gemini</th>
+                                    <th colSpan={2} style={{ textAlign: "center", padding: "4px 8px", color: "#6a4a1a", fontWeight: 700, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", borderBottom: "1px solid #e8d4a0", background: "#fdf8ee" }}>Serper</th>
                                     <th colSpan={3} style={{ textAlign: "center", padding: "4px 8px", color: "#888", fontWeight: 700, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", borderBottom: "1px solid #f0ece2" }}>Разом</th>
                                     <th rowSpan={2} style={{ textAlign: "center", padding: "8px 8px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", whiteSpace: "nowrap", verticalAlign: "bottom" }}>Час</th>
                                 </tr>
                                 <tr style={{ borderBottom: "2px solid #f0ece2" }}>
-                                    {["Вхід","Вихід","$","Вхід","Вихід","$","Вхід","Вихід","$"].map((h, i) => (
+                                    {["Вхід","Вихід","$","Вхід","Вихід","$","Кред.","$","Вхід","Вихід","$"].map((h, i) => (
                                         <th key={i} style={{ textAlign: "center", padding: "4px 6px", color: "#aaa", fontWeight: 600, fontSize: 10, whiteSpace: "nowrap" }}>{h}</th>
                                     ))}
                                 </tr>
@@ -496,6 +507,8 @@ function CostsTab({ users }) {
                                             <td style={{ textAlign: "center", padding: "9px 6px", color: "#555", fontFamily: "monospace" }}>{fmtTok(o.geminiInTok)}</td>
                                             <td style={{ textAlign: "center", padding: "9px 6px", color: "#555", fontFamily: "monospace" }}>{fmtTok(o.geminiOutTok)}</td>
                                             <td style={{ textAlign: "center", padding: "9px 6px", fontWeight: 600, color: "#1a6a1a" }}>{fmtCost(o.geminiCostUsd)}</td>
+                                            <td style={{ textAlign: "center", padding: "9px 6px", color: "#6a4a1a", fontFamily: "monospace" }}>{o.serperCredits || 0}</td>
+                                            <td style={{ textAlign: "center", padding: "9px 6px", fontWeight: 600, color: "#6a4a1a" }}>{fmtCost(o.serperCostUsd)}</td>
                                             <td style={{ textAlign: "center", padding: "9px 6px", color: "#555", fontFamily: "monospace" }}>{fmtTok(o.totalInTok)}</td>
                                             <td style={{ textAlign: "center", padding: "9px 6px", color: "#555", fontFamily: "monospace" }}>{fmtTok(o.totalOutTok)}</td>
                                             <td style={{ textAlign: "center", padding: "9px 8px", fontWeight: 700, color: "#1a6a1a" }}>{fmtCost(o.totalCostUsd)}</td>
