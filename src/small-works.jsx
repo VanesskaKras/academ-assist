@@ -289,12 +289,23 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
     setMaxStageIdx(prev => Math.max(prev, idx));
   }, [stage, workType]);
 
-  // ── Автозапуск пошуку джерел для тез/статті/есе/реферату/презентації ──
+  // ── Автозапуск пошуку джерел для тез/статті/есе/презентації ──
   useEffect(() => {
-    if (["tezy", "stattia", "ese", "referat", "prezentatsiya"].includes(workType) && stage === "sources" && tezyPapers.length === 0 && !tezySearchLoading && info?.topic) {
+    if (["tezy", "stattia", "ese", "prezentatsiya"].includes(workType) && stage === "sources" && tezyPapers.length === 0 && !tezySearchLoading && info?.topic) {
       doSearchTezyPapers();
     }
   }, [workType, stage, info?.topic]);
+
+  // ── Автозапуск пошуку джерел для кожного розділу реферату (не вступ/висновки) ──
+  useEffect(() => {
+    if (workType !== "referat" || stage !== "sources" || !info?.topic) return;
+    const chapSecs = sections.filter(s => !["intro", "conclusions", "sources"].includes(s.id));
+    for (const sec of chapSecs) {
+      if (!refSecPapers[sec.id] && !refSecLoading[sec.id]) {
+        doSearchForSection(sec.id, sec.label);
+      }
+    }
+  }, [workType, stage, info?.topic, sections.length]);
 
   // ── Авто-збереження вибраних джерел ──
   useEffect(() => {
@@ -506,13 +517,13 @@ formatting — поля сторінки в мм якщо явно вказан�
       const refSecs = sections.filter(s => s.id !== "sources");
       const needed = Math.ceil((info?.sourceCount || parsePagesAvg(info?.pages || "15")) / Math.max(refSecs.length, 1)) + 4;
       const [allPhrases, ukKw] = await Promise.all([
-        generateSearchPhrases(topic, secLabel, direction, subject),
-        Promise.resolve(buildSemanticKeywords(topic, secLabel, direction, subject)),
+        generateSearchPhrases(secLabel, topic, direction, subject),
+        Promise.resolve(buildSemanticKeywords(secLabel, topic, direction, subject)),
       ]);
       const ukPhrases = allPhrases.length ? allPhrases.slice(0, 4) : ukKw.slice(0, 4);
       const enPhrases = allPhrases.slice(4, 8);
       const displayPhrases = allPhrases.length ? allPhrases : ukKw.slice(0, 6);
-      const { flat } = await searchSourcesForSection(ukKw, enPhrases, needed, topic, secLabel, 1, [], [], ukPhrases);
+      const { flat } = await searchSourcesForSection(ukKw, enPhrases, needed, secLabel, topic, 1, [], [], ukPhrases);
       const papers = (flat || []).slice(0, 15);
       setRefSecPapers(prev => {
         const next = { ...prev, [secId]: papers };
@@ -662,38 +673,17 @@ ${refLines}`;
     setRunning(false); setLoadMsg("");
   };
 
-  const doConfirmTezyPapers = async () => {
-    setRunning(true); setLoadMsg("Оформлюю джерела...");
-    try {
-      const selected = tezyPapers.filter(p => selectedTezyIds.includes(p.id));
-      const enriched = await Promise.all(selected.map(async p => {
-        if (!p.doi) return p;
-        const meta = await lookupDoiMetadata(p.doi);
-        if (!meta) return p;
-        return {
-          ...p,
-          ...(meta.authorsStructured?.length ? { authorsStructured: meta.authorsStructured } : {}),
-          ...(meta.authors?.length ? { authors: meta.authors } : {}),
-          ...(meta.pages && !p.pages ? { pages: meta.pages } : {}),
-          ...(meta.volume ? { volume: meta.volume } : {}),
-          ...(meta.issue ? { issue: meta.issue } : {}),
-          ...(meta.journal && (!p.venue || /^[\w.-]+\.[a-zA-Z]{2,}$/.test(p.venue.trim())) ? { venue: meta.journal } : {}),
-        };
-      }));
-      const rawCitations = enriched.map(paperToCitation).filter(Boolean);
-
-      setLoadMsg("Форматую джерела...");
-      const citations = await formatCitationsList(rawCitations);
-      setCitText(prev => {
-        const existing = prev.trim();
-        const toAdd = citations.filter(c => !existing.includes(c.slice(0, 40)));
-        const next = existing ? existing + "\n" + toAdd.join("\n") : toAdd.join("\n");
-        saveToFirestore({ citText: next });
-        return next;
-      });
-      setSelectedTezyIds([]);
-    } catch (e) { setError(e.message); }
-    setRunning(false); setLoadMsg("");
+  const doConfirmTezyPapers = () => {
+    const selected = tezyPapers.filter(p => selectedTezyIds.includes(p.id));
+    const rawCitations = selected.map(paperToCitation).filter(Boolean);
+    setCitText(prev => {
+      const existing = prev.trim();
+      const toAdd = rawCitations.filter(c => !existing.includes(c.slice(0, 40)));
+      const next = existing ? existing + "\n" + toAdd.join("\n") : toAdd.join("\n");
+      saveToFirestore({ citText: next });
+      return next;
+    });
+    setSelectedTezyIds([]);
   };
 
   // Будує карту формату посилань: { 1: "[1, с. 45]" або "[1]", ... }
@@ -736,7 +726,7 @@ ${refLines}`;
     const hasSources = activeCitations.length > 0;
     const citeMap = buildCiteMap(activeCitations);
     const sourcesContext = hasSources
-      ? `\nДЖЕРЕЛА — вставляй посилання у тексті ТОЧНО у форматі вказаному перед кожним джерелом (з номером сторінки якщо є):\n${activeCitations.map((s, i) => `${citeMap[i + 1]} ${s}`).join("\n")}`
+      ? `\nДЖЕРЕЛА — вставляй посилання ВИКЛЮЧНО у форматі [N] або [N, с. PAGE] (де N — номер джерела). ЗАБОРОНЕНО формат (Автор, рік). ТОЧНО у форматі перед кожним джерелом:\n${activeCitations.map((s, i) => `${citeMap[i + 1]} ${s}`).join("\n")}`
       : "";
 
     const structureInstr = info?.bodyStructure === "structured"
@@ -759,9 +749,10 @@ ${refLines}`;
 – наступний рядок — підпис: Рис. N — Назва рисунку`
       : "";
 
+    const hasUploadedFiles = files.length > 0 || materialFiles.length > 0;
     const prompt = `Напиши тези наукової доповіді на тему "${info?.topic}". Галузь: ${[info?.subject, info?.direction].filter(Boolean).join(", ")}.
 ${materialContext}${comment?.trim() ? `\nКОМЕНТАР ЗАМОВНИКА (виконай обов'язково): ${comment.trim()}\n` : ""}
-БЛОК АВТОРА (${authorFormat === "right" ? "вирівняти по правому краю" : "вирівняти по центру"}):
+${hasUploadedFiles ? "НЕ додавай слово «ТЕЗИ» як окремий заголовок-рядок на початку документу.\n" : ""}БЛОК АВТОРА (${authorFormat === "right" ? "вирівняти по правому краю" : "вирівняти по центру"}):
 ${authorBlockLines}
 
 ${info?.needsUDK ? "Перший рядок документу: УДК [відповідний код для теми]" : ""}
@@ -1033,7 +1024,7 @@ ${materialContext}${methodReqBlock}${commentBlock}${sourcesBlock}${!methodReqBlo
     const hasSources = activeCitations.length > 0;
     const citeMap = buildCiteMap(activeCitations);
     const sourcesContext = hasSources
-      ? `\nДЖЕРЕЛА — вставляй посилання у тексті ТОЧНО у форматі вказаному перед кожним джерелом (з номером сторінки якщо є):\n${activeCitations.map((s, i) => `${citeMap[i + 1]} ${s}`).join("\n")}`
+      ? `\nДЖЕРЕЛА — вставляй посилання ВИКЛЮЧНО у форматі [N] або [N, с. PAGE] (де N — номер джерела). ЗАБОРОНЕНО формат (Автор, рік). ТОЧНО у форматі перед кожним джерелом:\n${activeCitations.map((s, i) => `${citeMap[i + 1]} ${s}`).join("\n")}`
       : "";
     const sourcesList = hasSources
       ? `\nСписок використаних джерел:\n${activeCitations.map((s, i) => `${i + 1}. ${s}`).join("\n")}`
@@ -1168,8 +1159,8 @@ ${contentPlan}
 
       setSlides(newSlides);
       playDoneSound();
-      await saveToFirestore({ slides: newSlides, tezyCitations: activeCitations, stage: "done", status: "done" });
       setStage("done");
+      await saveToFirestore({ slides: newSlides, tezyCitations: activeCitations, stage: "done", status: "done" });
     } catch (e) { setError(e.message); }
     setRunning(false); setLoadMsg("");
   };
@@ -1453,12 +1444,14 @@ ${contentPlan}
           // ── РЕФЕРАТ: per-section cards ──
           if (isReferat) {
             const refSections = sections.filter(s => s.id !== "sources");
-            const perSec = Math.ceil(minSrc / Math.max(refSections.length, 1));
+            const chapSections = refSections.filter(s => !["intro", "conclusions"].includes(s.id));
+            const perSec = Math.ceil(minSrc / Math.max(chapSections.length, 1));
             let runIdx = 0;
             return (
               <div className="fade">
                 <Heading>📚 Джерела</Heading>
                 {refSections.map(sec => {
+                  const isStructural = sec.id === "intro" || sec.id === "conclusions";
                   const secLines = (citInputs[sec.id] || "").split("\n").map(l => l.trim()).filter(Boolean);
                   const startIdx = runIdx + 1; runIdx += secLines.length;
                   const hasSources = secLines.length > 0;
@@ -1470,90 +1463,112 @@ ${contentPlan}
                   const isOpen = refSecOpen[sec.id] ?? filteredPapers.length > 0;
                   const selected = refSecSelected[sec.id] || [];
                   const ukCount = filteredPapers.filter(p => p.lang === "uk").length;
+                  const scholarQuery = phrases[0] || `${sec.label} ${info?.topic || ""}`;
+                  const scholarUrl = `https://scholar.google.com/scholar?hl=uk&as_sdt=0%2C5&as_ylo=2021&q=${encodeURIComponent(scholarQuery)}&btnG=`;
                   return (
-                    <div key={sec.id} style={{ border: `1.5px solid ${hasSources ? "#d4cfc4" : "#e8a050"}`, borderRadius: 8, overflow: "hidden", marginBottom: 14 }}>
+                    <div key={sec.id} style={{ border: `1.5px solid ${hasSources ? "#d4cfc4" : isStructural ? "#d4cfc4" : "#e8a050"}`, borderRadius: 8, overflow: "hidden", marginBottom: 14 }}>
                       <div style={{ background: "#1a1a14", padding: "11px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <span style={{ width: 8, height: 8, borderRadius: "50%", background: hasSources ? "#5ad060" : "#e8a050", flexShrink: 0, display: "inline-block" }} />
+                          <span style={{ width: 8, height: 8, borderRadius: "50%", background: hasSources ? "#5ad060" : isStructural ? "#888" : "#e8a050", flexShrink: 0, display: "inline-block" }} />
                           <span style={{ fontSize: 13, fontWeight: 600, color: "#f5f2eb" }}>{sec.label}</span>
                         </div>
                         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                           {secLines.length > 0 && <div style={{ fontSize: 11, color: "#888" }}>джерела [{startIdx}–{startIdx + secLines.length - 1}]</div>}
-                          <div style={{ fontSize: 12, color: "#e8ff47", background: "#2a2a1a", padding: "2px 10px", borderRadius: 10 }}>потрібно: {perSec} дж.</div>
+                          {!isStructural && <div style={{ fontSize: 12, color: "#e8ff47", background: "#2a2a1a", padding: "2px 10px", borderRadius: 10 }}>потрібно: {perSec} дж.</div>}
                         </div>
                       </div>
                       <div style={{ padding: "12px 16px", background: "#faf8f3" }}>
-                        <div style={{ background: "#eef5e4", padding: "8px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", borderRadius: 6, marginBottom: 10 }}
-                             onClick={() => setRefSecOpen(prev => ({ ...prev, [sec.id]: !isOpen }))}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                            {isLoadingSec
-                              ? <><SpinDot size={12} /><span style={{ fontSize: 12, color: "#5a8a2a" }}>Шукаю джерела...</span></>
-                              : <>
-                                  <span style={{ fontSize: 12, fontWeight: 600, color: "#3a6010" }}>Знайдені джерела ({filteredPapers.length})</span>
-                                  <span style={{ fontSize: 11, color: "#5a7a3a" }}>🇺🇦 {ukCount} укр.</span>
-                                </>
-                            }
+                        {isStructural ? (
+                          <div style={{ fontSize: 12, color: "#888", marginBottom: 8, fontStyle: "italic" }}>
+                            Джерела для вступу та висновків не потрібні — посилання беруться з розділів.
                           </div>
-                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                            <button onClick={e => { e.stopPropagation(); doSearchForSection(sec.id, sec.label); }} disabled={isLoadingSec}
-                              style={{ fontSize: 11, background: "#fff", border: "1px solid #b8dfa0", borderRadius: 5, padding: "2px 10px", cursor: isLoadingSec ? "default" : "pointer", color: "#3a6010" }}>
-                              ОНОВИТИ
-                            </button>
-                            <span style={{ fontSize: 12, color: "#888" }}>{isOpen ? "▲" : "▼"}</span>
-                          </div>
-                        </div>
-                        {phrases.length > 0 && (
-                          <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 10 }}>
-                            {phrases.map((ph, i) => (
-                              <span key={i} onClick={() => navigator.clipboard.writeText(ph)} title="Клікни щоб скопіювати"
-                                style={{ fontSize: 11, background: "#eef5e4", color: "#3a6010", padding: "2px 9px", borderRadius: 10, border: "1px solid #c8dfa0", cursor: "pointer", userSelect: "none", display: "inline-flex", alignItems: "center", gap: 4 }}>
-                                🔍 {ph}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                        {isOpen && filteredPapers.length > 0 && (
-                          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
-                            {filteredPapers.map(paper => {
-                              const isChecked = selected.includes(paper.id);
-                              const authorsList = Array.isArray(paper.authors) ? paper.authors : [];
-                              const authLine = authorsList.length > 2 ? `${authorsList.slice(0, 2).join(", ")} та ін.` : authorsList.join(", ") || "Автор невідомий";
-                              const isUk = paper.lang === "uk";
-                              return (
-                                <label key={paper.id} style={{ display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer", padding: "9px 12px", borderRadius: 7, background: isChecked ? "#f0f8e8" : "#faf8f3", border: `1.5px solid ${isChecked ? "#8cc84b" : "#e0ddd5"}`, transition: "all 0.15s" }}>
-                                  <input type="checkbox" checked={isChecked}
-                                    onChange={() => setRefSecSelected(prev => ({ ...prev, [sec.id]: isChecked ? (prev[sec.id] || []).filter(id => id !== paper.id) : [...(prev[sec.id] || []), paper.id] }))}
-                                    style={{ marginTop: 3, accentColor: "#5a9a1a", flexShrink: 0 }} />
-                                  <div style={{ flex: 1, minWidth: 0 }}>
-                                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 2, alignItems: "center" }}>
-                                      <span style={{ fontSize: 11, fontWeight: 600, color: "#3a6010" }}>{authLine}</span>
-                                      {paper.year && <span style={{ fontSize: 11, color: "#888" }}>{paper.year}</span>}
-                                      <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 8, background: isUk ? "#e8f5e0" : "#e8f0ff", color: isUk ? "#3a6010" : "#1a4a8a", border: `1px solid ${isUk ? "#b8dfa0" : "#b0c8f0"}` }}>
-                                        {isUk ? "🇺🇦 укр." : "🌐 зарубіж."}
-                                      </span>
-                                    </div>
-                                    <div style={{ fontSize: 12, color: "#1a1a14", lineHeight: "1.4" }}>
-                                      {paper.title.length > 120 ? paper.title.slice(0, 120) + "…" : paper.title}
-                                    </div>
-                                    {paper.venue && <div style={{ fontSize: 11, color: "#777", fontStyle: "italic", marginTop: 2 }}>{paper.venue}</div>}
-                                    {paper.url && <a href={paper.url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ display: "inline-block", marginTop: 4, fontSize: 11, color: "#1a5a8a", textDecoration: "none" }}>🔗 Відкрити джерело →</a>}
-                                  </div>
-                                </label>
-                              );
-                            })}
-                          </div>
-                        )}
-                        {isOpen && filteredPapers.length > 0 && (
-                          <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
-                            <button onClick={() => setRefSecSelected(prev => ({ ...prev, [sec.id]: (refSecPapers[sec.id] || []).map(p => p.id) }))}
-                              style={{ fontSize: 11, background: "#f5f3ef", border: "1px solid #d4cfc4", borderRadius: 5, padding: "4px 12px", cursor: "pointer", color: "#555" }}>
-                              вибрати всі
-                            </button>
-                            {selected.length > 0 && (
-                              <PrimaryBtn onClick={() => doAddForSection(sec.id)} loading={running} msg={loadMsg}
-                                label={`Додати вибрані (${selected.length}) →`} />
+                        ) : (
+                          <>
+                            <div style={{ background: "#eef5e4", padding: "8px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", borderRadius: 6, marginBottom: 10 }}
+                                 onClick={() => setRefSecOpen(prev => ({ ...prev, [sec.id]: !isOpen }))}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                {isLoadingSec
+                                  ? <><SpinDot size={12} /><span style={{ fontSize: 12, color: "#5a8a2a" }}>Шукаю джерела...</span></>
+                                  : <>
+                                      <span style={{ fontSize: 12, fontWeight: 600, color: "#3a6010" }}>Знайдені джерела ({filteredPapers.length})</span>
+                                      <span style={{ fontSize: 11, color: "#5a7a3a" }}>🇺🇦 {ukCount} укр.</span>
+                                    </>
+                                }
+                              </div>
+                              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                <button onClick={e => { e.stopPropagation(); doSearchForSection(sec.id, sec.label); }} disabled={isLoadingSec}
+                                  style={{ fontSize: 11, background: "#fff", border: "1px solid #b8dfa0", borderRadius: 5, padding: "2px 10px", cursor: isLoadingSec ? "default" : "pointer", color: "#3a6010" }}>
+                                  ОНОВИТИ
+                                </button>
+                                <span style={{ fontSize: 12, color: "#888" }}>{isOpen ? "▲" : "▼"}</span>
+                              </div>
+                            </div>
+                            {phrases.length > 0 && (
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 10, alignItems: "center" }}>
+                                {phrases.map((ph, i) => (
+                                  <span key={i} onClick={() => navigator.clipboard.writeText(ph)} title="Клікни щоб скопіювати"
+                                    style={{ fontSize: 11, background: "#eef5e4", color: "#3a6010", padding: "2px 9px", borderRadius: 10, border: "1px solid #c8dfa0", cursor: "pointer", userSelect: "none", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                                    🔍 {ph}
+                                  </span>
+                                ))}
+                                <a href={scholarUrl} target="_blank" rel="noopener noreferrer"
+                                  style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: "#1a5a8a", textDecoration: "none", background: "#e4f0ff", padding: "2px 9px", borderRadius: 10, border: "1px solid #b0d0f0" }}>
+                                  🎓 Google Scholar →
+                                </a>
+                              </div>
                             )}
-                          </div>
+                            {!phrases.length && (
+                              <div style={{ marginBottom: 10 }}>
+                                <a href={scholarUrl} target="_blank" rel="noopener noreferrer"
+                                  style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "#1a5a8a", textDecoration: "none", background: "#e4f0ff", padding: "6px 12px", borderRadius: 6, border: "1px solid #b0d0f0" }}>
+                                  🎓 Шукати на Google Scholar →
+                                </a>
+                              </div>
+                            )}
+                            {isOpen && filteredPapers.length > 0 && (
+                              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
+                                {filteredPapers.map(paper => {
+                                  const isChecked = selected.includes(paper.id);
+                                  const authorsList = Array.isArray(paper.authors) ? paper.authors : [];
+                                  const authLine = authorsList.length > 2 ? `${authorsList.slice(0, 2).join(", ")} та ін.` : authorsList.join(", ") || "Автор невідомий";
+                                  const isUk = paper.lang === "uk";
+                                  return (
+                                    <label key={paper.id} style={{ display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer", padding: "9px 12px", borderRadius: 7, background: isChecked ? "#f0f8e8" : "#faf8f3", border: `1.5px solid ${isChecked ? "#8cc84b" : "#e0ddd5"}`, transition: "all 0.15s" }}>
+                                      <input type="checkbox" checked={isChecked}
+                                        onChange={() => setRefSecSelected(prev => ({ ...prev, [sec.id]: isChecked ? (prev[sec.id] || []).filter(id => id !== paper.id) : [...(prev[sec.id] || []), paper.id] }))}
+                                        style={{ marginTop: 3, accentColor: "#5a9a1a", flexShrink: 0 }} />
+                                      <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 2, alignItems: "center" }}>
+                                          <span style={{ fontSize: 11, fontWeight: 600, color: "#3a6010" }}>{authLine}</span>
+                                          {paper.year && <span style={{ fontSize: 11, color: "#888" }}>{paper.year}</span>}
+                                          <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 8, background: isUk ? "#e8f5e0" : "#e8f0ff", color: isUk ? "#3a6010" : "#1a4a8a", border: `1px solid ${isUk ? "#b8dfa0" : "#b0c8f0"}` }}>
+                                            {isUk ? "🇺🇦 укр." : "🌐 зарубіж."}
+                                          </span>
+                                        </div>
+                                        <div style={{ fontSize: 12, color: "#1a1a14", lineHeight: "1.4" }}>
+                                          {paper.title.length > 120 ? paper.title.slice(0, 120) + "…" : paper.title}
+                                        </div>
+                                        {paper.venue && <div style={{ fontSize: 11, color: "#777", fontStyle: "italic", marginTop: 2 }}>{paper.venue}</div>}
+                                        {paper.url && <a href={paper.url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ display: "inline-block", marginTop: 4, fontSize: 11, color: "#1a5a8a", textDecoration: "none" }}>🔗 Відкрити джерело →</a>}
+                                      </div>
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            )}
+                            {isOpen && filteredPapers.length > 0 && (
+                              <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
+                                <button onClick={() => setRefSecSelected(prev => ({ ...prev, [sec.id]: (refSecPapers[sec.id] || []).map(p => p.id) }))}
+                                  style={{ fontSize: 11, background: "#f5f3ef", border: "1px solid #d4cfc4", borderRadius: 5, padding: "4px 12px", cursor: "pointer", color: "#555" }}>
+                                  вибрати всі
+                                </button>
+                                {selected.length > 0 && (
+                                  <PrimaryBtn onClick={() => doAddForSection(sec.id)} loading={running} msg={loadMsg}
+                                    label={`Додати вибрані (${selected.length}) →`} />
+                                )}
+                              </div>
+                            )}
+                          </>
                         )}
                         <div style={{ marginTop: 8 }}>
                           <div style={{ fontSize: 11, color: "#888", letterSpacing: "1px", textTransform: "uppercase", marginBottom: 5, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -1704,7 +1719,7 @@ ${contentPlan}
                         )}
                         {selectedTezyIds.length > 0 && (
                           <div style={{ marginBottom: 16 }}>
-                            <PrimaryBtn onClick={doConfirmTezyPapers} loading={running} msg={loadMsg}
+                            <PrimaryBtn onClick={doConfirmTezyPapers}
                               label={`Додати вибрані (${selectedTezyIds.length}) до списку →`} />
                           </div>
                         )}
@@ -1862,18 +1877,22 @@ ${contentPlan}
               <>
                 <p style={{ fontSize: 13, color: "#888", marginBottom: 16 }}>{slides.length} слайдів згенеровано.</p>
                 <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
-                  {slides.map((slide, i) => (
-                    <div key={i} style={{ border: "1.5px solid #d4cfc4", borderRadius: 8, overflow: "hidden" }}>
-                      <div style={{ background: "#1a1a14", padding: "9px 16px", display: "flex", alignItems: "center", gap: 10 }}>
-                        <span style={{ fontSize: 11, color: "#e8ff47", background: "#2a2a1a", padding: "1px 8px", borderRadius: 10 }}>{i + 1}</span>
-                        <span style={{ fontSize: 11, color: "#666", background: "#2a2a2a", padding: "1px 7px", borderRadius: 8, textTransform: "uppercase", letterSpacing: "0.5px" }}>{slide.layout || "slide"}</span>
-                        <span style={{ fontSize: 13, fontWeight: 600, color: "#f5f2eb", flex: 1 }}>{slide.title}</span>
+                  {slides.map((slide, i) => {
+                    const slideText = `${slide.title}\n${slide.content || (slide.visual?.items ? slide.visual.items.map(it => `${it.icon || "•"} ${it.header ? it.header + ": " : ""}${it.text || ""}`).join("\n") : slide.subtitle || "")}`;
+                    return (
+                      <div key={i} style={{ border: "1.5px solid #d4cfc4", borderRadius: 8, overflow: "hidden" }}>
+                        <div style={{ background: "#1a1a14", padding: "9px 16px", display: "flex", alignItems: "center", gap: 10 }}>
+                          <span style={{ fontSize: 11, color: "#e8ff47", background: "#2a2a1a", padding: "1px 8px", borderRadius: 10 }}>{i + 1}</span>
+                          <span style={{ fontSize: 11, color: "#666", background: "#2a2a2a", padding: "1px 7px", borderRadius: 8, textTransform: "uppercase", letterSpacing: "0.5px" }}>{slide.layout || "slide"}</span>
+                          <span style={{ fontSize: 13, fontWeight: 600, color: "#f5f2eb", flex: 1 }}>{slide.title}</span>
+                          <button onClick={() => navigator.clipboard.writeText(slideText)} style={{ background: "transparent", color: "#aaa", border: "1px solid #555", borderRadius: 5, padding: "2px 10px", fontSize: 11, cursor: "pointer", fontFamily: "'Spectral',serif" }}>COPY</button>
+                        </div>
+                        <div style={{ padding: "12px 16px", fontSize: 13, color: "#444", lineHeight: "1.7", whiteSpace: "pre-wrap", background: "#faf8f3" }}>
+                          {slide.content || (slide.visual?.items ? slide.visual.items.map(it => `${it.icon || "•"} ${it.header ? it.header + ": " : ""}${it.text || ""}`).join("\n") : slide.subtitle || "")}
+                        </div>
                       </div>
-                      <div style={{ padding: "12px 16px", fontSize: 13, color: "#444", lineHeight: "1.7", whiteSpace: "pre-wrap", background: "#faf8f3" }}>
-                        {slide.content || (slide.visual?.items ? slide.visual.items.map(it => `${it.icon || "•"} ${it.header ? it.header + ": " : ""}${it.text || ""}`).join("\n") : slide.subtitle || "")}
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
                 <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                   <NavBtn onClick={() => setSlides([])}>Перегенерувати</NavBtn>
@@ -2072,18 +2091,22 @@ ${contentPlan}
             {workType === "prezentatsiya" && slides.length > 0 && (
               <>
                 <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
-                  {slides.map((slide, i) => (
-                    <div key={i} style={{ border: "1.5px solid #d4cfc4", borderRadius: 8, overflow: "hidden" }}>
-                      <div style={{ background: "#1a1a14", padding: "9px 16px", display: "flex", alignItems: "center", gap: 10 }}>
-                        <span style={{ fontSize: 11, color: "#e8ff47", background: "#2a2a1a", padding: "1px 8px", borderRadius: 10 }}>{i + 1}</span>
-                        {slide.layout && <span style={{ fontSize: 11, color: "#666", background: "#2a2a2a", padding: "1px 7px", borderRadius: 8, textTransform: "uppercase", letterSpacing: "0.5px" }}>{slide.layout}</span>}
-                        <span style={{ fontSize: 13, fontWeight: 600, color: "#f5f2eb", flex: 1 }}>{slide.title}</span>
+                  {slides.map((slide, i) => {
+                    const slideText = `${slide.title}\n${slide.content || (slide.visual?.items ? slide.visual.items.map(it => `${it.icon || "•"} ${it.header ? it.header + ": " : ""}${it.text || ""}`).join("\n") : slide.subtitle || "")}`;
+                    return (
+                      <div key={i} style={{ border: "1.5px solid #d4cfc4", borderRadius: 8, overflow: "hidden" }}>
+                        <div style={{ background: "#1a1a14", padding: "9px 16px", display: "flex", alignItems: "center", gap: 10 }}>
+                          <span style={{ fontSize: 11, color: "#e8ff47", background: "#2a2a1a", padding: "1px 8px", borderRadius: 10 }}>{i + 1}</span>
+                          {slide.layout && <span style={{ fontSize: 11, color: "#666", background: "#2a2a2a", padding: "1px 7px", borderRadius: 8, textTransform: "uppercase", letterSpacing: "0.5px" }}>{slide.layout}</span>}
+                          <span style={{ fontSize: 13, fontWeight: 600, color: "#f5f2eb", flex: 1 }}>{slide.title}</span>
+                          <button onClick={() => navigator.clipboard.writeText(slideText)} style={{ background: "transparent", color: "#aaa", border: "1px solid #555", borderRadius: 5, padding: "2px 10px", fontSize: 11, cursor: "pointer", fontFamily: "'Spectral',serif" }}>COPY</button>
+                        </div>
+                        <div style={{ padding: "12px 16px", fontSize: 13, color: "#444", lineHeight: "1.7", whiteSpace: "pre-wrap", background: "#faf8f3" }}>
+                          {slide.content || (slide.visual?.items ? slide.visual.items.map(it => `${it.icon || "•"} ${it.header ? it.header + ": " : ""}${it.text || ""}`).join("\n") : slide.subtitle || "")}
+                        </div>
                       </div>
-                      <div style={{ padding: "12px 16px", fontSize: 13, color: "#444", lineHeight: "1.7", whiteSpace: "pre-wrap", background: "#faf8f3" }}>
-                        {slide.content || (slide.visual?.items ? slide.visual.items.map(it => `${it.icon || "•"} ${it.header ? it.header + ": " : ""}${it.text || ""}`).join("\n") : slide.subtitle || "")}
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
                 <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                   <button onClick={() => navigator.clipboard.writeText(slides.map((s, i) => `СЛАЙД ${i + 1}: ${s.title}\n${s.content || ""}`).join("\n\n"))}

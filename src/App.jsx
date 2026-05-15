@@ -6,12 +6,13 @@ import Dashboard from "./Dashboard";
 import AcademAssist from "./academic-assistant";
 import SmallWorks from "./small-works";
 import TrainingPage from "./TrainingPage";
+import FileCorrectionsPage from "./FileCorrectionsPage";
 
 function AppRouter() {
   const { user, profile } = useAuth();
   const [view, setView] = useState("dashboard");
   const [currentOrderId, setCurrentOrderId] = useState(null);
-  const [currentMode, setCurrentMode] = useState("large"); // "large" | "small"
+  const [currentMode, setCurrentMode] = useState("large"); // "large" | "small" | "file-corrections"
 
   if (!user) return <LoginPage />;
 
@@ -40,6 +41,10 @@ function AppRouter() {
     return <TrainingPage onBack={() => setView("dashboard")} />;
   }
 
+  if (view === "file-corrections") {
+    return <FileCorrectionsPage onBack={() => setView("dashboard")} />;
+  }
+
   if (view === "order") {
     if (currentMode === "small") {
       return (
@@ -65,6 +70,7 @@ function AppRouter() {
       onNew={(mode) => { setCurrentOrderId(null); setCurrentMode(mode || "large"); setView("order"); }}
       onAdmin={profile?.role === "admin" ? () => setView("admin") : null}
       onTraining={() => setView("training")}
+      onFileCorrections={() => setView("file-corrections")}
     />
   );
 }

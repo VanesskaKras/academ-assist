@@ -5,11 +5,12 @@ import {
   doc, getDoc, setDoc, updateDoc, serverTimestamp,
 } from "firebase/firestore";
 
+import mammoth from "mammoth";
 import { exportToDocx, exportPlanToDocx, exportAppendixToDocx, exportSpeechToDocx, renumberTablesAndFigures } from "./lib/exportDocx.js";
 import { exportToPptxFile } from "./lib/exportPptx.js";
 import { callClaude, callGemini, MODEL, MODEL_FAST } from "./lib/api.js";
 import { playDoneSound } from "./lib/audio.js";
-import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildClientMaterialsAnalysisPrompt, buildCorrectionsAnalysisPrompt, buildCorrectionRewritePrompt } from "./lib/prompts.js";
+import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildClientMaterialsAnalysisPrompt, buildCorrectionsAnalysisPrompt, buildCorrectionRewritePrompt, buildFileToSectionsPrompt } from "./lib/prompts.js";
 import { FIELD_LABELS, isPsychoPed, isEcon, hasEmpiricalResearch, getEmpiricalSections, getEconSections, STAGES_TEXT_FIRST, STAGE_KEYS_TEXT_FIRST, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, getLangLabels } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { searchByPhrase, filterSourcesWithGemini } from "./lib/sourcesSearch.js";
@@ -183,6 +184,8 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [correctionLoading, setCorrectionLoading] = useState(false);
   const [correctionApplyLoading, setCorrectionApplyLoading] = useState(false);
   const [correctionHistory, setCorrectionHistory] = useState([]);
+  const [fileParseLoading, setFileParseLoading] = useState(false);
+  const [uploadedFileName, setUploadedFileName] = useState("");
   const tokenAccRef = useRef({ inTok: 0, outTok: 0, costUsd: 0, claudeInTok: 0, claudeOutTok: 0, claudeCostUsd: 0, geminiInTok: 0, geminiOutTok: 0, geminiCostUsd: 0, serperCredits: 0, serperCostUsd: 0 });
   useEffect(() => {
     const handler = (e) => {
@@ -1872,30 +1875,30 @@ ${sectionSummaries}
         : "Біографічний блок (перші 4-5 запитань): ПІБ або псевдонім, вік, стаж, кваліфікація або посада.";
 
       const buildQuestionnairePrompt = (appendixLabel, groupDesc) => `Перший рядок: ${appendixLabel}
-Другий рядок: назва анкети відповідно до теми та групи респондентів.
+Другий рядок: назва анкети відповідно до теми роботи: "${info?.topic}"${groupDesc ? `, для групи: ${groupDesc}` : ""}.
 Звернення до респондента та інструкція (2-3 речення).
 ${bioFieldsLine}
 12-15 запитань закритого типу з варіантами відповідей: а), б), в), г).
-Запитання логічно охоплюють різні аспекти теми${groupDesc ? ` для групи: ${groupDesc}` : ""}.
+Запитання логічно охоплюють різні аспекти теми "${info?.topic}"${groupDesc ? ` для групи: ${groupDesc}` : ""}.
 В кінці: "Дякуємо за участь у дослідженні!"`;
 
       const buildScalePrompt = (appendixLabel) => `Перший рядок: ${appendixLabel}
-Другий рядок: назва методики відповідно до теми.
+Другий рядок: назва методики відповідно до теми роботи: "${info?.topic}".
 Опис методики: мета, сфера застосування, кількість тверджень.
 Інструкція для респондента (2-3 речення).
-20-25 тверджень або запитань відповідно до психологічної шкали (за темою: тривожність, самооцінка, мотивація, агресія тощо).
+20-25 тверджень або запитань відповідно до психологічної шкали за темою роботи: "${info?.topic}".
 Шкала відповідей: 1-4 або 1-5 балів, або варіанти "так/ні/важко відповісти".
 Ключ до обробки: розподіл балів, рівні (низький/середній/високий).`;
 
       const buildFitnessTestPrompt = (appendixLabel) => `Перший рядок: ${appendixLabel}
-Другий рядок: назва батареї тестів відповідно до теми.
+Другий рядок: назва батареї тестів відповідно до теми роботи: "${info?.topic}".
 Перелік 5-8 фізичних тестів або вимірювань: назва тесту, одиниці вимірювання, порядок проведення.
 Нормативна таблиця: вікові норми або рівні (низький/нижчий за середній/середній/вищий за середній/високий).
 Протокол фіксації результатів (таблиця для заповнення).`;
 
       const buildExperimentPrompt = (appendixLabel) => `Перший рядок: ${appendixLabel}
-Другий рядок: назва протоколу педагогічного експерименту.
-Мета та гіпотеза експерименту.
+Другий рядок: назва протоколу педагогічного експерименту відповідно до теми роботи: "${info?.topic}".
+Мета та гіпотеза експерименту відповідно до теми роботи: "${info?.topic}".
 Опис контрольної та експериментальної груп (кількість, критерії відбору).
 Констатувальний етап: діагностичний інструментарій (тести, завдання, спостереження) — 10-15 пунктів.
 Формувальний етап: короткий опис педагогічного впливу або програми.
@@ -2163,7 +2166,7 @@ ${JSON.stringify(analysis, null, 2)}
       const userContent = imageContent.length
         ? [...imageContent, { type: "text", text: prompt }]
         : prompt;
-      const raw = await callClaude([{ role: "user", content: userContent }], { system: SYS_JSON_ARRAY, model: MODEL_FAST });
+      const raw = await callClaude([{ role: "user", content: userContent }], null, SYS_JSON_ARRAY, 2000, null, MODEL_FAST);
       const jsonStr = raw.replace(/```json|```/g, "").trim();
       const parsed = JSON.parse(jsonStr);
       if (!Array.isArray(parsed)) throw new Error("Не масив");
@@ -2224,6 +2227,32 @@ ${JSON.stringify(analysis, null, 2)}
     setCorrectionAnalysis(null);
     setCorrectionChecked({});
     setCorrectionApplyLoading(false);
+  };
+
+  // ── Завантаження власного файлу і розбивка по розділах ──
+  const doParseUploadedFile = async (arrayBuffer, fileName) => {
+    setFileParseLoading(true);
+    setUploadedFileName(fileName);
+    try {
+      const result = await mammoth.extractRawText({ arrayBuffer });
+      const docText = result.value.trim();
+      if (!docText) throw new Error("Не вдалося витягти текст з документа");
+      const prompt = buildFileToSectionsPrompt({ sections, documentText: docText });
+      const raw = await callClaude([{ role: "user", content: prompt }], null, null, 16000, null, MODEL);
+      const jsonStr = raw.replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(jsonStr);
+      const newContent = { ...contentRef.current };
+      Object.entries(parsed).forEach(([id, text]) => {
+        if (text) newContent[id] = text;
+      });
+      setContent(newContent);
+      contentRef.current = newContent;
+      await saveToFirestore({ content: newContent });
+    } catch (e) {
+      alert("Помилка завантаження файлу: " + e.message);
+      setUploadedFileName("");
+    }
+    setFileParseLoading(false);
   };
 
   // ── Переписати всю роботу з нуля (з урахуванням вже згенерованого контексту) ──
@@ -3654,6 +3683,9 @@ ${refLines2.join("\n")}`;
               correctionHistory={correctionHistory}
               doAnalyzeCorrections={doAnalyzeCorrections}
               doApplyCorrections={doApplyCorrections}
+              doParseUploadedFile={doParseUploadedFile}
+              fileParseLoading={fileParseLoading}
+              uploadedFileName={uploadedFileName}
               setStage={setStage}
             />
           )}

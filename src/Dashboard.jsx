@@ -420,7 +420,7 @@ function DeadlinePicker({ dlFrom, dlTo, setDlFrom, setDlTo }) {
     );
 }
 
-export default function Dashboard({ onOpen, onNew, onAdmin, onTraining }) {
+export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCorrections }) {
     const { user, profile, logout } = useAuth();
     const [orders, setOrders] = useState([]);
     const [userMap, setUserMap] = useState({});
@@ -609,6 +609,11 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining }) {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
                     <div style={{ fontFamily: "'Spectral SC',serif", fontSize: 18, letterSpacing: 2, color: "#1a1a14" }}>{isAdmin ? "ВСІ ЗАМОВЛЕННЯ" : "МОЇ ЗАМОВЛЕННЯ"}</div>
                     <div style={{ display: "flex", gap: 8 }}>
+                        {onFileCorrections && (
+                            <button onClick={onFileCorrections} style={{ background: "transparent", color: "#6a3a00", border: "1.5px solid #c47a30", borderRadius: 7, padding: "9px 18px", fontSize: 12, fontWeight: 600, cursor: "pointer", letterSpacing: 1, fontFamily: "inherit" }}>
+                                ✏ Правки до файлу
+                            </button>
+                        )}
                         <button onClick={() => onNew("small")} style={{ background: "transparent", color: "#1a1a14", border: "1.5px solid #1a1a14", borderRadius: 7, padding: "9px 18px", fontSize: 12, fontWeight: 600, cursor: "pointer", letterSpacing: 1, fontFamily: "inherit" }}>
                             + Мала робота
                         </button>

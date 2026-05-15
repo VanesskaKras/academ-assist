@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { SpinDot } from "../SpinDot.jsx";
 import { Heading, NavBtn } from "../Buttons.jsx";
 import { PhotoDropZone } from "../PhotoDropZone.jsx";
@@ -13,8 +14,12 @@ export function CorrectionsStage({
   correctionHistory,
   doAnalyzeCorrections,
   doApplyCorrections,
+  doParseUploadedFile,
+  fileParseLoading,
+  uploadedFileName,
   setStage,
 }) {
+  const fileInputRef = useRef();
   const checkedCount = Object.values(correctionChecked).filter(Boolean).length;
   const analysisItems = correctionAnalysis || [];
 
@@ -31,6 +36,44 @@ export function CorrectionsStage({
         Введіть зауваження — програма визначить які розділи потребують виправлення і переписує тільки їх,
         зберігаючи тему і контекст роботи.
       </p>
+
+      {/* ── ЗАВАНТАЖЕННЯ ВЛАСНОГО ФАЙЛУ ── */}
+      {doParseUploadedFile && (
+        <div style={{ border: `1.5px solid ${uploadedFileName ? "#4a6a00" : "#c4bfb4"}`, borderRadius: 8, marginBottom: 14, overflow: "hidden" }}>
+          <div style={{ padding: "11px 16px", background: uploadedFileName ? "#1a2a00" : "#2a2a1e", display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ width: 8, height: 8, borderRadius: "50%", background: uploadedFileName ? "#a8e060" : "#888", flexShrink: 0 }} />
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#f5f2eb" }}>
+              {uploadedFileName ? `Файл завантажено: ${uploadedFileName}` : "Завантажити власний файл роботи (.docx)"}
+            </div>
+            {!fileParseLoading && (
+              <button
+                onClick={() => fileInputRef.current.click()}
+                style={{ marginLeft: "auto", fontSize: 11, color: uploadedFileName ? "#a8e060" : "#e8ff47", background: "transparent", border: `1px solid ${uploadedFileName ? "#4a6a00" : "#555"}`, borderRadius: 4, padding: "3px 10px", cursor: "pointer", fontFamily: "'Spectral',serif" }}
+              >
+                {uploadedFileName ? "Замінити" : "Обрати файл"}
+              </button>
+            )}
+            {fileParseLoading && <span style={{ marginLeft: "auto", fontSize: 12, color: "#888", display: "flex", alignItems: "center", gap: 6 }}><SpinDot />Розбиваю на розділи...</span>}
+          </div>
+          {!uploadedFileName && !fileParseLoading && (
+            <div style={{ padding: "10px 16px", background: "#faf8f3", fontSize: 12, color: "#888" }}>
+              Необов'язково. Якщо не завантажити — правки застосуються до тексту що згенерований у системі.
+            </div>
+          )}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".docx"
+            style={{ display: "none" }}
+            onChange={e => {
+              const f = e.target.files[0];
+              if (!f) return;
+              f.arrayBuffer().then(buf => doParseUploadedFile(buf, f.name));
+              e.target.value = "";
+            }}
+          />
+        </div>
+      )}
 
       {/* ── ВВЕДЕННЯ ПРАВОК ── */}
       <div style={{ border: "1.5px solid #aaa49a", borderRadius: 8, marginBottom: 14, overflow: "hidden" }}>
