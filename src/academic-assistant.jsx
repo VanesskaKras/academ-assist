@@ -2494,23 +2494,34 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
   const doGenKeywords = async () => {
     setKwLoading(true);
     const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
-    // Відображення: label-префікс ("3.2.1") → реальний internal id ("3.3")
     const labelToId = {};
     for (const s of mainSecs) {
       labelToId[s.id] = s.id;
       const m = s.label.match(/^(\d+(?:\.\d+)*)/);
       if (m) labelToId[m[1]] = s.id;
     }
-    const secBlocks = mainSecs.map(s => {
-      const txt = content[s.id]
-        ? `\n${content[s.id].substring(0, 1200).replace(/["\\]/g, " ").replace(/\n+/g, " ")}`
-        : "";
-      return `### [${s.id}] ${s.label} (потрібно ${sourceDist[s.id] || 3} джерела)${txt}`;
-    }).join("\n\n");
+    const normalizeKey = (k) => labelToId[k] || k.match(/^(\d+\.\d+)/)?.[1] || k;
     const domainCtx = [info?.direction, info?.subject].filter(Boolean).join(', ');
     const commentCtx = [commentAnalysis?.planHints, commentAnalysis?.writingHints].filter(Boolean).join(' ').slice(0, 400);
     const methodCtx = [methodInfo?.otherRequirements, methodInfo?.theoryRequirements, methodInfo?.analysisRequirements].filter(Boolean).join(' ').slice(0, 400);
-    const prompt = `Ти допомагаєш знайти наукові джерела для академічної роботи на тему "${info?.topic}"${domainCtx ? ` (галузь: ${domainCtx})` : ''}.
+
+    // Батч по 8 секцій — щоб JSON відповідь не обрізалась токенним лімітом
+    const BATCH_SIZE = 8;
+    const snippetLen = mainSecs.length > 10 ? 600 : 1200;
+    const allThesesNorm = {};
+    const allAnchorsNorm = {};
+
+    try {
+      for (let bStart = 0; bStart < mainSecs.length; bStart += BATCH_SIZE) {
+        const batch = mainSecs.slice(bStart, bStart + BATCH_SIZE);
+        const secBlocks = batch.map(s => {
+          const txt = content[s.id]
+            ? `\n${content[s.id].substring(0, snippetLen).replace(/["\\]/g, " ").replace(/\n+/g, " ")}`
+            : "";
+          return `### [${s.id}] ${s.label} (потрібно ${sourceDist[s.id] || 3} джерела)${txt}`;
+        }).join("\n\n");
+
+        const prompt = `Ти допомагаєш знайти наукові джерела для академічної роботи на тему "${info?.topic}"${domainCtx ? ` (галузь: ${domainCtx})` : ''}.
 
 ЗАВДАННЯ — для кожного підрозділу:
 
@@ -2527,57 +2538,44 @@ ${secBlocks}
 Поверни валідний JSON з двома полями:
 - "theses": об'єкт, ключ = ідентифікатор підрозділу з квадратних дужок ("1.1", "1.2", "3" тощо), значення = масив об'єктів {"thesis": рядок, "phrases": масив рядків}
 - "searchAnchors": об'єкт, ключ = ідентифікатор підрозділу з квадратних дужок, значення = масив з 2–3 якірних фраз (рядки)`;
-    try {
-      const res = await fetch("/api/gemini", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          _model: "gemini-2.5-flash-lite",
-          contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: { maxOutputTokens: 4000, responseMimeType: "application/json" },
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error?.message || JSON.stringify(data).slice(0, 200));
-      const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-      const parsed = JSON.parse(raw);
-      const thesesRaw = parsed.theses || {};
-      const anchorsRaw = parsed.searchAnchors || {};
 
-      const normalizeKey = (k) => labelToId[k] || k.match(/^(\d+\.\d+)/)?.[1] || k;
+        const res = await fetch("/api/gemini", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            _model: "gemini-2.5-flash-lite",
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            generationConfig: { maxOutputTokens: 8192, responseMimeType: "application/json" },
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error?.message || JSON.stringify(data).slice(0, 200));
+        const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        const parsed = JSON.parse(raw);
+        const thesesRaw = parsed.theses || {};
+        const anchorsRaw = parsed.searchAnchors || {};
 
-      const anchorsNorm = Object.fromEntries(
-        Object.entries(anchorsRaw).map(([k, v]) => [
-          normalizeKey(k),
-          Array.isArray(v) ? v.map(String).filter(Boolean) : [],
-        ])
-      );
-      setSearchAnchors(anchorsNorm);
-
-      // Нормалізуємо тези: {secId: [{thesis, phrases}]}
-      const thesesNorm = Object.fromEntries(
-        Object.entries(thesesRaw).map(([k, arr]) => [
-          normalizeKey(k),
-          (Array.isArray(arr) ? arr : []).map(t => ({
+        for (const [k, v] of Object.entries(anchorsRaw)) {
+          allAnchorsNorm[normalizeKey(k)] = Array.isArray(v) ? v.map(String).filter(Boolean) : [];
+        }
+        for (const [k, arr] of Object.entries(thesesRaw)) {
+          allThesesNorm[normalizeKey(k)] = (Array.isArray(arr) ? arr : []).map(t => ({
             thesis: String(t.thesis || '').trim(),
             phrases: (Array.isArray(t.phrases) ? t.phrases : []).map(String).filter(Boolean),
-          })).filter(t => t.phrases.length > 0),
-        ])
-      );
+          })).filter(t => t.phrases.length > 0);
+        }
+      }
 
-      // Плоский список фраз для UI (відображення в SourcesStage)
+      setSearchAnchors(allAnchorsNorm);
+
       const kwNorm = Object.fromEntries(
-        Object.entries(thesesNorm).map(([k, theses]) => [
-          k,
-          theses.flatMap(t => t.phrases),
-        ])
+        Object.entries(allThesesNorm).map(([k, theses]) => [k, theses.flatMap(t => t.phrases)])
       );
       setKeywords(kwNorm);
 
-      // Шукаємо джерела по черзі — один підрозділ за одним (видно прогрес)
       for (const s of mainSecs) {
         const normalKey = normalizeKey(s.id);
-        const thesesData = thesesNorm[normalKey] || thesesNorm[s.id] || [];
+        const thesesData = allThesesNorm[normalKey] || allThesesNorm[s.id] || [];
         if (thesesData.length) await doSearchSources(s.id, thesesData, s.label || '');
       }
     } catch (e) { console.error(e); setKwError(e.message); }
