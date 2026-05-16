@@ -1772,33 +1772,33 @@ ${clientReqsRegen ? `ВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО вико
       // ── Контекст 2: секції роботи ──
       const sectionSummaries = sections
         .filter(s => s.type !== "sources")
-        .map(s => { const txt = content[s.id] || ""; return txt ? `### ${s.label}\n${txt.substring(0, 3000)}` : ""; })
+        .map(s => { const txt = content[s.id] || ""; return txt ? `### ${s.label}\n${txt}` : ""; })
         .filter(Boolean).join("\n\n");
 
       const prompt = `Напиши текст доповіді для захисту ${info?.type || "наукової роботи"} перед науковою комісією на тему "${info?.topic}".
 
-${slidesOutline ? `СТРУКТУРА ПРЕЗЕНТАЦІЇ (виступ йде паралельно з нею):
+${slidesOutline ? `СТРУКТУРА ПРЕЗЕНТАЦІЇ (виступ іде паралельно зі слайдами — кожен блок відповідає одному слайду):
 ${slidesOutline}
 
-` : ""}ЗМІСТ РОБОТИ (звідси брати конкретні факти, методи, результати, цифри):
+` : ""}ПОВНИЙ ТЕКСТ РОБОТИ (витягуй звідси конкретні факти, методи, результати, числа):
 ${sectionSummaries}
 
-ВИМОГИ ДО ТЕКСТУ:
-- Обсяг: 7-10 хвилин (3-4 сторінки), кожен слайд — 3-5 речень
-- Перед кожним блоком постав мітку: "Слайд 1", "Слайд 2" і т.д. на окремому рядку
-- Стиль: стриманий академічний усний — не читання реферату, але й не розмова. Науковець звітує перед комісією
-- Конкретність: кожне речення має нести факт, метод, результат або висновок. Жодних загальних фраз типу "тема є актуальною", "у роботі розглядається", "слід зазначити"
-- Розгорнутість: спирайся на зміст роботи — розкривай методологію, конкретні результати, висновки детальніше, ніж вказано на слайдах
-- Якщо є числа, відсотки, назви методів — обов'язково вживай їх
-- Переходи між слайдами — одне коротке речення: "Перейдемо до...", "Наступний слайд демонструє...", "Звернімось до результатів..."
-- НЕ виводь назви розділів, підрозділів та їх номери
+ВИМОГИ:
+- Обсяг: 9-12 хвилин (4-5 сторінок), кожен слайд — 5-7 речень
+- Перед кожним блоком: "Слайд 1", "Слайд 2" і т.д. — окремим рядком
+- Стиль: стриманий академічний усний. Науковець звітує перед комісією
+- ОБОВ'ЯЗКОВО: конкретні назви методів, числа, відсотки, коефіцієнти, розміри вибірки з роботи
+- ЗАБОРОНЕНО: "тема є актуальною", "у роботі розглядається", "варто відмітити", "слід зазначити"
+- Кожне речення — факт, метод, результат або висновок
+- Переходи: "Перейдемо до...", "Наступний слайд демонструє...", "Звернімось до..."
+- НЕ виводь назви розділів та їх номери (наприклад "Розділ 1.2")
 - Мова: ${lang}
 - Без markdown, зірочок, жирного — тільки мітки "Слайд N" і звичайний текст`;
 
       const raw = await callGemini(
         [{ role: "user", content: prompt }], null,
-        `You are an expert academic writing assistant. Write a concise, factual oral defense speech for a scientific committee. Every sentence must state a concrete fact, method, result or conclusion — no filler phrases. No markdown formatting.`, 4000,
-        null, "gemini-2.5-flash-lite"
+        `You are an expert academic writing assistant. Write a substantive, factual oral defense speech for a scientific committee. Every sentence must state a concrete fact, method, result or conclusion — no filler phrases. No markdown formatting.`, 6000,
+        null, "gemini-2.5-flash"
       );
 
       const result = raw
@@ -1813,7 +1813,6 @@ ${sectionSummaries}
           return true;
         })
         .join("\n")
-        .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
         .replace(/[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF]/g, "")
         .replace(/[„""]([^"„""]*)["""]/g, "«$1»")
         .replace(/"([^"]*)"/g, "«$1»")
@@ -2032,38 +2031,54 @@ ${customBlock || `Включи один або два додатки що лог
       // ── Крок 1: Gemini аналізує текст ──
       const fullText = sections
         .filter(s => s.type !== "sources")
-        .map(s => { const txt = content[s.id] || ""; return txt ? `### ${s.label}\n${txt.substring(0, 1500)}` : ""; })
+        .map(s => { const txt = content[s.id] || ""; return txt ? `### ${s.label}\n${txt}` : ""; })
         .filter(Boolean).join("\n\n");
 
-      const geminiPrompt = `Проаналізуй наукову роботу та витягни структуровані дані для презентації. Поверни ТІЛЬКИ валідний JSON без markdown:
+      const geminiPrompt = `Проаналізуй наукову роботу та витягни всі дані для презентації захисту. Поверни ТІЛЬКИ валідний JSON без markdown:
 {
-  "problem": "головна наукова проблема або гіпотеза (1-2 речення)",
-  "relevance": ["теза актуальності 1", "теза актуальності 2"],
-  "methodology": {
-    "object": "об'єкт дослідження",
-    "subject": "предмет дослідження",
-    "methods": ["метод 1", "метод 2", "метод 3"],
-    "tools": ["інструмент або база 1", "інструмент 2"]
+  "student_info": {
+    "student": "ПІБ студента (з титульної сторінки або null)",
+    "supervisor": "ПІБ наукового керівника (або null)",
+    "institution": "Коротка назва навчального закладу (або null)"
   },
-  "literature_summary": ["що вже досліджено 1", "що вже досліджено 2"],
-  "literature_gap": "прогалина або невирішена проблема (1 речення)",
-  "results": [
-    {"title": "назва першого результату", "points": ["пункт 1", "пункт 2"], "key_number": "число або % якщо є, інакше null"},
-    {"title": "назва другого результату", "points": ["пункт 1", "пункт 2"], "key_number": null},
-    {"title": "назва третього результату", "points": ["пункт 1", "пункт 2"], "key_number": null}
+  "relevance": "Чому ця тема актуальна, яку проблему вирішує (2-3 речення)",
+  "object": "Об'єкт дослідження (точно як у роботі)",
+  "subject": "Предмет дослідження (точно як у роботі)",
+  "goal": "Мета дослідження (точно як у роботі)",
+  "tasks": ["завдання 1", "завдання 2", "завдання 3"],
+  "hypothesis": "Гіпотеза (якщо є у вступі, інакше null)",
+  "methods": [
+    {"name": "Назва методу", "description": "1 речення опису"}
   ],
-  "conclusions": ["висновок 1", "висновок 2", "висновок 3", "висновок 4", "висновок 5"],
-  "practical_value": ["де застосувати 1", "де застосувати 2"],
-  "field": "одне з: tech / medicine / social / economics / default"
+  "main_results": [
+    {
+      "title": "Назва блоку результату",
+      "points": ["конкретний результат 1", "результат 2"],
+      "key_stat": {"value": "87%", "label": "точність моделі"}
+    }
+  ],
+  "conclusions": ["висновок 1", "висновок 2", "висновок 3"],
+  "practical_value": "Де і як можна застосувати результати (або null)",
+  "novelty": "Наукова новизна (або null)",
+  "field": "tech | medicine | social | economics | default"
 }
+
+ПРАВИЛА:
+- student_info: шукай рядки "ПІБ студента", "Виконав", "Науковий керівник", назву закладу — на початку тексту
+- main_results: 3-5 блоків з конкретними знахідками. Числа/відсотки → key_stat. Без числа → key_stat: null
+- tasks: рівно стільки, скільки перелічено у вступі роботи
+- Мова: ${lang}
+
+ТИТУЛЬНА СТОРІНКА:
+${titlePage ? titlePage.substring(0, 800) : "(не надана)"}
 
 ТЕКСТ РОБОТИ:
 ${fullText}`;
 
       const geminiRaw = await callGemini(
         [{ role: "user", content: geminiPrompt }], null,
-        SYS_JSON_SHORT, 4000,
-        (s) => setPresentationMsg(`Аналізую... зачекайте ${s}с`), "gemini-2.5-flash-lite"
+        SYS_JSON_SHORT, 5000,
+        (s) => setPresentationMsg(`Аналізую... зачекайте ${s}с`), "gemini-2.5-flash"
       );
 
       let analysis;
@@ -2077,51 +2092,89 @@ ${fullText}`;
       const themeMap = { tech: "midnight", medicine: "forest", social: "coral", economics: "slate" };
       const defaultTheme = themeMap[analysis.field] || "warm";
 
-      const claudePrompt = `На основі аналізу наукової роботи згенеруй зміст 13 слайдів презентації для захисту.
+      const hasHypothesis = !!analysis.hypothesis;
+      const hasPractical = !!(analysis.practical_value || analysis.novelty);
+      const resultsCount = Math.min(Math.max((analysis.main_results || []).length, 3), 5);
+      let slideN = 0;
+      const next = () => ++slideN;
 
-МЕТАДАНІ РОБОТИ:
-- Тип: ${info?.type || "наукова робота"}
-- Тема: ${info?.topic || ""}
-- Галузь: ${info?.direction || info?.subject || ""}
-- Мова виступу: ${lang}
+      const slideSpecs = [];
+      slideSpecs.push(`Слайд ${next()}: layout "title_slide"
+  title: ${JSON.stringify(info?.topic || "")}
+  work_type: ${JSON.stringify(info?.type || "Наукова робота")}
+  student: ${JSON.stringify(analysis.student_info?.student || null)}
+  supervisor: ${JSON.stringify(analysis.student_info?.supervisor || null)}
+  institution: ${JSON.stringify(analysis.student_info?.institution || null)}
+  year: ${new Date().getFullYear()}`);
+
+      slideSpecs.push(`Слайд ${next()}: layout "two_column" — title: "Актуальність"
+  left: 2-3 речення чому тема важлива (з analysis.relevance)
+  right_type: "text", right: яку конкретну проблему вирішує`);
+
+      slideSpecs.push(`Слайд ${next()}: layout "two_column" — title: "Об'єкт і предмет дослідження"
+  left: "Об'єкт дослідження:\\n${(analysis.object || "").replace(/"/g, "'")}"
+  right_type: "text", right: "Предмет дослідження:\\n${(analysis.subject || "").replace(/"/g, "'")}"`);
+
+      slideSpecs.push(`Слайд ${next()}: layout "icon_list" — title: "Мета та завдання"
+  visual.items: [{icon:"🎯",header:"Мета",text:${JSON.stringify(analysis.goal || "")}}, потім по одному item на кожне завдання {icon:"→",header:"Завдання N",text:...}]
+  Максимум 5 items загалом`);
+
+      if (hasHypothesis) {
+        slideSpecs.push(`Слайд ${next()}: layout "highlight_box" — title: "Гіпотеза дослідження"
+  points: [${JSON.stringify(analysis.hypothesis)}]
+  accent: "Перевіряється в ході дослідження"`);
+      }
+
+      slideSpecs.push(`Слайд ${next()}: layout "numbered_steps" — title: "Методи дослідження"
+  visual.items: до 4 методів з analysis.methods → [{"num":"1","title":"назва","text":"1 речення"}]`);
+
+      (analysis.main_results || []).slice(0, resultsCount).forEach((res, i) => {
+        const hasStat = res.key_stat?.value;
+        const layout = hasStat ? "stat_callout" : "highlight_box";
+        slideSpecs.push(`Слайд ${next()}: layout "${layout}" — title: ${JSON.stringify(res.title || `Результати ${i + 1}`)}
+  ${hasStat
+          ? `visual.stats: [{"value":${JSON.stringify(res.key_stat.value)},"label":${JSON.stringify(res.key_stat.label || "")}}]\n  content: ${JSON.stringify((res.points || []).slice(0, 2).join(". "))}`
+          : `points: [${(res.points || []).map(p => JSON.stringify(p)).join(", ")}]`}`);
+      });
+
+      slideSpecs.push(`Слайд ${next()}: layout "icon_list" — title: "Висновки"
+  visual.items: до 5 висновків з analysis.conclusions → [{"icon":"✅","header":"Висновок N","text":"..."}]`);
+
+      if (hasPractical) {
+        slideSpecs.push(`Слайд ${next()}: layout "two_column" — title: "Практичне значення та наукова новизна"
+  left: ${JSON.stringify(analysis.practical_value || "Практичне застосування результатів")}
+  right_type: "text", right: ${JSON.stringify(analysis.novelty || "Сфери впровадження")}`);
+      }
+
+      slideSpecs.push(`Слайд ${next()}: layout "hero" — title: "Дякую за увагу!", subtitle: ""`);
+      const totalSlides = slideN;
+
+      const claudePrompt = `Згенеруй JSON для презентації захисту ${info?.type || "наукової роботи"}.
 
 АНАЛІЗ РОБОТИ (від Gemini):
 ${JSON.stringify(analysis, null, 2)}
 
-СТРУКТУРА — рівно 13 слайдів, суворо в такому порядку:
-1.  layout "hero"            — title: тема роботи, subtitle: тип · ${new Date().getFullYear()}
-2.  layout "two_column"      — Актуальність: left=формулювання проблеми, right_type="text", right=чому це важливо
-3.  layout "icon_list"       — Мета та завдання: visual.items з icon/header/text (мета + 3-4 завдання)
-4.  layout "highlight_box"   — Стан питання: points=огляд літератури, accent=прогалина у дослідженнях
-5.  layout "two_column"      — Методологія — об'єкт і предмет: left=опис, right_type="text", right=ключовий аспект
-6.  layout "numbered_steps"  — Методи дослідження: visual.items [{"num":"1","title":"назва","text":"1 речення"}]
-7.  layout "highlight_box"   — Інструментарій та база: points=перелік
-8.  layout "stat_callout"    — Результати I: visual.stats=[{"value":"...","label":"..."}] + content=опис
-9.  layout "two_column"      — Результати II: left=опис, right_type="stat"/"text" + right_value/right
-10. layout "highlight_box"   — Результати III: points=пункти
-11. layout "icon_list"       — Висновки: visual.items з icon/header/text (5 пунктів)
-12. layout "two_column"      — Практичне значення: left=опис застосування, right_type="text", right=сфери впровадження
-13. layout "hero"            — Фінальний: title="Дякую за увагу!", subtitle залиш порожнім
+СПЕЦИФІКАЦІЯ — рівно ${totalSlides} слайдів:
+${slideSpecs.join("\n\n")}
 
-ПРАВИЛА:
+ПРАВИЛА JSON:
 - Мова всіх текстів: ${lang}
-- Кожен пункт/item: 1-2 речення, конкретно, без «води»
-- Якщо є числа або % — витягни у visual.stats: [{"value":"87%","label":"точність моделі"}]
-- icon_list items: [{"icon":"🎯","header":"коротка назва","text":"1 речення деталей"}]
-- numbered_steps items: [{"num":"1","title":"Назва методу","text":"1 речення опису"}]
-- right_type: "stat" якщо є одне ключове число/% (≤6 символів), інакше "text"
-- Якщо для слайду 8 (stat_callout) нема чисел — використай layout "highlight_box" замість нього
-- Не додавай полів, яких нема у відповідному layout
+- title_slide: поля title, work_type, student, supervisor, institution, year (null якщо невідомо)
+- icon_list items: [{"icon":"...","header":"...","text":"..."}]
+- numbered_steps items: [{"num":"...","title":"...","text":"..."}]
+- stat_callout: {title, visual:{stats:[{value,label}]}, content}
+- two_column: {title, left, right_type, right} або right_value/right_label для stat
+- highlight_box: {title, points:[], accent} (accent опціональний)
+- hero: {title, subtitle}
+- Числа та % з аналізу — обов'язково включай
+- НЕ додавай зайвих слайдів, рівно ${totalSlides}
 
 Поверни ТІЛЬКИ валідний JSON без markdown:
-{
-  "theme": "${defaultTheme}",
-  "slides": [ ... рівно 13 об'єктів ... ]
-}`;
+{"theme":"${defaultTheme}","slides":[...рівно ${totalSlides} об'єктів...]}`;
 
       const claudeRaw = await callClaude(
         [{ role: "user", content: claudePrompt }], null,
-        SYS_JSON_SHORT, 5000,
+        SYS_JSON_SHORT, 6000,
         (s) => setPresentationMsg(`Генерую слайди... зачекайте ${s}с`), MODEL_FAST
       );
 
@@ -2887,7 +2940,7 @@ ${paragraphs.join("\n")}`;
       const batchPrompt = `Визнач в яких абзацах яке джерело доречне. Стиль: ${sourcesStyle}.
 
 ПРАВИЛА:
-1. Кожне джерело ставити МАКСИМУМ 2 рази на весь текст роботи — враховуй ВСІ підрозділи разом.
+1. Кожне джерело ставити МАКСИМУМ 1 раз на весь текст роботи — враховуй ВСІ підрозділи разом.
 2. Не ставити одне джерело підряд у кількох абзацах поспіль.
 3. Посилання ставити лише там де абзац ПРЯМО спирається на це джерело (визначення, факт, цитата).
 4. Розподіляй джерела рівномірно між підрозділами — не концентруй всі в одному.
@@ -2919,6 +2972,7 @@ ${secsSummary}
             nonEmptyIdx++;
             if (citNum && refCiteText[citNum]) {
               const cite = refCiteText[citNum];
+              if (p.includes(cite)) return p;
               const trimmed = p.trimEnd();
               // Якщо абзац закінчується крапкою/знаком оклику/питання — ставимо посилання ДО знака
               const lastChar = trimmed.slice(-1);

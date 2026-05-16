@@ -67,6 +67,47 @@ export async function exportToPptxFile(slideData, info) {
     }
   };
 
+  // ── renderTitleSlide: титульний слайд з ПІБ, керівником, закладом ──
+  const renderTitleSlide = (s, data) => {
+    s.background = { color: T.bg };
+    s.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 10, h: 0.13, fill: { color: T.accent }, line: { type: "none" } });
+    s.addShape(pptx.ShapeType.rect, { x: 0, y: 5.5, w: 10, h: 0.125, fill: { color: T.accent }, line: { type: "none" } });
+    s.addShape(pptx.ShapeType.rect, { x: 0.45, y: 0.75, w: 0.07, h: 4.5, fill: { color: T.accent }, line: { type: "none" } });
+    if (data.institution) {
+      s.addText(data.institution, {
+        x: 0.7, y: 0.18, w: 8.8, h: 0.48,
+        fontSize: 12, color: T.accent, fontFace: "Calibri", align: "left", valign: "middle", wrap: true,
+      });
+    }
+    s.addText(data.title || info?.topic || "", {
+      x: 0.7, y: 0.82, w: 8.8, h: 2.4,
+      fontSize: 26, bold: true, color: "FFFFFF",
+      fontFace: "Georgia", align: "left", valign: "middle", wrap: true,
+    });
+    if (data.work_type) {
+      s.addText(data.work_type, {
+        x: 0.7, y: 3.32, w: 8.8, h: 0.38,
+        fontSize: 14, color: T.accent, fontFace: "Calibri", align: "left", valign: "middle",
+      });
+    }
+    if (data.student) {
+      s.addText(`Виконав(ла): ${data.student}`, {
+        x: 0.7, y: 3.8, w: 8.8, h: 0.36,
+        fontSize: 13, color: "CCCCCC", fontFace: "Calibri", align: "left",
+      });
+    }
+    if (data.supervisor) {
+      s.addText(`Науковий керівник: ${data.supervisor}`, {
+        x: 0.7, y: 4.18, w: 8.8, h: 0.36,
+        fontSize: 13, color: "CCCCCC", fontFace: "Calibri", align: "left",
+      });
+    }
+    s.addText(String(data.year || new Date().getFullYear()), {
+      x: 0.7, y: 5.12, w: 8.8, h: 0.3,
+      fontSize: 13, color: T.accent, fontFace: "Calibri", align: "left",
+    });
+  };
+
   // ── renderTwoColumn: текст ліво + кольоровий блок право ──
   const renderTwoColumn = (s, data) => {
     addTitle(s, data.title);
@@ -272,6 +313,7 @@ export async function exportToPptxFile(slideData, info) {
   for (const slide of (slideData.slides || [])) {
     const s = pptx.addSlide();
     switch (slide.layout) {
+      case "title_slide": renderTitleSlide(s, slide); break;
       case "hero":
       case "dark_title": renderHero(s, slide); break;
       case "two_column": renderTwoColumn(s, slide); break;
