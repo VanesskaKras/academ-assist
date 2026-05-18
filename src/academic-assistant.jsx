@@ -2255,7 +2255,7 @@ ${slideSpecs.join("\n\n")}
           methodInfo,
           lang,
         });
-        const result = await callClaude([{ role: "user", content: prompt }], { system: buildSYS(lang, methodInfo), model: MODEL });
+        const result = await callClaude([{ role: "user", content: prompt }], null, buildSYS(lang, methodInfo), 8000, null, MODEL);
         newContent[item.sectionId] = result;
         sectionsAffected.push(item.sectionId);
         setContent({ ...newContent });
