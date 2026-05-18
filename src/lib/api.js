@@ -107,6 +107,38 @@ export async function callClaude(messages, signal, systemPrompt, maxTokens, onWa
   }
 }
 
+const FILE_INLINE_LIMIT = 3 * 1024 * 1024; // 3MB raw → ~4MB base64
+
+async function uploadLargeFile(base64Data, mimeType) {
+  const rawSize = Math.floor(base64Data.length * 0.75);
+  if (rawSize <= FILE_INLINE_LIMIT) return null;
+
+  const initRes = await fetch("/api/gemini-files-init", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mimeType, fileSize: rawSize }),
+  });
+  if (!initRes.ok) throw new Error("Не вдалось ініціалізувати завантаження файлу");
+  const { uploadUrl } = await initRes.json();
+
+  const binary = atob(base64Data);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+  const uploadRes = await fetch(uploadUrl, {
+    method: "POST",
+    headers: {
+      "Content-Length": String(bytes.byteLength),
+      "X-Goog-Upload-Offset": "0",
+      "X-Goog-Upload-Command": "upload, finalize",
+    },
+    body: bytes,
+  });
+  if (!uploadRes.ok) throw new Error("Не вдалось завантажити файл до Gemini");
+  const data = await uploadRes.json();
+  return data.file?.uri;
+}
+
 export async function callGemini(messages, signal, systemPrompt, maxTokens, onWait, model, jsonMode) {
   const MAX_RETRIES = 5;
   const FALLBACK_MODEL = "gemini-2.0-flash";
@@ -115,9 +147,22 @@ export async function callGemini(messages, signal, systemPrompt, maxTokens, onWa
   let currentModel = model || "gemini-2.5-flash-lite";
   let failCount503 = 0;
 
+  // Upload large documents to Gemini Files API to bypass Vercel 4.5MB limit
+  for (const msg of messages) {
+    if (!Array.isArray(msg.content)) continue;
+    for (const part of msg.content) {
+      if ((part.type === "document" || part.type === "image") && part.source?.type === "base64") {
+        const uri = await uploadLargeFile(part.source.data, part.source.media_type || "application/pdf");
+        if (uri) part.source = { type: "file_uri", media_type: part.source.media_type, uri };
+      }
+    }
+  }
+
   const toGeminiPart = (c) => {
     if ((c.type === "document" || c.type === "image") && c.source?.type === "base64")
       return { inlineData: { mimeType: c.source.media_type || "application/pdf", data: c.source.data } };
+    if ((c.type === "document" || c.type === "image") && c.source?.type === "file_uri")
+      return { fileData: { mimeType: c.source.media_type || "application/pdf", fileUri: c.source.uri } };
     return { text: c.text || c.content || "" };
   };
 
