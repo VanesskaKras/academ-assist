@@ -183,6 +183,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [correctionChecked, setCorrectionChecked] = useState({});
   const [correctionLoading, setCorrectionLoading] = useState(false);
   const [correctionApplyLoading, setCorrectionApplyLoading] = useState(false);
+  const [correctionApplyProgress, setCorrectionApplyProgress] = useState(null);
   const [correctionHistory, setCorrectionHistory] = useState([]);
   const [fileParseLoading, setFileParseLoading] = useState(false);
   const [uploadedFileName, setUploadedFileName] = useState("");
@@ -2164,7 +2165,7 @@ ${slideSpecs.join("\n\n")}
 - numbered_steps items: [{"num":"...","title":"...","text":"..."}]
 - stat_callout: {title, visual:{stats:[{value,label}]}, content}
 - two_column: {title, left, right_type, right} або right_value/right_label для stat
-- highlight_box: {title, points:[], accent} (accent опціональний)
+- highlight_box: {title, points:[], accent} (accent — короткий підсумковий текст для виділеного блоку внизу слайду; пиши реальний зміст або залиш null; НІКОЛИ не пиши назви кольорів)
 - hero: {title, subtitle}
 - Числа та % з аналізу — обов'язково включай
 - НЕ додавай зайвих слайдів, рівно ${totalSlides}
@@ -2239,12 +2240,15 @@ ${slideSpecs.join("\n\n")}
     const toFix = correctionAnalysis.filter(item => correctionChecked[item.sectionId]);
     if (!toFix.length) return;
     setCorrectionApplyLoading(true);
+    setCorrectionApplyProgress({ current: "", done: 0, total: toFix.length });
     const lang = info?.language || "Українська";
     const newContent = { ...contentRef.current };
     const sectionsAffected = [];
-    for (const item of toFix) {
+    for (let i = 0; i < toFix.length; i++) {
+      const item = toFix[i];
       const sec = sections.find(s => s.id === item.sectionId);
       if (!sec) continue;
+      setCorrectionApplyProgress({ current: sec.label || sec.id, done: i, total: toFix.length });
       try {
         const prompt = buildCorrectionRewritePrompt({
           section: sec,
@@ -2264,6 +2268,7 @@ ${slideSpecs.join("\n\n")}
         console.error("Помилка виправлення розділу", item.sectionId, e);
       }
     }
+    setCorrectionApplyProgress({ current: "", done: toFix.length, total: toFix.length });
     // Зберегти в історію правок
     const historyEntry = {
       clientTimestamp: Date.now(),
@@ -2280,6 +2285,7 @@ ${slideSpecs.join("\n\n")}
     setCorrectionAnalysis(null);
     setCorrectionChecked({});
     setCorrectionApplyLoading(false);
+    setCorrectionApplyProgress(null);
   };
 
   // ── Завантаження власного файлу і розбивка по розділах ──
@@ -3732,6 +3738,7 @@ ${refLines2.join("\n")}`;
               correctionChecked={correctionChecked} setCorrectionChecked={setCorrectionChecked}
               correctionLoading={correctionLoading}
               correctionApplyLoading={correctionApplyLoading}
+              correctionApplyProgress={correctionApplyProgress}
               correctionHistory={correctionHistory}
               doAnalyzeCorrections={doAnalyzeCorrections}
               doApplyCorrections={doApplyCorrections}
@@ -3739,6 +3746,13 @@ ${refLines2.join("\n")}`;
               fileParseLoading={fileParseLoading}
               uploadedFileName={uploadedFileName}
               setStage={setStage}
+              onExportDocx={async (setLoading) => {
+                setLoading(true);
+                try {
+                  await exportToDocx({ sections, content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo, commentAnalysis, orderId: currentIdRef.current });
+                } catch (e) { alert("Помилка: " + e.message); }
+                setLoading(false);
+              }}
             />
           )}
 

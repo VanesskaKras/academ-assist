@@ -227,10 +227,13 @@ export async function exportToPptxFile(slideData, info) {
   };
 
   // ── renderHighlightBox: смугасті рядки + опціональний акцент-футер ──
+  const COLOR_NAMES = new Set(["blue","green","orange","red","yellow","purple","pink","white","black","gray","cyan","magenta","violet","brown","beige"]);
   const renderHighlightBox = (s, data) => {
     addTitle(s, data.title);
     const items = data.visual?.items || data.points || (data.content ? data.content.split("\n").filter(Boolean) : []);
-    const hasFooter = !!(data.accent || data.gap);
+    const rawAccent = data.accent || data.gap;
+    const isColorPlaceholder = typeof rawAccent === "string" && rawAccent.trim().split(/\s+/).length === 1 && COLOR_NAMES.has(rawAccent.trim().toLowerCase());
+    const hasFooter = !!rawAccent && !isColorPlaceholder;
     const footerH = 0.88;
     const COL_Y = TITLE_H + 0.15;
     const availH = 5.625 - COL_Y - (hasFooter ? footerH + 0.22 : 0.25);
@@ -257,7 +260,7 @@ export async function exportToPptxFile(slideData, info) {
     if (hasFooter) {
       const gy = 5.625 - footerH - 0.1;
       s.addShape(pptx.ShapeType.rect, { x: CONTENT_X, y: gy, w: CONTENT_W, h: footerH, fill: { color: T.accent }, line: { type: "none" } });
-      s.addText(String(data.accent || data.gap), {
+      s.addText(String(rawAccent), {
         x: CONTENT_X + 0.15, y: gy, w: CONTENT_W - 0.3, h: footerH,
         fontSize: 13, bold: true, color: T.text, fontFace: "Calibri", align: "left", valign: "middle", wrap: true,
       });

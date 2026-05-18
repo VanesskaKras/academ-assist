@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { SpinDot } from "../SpinDot.jsx";
 import { Heading, NavBtn } from "../Buttons.jsx";
 import { PhotoDropZone } from "../PhotoDropZone.jsx";
@@ -11,6 +11,7 @@ export function CorrectionsStage({
   correctionChecked, setCorrectionChecked,
   correctionLoading,
   correctionApplyLoading,
+  correctionApplyProgress,
   correctionHistory,
   doAnalyzeCorrections,
   doApplyCorrections,
@@ -18,7 +19,9 @@ export function CorrectionsStage({
   fileParseLoading,
   uploadedFileName,
   setStage,
+  onExportDocx,
 }) {
+  const [docxLoading, setDocxLoading] = useState(false);
   const fileInputRef = useRef();
   const checkedCount = Object.values(correctionChecked).filter(Boolean).length;
   const analysisItems = correctionAnalysis || [];
@@ -187,8 +190,21 @@ export function CorrectionsStage({
                 ? <><SpinDot light />Виправляю...</>
                 : `Виправити обрані (${checkedCount}) →`}
             </button>
-            {correctionApplyLoading && (
-              <span style={{ fontSize: 12, color: "#6a9000" }}>Claude переписує розділи зберігаючи тему і контекст</span>
+            {correctionApplyLoading && correctionApplyProgress && (
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 12, color: "#6a9000", marginBottom: 5 }}>
+                  {correctionApplyProgress.done < correctionApplyProgress.total
+                    ? <>Переписую: <strong style={{ color: "#a8e060" }}>{correctionApplyProgress.current}</strong> ({correctionApplyProgress.done + 1} з {correctionApplyProgress.total})</>
+                    : "Зберігаю..."}
+                </div>
+                <div style={{ height: 4, borderRadius: 2, background: "#0e1e00", overflow: "hidden", width: "100%", maxWidth: 280 }}>
+                  <div style={{
+                    height: "100%", borderRadius: 2, background: "#a8e060",
+                    width: `${Math.round(((correctionApplyProgress.done + 1) / correctionApplyProgress.total) * 100)}%`,
+                    transition: "width 0.4s ease",
+                  }} />
+                </div>
+              </div>
             )}
           </div>
         </div>
@@ -240,8 +256,24 @@ export function CorrectionsStage({
         </div>
       )}
 
-      <div style={{ display: "flex", gap: 12, marginTop: 8 }}>
+      <div style={{ display: "flex", gap: 12, marginTop: 8, alignItems: "center", flexWrap: "wrap" }}>
         <NavBtn onClick={() => setStage("done")}>← Готово</NavBtn>
+        {correctionHistory.length > 0 && onExportDocx && (
+          <button
+            disabled={docxLoading || correctionApplyLoading}
+            onClick={() => onExportDocx(setDocxLoading)}
+            style={{
+              background: (docxLoading || correctionApplyLoading) ? "#444" : "#1a4a1a",
+              color: (docxLoading || correctionApplyLoading) ? "#aaa" : "#a8e060",
+              border: "none", borderRadius: 6,
+              padding: "9px 22px", fontFamily: "'Spectral',serif",
+              fontSize: 13, cursor: (docxLoading || correctionApplyLoading) ? "default" : "pointer",
+              display: "inline-flex", alignItems: "center", gap: 8,
+            }}
+          >
+            {docxLoading ? <><SpinDot light />Генерую Word...</> : "⬇ Завантажити .docx"}
+          </button>
+        )}
       </div>
     </div>
   );
