@@ -137,6 +137,7 @@ export function parseClientPlan(text, totalPages, lang = "Українська")
   const { intro: introLabel, conclusions: conclLabel, sources: srcLabel, chapConclLabel } = getLangLabels(lang);
 
   const normalized = text
+    .replace(/С(?=[Hh][Aa][Pp][Tt][Ee][Rr])/g, 'C')
     .replace(/([^\n])\s+(Розділ\s)/gi, "$1\n$2")
     .replace(/([^\n])\s+(Chapter\s)/gi, "$1\n$2")
     .replace(/([^\n])\s+(Rozdział\s)/gi, "$1\n$2")
