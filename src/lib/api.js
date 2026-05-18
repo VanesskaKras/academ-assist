@@ -113,17 +113,18 @@ async function uploadLargeFile(base64Data, mimeType) {
   const rawSize = Math.floor(base64Data.length * 0.75);
   if (rawSize <= FILE_INLINE_LIMIT) return null;
 
-  const initRes = await fetch("/api/gemini-files-init", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mimeType, fileSize: rawSize }),
-  });
-  if (!initRes.ok) throw new Error("Не вдалось ініціалізувати завантаження файлу");
-  const { uploadUrl } = await initRes.json();
-
+  // Decode first to get exact byte count (base64 padding makes estimates off by 1-2 bytes)
   const binary = atob(base64Data);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+  const initRes = await fetch("/api/gemini-files-init", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mimeType, fileSize: bytes.byteLength }),
+  });
+  if (!initRes.ok) throw new Error("Не вдалось ініціалізувати завантаження файлу");
+  const { uploadUrl } = await initRes.json();
 
   const uploadRes = await fetch(uploadUrl, {
     method: "POST",
