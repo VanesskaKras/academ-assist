@@ -128,13 +128,15 @@ async function uploadLargeFile(base64Data, mimeType) {
   const uploadRes = await fetch(uploadUrl, {
     method: "POST",
     headers: {
-      "Content-Length": String(bytes.byteLength),
       "X-Goog-Upload-Offset": "0",
       "X-Goog-Upload-Command": "upload, finalize",
     },
     body: bytes,
   });
-  if (!uploadRes.ok) throw new Error("Не вдалось завантажити файл до Gemini");
+  if (!uploadRes.ok) {
+    const errText = await uploadRes.text().catch(() => "");
+    throw new Error(`Не вдалось завантажити файл до Gemini (${uploadRes.status}): ${errText.slice(0, 150)}`);
+  }
   const data = await uploadRes.json();
   return data.file?.uri;
 }
