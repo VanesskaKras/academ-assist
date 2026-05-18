@@ -1041,13 +1041,25 @@ ${materialContext}${methodReqBlock}${commentBlock}${sourcesBlock}${!methodReqBlo
 – наступний рядок — підпис: Рис. N — Назва рисунку`
       : "";
 
+    const isEnglishLang = /англ|english/i.test(lang);
     const typePrompts = {
-      stattia: `Напиши НАУКОВУ СТАТТЮ.
+      stattia: isEnglishLang
+        ? `Write an ACADEMIC ARTICLE.
+Title: "${info?.topic}" — in CAPITALS, centered.
+Field: ${[info?.subject, info?.direction].filter(Boolean).join(", ")}.
+Structure: Introduction (relevance, aim), Materials and Methods, Results and Discussion, Conclusions.
+Length: ~${totalPages} pages. Academic style. No bold.`
+        : `Напиши НАУКОВУ СТАТТЮ.
 Назва: "${info?.topic}" — ВЕЛИКИМИ ЛІТЕРАМИ, по центру.
 Галузь: ${[info?.subject, info?.direction].filter(Boolean).join(", ")}.
 Структура: Вступ (актуальність, мета), Матеріали і методи, Результати та обговорення, Висновки.
 Обсяг: ~${totalPages} сторінок. Академічний стиль. Без жирного.`,
-      ese: `Напиши ЕСЕ.
+      ese: isEnglishLang
+        ? `Write an ESSAY.
+Title: "${info?.topic}".
+Structure: thesis, arguments with examples (3-4 paragraphs), counter-argument, conclusion.
+Length: ~${totalPages} pages. Analytical style. No bold.`
+        : `Напиши ЕСЕ.
 Назва: "${info?.topic}".
 Структура: теза, аргументи з прикладами (3-4 абзаци), контраргумент, висновок.
 Обсяг: ~${totalPages} сторінок. Аналітичний стиль. Без жирного.`,
@@ -1064,7 +1076,7 @@ ${sourcesList ? `\nПісля основного тексту додай (збе
 
     try {
       const msgs = [{ role: "user", content: [...matFileContext, ...fileContext, { type: "text", text: prompt }] }];
-      const text = await callClaude(msgs, null, buildSYSSmall(lang), 6000);
+      const text = await callClaude(msgs, null, buildSYSSmall(lang), 8000);
       setResult(text);
       playDoneSound();
       await saveToFirestore({ result: text, tezyCitations: activeCitations, stage: "done", status: "done" });

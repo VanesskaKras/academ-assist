@@ -12,7 +12,7 @@ export function buildSYS(lang = "Українська", methodInfo = null) {
     ? `STRICTLY FORBIDDEN to use Latin-script words, terms, or names in the text. Transliterate foreign researcher names into Ukrainian (e.g., "Джон Дьюї"). Replace foreign terms with Ukrainian equivalents. EXCEPTION: citations in format [N] or (Author, year) may contain Latin if the author is foreign — keep author names in original script. Source context passed as [N]... — Latin there is allowed, do NOT transliterate it.`
     : isChinese
     ? `所有正文必须使用中文。引用格式[N]或(作者,年份)中的外文作者姓名保持原文。`
-    : `Write entirely in ${lang}. Do not mix with Ukrainian, Russian, or any other language. EXCEPTION: citations [N] or (Author, year) — keep author names in their original language.`;
+    : `Write entirely in ${lang}. Do not mix with Ukrainian, Russian, or any other language. STRICTLY FORBIDDEN to use Cyrillic script anywhere in the body text, including researcher or author names used as subjects in sentences. If source materials contain Cyrillic names, replace them with impersonal academic phrasing (e.g. "research indicates" instead of "Калюжна argues"). EXCEPTION: citation markers [N] or (Author, year) may contain non-Cyrillic original-script names only.`;
 
   const mTableFormat = methodInfo?.formatting?.tableFormat;
   const mFigureFormat = methodInfo?.formatting?.figureFormat;
@@ -34,11 +34,17 @@ STRICTLY FORBIDDEN: table without caption. Every table MUST have a "${tableCapEx
   const figureRules = mFigureFormat
     ? `FIGURES — mandatory rules (per methodology):
 1. Number figures within each section: ${figWord} X.Y (X = section number, Y = figure number within section).
-2. Caption format per methodology: ${mFigureFormat}. Place caption on a separate line after the figure placeholder.
-3. The text before the figure MUST contain a sentence referencing it, e.g.: "${figRef} X.Y".`
+2. When a diagram, chart, or graph is needed: create a markdown data table with the values to be plotted (do NOT add a "${tableWord}" caption above it), then place the figure caption BELOW the table (format per methodology: ${mFigureFormat}), then add exactly this line right after the caption: ⚠ ДІАГРАМА: виділіть таблицю вище → Вставка → Діаграма у Word.
+3. For non-data figures (conceptual diagrams, models, schemes with no numeric data) — insert a standalone placeholder: ${figWord} X.Y – Figure name (caption below, no data table, no hint line).
+4. The text before the figure MUST contain a sentence referencing it, e.g.: "${figRef} X.Y".`
     : `FIGURES — mandatory rules:
-1. If a section needs a figure (diagram, chart, etc.) — insert a placeholder on a separate line after the figure location: ${figWord} X.Y – Figure name (X = section, Y = figure number within section).
-2. The text before the figure placeholder MUST contain a sentence referencing it, e.g.: "${figRef} X.Y". Without this reference the figure must not appear.`;
+1. When a diagram, chart, or graph is needed in a section: do NOT insert a standalone placeholder. Instead:
+   a. Write a sentence in the text referencing the figure, e.g.: "${figRef} X.Y demonstrates..."
+   b. Create a markdown data table with the values to be plotted (do NOT add a "${tableWord}" caption above it).
+   c. On a new line immediately after the table, place the figure caption: ${figWord} X.Y – Figure name
+   d. On the very next line after the caption, add exactly this hint: ⚠ ДІАГРАМА: виділіть таблицю вище → Вставка → Діаграма у Word.
+2. For non-data figures (conceptual diagrams, models, schemes with no numeric data) — insert a standalone placeholder: ${figWord} X.Y – Figure name (no data table, no hint line).
+3. The text before any figure MUST contain a sentence referencing it, e.g.: "${figRef} X.Y". Without this reference no figure may appear.`;
 
   return `You are an expert academic writer.
 
@@ -112,7 +118,7 @@ export function buildSYSSmall(lang = "Українська") {
     ? `STRICTLY FORBIDDEN to use Latin-script words, terms, or names in the text. Transliterate foreign researcher names into Ukrainian. EXCEPTION: citations [N] or (Author, year) may contain Latin; source context [N]... — do NOT transliterate.`
     : isChinese
     ? `所有正文必须使用中文。引用格式中的外文作者姓名保持原文。`
-    : `Write entirely in ${lang}. Do not mix with Ukrainian, Russian, or any other language. EXCEPTION: citations [N] or (Author, year) — keep author names in their original language.`;
+    : `Write entirely in ${lang}. Do not mix with Ukrainian, Russian, or any other language. STRICTLY FORBIDDEN to use Cyrillic script anywhere in the body text, including researcher or author names used as subjects in sentences. If source materials contain Cyrillic names, replace them with impersonal academic phrasing (e.g. "research indicates" instead of "Калюжна argues"). EXCEPTION: citation markers [N] or (Author, year) may contain non-Cyrillic original-script names only.`;
 
   return `You are an expert academic writer.
 
@@ -126,7 +132,7 @@ Researchers and scholars: do NOT cite or mention Russian or Belarusian scholars.
 Do NOT use markdown markup: no #, ##, **, *, - at line start. Write plain text.
 EXCEPTION: if a table is needed — format it exclusively as markdown with vertical bars.
 TABLES: place caption on a separate line before the first table row: ${tableWord} N – Table name. Text before the table MUST contain a sentence referencing it, e.g.: "${tableRef} N".
-FIGURES: if a figure is needed — placeholder on a separate line: ${figWord} N – Figure name. Text before it MUST contain a referencing sentence, e.g.: "${figRef} N".
+FIGURES: when a diagram or chart is needed — create a data table (no "${tableWord}" caption above), place "${figWord} N – Figure name" BELOW the table, then add "⚠ ДІАГРАМА: виділіть таблицю вище → Вставка → Діаграма у Word." on the next line. For non-data figures — standalone placeholder: ${figWord} N – Figure name. Text before any figure MUST contain a referencing sentence, e.g.: "${figRef} N".
 Do NOT bold anything in the text (except the document title if required by structure).
 STRICTLY FORBIDDEN to invent author or researcher names. Use impersonal academic phrasing in ${lang}.
 STRICTLY FORBIDDEN to add a reference list at the end. No "${sourcesLabel}:", "References:", "Bibliography:" etc.

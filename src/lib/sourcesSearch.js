@@ -234,6 +234,23 @@ export function buildSemanticKeywords(sectionLabel = '', topic = '', direction =
   return queries;
 }
 
+// ── Фільтрація за роками (останні 5 років обов'язково, 6–10 — тільки якщо дуже релевантні) ──
+const YEAR_STRICT = new Date().getFullYear() - 4; // >= поточний-4 (останні 5 років)
+const YEAR_LOOSE  = new Date().getFullYear() - 9; // >= поточний-9 (останні 10 років)
+const YEAR_LOOSE_MIN_SCORE = 2; // мінімальний скор для 6–10-річних джерел
+
+function applyYearFilter(papers, keywords = []) {
+  return papers.map(p => ({
+    ...p,
+    _score: p._score ?? scoreRelevance((p.title || '').toLowerCase(), keywords),
+  })).filter(p => {
+    const yr = parseInt(p.year, 10) || 0;
+    if (yr >= YEAR_STRICT) return true;
+    if (yr >= YEAR_LOOSE) return (p._score || 0) >= YEAR_LOOSE_MIN_SCORE;
+    return false;
+  });
+}
+
 // ── OpenAlex ──
 const OA_BASE = 'https://api.openalex.org/works';
 const OA_FIELDS = 'title,authorships,publication_year,primary_location,doi,language,id,biblio,abstract_inverted_index';
@@ -312,7 +329,7 @@ function mapBASE(doc) {
     year: doc.dcyear || '',
     venue: Array.isArray(doc.dcpublisher) ? doc.dcpublisher[0] : (doc.dcpublisher || ''),
     doi,
-    pages: '',
+    pages: extractPagesFromDoi(doi),
     lang: hasCyrillic(title) ? 'uk' : 'pl',
     source: 'base',
     abstract: snippetAbstract(abstract),
@@ -363,7 +380,7 @@ function mapCORE(result) {
     year: result.yearPublished || '',
     venue: (result.journals || [])[0]?.title || result.publisher || '',
     doi,
-    pages: '',
+    pages: extractPagesFromDoi(doi),
     lang: hasCyrillic(title) ? 'uk' : 'en',
     source: 'core',
     abstract: snippetAbstract(result.abstract || ''),
@@ -374,7 +391,7 @@ function mapCORE(result) {
 // ── OpenAlex книги (тип book/monograph, україномовні) ──
 async function fetchOpenAlexBooks(query, limit) {
   try {
-    const yr = 'publication_year:>2014';
+    const yr = `publication_year:>${YEAR_LOOSE - 1}`;
     const url = `${OA_BASE}?search=${encodeURIComponent(query)}&filter=type:book,language:uk,${yr}&per_page=${limit}&select=${OA_FIELDS}`;
     const r = await fetch(url, { cache: 'no-store' });
     if (!r.ok) return [];
@@ -406,7 +423,7 @@ async function fetchCrossRefBooks(query, limit) {
           || p['published-print']?.['date-parts']?.[0]?.[0] || '',
         venue: p['container-title']?.[0] || p.publisher || '',
         doi: p.DOI || '',
-        pages: '',
+        pages: p.page ? p.page.replace('-', '–') : extractPagesFromDoi(p.DOI || ''),
         lang: 'uk',
         source: 'crossref',
         type: 'book',
@@ -434,7 +451,7 @@ async function fetchBooksSerper(query, limit) {
 
 // ── CrossRef (добре покриває укр. журнали з DOI) ──
 async function fetchCrossRefUkrainian(query, limit) {
-  const url = `https://api.crossref.org/works?query=${encodeURIComponent(query)}&filter=from-pub-date:2020&rows=${Math.min(limit * 2, 20)}`;
+  const url = `https://api.crossref.org/works?query=${encodeURIComponent(query)}&filter=from-pub-date:${YEAR_LOOSE}&rows=${Math.min(limit * 2, 20)}`;
   const r = await fetch(url, {
     cache: 'no-store',
     headers: { 'User-Agent': 'AcademAssist/1.0 (mailto:support@academ-assist.vercel.app)' },
@@ -481,7 +498,7 @@ async function fetchEnglishViaBackend(enKeywords, limit) {
 
 // ── Пошук за однією фразою: BASE, Scholar (опційно), CORE, OpenAlex uk, CrossRef, OpenAlex pl ──
 export async function searchByPhrase(phrase, limit = 10, page = 1, useScholar = false) {
-  const yr = 'publication_year:>2019';
+  const yr = `publication_year:>${YEAR_LOOSE - 1}`;
   const [r1, r2, r3, r4, r5, r6] = await Promise.allSettled([
     fetchBASE(phrase, limit),
     useScholar ? fetchScholar(phrase, limit) : Promise.resolve([]),
@@ -499,14 +516,15 @@ export async function searchByPhrase(phrase, limit = 10, page = 1, useScholar = 
   const plRaw      = r6.status === 'fulfilled' ? r6.value.map(p => mapOpenAlex(p, 'pl')) : [];
 
   const seen = new Set();
-  const results = [];
+  const raw = [];
   for (const p of [...baseRaw, ...scholarRaw, ...coreRaw, ...ukRaw, ...crRaw, ...plRaw]) {
     const key = (p.title || '').toLowerCase().slice(0, 60);
     if (!key || seen.has(key)) continue;
     seen.add(key);
-    results.push(p);
+    raw.push(p);
   }
-  return results;
+  const keywords = phrase.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+  return applyYearFilter(raw, keywords);
 }
 
 // ── Головна функція пошуку ──
@@ -517,7 +535,7 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
   const target = 25;
   const fetchLimit = 15;
   const allUkKeywords = [...new Set([...ukKeywords, ...semKeywords])];
-  const yr = 'publication_year:>2019';
+  const yr = `publication_year:>${YEAR_LOOSE - 1}`;
 
   // ── Фрази для запитів ──
   // Якщо Gemini надав фрази — використовуємо їх; інакше — стара логіка ротації
@@ -604,12 +622,12 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
     }
   }
 
-  // Скоринг + domainBoost
+  // Скоринг + domainBoost + фільтр за роками
   const withScore = allUk.map(p => ({
     ...p,
     _score: scoreRelevance(p.title.toLowerCase(), allUkKeywords),
   })).sort((a, b) => b._score - a._score);
-  const boosted = domainBoost(withScore, sectionTitle, topic);
+  const boosted = domainBoost(applyYearFilter(withScore, allUkKeywords), sectionTitle, topic);
 
   // Іноземні: польські + англійські
   const maxForeign = Math.max(1, Math.ceil(needed * 0.3));
@@ -627,10 +645,13 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
     foreignSeen.add(key);
     allForeign.push(p);
   }
-  const foreignScored = allForeign.map(p => ({
-    ...p,
-    _score: scoreRelevance((p.title || '').toLowerCase(), enKeywords),
-  })).sort((a, b) => b._score - a._score);
+  const foreignScored = applyYearFilter(
+    allForeign.map(p => ({
+      ...p,
+      _score: scoreRelevance((p.title || '').toLowerCase(), enKeywords),
+    })).sort((a, b) => b._score - a._score),
+    enKeywords,
+  );
 
   const ukSeen = new Set(boosted.slice(0, target).map(p => (p.title || '').toLowerCase().slice(0, 60)));
   const foreignFiltered = foreignScored.filter(p => !ukSeen.has((p.title || '').toLowerCase().slice(0, 60)));
@@ -653,10 +674,12 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
     booksPool.push(p);
   }
   const maxBooks = Math.max(2, Math.ceil(needed * 0.4));
-  const booksScored = booksPool
-    .map(p => ({ ...p, _score: scoreRelevance((p.title || '').toLowerCase(), allUkKeywords) }))
-    .sort((a, b) => b._score - a._score)
-    .slice(0, maxBooks);
+  const booksScored = applyYearFilter(
+    booksPool
+      .map(p => ({ ...p, _score: scoreRelevance((p.title || '').toLowerCase(), allUkKeywords) }))
+      .sort((a, b) => b._score - a._score),
+    allUkKeywords,
+  ).slice(0, maxBooks);
 
   const flat = [
     ...boosted.slice(0, target),

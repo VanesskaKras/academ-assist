@@ -225,8 +225,10 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
       children: [new TextRun({ text, font: FONT, size: SIZE, bold: true, color: "000000" })],
     });
   }
-  function makeTableDocx(lines) {
-    const border = { style: BorderStyle.SINGLE, size: 1, color: "000000" };
+  function makeTableDocx(lines, isDiagram = false) {
+    const borderColor = isDiagram ? "1A5EAB" : "000000";
+    const borderSize = isDiagram ? 6 : 1;
+    const border = { style: BorderStyle.SINGLE, size: borderSize, color: borderColor };
     const cellBorders = { top: border, bottom: border, left: border, right: border };
     const filteredLines = lines.filter(l => !/^\s*\|[-:| ]+\|\s*$/.test(l));
     const rows = filteredLines.map((l, rowIndex) => {
@@ -240,7 +242,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
             children: [new Paragraph({
               alignment: isHeader ? AlignmentType.CENTER : AlignmentType.LEFT,
               spacing: { line: 240, lineRule: "exact", before: 0, after: 0 },
-              children: [new TextRun({ text: cellText, font: FONT, size: 24, color: "000000", bold: isHeader })],
+              children: [new TextRun({ text: cellText, font: FONT, size: 24, color: isDiagram ? "1A5EAB" : "000000", bold: isHeader })],
             })],
           })
         ),
@@ -260,6 +262,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     let i = 0;
     let taskMode = false;
     let taskNum = 0;
+    let lastWasDiagramTable = false;
     const TASK_HEADER_RE = /^(Завдання дослідження|Для досягнення мети|Для вирішення поставлених)/i;
     const INTRO_KEYWORD_RE = /^(Актуальн|Мета[\s.–—]|Метою|Завдання|Для досягн|Для вирішен|Об.єкт|Предмет|Метод(?:и|ологічн)|Наукова|Практична|Апробац|Структур|Теоретико|Матеріал|Хронологічн)/i;
     while (i < lines.length) {
@@ -270,8 +273,13 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
           tableLines.push(lines[i]);
           i++;
         }
+        let j = i;
+        while (j < lines.length && !lines[j].trim()) j++;
+        const peekLine = j < lines.length ? lines[j].trim() : "";
+        const isDiagram = fwRe.test(peekLine);
+        lastWasDiagramTable = isDiagram;
         if (tableLines.filter(l => !/^\s*\|[-:| ]+\|\s*$/.test(l)).length > 0) {
-          result.push(makeTableDocx(tableLines));
+          result.push(makeTableDocx(tableLines, isDiagram));
           result.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
         }
         continue;
@@ -314,10 +322,21 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
       if (fwRe.test(line.trim())) {
         const ff = methodInfo?.formatting?.figureFormat || "";
         const fBold = /жирн|bold/i.test(ff);
+        const isDiagramCaption = lastWasDiagramTable;
+        lastWasDiagramTable = false;
         result.push(new Paragraph({
           alignment: AlignmentType.CENTER,
-          spacing: { line: LINE, lineRule: "auto", before: 0, after: Math.round(LINE * 0.5) },
-          children: [new TextRun({ text: line.trim(), font: FONT, size: SIZE, bold: fBold, color: "B85C00" })],
+          spacing: { line: LINE, lineRule: "auto", before: 0, after: isDiagramCaption ? Math.round(LINE * 0.2) : Math.round(LINE * 0.5) },
+          children: [new TextRun({ text: line.trim(), font: FONT, size: SIZE, bold: isDiagramCaption || fBold, italics: isDiagramCaption, color: isDiagramCaption ? "1A5EAB" : "B85C00" })],
+        }));
+        i++;
+        continue;
+      }
+      if (/^⚠/.test(line.trim())) {
+        result.push(new Paragraph({
+          alignment: AlignmentType.CENTER,
+          spacing: { line: LINE_SINGLE, lineRule: "auto", before: 0, after: LINE },
+          children: [new TextRun({ text: line.trim(), font: FONT, size: SIZE_NUM, color: "1A5EAB", italics: true, bold: true })],
         }));
         i++;
         continue;
@@ -360,6 +379,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
         result.push(numberedListPara(`${taskNum}. ${raw}`));
         i++; continue;
       }
+      lastWasDiagramTable = false;
       result.push(isIntro ? introBoldPara(raw) : bodyPara(raw));
       i++;
     }
