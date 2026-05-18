@@ -3308,13 +3308,13 @@ ${refLines2.join("\n")}`;
       if (!newContent[sec.id]) return;
       const mapping = secLocalToGlobal[sec.id];
       if (!mapping || !Object.keys(mapping).length) return;
-      // Крок A: локальні номери → placeholders (max 2 рази на підрозділ для кожного джерела)
+      // Крок A: локальні номери → placeholders (max 1 раз на підрозділ для кожного джерела)
       const citCount = {};
       let text = newContent[sec.id].replace(/\[(\d+)(?:,\s*с\.\s*\d+)?\]/g, (match, localN) => {
         const globalN = mapping[Number(localN)];
         if (!globalN) return match;
         citCount[globalN] = (citCount[globalN] || 0) + 1;
-        return citCount[globalN] <= 2 ? `%%CIT${globalN}%%` : "";
+        return citCount[globalN] <= 1 ? `%%CIT${globalN}%%` : "";
       });
       // Крок B: placeholders → фінальний формат (для APA: (Прізвище, рік), для ДСТУ: [N])
       text = text.replace(/%%CIT(\d+)%%/g, (_, n) => refCiteText[Number(n)] || `[${n}]`);

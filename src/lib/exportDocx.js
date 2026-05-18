@@ -582,11 +582,28 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
   if (normAppendices && normAppendices.trim()) {
     children.push(new Paragraph({ pageBreakBefore: true, spacing: { before: 0, after: 0, line: LINE, lineRule: "auto" }, children: [] }));
     children.push(heading1(lc.appendixWord));
-    normAppendices.split("\n").forEach(line => {
+    const appLines = normAppendices.split("\n");
+    let ai = 0;
+    const fmt = methodInfo?.formatting || {};
+    const tf = fmt.tableFormat || "";
+    const tAlignRight = fmt.tableNumberRight ?? /правий|right|справа|верхн.*кут/i.test(tf);
+    const tCenter    = fmt.tableTitleCenter ?? /по\s*центру.*назв|назв.*по\s*центру|центр/i.test(tf);
+    const tBold      = fmt.tableTitleBold   ?? /жирн|bold/i.test(tf);
+    while (ai < appLines.length) {
+      const line = appLines[ai];
+      if (/^\s*\|/.test(line)) {
+        const tableLines = [];
+        while (ai < appLines.length && /^\s*\|/.test(appLines[ai])) { tableLines.push(appLines[ai]); ai++; }
+        if (tableLines.filter(l => !/^\s*\|[-:| ]+\|\s*$/.test(l)).length > 0) {
+          children.push(makeTableDocx(tableLines));
+          children.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
+        }
+        continue;
+      }
       const raw = line.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1").trim();
       if (!raw) {
         children.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
-        return;
+        ai++; continue;
       }
       if (/^ДОДАТОК\s+[А-ЯA-Z]/i.test(raw)) {
         children.push(new Paragraph({
@@ -595,15 +612,44 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
           spacing: { line: LINE, lineRule: "auto", before: LINE, after: Math.round(LINE / 2) },
           children: [new TextRun({ text: raw.toUpperCase(), font: FONT, size: SIZE, bold: false, color: "000000" })],
         }));
-      } else {
-        children.push(new Paragraph({
-          indent: { firstLine: INDENT },
-          spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
-          alignment: AlignmentType.BOTH,
-          children: [new TextRun({ text: raw, font: FONT, size: SIZE, color: "000000" })],
-        }));
+        ai++; continue;
       }
-    });
+      if (/^Таблиця\s+\w/.test(raw) || /^Tabelle\s+\w/i.test(raw) || /^Table\s+\w/i.test(raw)) {
+        const tTwoLine = tAlignRight && (tCenter || tBold);
+        const dashIdx = raw.search(/ [–\-] /);
+        if (tTwoLine && dashIdx !== -1) {
+          const numPart = raw.substring(0, dashIdx).trim();
+          const namePart = raw.substring(dashIdx + 3).trim();
+          children.push(new Paragraph({
+            alignment: AlignmentType.RIGHT,
+            spacing: { line: LINE, lineRule: "auto", before: Math.round(LINE * 0.5), after: 0 },
+            indent: { firstLine: 0 },
+            children: [new TextRun({ text: numPart, font: FONT, size: SIZE, color: "000000" })],
+          }));
+          children.push(new Paragraph({
+            alignment: AlignmentType.CENTER,
+            spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
+            indent: { firstLine: 0 },
+            children: [new TextRun({ text: namePart, font: FONT, size: SIZE, bold: true, color: "000000" })],
+          }));
+        } else {
+          children.push(new Paragraph({
+            alignment: tAlignRight ? AlignmentType.RIGHT : AlignmentType.BOTH,
+            spacing: { line: LINE, lineRule: "auto", before: Math.round(LINE * 0.5), after: 0 },
+            indent: { firstLine: tAlignRight ? 0 : INDENT },
+            children: [new TextRun({ text: raw, font: FONT, size: SIZE, bold: tBold, color: "000000" })],
+          }));
+        }
+        ai++; continue;
+      }
+      children.push(new Paragraph({
+        indent: { firstLine: INDENT },
+        spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
+        alignment: AlignmentType.BOTH,
+        children: [new TextRun({ text: raw, font: FONT, size: SIZE, color: "000000" })],
+      }));
+      ai++;
+    }
   }
 
   const doc = new Document({
