@@ -2860,7 +2860,7 @@ ${sourcesOrder} ${sourcesGrouping}${methodSourcesRules}
 ${refLines.join("\n")}`;
     let fmtResult;
     try {
-      fmtResult = await callGemini([{ role: "user", content: fmtPrompt }], null,
+      fmtResult = await callClaude([{ role: "user", content: fmtPrompt }], null,
         `Ти — асистент з бібліографічного форматування. Форматуй джерела строго за стилем ${sourcesStyle}. Не змішуй стилі цитування. Не перекладай і не транслітеруй прізвища авторів та назви джерел — зберігай мову оригіналу (українські джерела — українською, англійські — англійською). Перестав компоненти імені відповідно до вимог стилю (для APA: "Ім'я Прізвище" → "Прізвище, І."). Назви повністю ВЕЛИКИМИ ЛІТЕРАМИ переводь у sentence case. Повертай тільки відформатований список, без зайвого тексту.`, 16000);
       setRefList(fmtResult.split("\n").filter(Boolean));
       const srcSec = sections.find(s => s.type === "sources");
@@ -3248,7 +3248,7 @@ ${refLines2.join("\n")}`;
 
     let fmtResult;
     try {
-      fmtResult = await callGemini([{ role: "user", content: fmtPrompt }], null,
+      fmtResult = await callClaude([{ role: "user", content: fmtPrompt }], null,
         `Ти — асистент з бібліографічного форматування. Форматуй джерела строго за стилем ${sourcesStyle}. Не змішуй стилі цитування. Не перекладай і не транслітеруй прізвища авторів та назви джерел — зберігай мову оригіналу (українські джерела — українською, англійські — англійською). Перестав компоненти імені відповідно до вимог стилю (для APA: "Ім'я Прізвище" → "Прізвище, І."). Назви повністю ВЕЛИКИМИ ЛІТЕРАМИ переводь у sentence case. Повертай тільки відформатований список, без зайвого тексту.`, 16000);
     } catch (e) { console.error("remap fmt error:", e); }
 

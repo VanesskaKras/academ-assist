@@ -75,6 +75,21 @@ export function renumberTablesAndFigures(content, displayOrder, lang) {
 }
 
 // ─────────────────────────────────────────────
+// Визначає код мови Word для перевірки правопису
+// ─────────────────────────────────────────────
+function getLangWordCode(lang) {
+  const l = (lang || "").toLowerCase();
+  if (/англ|english/.test(l)) return "en-US";
+  if (/польськ|polish/.test(l)) return "pl-PL";
+  if (/іспан|spanish|español/.test(l)) return "es-ES";
+  if (/нім|german|deutsch/.test(l)) return "de-DE";
+  if (/чеськ|czech/.test(l)) return "cs-CZ";
+  if (/словацьк|slovak/.test(l)) return "sk-SK";
+  if (/китайськ|chinese/.test(l)) return "zh-CN";
+  return "uk-UA";
+}
+
+// ─────────────────────────────────────────────
 // Word export (основний документ)
 // ─────────────────────────────────────────────
 export async function exportToDocx({ content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo, commentAnalysis, orderId }) {
@@ -87,6 +102,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     });
   }
   const lc = getLangLabels(info?.language);
+  const langCode = getLangWordCode(info?.language);
   const numberedContent = renumberTablesAndFigures(content, displayOrder, info?.language);
   Object.keys(numberedContent).forEach(k => { if (numberedContent[k]) numberedContent[k] = numberedContent[k].replace(/'/g, '\u2019'); });
   const normAppendices = appendicesText ? appendicesText.replace(/'/g, '\u2019') : appendicesText;
@@ -655,10 +671,10 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
   const doc = new Document({
     features: { updateFields: true },
     styles: {
-      default: { document: { run: { font: FONT, size: SIZE, color: "000000" }, paragraph: { spacing: { line: LINE, lineRule: "auto" } } } },
+      default: { document: { run: { font: FONT, size: SIZE, color: "000000", language: { value: langCode } }, paragraph: { spacing: { line: LINE, lineRule: "auto" } } } },
       paragraphStyles: [
-        { id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal", run: { font: FONT, size: SIZE, bold: true, color: "000000" }, paragraph: { spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, alignment: AlignmentType.CENTER, indent: { firstLine: 0 } } },
-        { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", run: { font: FONT, size: SIZE, bold: true, color: "000000" }, paragraph: { spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, alignment: AlignmentType.BOTH, indent: { firstLine: INDENT } } },
+        { id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal", run: { font: FONT, size: SIZE, bold: true, color: "000000", language: { value: langCode } }, paragraph: { spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, alignment: AlignmentType.CENTER, indent: { firstLine: 0 } } },
+        { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", run: { font: FONT, size: SIZE, bold: true, color: "000000", language: { value: langCode } }, paragraph: { spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, alignment: AlignmentType.BOTH, indent: { firstLine: INDENT } } },
       ],
     },
     sections: [{
@@ -698,6 +714,7 @@ export async function exportPlanToDocx({ sections, info, methodInfo }) {
   }
   const { Document, Packer, Paragraph, TextRun, AlignmentType, HeadingLevel } = window.docx;
   const FONT = "Times New Roman", SIZE = 28, LINE = 360, INDENT = 709;
+  const langCode = getLangWordCode(info?.language);
   const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
   const marg = methodInfo?.formatting?.margins || {};
   const toMm = v => (v != null && Number(v) > 0 ? Number(v) : null);
@@ -744,7 +761,7 @@ export async function exportPlanToDocx({ sections, info, methodInfo }) {
   if (srcs) children.push(new Paragraph({ heading: HeadingLevel.HEADING_1, spacing: { line: LINE, lineRule: "auto", before: LINE, after: Math.round(LINE / 2) }, alignment: AlignmentType.LEFT, indent: { firstLine: 0 }, children: [new TextRun({ text: "СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ", font: FONT, size: SIZE, bold: true, color: "000000" })] }));
 
   const doc = new Document({
-    styles: { default: { document: { run: { font: FONT, size: SIZE, color: "000000" }, paragraph: { spacing: { line: LINE, lineRule: "auto" } } } } },
+    styles: { default: { document: { run: { font: FONT, size: SIZE, color: "000000", language: { value: langCode } }, paragraph: { spacing: { line: LINE, lineRule: "auto" } } } } },
     sections: [{ properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: T, right: R, bottom: B, left: L } } }, children }],
   });
 
@@ -775,6 +792,7 @@ export async function exportAppendixToDocx(text, info, methodInfo, orderId) {
   }
   const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel, Table, TableRow, TableCell, WidthType, BorderStyle } = window.docx;
   const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
+  const langCode = getLangWordCode(info?.language);
   const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
   const marg = methodInfo?.formatting?.margins || {};
   const toMm = v => (v != null && Number(v) > 0 ? Number(v) : null);
@@ -906,7 +924,7 @@ export async function exportAppendixToDocx(text, info, methodInfo, orderId) {
   }
 
   const doc = new Document({
-    styles: { default: { document: { run: { font: FONT, size: SIZE, color: "000000" }, paragraph: { spacing: { line: LINE, lineRule: "auto" } } } } },
+    styles: { default: { document: { run: { font: FONT, size: SIZE, color: "000000", language: { value: langCode } }, paragraph: { spacing: { line: LINE, lineRule: "auto" } } } } },
     sections: [{
       properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: T, right: R, bottom: B, left: L } }, pageNumberStart: 1 },
       headers: { default: new Header({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, spacing: { before: 0, after: 0 }, children: [new TextRun({ children: [PageNumber.CURRENT], font: FONT, size: SIZE_NUM, color: "000000" })] })] }) },
@@ -941,6 +959,7 @@ export async function exportSpeechToDocx(text, info, methodInfo, orderId) {
   }
   const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header } = window.docx;
   const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
+  const langCode = getLangWordCode(info?.language);
   const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
   const marg = methodInfo?.formatting?.margins || {};
   const toMm = v => (v != null && Number(v) > 0 ? Number(v) : null);
@@ -970,7 +989,7 @@ export async function exportSpeechToDocx(text, info, methodInfo, orderId) {
   });
 
   const doc = new Document({
-    styles: { default: { document: { run: { font: FONT, size: SIZE, color: "000000" }, paragraph: { spacing: { line: LINE, lineRule: "auto" } } } } },
+    styles: { default: { document: { run: { font: FONT, size: SIZE, color: "000000", language: { value: langCode } }, paragraph: { spacing: { line: LINE, lineRule: "auto" } } } } },
     sections: [{
       properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: T, right: R, bottom: B, left: L } }, pageNumberStart: 1 },
       headers: { default: new Header({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, spacing: { before: 0, after: 0 }, children: [new TextRun({ children: [PageNumber.CURRENT], font: FONT, size: SIZE_NUM, color: "000000" })] })] }) },
