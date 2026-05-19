@@ -5,14 +5,14 @@ export function WritingStage({
   running, paused, regenId, setRegenId, regenPrompt, setRegenPrompt,
   regenLoading, regenAllLoading, loadMsg, apiError, setApiError, progress,
   displayOrder, sections, genIdx, content, regenAllAbortRef,
-  stopGen, resumeGen, doRegenAll, doRegenSection, setStage, workflowMode,
+  stopGen, resumeGen, doRegenAll, doRegenSection, setStage,
   doRemapCitations, remapLoading,
   appendicesText, appendicesLoading,
 }) {
   return (
     <div className="fade">
       <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 10, flexWrap: "wrap" }}>
-        <Heading style={{ margin: 0 }}>{workflowMode === "sources-first" ? "05 / Генерація тексту" : "04 / Генерація тексту"}</Heading>
+        <Heading style={{ margin: 0 }}>05 / Генерація тексту</Heading>
         {running && <button onClick={stopGen} style={{ background: "#7a1010", color: "#fff", border: "none", borderRadius: 6, padding: "6px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>⏹ Зупинити</button>}
         {!running && paused && genIdx < sections.length && <button onClick={resumeGen} style={{ background: "#0a4a0a", color: "#e8ff47", border: "none", borderRadius: 6, padding: "6px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>▶ Продовжити</button>}
         {!running && !regenAllLoading && genIdx >= sections.length && <button onClick={doRegenAll} style={{ background: "transparent", border: "1px solid #555", color: "#ccc", borderRadius: 6, padding: "6px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>↺ Переписати всю роботу</button>}
@@ -90,13 +90,9 @@ export function WritingStage({
       )}
 
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 24 }}>
-        <NavBtn onClick={() => setStage(workflowMode === "sources-first" ? "sources" : "plan")} disabled={running}>
-          {workflowMode === "sources-first" ? "← До джерел" : "← План"}
-        </NavBtn>
+        <NavBtn onClick={() => setStage("sources")} disabled={running}>← До джерел</NavBtn>
         {!running && progress === 100 && (
-          workflowMode === "sources-first"
-            ? <GreenBtn onClick={doRemapCitations} loading={remapLoading} msg="Формую список літератури..." label="Сформувати список літератури та посилання →" />
-            : <PrimaryBtn onClick={() => setStage("sources")} label="Перейти до джерел →" />
+          <GreenBtn onClick={doRemapCitations} loading={remapLoading} msg="Формую список літератури..." label="Сформувати список літератури та посилання →" />
         )}
       </div>
     </div>

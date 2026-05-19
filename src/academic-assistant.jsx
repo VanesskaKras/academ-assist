@@ -11,7 +11,7 @@ import { exportToPptxFile } from "./lib/exportPptx.js";
 import { callClaude, callGemini, MODEL, MODEL_FAST } from "./lib/api.js";
 import { playDoneSound } from "./lib/audio.js";
 import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildClientMaterialsAnalysisPrompt, buildCorrectionsAnalysisPrompt, buildCorrectionRewritePrompt, buildFileToSectionsPrompt } from "./lib/prompts.js";
-import { FIELD_LABELS, isPsychoPed, isEcon, hasEmpiricalResearch, getEmpiricalSections, getEconSections, STAGES_TEXT_FIRST, STAGE_KEYS_TEXT_FIRST, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, getLangLabels } from "./lib/planUtils.js";
+import { FIELD_LABELS, isPsychoPed, isEcon, hasEmpiricalResearch, getEmpiricalSections, getEconSections, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, getLangLabels } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { searchByPhrase, filterSourcesWithGemini } from "./lib/sourcesSearch.js";
 import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
@@ -99,7 +99,6 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [stage, setStage] = useState("input");
   const [maxStageIdx, setMaxStageIdx] = useState(0);
-  const [workflowMode, setWorkflowMode] = useState("text-first"); // "text-first" | "sources-first"
   const [tplText, setTplText] = useState("");
   const [comment, setComment] = useState("");
   const [clientPlan, setClientPlan] = useState("");
@@ -278,9 +277,8 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
           if (d.slideJson) setSlideJson(d.slideJson);
           if (d.presentationReady) setPresentationReady(true);
           if (d.correctionHistory?.length) setCorrectionHistory(d.correctionHistory);
-          if (d.workflowMode) setWorkflowMode(d.workflowMode);
           if (d.stage) {
-            const keys = d.workflowMode === "sources-first" ? STAGE_KEYS_SOURCES_FIRST : STAGE_KEYS_TEXT_FIRST;
+            const keys = STAGE_KEYS_SOURCES_FIRST;
             const stageIdx = keys.indexOf(d.stage);
             setStage(d.stage);
             // Якщо написання вже завершено — позначаємо і розблоковуємо всі стадії
@@ -313,9 +311,8 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     load();
   }, [orderId, user]);
 
-  // Активні стейджі залежно від режиму
-  const activeStageKeys = workflowMode === "sources-first" ? STAGE_KEYS_SOURCES_FIRST : STAGE_KEYS_TEXT_FIRST;
-  const activeStages = workflowMode === "sources-first" ? STAGES_SOURCES_FIRST : STAGES_TEXT_FIRST;
+  const activeStageKeys = STAGE_KEYS_SOURCES_FIRST;
+  const activeStages = STAGES_SOURCES_FIRST;
 
   // Оновлюємо maxStageIdx коли просуваємось вперед
   useEffect(() => {
@@ -325,7 +322,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
       const newMax = stage === "done" ? activeStageKeys.length - 1 : idx;
       setMaxStageIdx(prev => Math.max(prev, newMax));
     }
-  }, [stage, workflowMode]);
+  }, [stage]);
 
   // Синхронізуємо ref з state для використання всередині async-функцій
   useEffect(() => { maxStageIdxRef.current = maxStageIdx; }, [maxStageIdx]);
@@ -1059,20 +1056,15 @@ Return ONLY JSON:
     setSingleNamingId(null);
   };
 
-  const startGen = async (mode) => {
-    const newMode = mode || workflowMode;
-    setWorkflowMode(newMode);
+  const startGen = async () => {
     const ORDER = ["theory", "analysis", "recommendations", "chapter_conclusion", "intro", "conclusions", "sources"];
     setSections(prev => [...prev].sort((a, b) => ORDER.indexOf(a.type) - ORDER.indexOf(b.type)));
     setContent({}); setGenIdx(0); setPaused(false); writingDoneRef.current = false;
-    // Генеруємо додатки тільки для педагогіки/психології або якщо тип практики обрано вручну
     const practicalApproachForGen = commentAnalysis?.practicalApproach;
     if (!appendicesText && (practicalApproachForGen || isPsychoPed(info))) doGenAppendices();
-    const nextStage = newMode === "sources-first" ? "sources" : "writing";
-    setStage(nextStage);
-    const genStartPayload = nextStage === "sources" ? { generationStartedAt: new Date().toISOString() } : {};
-    if (nextStage === "sources") generationStartRef.current = Date.now();
-    saveToFirestore({ workflowMode: newMode, stage: nextStage, status: "writing", ...genStartPayload });
+    setStage("sources");
+    generationStartRef.current = Date.now();
+    saveToFirestore({ workflowMode: "sources-first", stage: "sources", status: "writing", generationStartedAt: new Date().toISOString() });
   };
 
   // ── Виявлення рисунків у тексті ──
@@ -1137,12 +1129,7 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
         writingDoneRef.current = true;
         playDoneSound();
         const allUnlocked = activeStageKeys.length - 1;
-        if (workflowMode === "sources-first") {
-          // Джерела зібрані, текст написаний — чекаємо на remapCitations
-          saveToFirestore({ stage: "writing", status: "writing", content, citInputs, maxStageIdx: allUnlocked });
-        } else {
-          setStage("sources"); saveToFirestore({ stage: "sources", status: "writing", content, citInputs, maxStageIdx: allUnlocked });
-        }
+        saveToFirestore({ stage: "writing", status: "writing", content, citInputs, maxStageIdx: allUnlocked });
       }
       return;
     }
@@ -1449,10 +1436,7 @@ ${appendixBlock}${empHint ? `ВИМОГА: ${empHint}\n` : ""}Рекоменда
         }
       }
 
-      // sources-first: додаємо джерела як контекст для генерації
-      const secSourceLines = workflowMode === "sources-first"
-        ? (citInputs[sec.id] || "").split("\n").map(l => l.trim()).filter(Boolean)
-        : [];
+      const secSourceLines = (citInputs[sec.id] || "").split("\n").map(l => l.trim()).filter(Boolean);
       const sourcesBlock = secSourceLines.length > 0
         ? `\nДЖЕРЕЛА ДЛЯ ЦЬОГО ПІДРОЗДІЛУ (${secSourceLines.length} шт.) — спирайся на них при написанні, вставляй посилання [N] після відповідних тверджень:\n${secSourceLines.map((s, i) => {
           const snippet = abstractsMap[s];
@@ -3636,7 +3620,7 @@ ${refLines2.join("\n")}`;
               namingLoading={namingLoading} totalPagesNum={totalPagesNum}
               info={info} methodInfo={methodInfo} content={content}
               doGenPlan={doGenPlan} doNamePlaceholders={doNamePlaceholders}
-              startGen={startGen} setStage={setStage} workflowMode={workflowMode}
+              startGen={startGen} setStage={setStage}
               setSourceDist={setSourceDist} setSourceTotal={setSourceTotal}
               addNewChapter={addNewChapter} recalcPages={recalcPages}
               moveSectionUp={moveSectionUp} moveSectionDown={moveSectionDown}
@@ -3655,7 +3639,7 @@ ${refLines2.join("\n")}`;
               sections={sections} genIdx={genIdx} content={content}
               regenAllAbortRef={regenAllAbortRef}
               stopGen={stopGen} resumeGen={resumeGen} doRegenAll={doRegenAll}
-              doRegenSection={doRegenSection} setStage={setStage} workflowMode={workflowMode}
+              doRegenSection={doRegenSection} setStage={setStage}
               doRemapCitations={doRemapCitations} remapLoading={remapLoading}
               appendicesText={appendicesText} appendicesLoading={appendicesLoading}
             />
@@ -3683,7 +3667,7 @@ ${refLines2.join("\n")}`;
               onAddAbstracts={(entries) => setAbstractsMap(prev => ({ ...prev, ...entries }))}
               onFinish={async () => { await saveToFirestore({ stage: "done", status: "done", content, citInputs, citStructured, abstractsMap, refList }); setStage("done"); }}
               onProceedToWriting={() => setStage("writing")}
-              setStage={setStage} workflowMode={workflowMode}
+              setStage={setStage}
               hasGeneratedContent={Object.keys(content).length > 0}
               onRegenWithNewSources={() => {
                 if (Object.keys(content).length > 0) {

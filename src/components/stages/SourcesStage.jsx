@@ -77,7 +77,7 @@ export function SourcesStage({
   keywords, kwLoading, kwError, setKwError, methodInfo, commentAnalysis,
   allRefs, refList, showMissingSources, citInputsSnapshot, allCitLoading, info,
   suggestedSources, phraseGroups, sourcesSearchLoading, sourcesSearchError, doSearchSources, doRegenSectionSources,
-  doGenKeywords, doAddAllCitations, onAddAbstracts, onFinish, onProceedToWriting, setStage, workflowMode,
+  doGenKeywords, doAddAllCitations, onAddAbstracts, onFinish, onProceedToWriting, setStage,
   onRegenWithNewSources, hasGeneratedContent,
 }) {
   const [selectedSugg, setSelectedSugg] = useState({});
@@ -181,7 +181,7 @@ export function SourcesStage({
 
   return (
     <div className="fade">
-      <Heading>{workflowMode === "sources-first" ? "04 / Джерела" : "05 / Джерела"}</Heading>
+      <Heading>04 / Джерела</Heading>
 
       {/* ── Заголовок: статистика + кнопка генерації ── */}
       <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20, flexWrap: "wrap" }}>
@@ -481,22 +481,17 @@ export function SourcesStage({
       </div>
 
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 8 }}>
-        <NavBtn onClick={() => setStage(workflowMode === "sources-first" ? "plan" : "writing")}>
-          {workflowMode === "sources-first" ? "← До плану" : "← До тексту"}
-        </NavBtn>
-        {workflowMode === "sources-first" || hasGeneratedContent
-          ? <>
-              <button
-                onClick={onRegenWithNewSources}
-                style={{ background: "#1a1a14", color: "#e8ff47", border: "1.5px solid #e8ff47", borderRadius: 6, padding: "8px 20px", fontFamily: "'Spectral',serif", fontSize: 13, cursor: "pointer" }}>
-                ↺ Переписати всю роботу
-              </button>
-              {hasGeneratedContent && (
-                <PrimaryBtn onClick={onFinish} label="До готового тексту →" />
-              )}
-            </>
-          : <PrimaryBtn onClick={onFinish} label="Завершити роботу →" />
-        }
+        <NavBtn onClick={() => setStage("plan")}>← До плану</NavBtn>
+        <>
+          <button
+            onClick={onRegenWithNewSources}
+            style={{ background: "#1a1a14", color: "#e8ff47", border: "1.5px solid #e8ff47", borderRadius: 6, padding: "8px 20px", fontFamily: "'Spectral',serif", fontSize: 13, cursor: "pointer" }}>
+            ↺ Переписати всю роботу
+          </button>
+          {hasGeneratedContent && (
+            <PrimaryBtn onClick={onFinish} label="До готового тексту →" />
+          )}
+        </>
       </div>
     </div>
   );

@@ -10,7 +10,7 @@ export function PlanStage({
   showManualPlanInput, setShowManualPlanInput, manualPlanText, setManualPlanText,
   planDocxLoading, setPlanDocxLoading, namingLoading, totalPagesNum,
   info, methodInfo, content, doGenPlan, doNamePlaceholders, startGen, setStage,
-  setSourceDist, setSourceTotal, addNewChapter, recalcPages, workflowMode,
+  setSourceDist, setSourceTotal, addNewChapter, recalcPages,
   moveSectionUp, moveSectionDown,
   doNameSinglePlaceholder, singleNamingId,
 }) {
@@ -191,7 +191,7 @@ export function PlanStage({
               <div style={{ fontSize: 13, fontWeight: 600, color: "#2a4010", marginBottom: 12 }}>Текст вже згенеровано — продовжте роботу:</div>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                 <button
-                  onClick={() => setStage(workflowMode === "sources-first" ? "sources" : "writing")}
+                  onClick={() => setStage("sources")}
                   style={{
                     flex: 1, minWidth: 200, padding: "12px 16px", borderRadius: 8, cursor: "pointer",
                     fontFamily: "'Spectral',serif", fontSize: 13, textAlign: "left", lineHeight: 1.5,
@@ -202,7 +202,7 @@ export function PlanStage({
                   <div style={{ fontSize: 11, color: "#a8d060", opacity: 0.9 }}>Повернутись до вже згенерованого тексту</div>
                 </button>
                 <button
-                  onClick={() => { if (window.confirm("Увага! Весь згенерований текст буде стерто. Продовжити?")) startGen(workflowMode || "sources-first"); }}
+                  onClick={() => { if (window.confirm("Увага! Весь згенерований текст буде стерто. Продовжити?")) startGen(); }}
                   style={{
                     padding: "12px 16px", borderRadius: 8, cursor: "pointer",
                     fontFamily: "'Spectral',serif", fontSize: 12, textAlign: "left", lineHeight: 1.5,
@@ -216,10 +216,9 @@ export function PlanStage({
             </div>
           ) : (
             <div style={{ marginTop: 16, padding: "16px 18px", background: "#f0f5e8", border: "1.5px solid #c8dfa0", borderRadius: 8 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "#2a4010", marginBottom: 12 }}>Оберіть порядок роботи:</div>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                 <button
-                  onClick={() => startGen("sources-first")}
+                  onClick={() => startGen()}
                   style={{
                     flex: 1, minWidth: 200, padding: "12px 16px", borderRadius: 8, cursor: "pointer",
                     fontFamily: "'Spectral',serif", fontSize: 13, textAlign: "left", lineHeight: 1.5,
