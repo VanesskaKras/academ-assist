@@ -283,7 +283,10 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
             setStage(d.stage);
             // Якщо написання вже завершено — позначаємо і розблоковуємо всі стадії
             const writingIdx = keys.indexOf("writing");
-            const writingIsDone = stageIdx > writingIdx || (d.genIdx !== undefined && (d.sections?.length ?? 0) > 0 && d.genIdx >= d.sections.length);
+            const writingIsDone = stageIdx > writingIdx
+              || d.status === "done"
+              || (d.maxStageIdx !== undefined && d.maxStageIdx >= keys.length - 1)
+              || (d.genIdx !== undefined && (d.sections?.length ?? 0) > 0 && d.genIdx >= d.sections.length);
             if (writingIsDone) {
               writingDoneRef.current = true;
               setMaxStageIdx(keys.length - 1);
