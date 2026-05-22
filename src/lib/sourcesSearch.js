@@ -184,6 +184,26 @@ export async function lookupDoiMetadata(doi) {
   return result;
 }
 
+/**
+ * Витягує сторінки зі сторінки журналу через Google Scholar мета-теги.
+ * Використовується як fallback коли CrossRef/OpenAlex не мають сторінок.
+ */
+export async function fetchPagesFromUrl(url) {
+  if (!url) return null;
+  try {
+    const res = await fetch('/api/fetch-meta', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.pages || null;
+  } catch {
+    return null;
+  }
+}
+
 // ── Декодування abstract_inverted_index OpenAlex → plain text ──
 function decodeAbstract(inv) {
   if (!inv || typeof inv !== 'object') return '';

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { lookupDoiMetadata, paperToCitation } from "../../lib/sourcesSearch.js";
+import { lookupDoiMetadata, fetchPagesFromUrl, paperToCitation } from "../../lib/sourcesSearch.js";
 import { TA_WHITE } from "../../shared.jsx";
 import { Heading, NavBtn, PrimaryBtn, GreenBtn } from "../Buttons.jsx";
 import { SpinDot } from "../SpinDot.jsx";
@@ -118,8 +118,8 @@ export function SourcesStage({
     const allSelected = selectedSugg[secId] || [];
     if (!allSelected.length) return;
 
-    // Збагачуємо всі записи з DOI через CrossRef (отримуємо структуровані дані)
-    const enriched = await Promise.all(allSelected.map(async p => {
+    // Крок 1: збагачуємо всі записи з DOI через CrossRef/OpenAlex
+    const afterDoi = await Promise.all(allSelected.map(async p => {
       if (!p.doi) return p;
       const meta = await lookupDoiMetadata(p.doi);
       if (!meta) return p;
@@ -134,6 +134,15 @@ export function SourcesStage({
         ...(meta.publisher ? { publisher: meta.publisher } : {}),
         ...(meta.publisherLocation ? { publisherLocation: meta.publisherLocation } : {}),
       };
+    }));
+
+    // Крок 2: для джерел без сторінок — пробуємо витягти з HTML мета-тегів сторінки журналу
+    const enriched = await Promise.all(afterDoi.map(async p => {
+      if (p.pages) return p;
+      const pageUrl = p.url || (p.doi ? `https://doi.org/${p.doi}` : null);
+      if (!pageUrl) return p;
+      const pages = await fetchPagesFromUrl(pageUrl);
+      return pages ? { ...p, pages } : p;
     }));
 
     // Обмежуємо зарубіжні до 30%
