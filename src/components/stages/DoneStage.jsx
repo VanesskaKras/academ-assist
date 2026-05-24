@@ -134,17 +134,15 @@ export function DoneStage({
 
       {/* ── Рисунки ── */}
       <div style={{ marginTop: 20, border: "1.5px solid #e8c84a", borderRadius: 8, overflow: "hidden" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", background: "#fff8e8", cursor: "pointer" }} onClick={() => setFigPanelOpen(p => !p)}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", background: "#fff8e8" }}>
           <span style={{ fontWeight: 600, fontSize: 13, color: "#7a5000", fontFamily: "'Spectral',serif" }}>Рисунки у роботі</span>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }} onClick={e => e.stopPropagation()}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <button onClick={doScanAndGenFigures} disabled={figKwLoading} style={{ fontSize: 11, background: "transparent", border: "1px solid #c8a030", borderRadius: 5, padding: "3px 10px", cursor: figKwLoading ? "default" : "pointer", color: "#7a5000", fontFamily: "'Spectral',serif" }}>
               {figKwLoading ? "Оновлюю..." : "↻ Оновити"}
             </button>
-            <span style={{ fontSize: 11, color: "#b08020", fontFamily: "'Spectral',serif" }} onClick={e => { e.stopPropagation(); setFigPanelOpen(p => !p); }}>{figPanelOpen ? "▲ згорнути" : "▼ розгорнути"}</span>
           </div>
         </div>
-        {figPanelOpen && (
-          <div style={{ padding: "12px 16px", background: "#fffdf5" }}>
+        <div style={{ padding: "12px 16px", background: "#fffdf5" }}>
             {figKwLoading ? (
               <div style={{ fontSize: 13, color: "#888" }}>Оновлюю рисунки...</div>
             ) : Object.values(figureRefs).every(a => a.length === 0) ? (
@@ -172,8 +170,7 @@ export function DoneStage({
                 })}
               </>
             )}
-          </div>
-        )}
+        </div>
       </div>
 
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 24 }}>
