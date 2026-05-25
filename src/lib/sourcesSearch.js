@@ -154,10 +154,10 @@ export async function lookupDoiMetadata(doi) {
     }
   } catch { /* fallthrough to OpenAlex */ }
 
-  // Якщо CrossRef не повернув авторів — пробуємо OpenAlex
-  if (!result?.authors?.length) {
+  // Якщо CrossRef не повернув авторів або не повернув сторінки — пробуємо OpenAlex
+  if (!result?.authors?.length || !result?.pages) {
     try {
-      const oaUrl = `https://api.openalex.org/works/https://doi.org/${encodeURIComponent(doi)}?select=authorships,biblio`;
+      const oaUrl = `https://api.openalex.org/works/https://doi.org/${doi}?select=authorships,biblio`;
       const r2 = await fetch(oaUrl);
       if (r2.ok) {
         const w = await r2.json();
@@ -166,14 +166,18 @@ export async function lookupDoiMetadata(doi) {
         const oaPages = w.biblio?.first_page && w.biblio?.last_page
           ? `${w.biblio.first_page}–${w.biblio.last_page}`
           : w.biblio?.first_page || null;
-        if (oaAuthors.length) {
+        if (oaAuthors.length || oaPages) {
           result = {
             ...(result || {}),
-            authors: oaAuthors,
-            authorsStructured: oaAuthors.map(n => {
-              const parts = n.trim().split(/\s+/);
-              return { family: parts[0] || '', given: parts.slice(1).join(' ') };
-            }),
+            // Автори — лише якщо CrossRef їх не дав
+            ...(oaAuthors.length && !result?.authors?.length ? {
+              authors: oaAuthors,
+              authorsStructured: oaAuthors.map(n => {
+                const parts = n.trim().split(/\s+/);
+                return { family: parts[0] || '', given: parts.slice(1).join(' ') };
+              }),
+            } : {}),
+            // Сторінки — беремо перше непорожнє значення
             pages: result?.pages || oaPages || extractPagesFromDoi(doi),
           };
         }
@@ -334,13 +338,23 @@ async function fetchBASE(query, limit) {
   } catch { return []; }
 }
 
+// Витягує чистий DOI з рядка різних форматів: "doi:10.x/y", "https://doi.org/10.x/y", "10.x/y"
+function extractDoiFromString(s = '') {
+  const clean = s.replace(/^https?:\/\/doi\.org\//i, '').replace(/^doi:/i, '').trim();
+  return /^10\.\d{4,}\/.+/.test(clean) ? clean : '';
+}
+
 function mapBASE(doc) {
   const title = Array.isArray(doc.dctitle) ? doc.dctitle[0] : (doc.dctitle || '');
   const rawDoi = Array.isArray(doc.dcdoi) ? doc.dcdoi[0] : (doc.dcdoi || '');
-  const doi = rawDoi.replace('https://doi.org/', '');
-  const rawLink = Array.isArray(doc.dclink) ? doc.dclink[0] : (doc.dclink || '');
-  const url = rawLink || (doi ? `https://doi.org/${doi}` : '');
+  // dcidentifier може містити DOI або URL (деякі репозиторії кладуть DOI саме сюди)
   const rawId = Array.isArray(doc.dcidentifier) ? doc.dcidentifier[0] : (doc.dcidentifier || '');
+  const doiFromId = extractDoiFromString(rawId);
+  const doi = extractDoiFromString(rawDoi) || doiFromId;
+  const rawLink = Array.isArray(doc.dclink) ? doc.dclink[0] : (doc.dclink || '');
+  // dcidentifier як URL-фолбек (деякі repos зберігають handle/URL саме тут)
+  const idAsUrl = (rawId.startsWith('http') && !rawId.includes('doi.org')) ? rawId : '';
+  const url = rawLink || (doi ? `https://doi.org/${doi}` : '') || idAsUrl;
   const abstract = Array.isArray(doc.dcdescription) ? doc.dcdescription[0] : (doc.dcdescription || '');
   return {
     id: rawId || url || String(Math.random()),
@@ -392,9 +406,14 @@ function mapCORE(result) {
   const title = result.title || '';
   const doi = result.doi || '';
   const urls = result.sourceFulltextUrls || [];
-  const url = result.downloadUrl || urls[0] || (doi ? `https://doi.org/${doi}` : '');
+  // result.links — масив {type, url} у відповіді CORE API; беремо перший не-thumbnail
+  const coLink = (result.links || []).find(l => l.url && l.type !== 'thumbnail')?.url || '';
+  const coreId = result.id || '';
+  const url = result.downloadUrl || urls[0] || coLink
+    || (doi ? `https://doi.org/${doi}` : '')
+    || (coreId ? `https://core.ac.uk/works/${coreId}` : '');
   return {
-    id: result.id ? `core-${result.id}` : String(Math.random()),
+    id: coreId ? `core-${coreId}` : String(Math.random()),
     title,
     authors: (result.authors || []).slice(0, 3).map(a => (typeof a === 'string' ? a : a.name || '')).filter(Boolean),
     year: result.yearPublished || '',
@@ -777,6 +796,41 @@ ${items}
 }
 
 // ── Gemini генерує 4 точних академічних пошукових фрази для підрозділу ──
+/**
+ * Для паперів без url і без doi — шукає DOI в CrossRef за бібліографічними даними.
+ * Повертає той самий об'єкт з доданим doi (якщо знайдено з достатньою впевненістю).
+ */
+export async function lookupDOIByBiblio(paper) {
+  if (paper.doi || paper.url) return paper;
+  const title = (paper.title || '').slice(0, 120);
+  const firstAuthorFamily = (Array.isArray(paper.authors) ? paper.authors[0] : '')
+    .split(/[\s,]+/)[0] || '';
+  const year = String(paper.year || '');
+  if (!title || title.length < 8) return paper;
+  try {
+    const q = [title, firstAuthorFamily, year].filter(Boolean).join(' ');
+    const r = await fetch(
+      `https://api.crossref.org/works?query.bibliographic=${encodeURIComponent(q)}&rows=1&select=DOI,published,title`,
+      { headers: { 'User-Agent': 'AcademAssist/1.0 (mailto:support@academ-assist.vercel.app)' } },
+    );
+    if (!r.ok) return paper;
+    const d = await r.json();
+    const item = d.message?.items?.[0];
+    if (!item?.DOI) return paper;
+    // Перевіряємо рік — відхилення ≤ 1 рік
+    const itemYear = item.published?.['date-parts']?.[0]?.[0];
+    if (year && itemYear && Math.abs(parseInt(year, 10) - parseInt(itemYear, 10)) > 1) return paper;
+    // Перевіряємо автора — прізвище першого автора має бути в CrossRef-назві або авторах
+    const crTitle = (item.title?.[0] || '').toLowerCase();
+    const ourTitleLower = title.toLowerCase();
+    // Хоча б 3 спільних слова > 4 літер між назвами → достатня схожість
+    const ourWords = ourTitleLower.split(/\s+/).filter(w => w.length > 4);
+    const overlap = ourWords.filter(w => crTitle.includes(w)).length;
+    if (ourWords.length > 2 && overlap < 2) return paper; // занадто різні назви — не беремо
+    return { ...paper, doi: item.DOI };
+  } catch { return paper; }
+}
+
 function normTitle(str) {
   if (!str) return str;
   const letters = str.match(/[а-яґєіїА-ЯҐЄІЇa-zA-Z]/g) || [];
