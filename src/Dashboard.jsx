@@ -555,6 +555,29 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
                 return true;
             });
         }
+        // Сортування: архів — без змін; решта — активні за дедлайном (nearest first), Готово — внизу
+        if (filterStatus !== "archived") {
+            const parseDeadline = (dl) => {
+                if (!dl) return null;
+                const parts = dl.split(".");
+                if (parts.length !== 3) return null;
+                return new Date(+parts[2], +parts[1] - 1, +parts[0]);
+            };
+            result = [...result].sort((a, b) => {
+                const aDone = a.status === "done" && !needsSources(a);
+                const bDone = b.status === "done" && !needsSources(b);
+                // Готово — в кінець
+                if (aDone && !bDone) return 1;
+                if (!aDone && bDone) return -1;
+                // Обидва активні або обидва Готово — сортуємо за дедлайном
+                const dA = parseDeadline(a.deadline);
+                const dB = parseDeadline(b.deadline);
+                if (!dA && !dB) return 0;
+                if (!dA) return 1;  // без дедлайну — в кінець
+                if (!dB) return -1;
+                return dA - dB;
+            });
+        }
         return result;
     }, [orders, search, filterStatus, dlFrom, dlTo, filterManager]);
 
