@@ -2737,11 +2737,17 @@ ${secBlock}
     // Якщо алфавітний порядок — сортуємо і перебудовуємо індекси
     let allRefs, indexMap;
     if (isAlphabetical) {
-      const langGroup = (s) => /^[А-ЯҐЄІЇа-яґєії]/i.test(s) ? 0 : 1;
+      const _workLang = info?.language || "Українська";
+      const _latinFirst = /англ|english|польськ|polish|нім|german|франц|french|іспан|spanish|італ|italian/i.test(_workLang);
+      const langGroup = (s) => {
+        const isCyrillic = /^[А-ЯҐЄІЇа-яґєії]/i.test(s);
+        return _latinFirst ? (isCyrillic ? 1 : 0) : (isCyrillic ? 0 : 1);
+      };
+      const _groupLocales = _latinFirst ? ["en", "uk"] : ["uk", "en"];
       const sorted = [...rawRefs].sort((a, b) => {
         const ga = langGroup(a), gb = langGroup(b);
         if (ga !== gb) return ga - gb;
-        return a.localeCompare(b, ga === 0 ? "uk" : "en");
+        return a.localeCompare(b, _groupLocales[ga]);
       });
       indexMap = rawRefs.map(r => sorted.indexOf(r) + 1);
       allRefs = sorted;
@@ -2783,10 +2789,16 @@ ${secBlock}
     const isApaStyle = /APA/i.test(sourcesStyle);
     const isDstu = /ДСТУ/i.test(sourcesStyle);
     const sourcesOrder = (isAlphabeticalOrder || isDstu) ? "Список відсортований за алфавітом." : "Список у порядку першої появи у тексті.";
-    const defaultGrouping = "спочатку законодавчі акти (закони, кодекси, постанови, накази тощо) за хронологією або номером; потім книги та журнальні статті кирилицею (українські та інші кириличні) за алфавітом; потім українські електронні джерела (сайти, онлайн-матеріали кирилицею) за алфавітом; наприкінці іноземні джерела (латиниця) за алфавітом";
+    const _isLatinWork = /англ|english|польськ|polish|нім|german|франц|french|іспан|spanish|італ|italian/i.test(lang);
+    const defaultGrouping = _isLatinWork
+      ? "спочатку законодавчі акти (закони, кодекси, постанови, накази тощо) за хронологією або номером; потім іноземні джерела (латиниця) за алфавітом; наприкінці кириличні джерела (українські та інші) за алфавітом"
+      : "спочатку законодавчі акти (закони, кодекси, постанови, накази тощо) за хронологією або номером; потім книги та журнальні статті кирилицею (українські та інші кириличні) за алфавітом; потім українські електронні джерела (сайти, онлайн-матеріали кирилицею) за алфавітом; наприкінці іноземні джерела (латиниця) за алфавітом";
     const sourcesGrouping = methodInfo?.sourcesGrouping
       ? `Групування: ${methodInfo.sourcesGrouping}.`
       : (isDstu || isAlphabeticalOrder) ? `Групування за ДСТУ 8302:2015: ${defaultGrouping}.` : "";
+    const _dstuGroupOrder = _isLatinWork
+      ? "1) законодавчі акти (за хронологією/номером); 2) іноземні джерела латиницею за алфавітом; 3) книги та статті кирилицею за алфавітом; 4) кириличні електронні джерела за алфавітом."
+      : "1) законодавчі акти (за хронологією/номером); 2) книги та статті кирилицею за алфавітом; 3) українські електронні джерела за алфавітом; 4) іноземні джерела латиницею за алфавітом.";
     const styleRules = isApaStyle
       ? `СТИЛЬ: APA 7th edition. СУВОРО дотримуйся APA — НЕ змішуй з ДСТУ чи іншими стилями.
 Правила APA:
@@ -2809,7 +2821,7 @@ ${secBlock}
 - Між ініціалами — пробіл: "М. В." а не "М.В.".
 - Між містом і видавцем — пробіл двокрапка пробіл ( : ).
 - КУРСИВ: назву журналу, збірника, серії або сайту ОБОВ'ЯЗКОВО обгортай в *зірочки* (*Назва журналу*). Назву статті та прізвища авторів — звичайний шрифт.
-- ПОРЯДОК ГРУП: 1) законодавчі акти (за хронологією/номером); 2) книги та статті кирилицею за алфавітом; 3) українські електронні джерела за алфавітом; 4) іноземні джерела латиницею за алфавітом.`
+- ПОРЯДОК ГРУП: ${_dstuGroupOrder}`
         : `СТИЛЬ: ${sourcesStyle}. Точно дотримуйся цього стилю.`;
     const methodSourcesRules = methodInfo?.sourcesFormatRules ? `\nВИМОГИ МЕТОДИЧКИ ДО СПИСКУ ДЖЕРЕЛ: ${methodInfo.sourcesFormatRules}` : "";
 
@@ -3140,13 +3152,19 @@ ${secsSummary}
     });
 
     // ── 3. Алфавітне сортування якщо потрібно ──
+    const _remapWorkLang = info?.language || "Українська";
+    const _remapLatinFirst = /англ|english|польськ|polish|нім|german|франц|french|іспан|spanish|італ|italian/i.test(_remapWorkLang);
     let allRefs, indexMap;
     if (isAlphabeticalOrder) {
-      const langGroup = s => /^[А-ЯҐЄІЇа-яґєії]/i.test(s) ? 0 : 1;
+      const langGroup = s => {
+        const isCyrillic = /^[А-ЯҐЄІЇа-яґєії]/i.test(s);
+        return _remapLatinFirst ? (isCyrillic ? 1 : 0) : (isCyrillic ? 0 : 1);
+      };
+      const _remapGroupLocales = _remapLatinFirst ? ["en", "uk"] : ["uk", "en"];
       const sorted = [...rawRefs].sort((a, b) => {
         const ga = langGroup(a), gb = langGroup(b);
         if (ga !== gb) return ga - gb;
-        return a.localeCompare(b, ga === 0 ? "uk" : "en");
+        return a.localeCompare(b, _remapGroupLocales[ga]);
       });
       indexMap = rawRefs.map(r => sorted.indexOf(r) + 1);
       allRefs = sorted;
@@ -3169,10 +3187,16 @@ ${secsSummary}
     const today = new Date();
     const accessDate = `${String(today.getDate()).padStart(2, "0")}.${String(today.getMonth() + 1).padStart(2, "0")}.${today.getFullYear()}`;
     const sourcesOrder = (isAlphabeticalOrder || isDstu) ? "Список відсортований за алфавітом." : "Список у порядку першої появи у тексті.";
-    const defaultGrouping = "спочатку законодавчі акти (закони, кодекси, постанови, накази тощо) за хронологією або номером; потім книги та журнальні статті кирилицею (українські та інші кириличні) за алфавітом; потім українські електронні джерела (сайти, онлайн-матеріали кирилицею) за алфавітом; наприкінці іноземні джерела (латиниця) за алфавітом";
+    const _isLatinWork2 = _remapLatinFirst;
+    const defaultGrouping = _isLatinWork2
+      ? "спочатку законодавчі акти (закони, кодекси, постанови, накази тощо) за хронологією або номером; потім іноземні джерела (латиниця) за алфавітом; наприкінці кириличні джерела (українські та інші) за алфавітом"
+      : "спочатку законодавчі акти (закони, кодекси, постанови, накази тощо) за хронологією або номером; потім книги та журнальні статті кирилицею (українські та інші кириличні) за алфавітом; потім українські електронні джерела (сайти, онлайн-матеріали кирилицею) за алфавітом; наприкінці іноземні джерела (латиниця) за алфавітом";
     const sourcesGrouping = methodInfo?.sourcesGrouping
       ? `Групування: ${methodInfo.sourcesGrouping}.`
       : (isDstu || isAlphabeticalOrder) ? `Групування за ДСТУ 8302:2015: ${defaultGrouping}.` : "";
+    const _dstuGroupOrder2 = _isLatinWork2
+      ? "1) законодавчі акти (за хронологією/номером); 2) іноземні джерела латиницею за алфавітом; 3) книги та статті кирилицею за алфавітом; 4) кириличні електронні джерела за алфавітом."
+      : "1) законодавчі акти (за хронологією/номером); 2) книги та статті кирилицею за алфавітом; 3) українські електронні джерела за алфавітом; 4) іноземні джерела латиницею за алфавітом.";
     const styleRules = /APA/i.test(sourcesStyle)
       ? `СТИЛЬ: APA 7th edition. СУВОРО дотримуйся APA — НЕ змішуй з ДСТУ чи іншими стилями.
 Правила APA:
@@ -3196,7 +3220,7 @@ ${secsSummary}
 - Між ініціалами — пробіл: "М. В." а не "М.В.".
 - Між містом і видавцем — пробіл двокрапка пробіл ( : ).
 - КУРСИВ: назву журналу, збірника, серії або сайту ОБОВ'ЯЗКОВО обгортай в *зірочки* (*Назва журналу*). Назву статті та прізвища авторів — звичайний шрифт.
-- ПОРЯДОК ГРУП: 1) законодавчі акти (за хронологією/номером); 2) книги та статті кирилицею за алфавітом; 3) українські електронні джерела за алфавітом; 4) іноземні джерела латиницею за алфавітом.`
+- ПОРЯДОК ГРУП: ${_dstuGroupOrder2}`
         : `СТИЛЬ: ${sourcesStyle}. Точно дотримуйся цього стилю.`;
 
     const methodSourcesRules2 = methodInfo?.sourcesFormatRules ? `\nВИМОГИ МЕТОДИЧКИ ДО СПИСКУ ДЖЕРЕЛ: ${methodInfo.sourcesFormatRules}` : "";

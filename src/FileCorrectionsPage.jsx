@@ -253,11 +253,20 @@ export default function FileCorrectionsPage({ onBack }) {
           [{ role: "user", content: prompt }],
           null,
           null,
-          32000,
+          10000,
           null,
           MODEL,
         );
-        text = result.trim();
+        try {
+          const jsonStr = result.replace(/```json|```/g, "").trim();
+          const { original, replacement } = JSON.parse(jsonStr);
+          if (original && replacement && text.includes(original)) {
+            text = text.replace(original, replacement);
+          }
+          // якщо оригінал не знайдено — пропускаємо це виправлення
+        } catch {
+          // якщо JSON не розпарсився — пропускаємо
+        }
         setApplyProgress(i + 1);
       }
       setCorrectedText(text);
