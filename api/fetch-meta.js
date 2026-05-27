@@ -13,7 +13,7 @@ function withTimeout(promise, ms = 6000) {
 }
 
 function extractMetaPages(html) {
-  // Шукаємо citation_firstpage / citation_lastpage
+  // ── citation_firstpage / citation_lastpage (OJS, більшість журналів) ──
   const first = html.match(/<meta[^>]+name=["']citation_firstpage["'][^>]+content=["'](\d+)["']/i)
     || html.match(/<meta[^>]+content=["'](\d+)["'][^>]+name=["']citation_firstpage["']/i);
   const last = html.match(/<meta[^>]+name=["']citation_lastpage["'][^>]+content=["'](\d+)["']/i)
@@ -25,10 +25,23 @@ function extractMetaPages(html) {
     return l && l !== f ? `${f}–${l}` : f;
   }
 
-  // Fallback: citation_pages (деякі видавці використовують один тег)
-  const pages = html.match(/<meta[^>]+name=["']citation_pages["'][^>]+content=["']([^"']+)["']/i)
+  // ── citation_pages (деякі видавці використовують один тег) ──
+  const citPages = html.match(/<meta[^>]+name=["']citation_pages["'][^>]+content=["']([^"']+)["']/i)
     || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']citation_pages["']/i);
-  if (pages) return pages[1].replace('-', '–');
+  if (citPages) return citPages[1].replace('-', '–');
+
+  // ── DC.description — DSpace/EPrints кладуть повну цитату сюди ──
+  // Приклад: content="... - С.82-87." або "pp. 45-67"
+  const dcDesc = html.match(/<meta[^>]+name=["']DC\.description["'][^>]+content=["']([^"']{10,})["']/i)
+    || html.match(/<meta[^>]+content=["']([^"']{10,})["'][^>]+name=["']DC\.description["']/i);
+  if (dcDesc) {
+    // Кирилична С. або латинська P./pp. + діапазон сторінок
+    const pm = dcDesc[1].match(/[СC]\.\s*(\d{1,4})\s*[-–]\s*(\d{1,4})/u)
+      || dcDesc[1].match(/[Pp]{1,2}\.\s*(\d{1,4})\s*[-–]\s*(\d{1,4})/);
+    if (pm && parseInt(pm[2], 10) >= parseInt(pm[1], 10)) {
+      return `${pm[1]}–${pm[2]}`;
+    }
+  }
 
   return null;
 }
@@ -55,6 +68,28 @@ function extractMetaDoi(html) {
   return null;
 }
 
+/**
+ * Перетворює пряме посилання на PDF у репозиторії на HTML-сторінку статті,
+ * де є citation_firstpage / citation_lastpage мета-теги.
+ *
+ * lib.iitta.gov.ua:  /id/eprint/NNN/seq/file.pdf  → /id/eprint/NNN
+ * DSpace:            /bitstream/NNN/MMM/seq/file   → /handle/NNN/MMM
+ */
+function resolveHtmlUrl(rawUrl) {
+  // Відрізаємо якір (#page=NNN тощо) — він не потрібен для фетчу
+  const url = rawUrl.split('#')[0];
+
+  // IITTA EPrints: https://lib.iitta.gov.ua/id/eprint/NNN/digit/...
+  const iittaM = url.match(/^(https?:\/\/lib\.iitta\.gov\.ua\/id\/eprint\/\d+)\/\d+\//i);
+  if (iittaM) return iittaM[1];
+
+  // DSpace: https://dspace.*/bitstream/NNN/MMM/digit/...
+  const dspaceM = url.match(/^(https?:\/\/[^/]+)\/bitstream\/(\d+\/\d+)\/\d+\//i);
+  if (dspaceM) return `${dspaceM[1]}/handle/${dspaceM[2]}`;
+
+  return url;
+}
+
 export default async function handler(req, res) {
   if (req.method === 'OPTIONS') {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -68,8 +103,10 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Methods', 'POST');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-  const { url } = req.body || {};
-  if (!url || typeof url !== 'string') return res.status(200).json({ pages: null });
+  const { url: rawUrl } = req.body || {};
+  if (!rawUrl || typeof rawUrl !== 'string') return res.status(200).json({ pages: null });
+
+  const url = resolveHtmlUrl(rawUrl);
 
   try {
     const r = await withTimeout(
@@ -79,7 +116,7 @@ export default async function handler(req, res) {
           'Accept': 'text/html',
         },
       }),
-      4000,
+      7000,
     );
     if (!r.ok) return res.status(200).json({ pages: null });
 
@@ -105,7 +142,7 @@ export default async function handler(req, res) {
           fetch(`https://api.crossref.org/works/${encodeURIComponent(doi)}`, {
             headers: { 'User-Agent': 'AcademAssist/1.0 (mailto:support@academ-assist.vercel.app)' },
           }),
-          4000,
+          5000,
         );
         if (cr.ok) {
           const crData = await cr.json();

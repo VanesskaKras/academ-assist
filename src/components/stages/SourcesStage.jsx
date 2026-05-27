@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { lookupDoiMetadata, fetchPagesFromUrl, paperToCitation } from "../../lib/sourcesSearch.js";
+import { lookupDoiMetadata, fetchPagesFromUrl, paperToCitation, lookupDOIByBiblio, enrichManualLine } from "../../lib/sourcesSearch.js";
 import { TA_WHITE } from "../../shared.jsx";
 import { Heading, NavBtn, PrimaryBtn, GreenBtn } from "../Buttons.jsx";
 import { SpinDot } from "../SpinDot.jsx";
@@ -84,6 +84,8 @@ export function SourcesStage({
   const [suggOpen, setSuggOpen] = useState({});
   // "secId_phraseIdx" → поточна сторінка (1-based)
   const [phrasePages, setPhrasePages] = useState({});
+  const [enrichLoading, setEnrichLoading] = useState({});
+  const [enrichResult, setEnrichResult] = useState({});
 
   let runningIdx = 0;
   const missingSections = mainSections.filter(s => !(citInputs[s.id] || "").trim());
@@ -136,8 +138,11 @@ export function SourcesStage({
       };
     }));
 
+    // Крок 1.5: для паперів без doi і без url — шукаємо DOI в CrossRef за назвою+автором
+    const afterDoiBiblio = await Promise.all(afterDoi.map(p => lookupDOIByBiblio(p)));
+
     // Крок 2: для джерел без сторінок — пробуємо витягти з HTML мета-тегів сторінки журналу
-    const enriched = await Promise.all(afterDoi.map(async p => {
+    const enriched = await Promise.all(afterDoiBiblio.map(async p => {
       if (p.pages) return p;
       const pageUrl = p.url || (p.doi ? `https://doi.org/${p.doi}` : null);
       if (!pageUrl) return p;
@@ -186,6 +191,32 @@ export function SourcesStage({
       const ta = document.querySelector(`textarea[data-secid="${secId}"]`);
       if (ta) { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; }
     });
+  };
+
+  const handleEnrichManual = async (secId) => {
+    const lines = (citInputs[secId] || '').split('\n');
+    setEnrichLoading(prev => ({ ...prev, [secId]: true }));
+    setEnrichResult(prev => ({ ...prev, [secId]: null }));
+    try {
+      // Послідовно, з паузою 400 мс між рядками — щоб уникнути 429 від академічних сайтів
+      const enriched = [];
+      for (let i = 0; i < lines.length; i++) {
+        enriched.push(await enrichManualLine(lines[i]));
+        if (i < lines.length - 1 && /https?:\/\//.test(lines[i])) {
+          await new Promise(r => setTimeout(r, 400));
+        }
+      }
+      const changed = enriched.filter((l, i) => l !== lines[i]).length;
+      setCitInputs(prev => ({ ...prev, [secId]: enriched.join('\n') }));
+      setEnrichResult(prev => ({ ...prev, [secId]: changed }));
+      // Авторозтягування textarea
+      requestAnimationFrame(() => {
+        const ta = document.querySelector(`textarea[data-secid="${secId}"]`);
+        if (ta) { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; }
+      });
+    } finally {
+      setEnrichLoading(prev => ({ ...prev, [secId]: false }));
+    }
   };
 
   return (
@@ -425,24 +456,54 @@ export function SourcesStage({
               )}
 
               {/* Ручне введення */}
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 5 }}>
-                <div style={{ fontSize: 11, color: "#888", letterSpacing: "1px", textTransform: "uppercase" }}>
-                  {suggestions.length > 0 ? "Або додайте джерела вручну (кожне з нового рядка):" : "Вставте джерела (кожне з нового рядка):"}
-                </div>
-                {(citInputs[sec.id] || "").trim() && (
-                  <button
-                    onClick={() => {
-                      setCitInputs(p => ({ ...p, [sec.id]: "" }));
-                      if (setCitStructured) setCitStructured(p => ({ ...p, [sec.id]: [] }));
-                      requestAnimationFrame(() => {
-                        const ta = document.querySelector(`textarea[data-secid="${sec.id}"]`);
-                        if (ta) { ta.style.height = "auto"; }
-                      });
-                    }}
-                    style={{ fontSize: 11, background: "transparent", border: "1px solid #e0b0b0", color: "#a04040", borderRadius: 5, padding: "2px 8px", cursor: "pointer", flexShrink: 0 }}
-                  >× Очистити</button>
-                )}
-              </div>
+              {(() => {
+                const hasUrlLines = secRefs.some(line =>
+                  /https?:\/\//.test(line) && !/[СP]\.\s*\d/.test(line)
+                );
+                return (
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 5, gap: 8 }}>
+                    <div style={{ fontSize: 11, color: "#888", letterSpacing: "1px", textTransform: "uppercase" }}>
+                      {suggestions.length > 0 ? "Або додайте джерела вручну (кожне з нового рядка):" : "Вставте джерела (кожне з нового рядка):"}
+                    </div>
+                    <div style={{ display: "flex", gap: 6, flexShrink: 0, alignItems: "center" }}>
+                      {hasUrlLines && (
+                        <button
+                          onClick={() => handleEnrichManual(sec.id)}
+                          disabled={enrichLoading[sec.id]}
+                          title="Підтягнути сторінки для джерел з URL"
+                          style={{
+                            fontSize: 11, background: enrichLoading[sec.id] ? "#f0f5e8" : "#eef5e4",
+                            border: "1px solid #8cc84b", color: "#3a6010",
+                            borderRadius: 5, padding: "2px 9px", cursor: enrichLoading[sec.id] ? "default" : "pointer",
+                            flexShrink: 0,
+                          }}
+                        >
+                          {enrichLoading[sec.id] ? '⏳ Шукаю…' : '📄 Підтягнути сторінки'}
+                        </button>
+                      )}
+                      {enrichResult[sec.id] != null && !enrichLoading[sec.id] && (
+                        <span style={{ fontSize: 11, color: enrichResult[sec.id] > 0 ? "#3a6010" : "#888" }}>
+                          {enrichResult[sec.id] > 0 ? `✓ ${enrichResult[sec.id]} оновлено` : '— не знайдено'}
+                        </span>
+                      )}
+                      {(citInputs[sec.id] || "").trim() && (
+                        <button
+                          onClick={() => {
+                            setCitInputs(p => ({ ...p, [sec.id]: "" }));
+                            if (setCitStructured) setCitStructured(p => ({ ...p, [sec.id]: [] }));
+                            setEnrichResult(p => ({ ...p, [sec.id]: null }));
+                            requestAnimationFrame(() => {
+                              const ta = document.querySelector(`textarea[data-secid="${sec.id}"]`);
+                              if (ta) { ta.style.height = "auto"; }
+                            });
+                          }}
+                          style={{ fontSize: 11, background: "transparent", border: "1px solid #e0b0b0", color: "#a04040", borderRadius: 5, padding: "2px 8px", cursor: "pointer", flexShrink: 0 }}
+                        >× Очистити</button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
               <textarea
                 data-secid={sec.id}
                 value={citInputs[sec.id] || ""}

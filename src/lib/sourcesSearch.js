@@ -840,6 +840,78 @@ function normTitle(str) {
   return str;
 }
 
+/**
+ * Збагачує один рядок ручного введення — підтягує сторінки.
+ *
+ * Стратегія (від надійного до ненадійного):
+ *  1. DOI в тексті → CrossRef/OpenAlex напряму (не залежить від сайту)
+ *  2. CrossRef бібліографічний пошук по тексту рядка (назва + автор + рік)
+ *  3. HTML мета-теги через проксі (fallback, може дати 429 або timeout)
+ */
+export async function enrichManualLine(line) {
+  const trimmed = line.trim();
+  if (!trimmed) return line;
+  // Вже є позначка сторінок: "С. 86" / "P. 45" (велика літера = сторінки, не ініціал)
+  if (/[СP]\.\s*\d/.test(trimmed)) return line;
+
+  const isUk = /[а-яА-ЯҐЄІЇґєії]/.test(trimmed);
+
+  // Вставляємо сторінки перед URL або в кінець рядка
+  const insertPages = (pages) => {
+    const p = pages.replace(/-/g, '–');
+    const pagesStr = isUk ? `С. ${p}` : `P. ${p}`;
+    const urlM = trimmed.match(/https?:\/\/\S+/);
+    if (urlM) {
+      const url = urlM[0].replace(/[.,;)#]+$/, '');
+      return line.replace(urlM[0], `${pagesStr}. ${urlM[0]}`);
+    }
+    return line.trimEnd().replace(/[.\s]+$/, '') + `. ${pagesStr}.`;
+  };
+
+  // ── Крок 1: DOI в тексті (doi.org/10.xxx або bare 10.xxx) ──
+  const doiRaw = trimmed.match(/doi\.org\/(10\.\d{4,}\/[^\s"'<>]+)/i)
+    || trimmed.match(/(?:^|\s)(10\.\d{4,}\/[^\s"'<>]+)/);
+  if (doiRaw) {
+    const doi = doiRaw[1].replace(/[.,;)]+$/, '');
+    const meta = await lookupDoiMetadata(doi);
+    if (meta?.pages) return insertPages(meta.pages);
+  }
+
+  // ── Крок 2: CrossRef бібліографічний пошук по тексту ──
+  const textOnly = trimmed.replace(/https?:\/\/\S+/g, '').replace(/\s{2,}/g, ' ').trim();
+  const yearM = textOnly.match(/\b(20\d{2}|19\d{2})\b/);
+  const lineYear = yearM ? parseInt(yearM[1], 10) : null;
+
+  if (textOnly.length > 20) {
+    try {
+      const q = encodeURIComponent(textOnly.slice(0, 220));
+      const r = await fetch(
+        `https://api.crossref.org/works?query.bibliographic=${q}&rows=1&select=DOI,page,published`,
+        { headers: { 'User-Agent': 'AcademAssist/1.0 (mailto:support@academ-assist.vercel.app)' } },
+      );
+      if (r.ok) {
+        const d = await r.json();
+        const item = d.message?.items?.[0];
+        if (item?.page) {
+          // Перевірка року — відхилення не більше 1 року
+          const crYear = item.published?.['date-parts']?.[0]?.[0];
+          if (!lineYear || !crYear || Math.abs(lineYear - crYear) <= 1) {
+            return insertPages(item.page);
+          }
+        }
+      }
+    } catch { /* CrossRef недоступний */ }
+  }
+
+  // ── Крок 3: HTML мета-теги через проксі (fallback) ──
+  const urlMatch = trimmed.match(/https?:\/\/\S+/);
+  if (!urlMatch) return line;
+  const url = urlMatch[0].replace(/[.,;)#]+$/, '');
+  const pages = await fetchPagesFromUrl(url);
+  if (!pages) return line;
+  return insertPages(pages);
+}
+
 export function paperToCitation(paper) {
   const authorsList = Array.isArray(paper.authors) ? paper.authors : [];
   // ДСТУ: коли автор невідомий — починаємо з назви (без "Автор невідомий")
