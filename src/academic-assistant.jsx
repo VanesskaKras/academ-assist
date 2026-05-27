@@ -2911,7 +2911,8 @@ ${refLines.join("\n")}`;
     // ── Допоміжні функції ──
     const isTableRow = p => p.includes("|") || (p.match(/\t/g) || []).length >= 2 || /^Таблиця\s+\d/.test(p.trim()) || /^Рис\.\s+\d/.test(p.trim());
     const stripCitations = text => text
-      .replace(/\s*\[\d+(?:[,;]\s*\d+)+\]/g, "")
+      .replace(/\s*\[\d+(?:[,;]\s*(?:с\.\s*)?\d+)+\]/g, "")   // [1,2], [1;2], [1, с.5; 2, с.10]
+      .replace(/\s*\[\d+(?:,\s*с\.\s*\d+)?(?:\s*;\s*\d+(?:,\s*с\.\s*\d+)?)*\]/g, "") // [N, с.X; M, с.Y]
       .replace(/\s*\[\d+,\s*с\.\s*\d+\]/g, "")
       .replace(/\s*\[\d+\]/g, "")
       .replace(/\s*\([А-ЯҐЄІЇA-Z][а-яґєіїa-z\-A-Za-z]+(?:\s+et\s+al\.?)?(?:,\s*\d{4})?\)/g, "");
@@ -3309,7 +3310,7 @@ ${refLines2.join("\n")}`;
       const citCount = {};
       let text = newContent[sec.id].replace(/\[(\d+)(?:,\s*с\.\s*\d+)?\]/g, (match, localN) => {
         const globalN = mapping[Number(localN)];
-        if (!globalN) return match;
+        if (!globalN) return ""; // хибний (галюцинований) локальний номер — прибираємо
         citCount[globalN] = (citCount[globalN] || 0) + 1;
         return citCount[globalN] <= 1 ? `%%CIT${globalN}%%` : "";
       });
