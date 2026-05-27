@@ -253,7 +253,7 @@ export default function FileCorrectionsPage({ onBack }) {
           [{ role: "user", content: prompt }],
           null,
           null,
-          12000,
+          32000,
           null,
           MODEL,
         );

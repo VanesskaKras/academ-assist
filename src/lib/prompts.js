@@ -36,7 +36,8 @@ STRICTLY FORBIDDEN: table without caption. Every table MUST have a "${tableCapEx
 1. Number figures within each section: ${figWord} X.Y (X = section number, Y = figure number within section).
 2. When a diagram, chart, or graph is needed: create a markdown data table with the values to be plotted (do NOT add a "${tableWord}" caption above it), then place the figure caption BELOW the table (format per methodology: ${mFigureFormat}), then add exactly this line right after the caption: ⚠ ДІАГРАМА: виділіть таблицю вище → Вставка → Діаграма у Word.
 3. For non-data figures (conceptual diagrams, models, schemes with no numeric data) — insert a standalone placeholder: ${figWord} X.Y – Figure name (caption below, no data table, no hint line).
-4. The text before the figure MUST contain a sentence referencing it, e.g.: "${figRef} X.Y".`
+4. The text before the figure MUST contain a sentence referencing it, e.g.: "${figRef} X.Y".
+STRICTLY FORBIDDEN: show the same data as both a "${tableWord}" and a diagram. For each dataset choose ONE: either a "${tableWord}" (for detailed multi-column data) or a diagram (for trends, comparisons, distributions). Tables and diagrams in the same section MUST show different data.`
     : `FIGURES — mandatory rules:
 1. When a diagram, chart, or graph is needed in a section: do NOT insert a standalone placeholder. Instead:
    a. Write a sentence in the text referencing the figure, e.g.: "${figRef} X.Y demonstrates..."
@@ -44,7 +45,8 @@ STRICTLY FORBIDDEN: table without caption. Every table MUST have a "${tableCapEx
    c. On a new line immediately after the table, place the figure caption: ${figWord} X.Y – Figure name
    d. On the very next line after the caption, add exactly this hint: ⚠ ДІАГРАМА: виділіть таблицю вище → Вставка → Діаграма у Word.
 2. For non-data figures (conceptual diagrams, models, schemes with no numeric data) — insert a standalone placeholder: ${figWord} X.Y – Figure name (no data table, no hint line).
-3. The text before any figure MUST contain a sentence referencing it, e.g.: "${figRef} X.Y". Without this reference no figure may appear.`;
+3. The text before any figure MUST contain a sentence referencing it, e.g.: "${figRef} X.Y". Without this reference no figure may appear.
+STRICTLY FORBIDDEN: show the same data as both a "${tableWord}" and a diagram. For each dataset choose ONE: either a "${tableWord}" (for detailed multi-column data) or a diagram (for trends, comparisons, distributions). Tables and diagrams in the same section MUST show different data.`;
 
   return `You are an expert academic writer.
 
@@ -62,6 +64,7 @@ ${figureRules}
 Do NOT bold anything in the subsection text.
 Do NOT repeat the subsection title at the start — begin content immediately.
 INSERT citation markers [N] immediately after claims that rely on a source from the provided list. Use impersonal phrasing only — never write author names before a claim. If no sources are provided — do NOT add any citation markers.
+When citing multiple sources for the same claim, combine them in ONE bracket separated by semicolons: [17, с. 54; 10, с. 101]. NEVER write separate adjacent brackets like [17, с. 54] [10, с. 101] — this is FORBIDDEN.
 STRICTLY FORBIDDEN to invent author, researcher, or scholar names. Never write "Smith A. and Jones B. claim..." or similar name constructions. Instead use impersonal academic phrasing in ${lang}.
 STRICTLY FORBIDDEN to add a reference list or bibliography at the end of a subsection. No "${sourcesLabel}:", "References:", "Bibliography:" etc.
 STRICTLY FORBIDDEN to use em dash "—". Use a comma or rephrase the sentence instead. The "—" symbol must NEVER appear in the text.
@@ -84,6 +87,7 @@ Vary sentence length for natural reading rhythm.
 Vary paragraph length: short paragraphs (3-4 sentences) should alternate with longer ones (5-7 sentences). Avoid consecutive same-size paragraphs. FORBIDDEN to write single- or two-sentence paragraphs.
 Add short, clear examples to explain theoretical points.
 Use natural connectors appropriate for ${lang} academic writing.
+STRICTLY FORBIDDEN to use sequential enumerators ("по-перше", "по-друге", "по-третє", "по-четверте", "firstly", "secondly", "thirdly", and any similar constructions in any language). Express each point as a separate sentence or paragraph with a natural transition instead.
 Insert simple metaphors for clarity where appropriate.
 Soften categorical statements into gentle propositions. Add short transitions between paragraphs.
 Reduce dramatic urgency and pathos. Keep all key facts intact.
@@ -133,6 +137,7 @@ Do NOT use markdown markup: no #, ##, **, *, - at line start. Write plain text.
 EXCEPTION: if a table is needed — format it exclusively as markdown with vertical bars.
 TABLES: place caption on a separate line before the first table row: ${tableWord} N – Table name. Text before the table MUST contain a sentence referencing it, e.g.: "${tableRef} N".
 FIGURES: when a diagram or chart is needed — create a data table (no "${tableWord}" caption above), place "${figWord} N – Figure name" BELOW the table, then add "⚠ ДІАГРАМА: виділіть таблицю вище → Вставка → Діаграма у Word." on the next line. For non-data figures — standalone placeholder: ${figWord} N – Figure name. Text before any figure MUST contain a referencing sentence, e.g.: "${figRef} N".
+STRICTLY FORBIDDEN: show the same data as both a "${tableWord}" and a diagram. For each dataset choose ONE: either a "${tableWord}" (for detailed multi-column data) or a diagram (for trends, comparisons, distributions). Tables and diagrams in the same section MUST show different data.
 Do NOT bold anything in the text (except the document title if required by structure).
 STRICTLY FORBIDDEN to invent author or researcher names. Use impersonal academic phrasing in ${lang}.
 STRICTLY FORBIDDEN to add a reference list at the end. No "${sourcesLabel}:", "References:", "Bibliography:" etc.
@@ -154,6 +159,7 @@ Replace jargon with accessible language. Use minimal abbreviations.
 Vary sentence and paragraph length for natural reading rhythm.
 Short paragraphs (3-4 sentences) must alternate with longer ones (5-7). FORBIDDEN to write single- or two-sentence paragraphs.
 Add short, clear examples to explain theoretical points. Use natural connectors appropriate for ${lang} academic writing.
+STRICTLY FORBIDDEN to use sequential enumerators ("по-перше", "по-друге", "по-третє", "по-четверте", "firstly", "secondly", "thirdly", and any similar constructions in any language). Express each point as a separate sentence or paragraph with a natural transition instead.
 Insert simple metaphors for clarity where appropriate. Soften categorical statements. Add short transitions between paragraphs.
 Keep all key facts intact. Adopt a simple, conversational yet academic tone.
 End the work logically with a complete sentence and concluding thought. Do not cut off the text.`;
@@ -420,14 +426,10 @@ ${documentText}
 
 // ── Аналіз правок для власного файлу (повний текст документа) ──
 export function buildFileCorrectionsAnalysisPrompt({ documentText, correctionsText }) {
-  const docPreview = documentText.length > 12000
-    ? documentText.slice(0, 12000) + "\n...[документ скорочено для аналізу]"
-    : documentText;
-
   return `Ти аналізуєш зауваження викладача до академічної роботи.
 
 ТЕКСТ РОБОТИ:
-${docPreview}
+${documentText}
 
 ЗАУВАЖЕННЯ ВИКЛАДАЧА:
 ${correctionsText}

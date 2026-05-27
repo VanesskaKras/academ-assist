@@ -1478,7 +1478,9 @@ ${planSummary}
         .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
         .replace(/[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF]/g, "")
         .replace(/[„""]([^"„""]*)["""]/g, "«$1»")
-        .replace(/"([^"]*)"/g, "«$1»");
+        .replace(/"([^"]*)"/g, "«$1»")
+        .replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2")
+        .replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2");
       const newContent = { ...contentRef.current, [sec.id]: result };
       setContent(newContent);
       runningRef.current = false; setRunning(false); setLoadMsg("");
@@ -1717,7 +1719,9 @@ ${clientReqsRegen ? `ВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО вико
         .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
         .replace(/[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF]/g, "")
         .replace(/[„""]([^"„""]*)["""]/g, "«$1»")
-        .replace(/"([^"]*)"/g, "«$1»");
+        .replace(/"([^"]*)"/g, "«$1»")
+        .replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2")
+        .replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2");
       const newContent = { ...contentRef.current, [sec.id]: result };
       setContent(newContent);
       setRegenId(null); setRegenPrompt("");
