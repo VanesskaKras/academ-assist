@@ -329,7 +329,11 @@ function CostsTab({ users }) {
         }
         if (searchNum.trim()) {
             const q = searchNum.trim().toLowerCase();
-            result = result.filter(o => o.info?.orderNumber?.toString().toLowerCase().includes(q));
+            result = result.filter(o =>
+                o.info?.orderNumber?.toString().toLowerCase().includes(q) ||
+                o.info?.topic?.toLowerCase().includes(q) ||
+                o.topic?.toLowerCase().includes(q)
+            );
         }
         return result.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
     }, [allOrders, customFrom, customTo, filterUid, searchNum]);
@@ -445,7 +449,7 @@ function CostsTab({ users }) {
                         <input
                             value={searchNum}
                             onChange={e => setSearchNum(e.target.value)}
-                            placeholder="№ замовлення"
+                            placeholder="№ або тема"
                             style={{ padding: "6px 28px 6px 10px", border: `1.5px solid ${searchNum ? "#1a1a14" : "#e0ddd4"}`, borderRadius: 7, fontSize: 13, fontFamily: "inherit", outline: "none", width: 140 }}
                         />
                         {searchNum && (
@@ -539,6 +543,7 @@ function CostsTab({ users }) {
                                     <th rowSpan={2} style={{ textAlign: "left", padding: "8px 8px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", whiteSpace: "nowrap", verticalAlign: "bottom" }}>Дата</th>
                                     <th rowSpan={2} style={{ textAlign: "left", padding: "8px 8px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", verticalAlign: "bottom" }}>Менеджер</th>
                                     <th rowSpan={2} style={{ textAlign: "left", padding: "8px 8px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", whiteSpace: "nowrap", verticalAlign: "bottom" }}>№</th>
+                                    <th rowSpan={2} style={{ textAlign: "left", padding: "8px 8px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", verticalAlign: "bottom" }}>Тема</th>
                                     <th rowSpan={2} style={{ textAlign: "left", padding: "8px 8px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", verticalAlign: "bottom" }}>Тип</th>
                                     <th rowSpan={2} style={{ textAlign: "center", padding: "8px 6px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", whiteSpace: "nowrap", verticalAlign: "bottom" }}>Стор.</th>
                                     <th colSpan={1} style={{ textAlign: "center", padding: "4px 8px", color: "#5a6a5a", fontWeight: 700, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", borderBottom: "1px solid #e0ece0", background: "#f5faf5" }}>Claude</th>
@@ -563,6 +568,7 @@ function CostsTab({ users }) {
                                                 <div style={{ fontWeight: 600, color: "#1a1a14", fontSize: 12 }}>{u?.name || "—"}</div>
                                             </td>
                                             <td style={{ padding: "9px 8px", color: "#555", fontSize: 11, fontFamily: "monospace", whiteSpace: "nowrap" }}>{o.info?.orderNumber || "—"}</td>
+                                            <td style={{ padding: "9px 8px", color: "#1a1a14", fontSize: 11, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={o.info?.topic || o.topic || ""}>{o.info?.topic || o.topic || "—"}</td>
                                             <td style={{ padding: "9px 8px", color: "#1a1a14", whiteSpace: "nowrap" }}>{o.type || o.workType || "—"}</td>
                                             <td style={{ textAlign: "center", padding: "9px 6px", color: "#555" }}>{o.pages || "—"}</td>
                                             <td style={{ textAlign: "center", padding: "9px 6px", fontWeight: 600, color: "#1a6a1a" }}>{fmtCost(o.claudeCostUsd)}</td>
