@@ -116,7 +116,7 @@ export function parsePagesAvg(str) {
 export function parseTemplate(text) {
   const g = (re, fb = "") => { const m = text.match(re); return m ? m[1].trim() : fb; };
   return {
-    orderNumber: g(/№\s*замовлення\s*[-–:]\s*(\S+)/i),
+    orderNumber: g(/№\s*замовлення\s*[-–—:]\s*(\S+)/i),
     type: g(/Тип\s*[-–:]\s*(.+?)(?=\n|⏰|📌|✈️|⚙️|⚡|$)/i),
     deadline: g(/Дедлайн\s*[-–:]\s*(.+?)(?=\n|⚡|📌|✈️|⚙️|$)/i),
     direction: g(/Напрям\s*[-–:]\s*(.+?)(?=\n|📌|✈️|⚙️|$)/i),

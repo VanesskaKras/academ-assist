@@ -1447,7 +1447,7 @@ ${appendixBlock}${empHint ? `ВИМОГА: ${empHint}\n` : ""}Рекоменда
         }).join("\n")}\n`
         : "";
       const citNote = secSourceLines.length > 0
-        ? "Вставляй [N] у текст одразу після тверджень що спираються на джерело (де N — номер зі списку вище). ЗАБОРОНЕНО вигадувати імена авторів перед цитатою — не пиши 'Іванов А. стверджує...'. Використовуй безособові конструкції: 'у дослідженні зазначається [N]', 'науковці вказують [N]', 'встановлено [N]' тощо. ЗАБОРОНЕНО об'єднувати кілька джерел в одну дужку [1, 6] — кожне джерело ставь окремо: [1] [6]."
+        ? "Вставляй [N] у текст одразу після тверджень що спираються на джерело (де N — номер зі списку вище). ЗАБОРОНЕНО вигадувати імена авторів перед цитатою — не пиши 'Іванов А. стверджує...'. Використовуй безособові конструкції: 'у дослідженні зазначається [N]', 'науковці вказують [N]', 'встановлено [N]' тощо."
         : "Без посилань [1],[2].";
 
       instruction = `Напиши підрозділ "${sec.label}" для ${d.type} на тему "${d.topic}". Галузь: ${d.subject}.
@@ -2714,7 +2714,7 @@ ${secBlock}
   // ── Джерела ──
   const buildGlobalRefList = () => {
     const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
-    const isAlphabetical = methodInfo?.sourcesOrder === "alphabetical";
+    const isAlphabetical = !methodInfo?.sourcesOrder || methodInfo?.sourcesOrder === "alphabetical";
 
     // Збираємо всі унікальні джерела з прив'язкою до секцій (за порядком появи)
     const rawRefs = [], secRefMapRaw = {}, seenRefs = new Map();
@@ -2911,10 +2911,12 @@ ${refLines.join("\n")}`;
         const surnameMatch = ref.match(/(?:^|[\s,&])([А-ЯҐЄІЇа-яґєіїA-Za-z]{3,})/);
         refCiteText[n] = `(${surnameMatch?.[1] || `Автор${n}`})`;
       } else {
-        // ДСТУ та інші нумеровані стилі — витягуємо номер першої сторінки статті
-        const articlePageMatch = ref.match(/[Сс]\.\s*(\d+)\s*[–\-—]/); // діапазон С. 56–74
-        const singlePageMatch = !articlePageMatch && ref.match(/[Сс]\.\s*(\d+)(?!\d*\s*с\.)/); // одна сторінка С. 56, але не "210 с."
-        const engPageMatch = ref.match(/pp?\.\s*(\d+)/i); // англійські pp. 56
+        // ДСТУ та інші нумеровані стилі — витягуємо сторінку з raw-запису (allRefs),
+        // щоб не залежати від можливого переупорядкування Gemini (ДСТУ-групи)
+        const rawRef = allRefs[i] ?? ref;
+        const articlePageMatch = rawRef.match(/[Сс]\.\s*(\d+)\s*[–\-—]/); // діапазон С. 56–74
+        const singlePageMatch = !articlePageMatch && rawRef.match(/[Сс]\.\s*(\d+)(?!\d*\s*с\.)/); // одна сторінка С. 56, але не "210 с."
+        const engPageMatch = rawRef.match(/pp?\.\s*(\d+)/i); // англійські pp. 56
         const startPage = articlePageMatch?.[1] || singlePageMatch?.[1] || engPageMatch?.[1];
         refCiteText[n] = startPage ? `[${n}, с. ${startPage}]` : `[${n}]`;
       }
@@ -3155,7 +3157,7 @@ ${secsSummary}
     const _remapWorkLang = info?.language || "Українська";
     const _remapLatinFirst = /англ|english|польськ|polish|нім|german|франц|french|іспан|spanish|італ|italian/i.test(_remapWorkLang);
     let allRefs, indexMap;
-    if (isAlphabeticalOrder) {
+    if (isAlphabeticalOrder || isDstu) {
       const langGroup = s => {
         const isCyrillic = /^[А-ЯҐЄІЇа-яґєії]/i.test(s);
         return _remapLatinFirst ? (isCyrillic ? 1 : 0) : (isCyrillic ? 0 : 1);
@@ -3315,10 +3317,12 @@ ${refLines2.join("\n")}`;
           : ref.match(/(?:^|[\s,])([А-ЯҐЄІЇа-яґєіїA-Za-z]{3,})/)?.[1];
         refCiteText[n] = `(${rawSurname || `Автор${n}`})`;
       } else {
-        // ДСТУ: [N, с. PAGE] або [N]
-        const articlePageMatch = ref.match(/[Сс]\.\s*(\d+)\s*[–\-—]/);
-        const singlePageMatch = !articlePageMatch && ref.match(/[Сс]\.\s*(\d+)(?!\d*\s*с\.)/);
-        const engPageMatch = ref.match(/pp?\.\s*(\d+)/i);
+        // ДСТУ: витягуємо сторінку з raw-запису (allRefs), не з fmtLines,
+        // щоб не залежати від переупорядкування Gemini за ДСТУ-групами
+        const rawRef = allRefs[i] ?? ref;
+        const articlePageMatch = rawRef.match(/[Сс]\.\s*(\d+)\s*[–\-—]/);
+        const singlePageMatch = !articlePageMatch && rawRef.match(/[Сс]\.\s*(\d+)(?!\d*\s*с\.)/);
+        const engPageMatch = rawRef.match(/pp?\.\s*(\d+)/i);
         const startPage = articlePageMatch?.[1] || singlePageMatch?.[1] || engPageMatch?.[1];
         refCiteText[n] = startPage ? `[${n}, с. ${startPage}]` : `[${n}]`;
       }

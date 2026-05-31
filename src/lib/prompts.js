@@ -313,7 +313,7 @@ conclusionsPages: ${s.conclusionsPages ?? 'null'}
 
 // ── Промпт для аналізу шаблону замовлення ──
 export function buildTemplateAnalysisPrompt(tplText, comment) {
-  return `Проаналізуй шаблон замовлення.\n\nШАБЛОН:\n${tplText}\n${comment ? "\nКОМЕНТАР: " + comment : ""}\n\nПоверни ТІЛЬКИ JSON (без markdown):\n{"type":"","pages":"","topic":"","subject":"","direction":"","uniqueness":"","language":"Українська","deadline":"","extras":"","methodNotes":"","sourceCount":"30-40"}`;
+  return `Проаналізуй шаблон замовлення.\n\nШАБЛОН:\n${tplText}\n${comment ? "\nКОМЕНТАР: " + comment : ""}\n\nПоверни ТІЛЬКИ JSON (без markdown):\n{"type":"","pages":"","topic":"","subject":"","direction":"","uniqueness":"","language":"Українська","deadline":"","orderNumber":"","extras":"","methodNotes":"","sourceCount":"30-40"}`;
 }
 
 // ── Промпт для аналізу коментаря клієнта ──
