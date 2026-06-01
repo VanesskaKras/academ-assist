@@ -32,6 +32,20 @@ import { DoneStage } from "./components/stages/DoneStage.jsx";
 import { ChecklistStage } from "./components/stages/ChecklistStage.jsx";
 import { CorrectionsStage } from "./components/stages/CorrectionsStage.jsx";
 
+// Fixes Latin characters accidentally inserted inside Cyrillic words by the AI model
+function fixMixedScript(text, lang) {
+  if (getLangLabels(lang).latinScript) return text;
+  const map = {
+    'a':'а','c':'с','e':'е','i':'і','o':'о','p':'р','x':'х','y':'у','g':'г','r':'р',
+    'A':'А','B':'В','C':'С','E':'Е','H':'Н','I':'І','K':'К','M':'М','O':'О','P':'Р','T':'Т','X':'Х',
+  };
+  return text.replace(/\S+/g, w =>
+    /[Ѐ-ӿ]/.test(w) && /[a-zA-Z]/.test(w)
+      ? w.replace(/[a-zA-Z]/g, ch => map[ch] ?? ch)
+      : w
+  );
+}
+
 // ── Helpers for section reordering ──
 
 function renumberSections(sections) {
@@ -1530,7 +1544,7 @@ ${planSummary}
     try {
       const raw = await callClaude(buildMessages(instruction), ctrl.signal, buildSYS(lang, methodInfo), sectionMaxTokens, (s) => setLoadMsg(`Генерую: ${sec.label}... зачекайте ${s}с`));
       // Видаляємо довге тире на всякий випадок (модель іноді ігнорує заборону)
-      const result = raw
+      const result = fixMixedScript(raw, lang)
         .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
         .replace(/[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF]/g, "")
         .replace(/[„""]([^"„""]*)["""]/g, "«$1»")
@@ -1775,7 +1789,7 @@ ${clientReqsRegen ? `ВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО вико
     const regenMaxTokens = Math.min(60000, Math.max(8000, Math.round((sec.pages || 1) * 3000)));
     try {
       const raw = await callClaude(buildRegenMessages(instruction), null, buildSYS(lang, methodInfo), regenMaxTokens);
-      const result = raw
+      const result = fixMixedScript(raw, lang)
         .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
         .replace(/[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF]/g, "")
         .replace(/[„""]([^"„""]*)["""]/g, "«$1»")
@@ -2510,7 +2524,7 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
       const sectionMaxTokens = Math.min(60000, Math.max(8000, Math.round((sec.pages || 1) * 3000)));
       try {
         const raw = await callClaude(buildRegenAllMessages(sec.id, instruction), ctrl.signal, buildSYS(lang, methodInfo), sectionMaxTokens, null, MODEL);
-        const result = raw
+        const result = fixMixedScript(raw, lang)
           .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
           .replace(/[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF]/g, "")
           .replace(/[„""]([^"„""]*)["""]/g, "«$1»")
