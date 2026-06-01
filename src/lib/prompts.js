@@ -495,6 +495,116 @@ ${instrLine}
 - НЕ повертай весь документ — тільки JSON з двома полями`;
 }
 
+// ── Промпти для звіту з практики ──
+
+export function buildPracticePlanPrompt(info) {
+  const { practiceType, companyName, companyProfile, individualTask, pages = 30 } = info;
+  const total = parseInt(pages) || 30;
+  const main = total - 5;
+  const ch1 = Math.round(main * 0.18);
+  const ch2 = Math.round(main * 0.18);
+  const ch3 = Math.round(main * 0.28);
+  const ch4 = Math.round(main * 0.25);
+  const concl = total - 2 - ch1 - ch2 - ch3 - ch4;
+  return `Склади структуру звіту з практики.
+Тип практики: ${practiceType || "виробнича"}
+Підприємство: ${companyName || ""}
+${companyProfile ? `Профіль діяльності: ${companyProfile}` : ""}
+${individualTask ? `Індивідуальне завдання: ${individualTask}` : ""}
+Загальний обсяг: ${total} сторінок.
+
+Поверни ТІЛЬКИ JSON (без markdown):
+{"sections":[
+  {"id":"intro","label":"ВСТУП","pages":2},
+  {"id":"ch1","label":"1. ЗАГАЛЬНА ХАРАКТЕРИСТИКА ПІДПРИЄМСТВА","pages":${ch1}},
+  {"id":"ch2","label":"2. АНАЛІЗ ОСНОВНИХ НАПРЯМІВ ДІЯЛЬНОСТІ ПІДПРИЄМСТВА","pages":${ch2}},
+  {"id":"ch3","label":"3. ВИКОНАНІ ЗАВДАННЯ ПІД ЧАС ПРАКТИКИ","pages":${ch3}},
+  {"id":"ch4","label":"4. ІНДИВІДУАЛЬНЕ ЗАВДАННЯ","pages":${ch4}},
+  {"id":"conclusions","label":"ВИСНОВКИ","pages":${Math.max(2, concl)}},
+  {"id":"sources","label":"СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ","pages":0}
+]}
+
+Адаптуй назви розділів до типу практики та підприємства. id "intro", "conclusions", "sources" — не змінювати.`;
+}
+
+export function buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterialsSummary, citInputs) {
+  const { practiceType, companyName, companyProfile, companyAddress, dateFrom, dateTo, specialty, course, group, studentName, supervisorCompany, supervisorUniversity, individualTask, language = "Українська" } = info;
+
+  const ctx = `Звіт з ${(practiceType || "виробничої").toLowerCase()} практики.
+Підприємство: ${companyName || ""}${companyProfile ? ` (${companyProfile})` : ""}${companyAddress ? `, ${companyAddress}` : ""}.
+Строки практики: ${dateFrom || ""} – ${dateTo || ""}.
+${studentName ? `Студент: ${studentName}` : ""}${specialty ? `, спеціальність: ${specialty}` : ""}${course ? `, ${course} курс` : ""}${group ? `, група ${group}` : ""}.
+${supervisorCompany ? `Керівник від підприємства: ${supervisorCompany}.` : ""}
+${supervisorUniversity ? `Керівник від університету: ${supervisorUniversity}.` : ""}`.trim();
+
+  const isIntro = sec.id === "intro";
+  const isConclusions = sec.id === "conclusions";
+  const isIndividual = sec.id === "ch4" || /індивідуальн/i.test(sec.label || "");
+
+  const hint = isIntro
+    ? "Вступ: мета та завдання практики, місце проходження, керівники. Обсяг не більше 2 сторінок."
+    : isConclusions
+    ? "Висновки: підсумки практики, що виконано, набуті компетентності, рекомендації підприємству."
+    : isIndividual && individualTask
+    ? `Розкрий індивідуальне завдання: ${individualTask}`
+    : "";
+
+  const methodReq = methodInfo
+    ? [methodInfo.theoryRequirements, methodInfo.analysisRequirements, methodInfo.otherRequirements].filter(Boolean).join(". ")
+    : "";
+
+  const secCit = citInputs?.[sec.id]?.trim();
+  const sourcesBlock = secCit
+    ? `\nДЖЕРЕЛА для цього розділу (вставляй маркери [N] після відповідних тверджень):\n${secCit}`
+    : "";
+
+  let instruction = `Напиши розділ "${sec.label}" звіту з практики. Мова: ${language}.
+
+КОНТЕКСТ ПРАКТИКИ:
+${ctx}
+${hint ? `\nОСОБЛИВОСТІ РОЗДІЛУ: ${hint}` : ""}
+${methodReq ? `\nВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${sourcesBlock}
+
+Обсяг: ~${sec.pages * 270} слів (~${sec.pages} стор.). Пиши НЕ МЕНШЕ вказаного обсягу.
+Без markdown заголовків (#, ##). Не повторюй назву розділу на початку тексту.`;
+
+  if (clientMaterialsSummary?.rawText) {
+    instruction += `\n\nМАТЕРІАЛИ КЛІЄНТА (використовуй ці дані — не вигадуй, не замінюй):\n${clientMaterialsSummary.rawText.slice(0, 80000)}`;
+  }
+  return instruction;
+}
+
+export function buildPracticeDiaryPrompt(info) {
+  const { dateFrom, dateTo, practiceType, companyName, companyProfile, individualTask, specialty, language = "Українська" } = info;
+  return `Склади щоденник ${(practiceType || "виробничої").toLowerCase()} практики у вигляді таблиці.
+Підприємство: ${companyName || ""}${companyProfile ? ` (${companyProfile})` : ""}
+Строки практики: ${dateFrom || ""} – ${dateTo || ""}
+${specialty ? `Спеціальність: ${specialty}` : ""}
+${individualTask ? `Індивідуальне завдання: ${individualTask}` : ""}
+Мова: ${language}.
+
+Склади таблицю по робочих днях (понеділок–п'ятниця) у межах вказаних дат. Кожен день — окремий рядок.
+Зміст роботи має бути конкретним і відповідати профілю підприємства та типу практики.
+В останні 2-3 дні включи: оформлення звіту, перевірку документів.
+
+Поверни ТІЛЬКИ markdown-таблицю:
+| Дата | Зміст виконаної роботи | Підпис керівника |
+|------|------------------------|-----------------|
+| дд.мм.рррр | ... | |`;
+}
+
+export function buildPracticeSourcesKeywordsPrompt(sections, info) {
+  const secList = sections.filter(s => s.id !== "sources").map(s => `- id:"${s.id}" → ${s.label}`).join("\n");
+  return `Визнач пошукові фрази для наукових джерел до звіту з практики.
+Підприємство: ${info?.companyName || ""}. Тип практики: ${info?.practiceType || ""}. Спеціальність: ${info?.specialty || ""}.
+
+Розділи:
+${secList}
+
+Поверни ТІЛЬКИ JSON (ключ — id розділу, значення — 3-4 пошукові фрази):
+{"intro":"...","ch1":"...","ch2":"...","ch3":"...","ch4":"...","conclusions":"..."}`;
+}
+
 // ── Застосування одного виправлення до фрагменту тексту файлу ──
 export function buildFileApplyCorrectionPrompt({ documentText, location, issue, suggestion }) {
   return `Ти виправляєш частину академічної роботи відповідно до зауваження викладача.

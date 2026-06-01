@@ -244,9 +244,22 @@ async function exportCorrectedDocx(text, originalName) {
   const { Document, Packer, Paragraph, TextRun, AlignmentType, Table, TableRow, TableCell, WidthType, BorderStyle, Header, PageNumber } = window.docx;
   const FONT = "Times New Roman", SIZE = 28, LINE = 360, INDENT = 709;
 
-  const HEADING_RE = /^(РОЗДІЛ|ВСТУП|ВИСНОВКИ|СПИСОК|ДОДАТКИ|ЗМІСТ|INTRODUCTION|CHAPTER|CONCLUSIONS|REFERENCES|APPENDIX|BIBLIOGRAPHY|CONTENTS|ROZDZIAŁ|WSTĘP|WNIOSKI|ZAKOŃCZENIE|PODSUMOWANIE|BIBLIOGRAFIA|SPIS|CAPÍTULO|INTRODUCCIÓN|CONCLUSIONES|BIBLIOGRAFÍA|REFERENCIAS|APÉNDICE|KAPITEL|EINLEITUNG|FAZIT|SCHLUSSFOLGERUNG|LITERATURVERZEICHNIS|ANHANG|INHALTSVERZEICHNIS|KAPITOLA|ÚVOD|ZÁVĚR|SEZNAM|PŘÍLOHY|ZÁVER|ZOZNAM|PRÍLOHY|第|绪论|结论|参考文献|附录|目录|\d+\.\s)/i;
   const TABLE_RE = /^\s*\|/;
   const LIST_RE = /^[–—-]\s+/;
+
+  // Висновки до розділу / chapter conclusions — підзаголовок без нової сторінки
+  const CHAPTER_CONCL_RE = /^(висновки до |podsumowanie rozdzia|fazit zu kapitel|conclusiones del cap)/i;
+  // Підрозділи типу "1.1", "2.3.1" — підзаголовок без нової сторінки
+  const SUBSECTION_RE = /^\d+\.\d+/;
+  // Великі розділи — нова сторінка
+  const MAJOR_RE = /^(ЗМІСТ|ВСТУП|ВИСНОВКИ|СПИСОК|ДОДАТКИ|РОЗДІЛ|INTRODUCTION|CHAPTER|CONCLUSIONS|REFERENCES|APPENDIX|BIBLIOGRAPHY|CONTENTS|ROZDZIAŁ|WSTĘP|WNIOSKI|ZAKOŃCZENIE|PODSUMOWANIE|BIBLIOGRAFIA|SPIS|CAPÍTULO|INTRODUCCIÓN|CONCLUSIONES|BIBLIOGRAFÍA|REFERENCIAS|APÉNDICE|KAPITEL|EINLEITUNG|FAZIT|SCHLUSSFOLGERUNG|LITERATURVERZEICHNIS|ANHANG|INHALTSVERZEICHNIS|KAPITOLA|ÚVOD|ZÁVĚR|SEZNAM|PŘÍLOHY|ZÁVER|ZOZNAM|PRÍLOHY|第|绪论|结论|参考文献|附录|目录)/i;
+
+  function classifyLine(t) {
+    if (CHAPTER_CONCL_RE.test(t)) return "subsection";   // висновки до розділу
+    if (SUBSECTION_RE.test(t))    return "subsection";   // 1.1 Назва
+    if (MAJOR_RE.test(t))         return "major";        // РОЗДІЛ, ВСТУП тощо
+    return "body";
+  }
 
   function makeTableFromLines(lines) {
     const filtered = lines.filter(l => !/^\s*\|[-:|\s]+\|\s*$/.test(l));
@@ -268,9 +281,43 @@ async function exportCorrectedDocx(text, originalName) {
     return new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows });
   }
 
+  // Ключові слова вступу що потребують жирного початку
+  const INTRO_BOLD_RE = /^(Актуальн|Мет(?:ою|а[\s.])|Завдання|Для досягн|Для вирішен|Об['']?єкт|Предмет|Метод(?:и|ологічн)|Наукова новизна|Практична знач|Апробац|Структур|Теоретико|Матеріал|Хронологічн)/i;
+
+  function makeIntroBoldPara(t) {
+    let boldEnd = -1;
+    const colon = t.indexOf(":");
+    if (colon > 0 && colon < 120) { boldEnd = colon + 1; }
+    else {
+      const dash = t.search(/ [–—-] /);
+      if (dash > 0 && dash < 80) { boldEnd = dash + 2; }
+      else {
+        const dot = t.indexOf(".");
+        if (dot > 0 && dot < 50) { boldEnd = dot + 1; }
+      }
+    }
+    if (boldEnd <= 0) {
+      return new Paragraph({
+        indent: { firstLine: INDENT }, spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
+        alignment: AlignmentType.BOTH,
+        children: [new TextRun({ text: t, font: FONT, size: SIZE })],
+      });
+    }
+    return new Paragraph({
+      indent: { firstLine: INDENT }, spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
+      alignment: AlignmentType.BOTH,
+      children: [
+        new TextRun({ text: t.slice(0, boldEnd), font: FONT, size: SIZE, bold: true }),
+        new TextRun({ text: t.slice(boldEnd), font: FONT, size: SIZE }),
+      ],
+    });
+  }
+
   const docChildren = [];
   const lines = text.split("\n");
+  let inIntro = false;
   let i = 0;
+
   while (i < lines.length) {
     const line = lines[i];
     const trimmed = line.trim();
@@ -288,14 +335,25 @@ async function exportCorrectedDocx(text, originalName) {
 
     if (!trimmed) { i++; continue; }
 
-    const isHeading = HEADING_RE.test(trimmed);
+    const kind = classifyLine(trimmed);
     const isList = LIST_RE.test(trimmed);
 
-    if (isHeading) {
+    if (kind === "major") {
+      // Відстежуємо чи ми у вступі
+      inIntro = /^(ВСТУП|INTRODUCTION|WSTĘP|ÚVOD|EINLEITUNG|INTRODUCCIÓN|绪论)$/i.test(trimmed);
       docChildren.push(new Paragraph({
+        pageBreakBefore: docChildren.length > 0,
         alignment: AlignmentType.CENTER,
-        spacing: { line: LINE, lineRule: "auto", before: Math.round(LINE * 0.5), after: Math.round(LINE * 0.3) },
+        spacing: { line: LINE, lineRule: "auto", before: 0, after: Math.round(LINE * 0.3) },
         indent: { firstLine: 0 },
+        children: [new TextRun({ text: trimmed, font: FONT, size: SIZE, bold: true })],
+      }));
+    } else if (kind === "subsection") {
+      inIntro = false;
+      docChildren.push(new Paragraph({
+        alignment: AlignmentType.BOTH,
+        spacing: { line: LINE, lineRule: "auto", before: Math.round(LINE * 0.3), after: Math.round(LINE * 0.2) },
+        indent: { firstLine: INDENT },
         children: [new TextRun({ text: trimmed, font: FONT, size: SIZE, bold: true })],
       }));
     } else if (isList) {
@@ -305,6 +363,9 @@ async function exportCorrectedDocx(text, originalName) {
         alignment: AlignmentType.BOTH,
         children: [new TextRun({ text: trimmed, font: FONT, size: SIZE })],
       }));
+    } else if (inIntro && INTRO_BOLD_RE.test(trimmed)) {
+      // Абзаци вступу з жирним початком: "Мета дослідження –", "Актуальність теми." тощо
+      docChildren.push(makeIntroBoldPara(trimmed));
     } else {
       docChildren.push(new Paragraph({
         alignment: AlignmentType.BOTH,
@@ -607,7 +668,16 @@ export default function FileCorrectionsPage({ onBack }) {
     <div style={{ minHeight: "100vh", background: "#f5f2eb", fontFamily: "'Spectral', Georgia, serif", padding: "0 0 60px" }}>
       {/* Хедер */}
       <div style={{ background: "#1a1a14", padding: "14px 24px", display: "flex", alignItems: "center", gap: 14, position: "sticky", top: 0, zIndex: 10 }}>
-        <button onClick={onBack} style={{ background: "none", border: "none", color: "#888", fontSize: 18, cursor: "pointer", lineHeight: 1, padding: 4 }}>←</button>
+        <button
+          onClick={() => {
+            if (!mode) { onBack(); return; }
+            if (step === 0) { setMode(null); setError(""); return; }
+            if (step === 1) { setStep(0); setTasksA([]); setAnnotations({ highlights: [], comments: [] }); return; }
+            if (step === 2) { setStep(mode === "A" ? 1 : 1); setApplyProgress(0); return; }
+            if (step === 3) { setStep(mode === "A" ? 1 : 2); setCorrectedText(""); setCurrentDocText(docText); setApplyProgress(0); }
+          }}
+          style={{ background: "none", border: "none", color: "#888", fontSize: 18, cursor: "pointer", lineHeight: 1, padding: 4 }}
+        >←</button>
         <div style={{ color: "#e8ff47", fontFamily: "'Spectral SC',serif", fontSize: 14, letterSpacing: 3 }}>ПРАВКИ ДО ФАЙЛУ</div>
         {sessionCost > 0 && <div style={{ marginLeft: "auto", fontSize: 11, color: "#888", fontFamily: "monospace" }}>сесія: ${sessionCost.toFixed(4)}</div>}
       </div>
