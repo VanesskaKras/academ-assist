@@ -498,7 +498,7 @@ ${instrLine}
 // ── Промпти для звіту з практики ──
 
 export function buildPracticePlanPrompt(info) {
-  const { practiceType, practiceCategory = "economy", companyName, companyProfile, individualTask, pages = 30 } = info;
+  const { practiceText = "", practiceCategory = "economy", pages = 30 } = info;
   const total = parseInt(pages) || 30;
   const main = total - 5;
 
@@ -564,11 +564,10 @@ export function buildPracticePlanPrompt(info) {
   ].join(",\n");
 
   return `Склади структуру звіту з практики.
-Тип практики: ${practiceType || "виробнича"}
-Підприємство/Установа: ${companyName || ""}
-${companyProfile ? `Профіль діяльності: ${companyProfile}` : ""}
-${individualTask ? `Індивідуальне завдання: ${individualTask}` : ""}
 Загальний обсяг: ${total} сторінок.
+
+ДАНІ ПРАКТИКИ:
+${practiceText}
 
 Поверни ТІЛЬКИ JSON (без markdown):
 {"sections":[
@@ -579,25 +578,15 @@ ${sectionsJson}
 }
 
 export function buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterialsSummary, citInputs) {
-  const { practiceType, companyName, companyProfile, companyAddress, dateFrom, dateTo, specialty, course, group, studentName, supervisorCompany, supervisorUniversity, individualTask, language = "Українська" } = info;
-
-  const ctx = `Звіт з ${(practiceType || "виробничої").toLowerCase()} практики.
-Підприємство: ${companyName || ""}${companyProfile ? ` (${companyProfile})` : ""}${companyAddress ? `, ${companyAddress}` : ""}.
-Строки практики: ${dateFrom || ""} – ${dateTo || ""}.
-${studentName ? `Студент: ${studentName}` : ""}${specialty ? `, спеціальність: ${specialty}` : ""}${course ? `, ${course} курс` : ""}${group ? `, група ${group}` : ""}.
-${supervisorCompany ? `Керівник від підприємства: ${supervisorCompany}.` : ""}
-${supervisorUniversity ? `Керівник від університету: ${supervisorUniversity}.` : ""}`.trim();
+  const { practiceText = "", language = "Українська" } = info;
 
   const isIntro = sec.id === "intro";
   const isConclusions = sec.id === "conclusions";
-  const isIndividual = sec.id === "ch4" || /індивідуальн/i.test(sec.label || "");
 
   const hint = isIntro
     ? "Вступ: мета та завдання практики, місце проходження, керівники. Обсяг не більше 2 сторінок."
     : isConclusions
-    ? "Висновки: підсумки практики, що виконано, набуті компетентності, рекомендації підприємству."
-    : isIndividual && individualTask
-    ? `Розкрий індивідуальне завдання: ${individualTask}`
+    ? "Висновки: підсумки практики, що виконано, набуті компетентності, рекомендації."
     : "";
 
   const methodReq = methodInfo
@@ -611,8 +600,8 @@ ${supervisorUniversity ? `Керівник від університету: ${su
 
   let instruction = `Напиши розділ "${sec.label}" звіту з практики. Мова: ${language}.
 
-КОНТЕКСТ ПРАКТИКИ:
-${ctx}
+ДАНІ ПРАКТИКИ:
+${practiceText}
 ${hint ? `\nОСОБЛИВОСТІ РОЗДІЛУ: ${hint}` : ""}
 ${methodReq ? `\nВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${sourcesBlock}
 
@@ -626,13 +615,12 @@ ${methodReq ? `\nВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${sourcesBl
 }
 
 export function buildPracticeDiaryPrompt(info) {
-  const { dateFrom, dateTo, practiceType, companyName, companyProfile, individualTask, specialty, language = "Українська" } = info;
-  return `Склади щоденник ${(practiceType || "виробничої").toLowerCase()} практики у вигляді таблиці.
-Підприємство: ${companyName || ""}${companyProfile ? ` (${companyProfile})` : ""}
-Строки практики: ${dateFrom || ""} – ${dateTo || ""}
-${specialty ? `Спеціальність: ${specialty}` : ""}
-${individualTask ? `Індивідуальне завдання: ${individualTask}` : ""}
+  const { practiceText = "", language = "Українська" } = info;
+  return `Склади щоденник практики у вигляді таблиці на основі наданих даних.
 Мова: ${language}.
+
+ДАНІ ПРАКТИКИ:
+${practiceText}
 
 Склади таблицю по робочих днях (понеділок–п'ятниця) у межах вказаних дат. Кожен день — окремий рядок.
 Зміст роботи має бути конкретним і відповідати профілю підприємства та типу практики.
@@ -647,7 +635,9 @@ ${individualTask ? `Індивідуальне завдання: ${individualTas
 export function buildPracticeSourcesKeywordsPrompt(sections, info) {
   const secList = sections.filter(s => s.id !== "sources").map(s => `- id:"${s.id}" → ${s.label}`).join("\n");
   return `Визнач пошукові фрази для наукових джерел до звіту з практики.
-Підприємство: ${info?.companyName || ""}. Тип практики: ${info?.practiceType || ""}. Спеціальність: ${info?.specialty || ""}.
+
+ДАНІ ПРАКТИКИ:
+${info?.practiceText || ""}
 
 Розділи:
 ${secList}

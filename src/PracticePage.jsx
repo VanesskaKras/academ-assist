@@ -117,25 +117,12 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
   const [maxStageIdx, setMaxStageIdx] = useState(0);
   const maxStageIdxRef = useRef(0);
 
-  // Форма — поля практики
+  // Форма
   const [practiceCategory, setPracticeCategory] = useState("economy");
-  const [practiceType, setPracticeType] = useState("Виробнича");
-  const [companyName, setCompanyName] = useState("");
-  const [companyProfile, setCompanyProfile] = useState("");
-  const [companyAddress, setCompanyAddress] = useState("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
-  const [specialty, setSpecialty] = useState("");
-  const [course, setCourse] = useState("");
-  const [group, setGroup] = useState("");
-  const [studentName, setStudentName] = useState("");
-  const [supervisorCompany, setSupervisorCompany] = useState("");
-  const [supervisorUniversity, setSupervisorUniversity] = useState("");
-  const [individualTask, setIndividualTask] = useState("");
+  const [practiceText, setPracticeText] = useState("");
   const [pages, setPages] = useState("30");
   const [language, setLanguage] = useState("Українська");
   const [deadline, setDeadline] = useState("");
-  const [comment, setComment] = useState("");
 
   // Методичка (PDF)
   const [fileLabel, setFileLabel] = useState("");
@@ -199,13 +186,10 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
 
   // Info-об'єкт для промптів
   const getPracticeInfo = useCallback(() => ({
-    practiceCategory, practiceType, companyName, companyProfile, companyAddress,
-    dateFrom, dateTo, specialty, course, group, studentName,
-    supervisorCompany, supervisorUniversity, individualTask,
-    pages, language, deadline, comment,
-    topic: `${practiceType} практика: ${companyName}`,
+    practiceCategory, practiceText, pages, language, deadline,
+    topic: "Звіт із практики",
     type: "Звіт із практики",
-  }), [practiceCategory, practiceType, companyName, companyProfile, companyAddress, dateFrom, dateTo, specialty, course, group, studentName, supervisorCompany, supervisorUniversity, individualTask, pages, language, deadline, comment]);
+  }), [practiceCategory, practiceText, pages, language, deadline]);
 
   // ── Збереження в Firestore ──────────────────────────────────────────────────
   const saveToFirestore = useCallback(async (patch = {}) => {
@@ -253,23 +237,10 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
           currentIdRef.current = orderId;
           const i = d.info || {};
           if (i.practiceCategory) setPracticeCategory(i.practiceCategory);
-          if (i.practiceType) setPracticeType(i.practiceType);
-          if (i.companyName) setCompanyName(i.companyName);
-          if (i.companyProfile) setCompanyProfile(i.companyProfile);
-          if (i.companyAddress) setCompanyAddress(i.companyAddress);
-          if (i.dateFrom) setDateFrom(i.dateFrom);
-          if (i.dateTo) setDateTo(i.dateTo);
-          if (i.specialty) setSpecialty(i.specialty);
-          if (i.course) setCourse(i.course);
-          if (i.group) setGroup(i.group);
-          if (i.studentName) setStudentName(i.studentName);
-          if (i.supervisorCompany) setSupervisorCompany(i.supervisorCompany);
-          if (i.supervisorUniversity) setSupervisorUniversity(i.supervisorUniversity);
-          if (i.individualTask) setIndividualTask(i.individualTask);
+          if (i.practiceText) setPracticeText(i.practiceText);
           if (i.pages) setPages(i.pages);
           if (i.language) setLanguage(i.language);
           if (i.deadline) setDeadline(i.deadline);
-          if (i.comment) setComment(i.comment);
           if (d.fileLabel) setFileLabel(d.fileLabel);
           if (d.methodInfo) setMethodInfo(d.methodInfo);
           if (d.clientMaterialsSummary) setClientMaterialsSummary(d.clientMaterialsSummary);
@@ -304,7 +275,7 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
 
   // ── Крок 1: Аналіз PDF методички + матеріали ───────────────────────────────
   const doAnalyze = async () => {
-    if (!companyName.trim()) { setError("Введіть назву підприємства"); return; }
+    if (!practiceText.trim()) { setError("Введіть дані про практику"); return; }
     setError("");
     setRunning(true); runningRef.current = true;
     const info = getPracticeInfo();
@@ -618,66 +589,22 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
         </div>
       </FieldBox>
 
-      <FieldBox label="Тип практики">
-        <div style={{ display: "flex", gap: 8 }}>
-          {PRACTICE_TYPES.map(t => (
-            <button key={t} onClick={() => setPracticeType(t)}
-              style={{ padding: "7px 16px", borderRadius: 20, fontSize: 12, cursor: "pointer", background: practiceType === t ? "#1a1a14" : "#f0ece2", color: practiceType === t ? "#e8ff47" : "#333", border: `1.5px solid ${practiceType === t ? "#1a1a14" : "#d4cfc4"}` }}>
-              {t}
-            </button>
-          ))}
-        </div>
-      </FieldBox>
+      <FieldBox label="Дані практики" tooltip="Вставте будь-який текст — бланк завдання, опис підприємства, вимоги викладача. AI сам витягне всю потрібну інформацію.">
+        <textarea
+          value={practiceText}
+          onChange={e => setPracticeText(e.target.value)}
+          placeholder={`Вставте або введіть дані про практику — бланк завдання, опис підприємства, вимоги тощо.
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 20px" }}>
-        <FieldBox label="Назва підприємства / організації *">
-          <input value={companyName} onChange={e => setCompanyName(e.target.value)} placeholder="ТОВ «Назва»" style={{ ...inputStyle, borderColor: !companyName && error ? "#c55" : "#d4cfc4" }} />
-        </FieldBox>
-        <FieldBox label="Адреса підприємства">
-          <input value={companyAddress} onChange={e => setCompanyAddress(e.target.value)} placeholder="м. Київ, вул. ..." style={inputStyle} />
-        </FieldBox>
-      </div>
-
-      <FieldBox label="Профіль / вид діяльності підприємства">
-        <input value={companyProfile} onChange={e => setCompanyProfile(e.target.value)} placeholder="Виробництво, торгівля, ІТ-послуги..." style={inputStyle} />
-      </FieldBox>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 20px" }}>
-        <FieldBox label="Дата початку практики">
-          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={inputStyle} />
-        </FieldBox>
-        <FieldBox label="Дата закінчення практики">
-          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} style={inputStyle} />
-        </FieldBox>
-      </div>
-
-      <FieldBox label="ПІБ студента">
-        <input value={studentName} onChange={e => setStudentName(e.target.value)} placeholder="Іваненко Іван Іванович" style={inputStyle} />
-      </FieldBox>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0 20px" }}>
-        <FieldBox label="Спеціальність">
-          <input value={specialty} onChange={e => setSpecialty(e.target.value)} placeholder="072 Фінанси, банківська справа..." style={inputStyle} />
-        </FieldBox>
-        <FieldBox label="Курс">
-          <input value={course} onChange={e => setCourse(e.target.value)} placeholder="3" style={inputStyle} />
-        </FieldBox>
-        <FieldBox label="Група">
-          <input value={group} onChange={e => setGroup(e.target.value)} placeholder="ФБС-31" style={inputStyle} />
-        </FieldBox>
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 20px" }}>
-        <FieldBox label="Керівник від підприємства (ПІБ, посада)">
-          <input value={supervisorCompany} onChange={e => setSupervisorCompany(e.target.value)} placeholder="Петренко П. П., директор" style={inputStyle} />
-        </FieldBox>
-        <FieldBox label="Керівник від університету (ПІБ, посада)">
-          <input value={supervisorUniversity} onChange={e => setSupervisorUniversity(e.target.value)} placeholder="Сидоренко С. С., доцент, к. е. н." style={inputStyle} />
-        </FieldBox>
-      </div>
-
-      <FieldBox label="Індивідуальне завдання">
-        <textarea value={individualTask} onChange={e => setIndividualTask(e.target.value)} placeholder="Опишіть індивідуальне завдання..." style={{ ...TA_WHITE, minHeight: 80 }} />
+Наприклад:
+Місце практики: ТОВ «Назва», м. Київ
+Строки: 01.06.2025 – 28.06.2025
+Студент: Іваненко І. І., 3 курс, група ФБС-31
+Спеціальність: 072 Фінанси
+Керівник від підприємства: Петренко П. П., директор
+Керівник від університету: Сидоренко С. С., доцент
+Індивідуальне завдання: ...`}
+          style={{ ...TA_WHITE, minHeight: 200 }}
+        />
       </FieldBox>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0 20px" }}>
@@ -693,10 +620,6 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
           <input value={deadline} onChange={e => setDeadline(e.target.value)} placeholder="дд.мм.рррр" style={inputStyle} />
         </FieldBox>
       </div>
-
-      <FieldBox label="Коментар / додаткові вимоги">
-        <textarea value={comment} onChange={e => setComment(e.target.value)} placeholder="Будь-які особливі вимоги або побажання..." style={{ ...TA_WHITE, minHeight: 60 }} />
-      </FieldBox>
 
       <FieldBox label="Методичка (PDF)" tooltip="Завантажте методичні вказівки — програма врахує всі вимоги до оформлення та структури">
         <DropZone fileLabel={fileLabel} onFile={(name, b64, type) => { setFileLabel(name); setFileB64(b64); setFileType(type); }} />
