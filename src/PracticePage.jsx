@@ -31,6 +31,14 @@ const STAGE_KEYS   = ["input", "plan", "sources", "writing", "diary", "done"];
 const PRACTICE_TYPES = ["Навчальна", "Виробнича", "Переддипломна"];
 const LANGUAGES = ["Українська", "Англійська", "Польська"];
 
+const PRACTICE_CATEGORIES = [
+  { key: "economy", label: "Економіка / Менеджмент", icon: "📊" },
+  { key: "pedagogy", label: "Педагогічна",           icon: "📚" },
+  { key: "law",      label: "Юридична",               icon: "⚖️" },
+  { key: "it",       label: "ІТ / Технічна",          icon: "💻" },
+  { key: "medicine", label: "Медична / Фарм.",        icon: "🏥" },
+];
+
 // ─── Render markdown tables ───────────────────────────────────────────────────
 function renderWithTables(text) {
   if (!text) return null;
@@ -108,6 +116,7 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
   const maxStageIdxRef = useRef(0);
 
   // Форма — поля практики
+  const [practiceCategory, setPracticeCategory] = useState("economy");
   const [practiceType, setPracticeType] = useState("Виробнича");
   const [companyName, setCompanyName] = useState("");
   const [companyProfile, setCompanyProfile] = useState("");
@@ -188,13 +197,13 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
 
   // Info-об'єкт для промптів
   const getPracticeInfo = useCallback(() => ({
-    practiceType, companyName, companyProfile, companyAddress,
+    practiceCategory, practiceType, companyName, companyProfile, companyAddress,
     dateFrom, dateTo, specialty, course, group, studentName,
     supervisorCompany, supervisorUniversity, individualTask,
     pages, language, deadline, comment,
     topic: `${practiceType} практика: ${companyName}`,
     type: "Звіт із практики",
-  }), [practiceType, companyName, companyProfile, companyAddress, dateFrom, dateTo, specialty, course, group, studentName, supervisorCompany, supervisorUniversity, individualTask, pages, language, deadline, comment]);
+  }), [practiceCategory, practiceType, companyName, companyProfile, companyAddress, dateFrom, dateTo, specialty, course, group, studentName, supervisorCompany, supervisorUniversity, individualTask, pages, language, deadline, comment]);
 
   // ── Збереження в Firestore ──────────────────────────────────────────────────
   const saveToFirestore = useCallback(async (patch = {}) => {
@@ -241,6 +250,7 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
           const d = snap.data();
           currentIdRef.current = orderId;
           const i = d.info || {};
+          if (i.practiceCategory) setPracticeCategory(i.practiceCategory);
           if (i.practiceType) setPracticeType(i.practiceType);
           if (i.companyName) setCompanyName(i.companyName);
           if (i.companyProfile) setCompanyProfile(i.companyProfile);
@@ -588,6 +598,23 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
   const renderInput = () => (
     <div className="fade">
       <Heading>Дані практики</Heading>
+
+      <FieldBox label="Напрям практики">
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 8 }}>
+          {PRACTICE_CATEGORIES.map(c => (
+            <button key={c.key} onClick={() => setPracticeCategory(c.key)}
+              style={{
+                padding: "8px 12px", borderRadius: 8, fontSize: 12, cursor: "pointer", textAlign: "left",
+                background: practiceCategory === c.key ? "#1a1a14" : "#f0ece2",
+                color: practiceCategory === c.key ? "#e8ff47" : "#333",
+                border: `1.5px solid ${practiceCategory === c.key ? "#1a1a14" : "#d4cfc4"}`,
+                display: "flex", alignItems: "center", gap: 6,
+              }}>
+              <span>{c.icon}</span><span>{c.label}</span>
+            </button>
+          ))}
+        </div>
+      </FieldBox>
 
       <FieldBox label="Тип практики">
         <div style={{ display: "flex", gap: 8 }}>

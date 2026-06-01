@@ -498,33 +498,71 @@ ${instrLine}
 // ── Промпти для звіту з практики ──
 
 export function buildPracticePlanPrompt(info) {
-  const { practiceType, companyName, companyProfile, individualTask, pages = 30 } = info;
+  const { practiceType, practiceCategory = "economy", companyName, companyProfile, individualTask, pages = 30 } = info;
   const total = parseInt(pages) || 30;
   const main = total - 5;
-  const ch1 = Math.round(main * 0.18);
-  const ch2 = Math.round(main * 0.18);
-  const ch3 = Math.round(main * 0.28);
-  const ch4 = Math.round(main * 0.25);
-  const concl = total - 2 - ch1 - ch2 - ch3 - ch4;
+
+  // Шаблони структури по категоріях
+  const templates = {
+    economy: [
+      { id: "ch1", label: "1. ЗАГАЛЬНА ХАРАКТЕРИСТИКА ПІДПРИЄМСТВА", w: 0.18 },
+      { id: "ch2", label: "2. АНАЛІЗ ОСНОВНИХ НАПРЯМІВ ДІЯЛЬНОСТІ ПІДПРИЄМСТВА", w: 0.18 },
+      { id: "ch3", label: "3. ВИКОНАНІ ЗАВДАННЯ ПІД ЧАС ПРАКТИКИ", w: 0.28 },
+      { id: "ch4", label: "4. ІНДИВІДУАЛЬНЕ ЗАВДАННЯ", w: 0.25 },
+    ],
+    pedagogy: [
+      { id: "ch1", label: "1. ХАРАКТЕРИСТИКА НАВЧАЛЬНОГО ЗАКЛАДУ", w: 0.15 },
+      { id: "ch2", label: "2. АНАЛІЗ НАВЧАЛЬНО-ВИХОВНОГО ПРОЦЕСУ", w: 0.20 },
+      { id: "ch3", label: "3. ПРОВЕДЕНІ УРОКИ ТА ВИХОВНІ ЗАХОДИ", w: 0.28 },
+      { id: "ch4", label: "4. ПОЗАКЛАСНА ТА ВИХОВНА РОБОТА", w: 0.15 },
+      { id: "ch5", label: "5. ІНДИВІДУАЛЬНЕ ЗАВДАННЯ", w: 0.11 },
+    ],
+    law: [
+      { id: "ch1", label: "1. ХАРАКТЕРИСТИКА УСТАНОВИ ТА ЇЇ ПРАВОВОГО СТАТУСУ", w: 0.18 },
+      { id: "ch2", label: "2. АНАЛІЗ НОРМАТИВНО-ПРАВОВОЇ БАЗИ ДІЯЛЬНОСТІ УСТАНОВИ", w: 0.20 },
+      { id: "ch3", label: "3. ПРАКТИЧНА ЮРИДИЧНА ДІЯЛЬНІСТЬ", w: 0.25 },
+      { id: "ch4", label: "4. СКЛАДЕНІ ДОКУМЕНТИ ТА ПРАВОВІ ВИСНОВКИ", w: 0.15 },
+      { id: "ch5", label: "5. ІНДИВІДУАЛЬНЕ ЗАВДАННЯ", w: 0.11 },
+    ],
+    it: [
+      { id: "ch1", label: "1. ХАРАКТЕРИСТИКА ПІДПРИЄМСТВА ТА IT-ІНФРАСТРУКТУРИ", w: 0.15 },
+      { id: "ch2", label: "2. АНАЛІЗ ТЕХНОЛОГІЧНОГО СТЕКУ ТА АРХІТЕКТУРИ", w: 0.18 },
+      { id: "ch3", label: "3. ВИКОНАНІ ТЕХНІЧНІ ЗАВДАННЯ", w: 0.30 },
+      { id: "ch4", label: "4. ІНДИВІДУАЛЬНЕ ЗАВДАННЯ", w: 0.26 },
+    ],
+    medicine: [
+      { id: "ch1", label: "1. ХАРАКТЕРИСТИКА КЛІНІЧНОЇ БАЗИ ПРАКТИКИ", w: 0.15 },
+      { id: "ch2", label: "2. ОРГАНІЗАЦІЯ ЛІКУВАЛЬНО-ПРОФІЛАКТИЧНОЇ РОБОТИ", w: 0.20 },
+      { id: "ch3", label: "3. ВИКОНАНІ МАНІПУЛЯЦІЇ ТА КЛІНІЧНА ДІЯЛЬНІСТЬ", w: 0.30 },
+      { id: "ch4", label: "4. ІНДИВІДУАЛЬНЕ ЗАВДАННЯ", w: 0.24 },
+    ],
+  };
+
+  const tmpl = templates[practiceCategory] || templates.economy;
+  const mainSecs = tmpl.map(s => ({ ...s, pages: Math.max(3, Math.round(main * s.w)) }));
+  const usedPages = mainSecs.reduce((a, s) => a + s.pages, 0);
+  const concl = Math.max(2, total - 2 - usedPages);
+
+  const sectionsJson = [
+    `  {"id":"intro","label":"ВСТУП","pages":2}`,
+    ...mainSecs.map(s => `  {"id":"${s.id}","label":"${s.label}","pages":${s.pages}}`),
+    `  {"id":"conclusions","label":"ВИСНОВКИ","pages":${concl}}`,
+    `  {"id":"sources","label":"СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ","pages":0}`,
+  ].join(",\n");
+
   return `Склади структуру звіту з практики.
 Тип практики: ${practiceType || "виробнича"}
-Підприємство: ${companyName || ""}
+Підприємство/Установа: ${companyName || ""}
 ${companyProfile ? `Профіль діяльності: ${companyProfile}` : ""}
 ${individualTask ? `Індивідуальне завдання: ${individualTask}` : ""}
 Загальний обсяг: ${total} сторінок.
 
 Поверни ТІЛЬКИ JSON (без markdown):
 {"sections":[
-  {"id":"intro","label":"ВСТУП","pages":2},
-  {"id":"ch1","label":"1. ЗАГАЛЬНА ХАРАКТЕРИСТИКА ПІДПРИЄМСТВА","pages":${ch1}},
-  {"id":"ch2","label":"2. АНАЛІЗ ОСНОВНИХ НАПРЯМІВ ДІЯЛЬНОСТІ ПІДПРИЄМСТВА","pages":${ch2}},
-  {"id":"ch3","label":"3. ВИКОНАНІ ЗАВДАННЯ ПІД ЧАС ПРАКТИКИ","pages":${ch3}},
-  {"id":"ch4","label":"4. ІНДИВІДУАЛЬНЕ ЗАВДАННЯ","pages":${ch4}},
-  {"id":"conclusions","label":"ВИСНОВКИ","pages":${Math.max(2, concl)}},
-  {"id":"sources","label":"СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ","pages":0}
+${sectionsJson}
 ]}
 
-Адаптуй назви розділів до типу практики та підприємства. id "intro", "conclusions", "sources" — не змінювати.`;
+Адаптуй назви розділів до конкретного підприємства/установи та типу практики. id залишати незмінними.`;
 }
 
 export function buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterialsSummary, citInputs) {
