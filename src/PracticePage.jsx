@@ -37,7 +37,6 @@ const PRACTICE_CATEGORIES = [
   { key: "psychology", label: "Психологічна",            icon: "🧠" },
   { key: "law",        label: "Юридична",                icon: "⚖️" },
   { key: "it",         label: "ІТ / Технічна",           icon: "💻" },
-  { key: "medicine",   label: "Медична / Фарм.",         icon: "🏥" },
   { key: "other",      label: "Інший напрям",            icon: "📋" },
 ];
 
@@ -122,7 +121,6 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
   const [practiceText, setPracticeText] = useState("");
   const [pages, setPages] = useState("30");
   const [language, setLanguage] = useState("Українська");
-  const [deadline, setDeadline] = useState("");
 
   // Методичка (PDF)
   const [fileLabel, setFileLabel] = useState("");
@@ -186,10 +184,10 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
 
   // Info-об'єкт для промптів
   const getPracticeInfo = useCallback(() => ({
-    practiceCategory, practiceText, pages, language, deadline,
+    practiceCategory, practiceText, pages, language,
     topic: "Звіт із практики",
     type: "Звіт із практики",
-  }), [practiceCategory, practiceText, pages, language, deadline]);
+  }), [practiceCategory, practiceText, pages, language]);
 
   // ── Збереження в Firestore ──────────────────────────────────────────────────
   const saveToFirestore = useCallback(async (patch = {}) => {
@@ -240,7 +238,6 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
           if (i.practiceText) setPracticeText(i.practiceText);
           if (i.pages) setPages(i.pages);
           if (i.language) setLanguage(i.language);
-          if (i.deadline) setDeadline(i.deadline);
           if (d.fileLabel) setFileLabel(d.fileLabel);
           if (d.methodInfo) setMethodInfo(d.methodInfo);
           if (d.clientMaterialsSummary) setClientMaterialsSummary(d.clientMaterialsSummary);
@@ -321,6 +318,17 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
       summary = { rawText: combinedText };
       setClientMaterialsSummary(summary);
     }
+
+    // Витягуємо pages і language з тексту
+    const extractPrompt = `З тексту нижче витягни: кількість сторінок (ціле число, якщо не вказано — 30) і мову роботи (якщо не вказано — "Українська").
+Поверни ТІЛЬКИ JSON: {"pages":30,"language":"Українська"}
+ТЕКСТ: ${practiceText.slice(0, 1000)}`;
+    try {
+      const exRaw = await callClaude([{ role: "user", content: extractPrompt }], null, "Respond only with valid JSON.", 200, null, MODEL_FAST);
+      const ex = JSON.parse(exRaw.match(/\{[\s\S]*\}/)?.[0] || "{}");
+      if (ex.pages) { setPages(String(ex.pages)); info.pages = String(ex.pages); }
+      if (ex.language) { setLanguage(ex.language); info.language = ex.language; }
+    } catch {}
 
     // Генерація плану
     setLoadMsg("Генерую структуру звіту...");
@@ -606,20 +614,6 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
           style={{ ...TA_WHITE, minHeight: 200 }}
         />
       </FieldBox>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0 20px" }}>
-        <FieldBox label="К-сть сторінок">
-          <input value={pages} onChange={e => setPages(e.target.value)} placeholder="30" style={inputStyle} />
-        </FieldBox>
-        <FieldBox label="Мова">
-          <select value={language} onChange={e => setLanguage(e.target.value)} style={{ ...inputStyle, cursor: "pointer" }}>
-            {LANGUAGES.map(l => <option key={l}>{l}</option>)}
-          </select>
-        </FieldBox>
-        <FieldBox label="Дедлайн">
-          <input value={deadline} onChange={e => setDeadline(e.target.value)} placeholder="дд.мм.рррр" style={inputStyle} />
-        </FieldBox>
-      </div>
 
       <FieldBox label="Методичка (PDF)" tooltip="Завантажте методичні вказівки — програма врахує всі вимоги до оформлення та структури">
         <DropZone fileLabel={fileLabel} onFile={(name, b64, type) => { setFileLabel(name); setFileB64(b64); setFileType(type); }} />
