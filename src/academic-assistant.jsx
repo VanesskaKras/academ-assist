@@ -10,7 +10,7 @@ import { exportToDocx, exportPlanToDocx, exportAppendixToDocx, exportSpeechToDoc
 import { exportToPptxFile } from "./lib/exportPptx.js";
 import { callClaude, callGemini, MODEL, MODEL_FAST } from "./lib/api.js";
 import { playDoneSound } from "./lib/audio.js";
-import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildClientMaterialsAnalysisPrompt, buildCorrectionsAnalysisPrompt, buildCorrectionRewritePrompt, buildFileToSectionsPrompt } from "./lib/prompts.js";
+import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildClientMaterialsAnalysisPrompt, buildCorrectionsAnalysisPrompt, buildCorrectionRewritePrompt, buildFileToSectionsPrompt } from "./lib/prompts.js";
 import { FIELD_LABELS, isPsychoPed, isEcon, hasEmpiricalResearch, getEmpiricalSections, getEconSections, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, getLangLabels } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { searchByPhrase, filterSourcesWithGemini } from "./lib/sourcesSearch.js";
@@ -108,6 +108,8 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [methodInfo, setMethodInfo] = useState(null); // структурна інфо з методички
   const [commentAnalysis, setCommentAnalysis] = useState(null); // {planHints, writingHints}
   const [photos, setPhotos] = useState([]); // [{name, b64, type}] — додаткові фото
+  const [illustrations, setIllustrations] = useState([]); // [{name, b64, type, caption, targetSection}]
+  const [illustrationDescs, setIllustrationDescs] = useState([]); // [{figureNum, description, suggestedSection}]
   const [clientMaterials, setClientMaterials] = useState([]); // [{name, text}] — файли клієнта
   const [clientMaterialsText, setClientMaterialsText] = useState(""); // ручний ввід
   const [clientMaterialsSummary, setClientMaterialsSummary] = useState(null); // {rawText, keyFacts, tablesMd, sectionHints}
@@ -253,6 +255,8 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
           if (d.methodInfo) setMethodInfo(d.methodInfo);
           if (d.fileLabel) setFileLabel(d.fileLabel);
           if (d.commentAnalysis) setCommentAnalysis(d.commentAnalysis);
+          if (d.illustrations?.length) setIllustrations(d.illustrations);
+          if (d.illustrationDescs?.length) setIllustrationDescs(d.illustrationDescs);
           if (d.clientMaterialsSummary) setClientMaterialsSummary(d.clientMaterialsSummary);
           if (d.clientMaterialsText) setClientMaterialsText(d.clientMaterialsText);
           if (d.content) setContent(d.content);
@@ -558,6 +562,29 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
       setCommentAnalysis(null);
     }
 
+    // КРОК 3.5: Опис ілюстрацій клієнта
+    if (illustrations.length > 0) {
+      setLoadMsg("Описую ілюстрації...");
+      await new Promise(r => setTimeout(r, 500));
+      try {
+        const illContent = [];
+        for (const ill of illustrations) {
+          illContent.push({ type: "image", source: { type: "base64", media_type: ill.type, data: ill.b64 } });
+        }
+        illContent.push({ type: "text", text: buildIllustrationsPrompt({ topic: newInfo?.topic, illustrations, planSections: sections, lang: newInfo?.language }) });
+        const illRaw = await callClaude([{ role: "user", content: illContent }], null, SYS_JSON_ARRAY, 1500, null, MODEL_FAST);
+        const illMatch = illRaw.match(/\[[\s\S]*\]/);
+        const illParsed = JSON.parse(illMatch?.[0] || illRaw);
+        setIllustrationDescs(illParsed);
+        await saveToFirestore({ illustrations, illustrationDescs: illParsed });
+      } catch (e) {
+        console.warn("illustrationDescs failed:", e.message);
+        setIllustrationDescs([]);
+      }
+    } else {
+      setIllustrationDescs([]);
+    }
+
     // КРОК 4: Матеріали клієнта — зберігаємо повний текст без стиснення
     const combinedMaterialsText = [
       ...clientMaterials.map(m => `=== ${m.name} ===\n${m.text}`),
@@ -574,6 +601,28 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
 
     setRunning(false); runningRef.current = false; setLoadMsg(""); setStage("parsed");
   };
+
+  // ── Підбір ілюстрацій для розділу ──
+  function getIllustrationsForSection(sec) {
+    if (!illustrationDescs.length) return [];
+    return illustrations.map((ill, i) => {
+      const desc = illustrationDescs.find(d => d.figureNum === i + 1) || illustrationDescs[i];
+      if (!desc) return null;
+      const target = ill.targetSection?.trim();
+      if (target) {
+        const t = target.toLowerCase().replace(/^розділ\s+/i, "").trim();
+        if (sec.id?.toLowerCase() === t || sec.id?.toLowerCase().startsWith(t + ".") || sec.label?.toLowerCase().includes(t)) {
+          return { ...desc, caption: ill.caption, index: i };
+        }
+        return null;
+      }
+      const suggested = desc.suggestedSection?.trim();
+      if (suggested && (sec.id === suggested || sec.id?.startsWith(suggested + ".") || suggested?.startsWith(sec.id))) {
+        return { ...desc, caption: ill.caption, index: i };
+      }
+      return null;
+    }).filter(Boolean);
+  }
 
   // ── Парсинг плану клієнта ──
   const buildDefaultPlan = (totalPages, lang = "Українська") => {
@@ -1465,6 +1514,13 @@ ${planSummary}
       commentAnalysis?.textStructureHints,
     ].filter(Boolean).join("\n");
     if (clientWritingReqs) instruction += `\n\nВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО виконати при написанні):\n${clientWritingReqs}`;
+    const secIllustrations = getIllustrationsForSection(sec);
+    if (secIllustrations.length) {
+      const illLines = secIllustrations.map(ill =>
+        `Рис. ${ill.figureNum}${ill.caption ? ` – ${ill.caption}` : ""}: ${ill.description}`
+      ).join("\n");
+      instruction += `\n\nІЛЮСТРАЦІЇ КЛІЄНТА ДО ЦЬОГО ПІДРОЗДІЛУ (вже надані, треба вставити в текст):\n${illLines}\nОБОВ'ЯЗКОВО: додай посилання на кожен рисунок у тексті (напр. "як показано на Рис. X.Y..."). Використовуй нумерацію X.Y відповідно до номера підрозділу.`;
+    }
     if (clientMaterialsSummary?.rawText) {
       instruction += `\n\nМАТЕРІАЛИ КЛІЄНТА (використовуй ці дані — не вигадуй, не замінюй):\n${clientMaterialsSummary.rawText.slice(0, 80000)}`;
     } else if (clientMaterialsText?.trim()) {
@@ -1707,10 +1763,14 @@ ${empHintRegen ? `ВИМОГА: ${empHintRegen}\n` : ""}Рекомендації
         }
         return "";
       })();
+      const secIllRegen = getIllustrationsForSection(sec);
+      const illBlockRegen = secIllRegen.length
+        ? `\n\nІЛЮСТРАЦІЇ КЛІЄНТА ДО ЦЬОГО ПІДРОЗДІЛУ:\n${secIllRegen.map(ill => `Рис. ${ill.figureNum}${ill.caption ? ` – ${ill.caption}` : ""}: ${ill.description}`).join("\n")}\nОБОВ'ЯЗКОВО: додай посилання на кожен рисунок у тексті. Використовуй нумерацію X.Y відповідно до номера підрозділу.`
+        : "";
       instruction = `Перепиши підрозділ "${sec.label}" для ${d.type} на тему "${d.topic}". Галузь: ${d.subject}.
 ${empiricalBlockRegen}${econBlockRegen}
 ${clientReqsRegen ? `ВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО виконати):\n${clientReqsRegen}\n` : ""}Обсяг: ~${Math.round((sec.pages || 1) * 360)} слів (~${sec.pages} стор.). Не перевищуй вказаний обсяг.
-Не обривай текст. Завершуй підсумковим абзацом. Без посилань. Без жирного.${customInstructions}${clientMaterialsBlockRegen}`;
+Не обривай текст. Завершуй підсумковим абзацом. Без посилань. Без жирного.${customInstructions}${illBlockRegen}${clientMaterialsBlockRegen}`;
     }
     const regenMaxTokens = Math.min(60000, Math.max(8000, Math.round((sec.pages || 1) * 3000)));
     try {
@@ -3627,7 +3687,9 @@ ${refLines2.join("\n")}`;
               comment={comment} setComment={setComment}
               appendicesText={appendicesText} setAppendicesText={setAppendicesText}
               fileLabel={fileLabel} fileB64={fileB64} methodInfo={methodInfo}
-              photos={photos} setPhotos={setPhotos} info={info}
+              photos={photos} setPhotos={setPhotos}
+              illustrations={illustrations} setIllustrations={setIllustrations}
+              info={info}
               clientMaterials={clientMaterials}
               onAddClientMaterial={m => setClientMaterials(prev => [...prev, m])}
               onRemoveClientMaterial={i => setClientMaterials(prev => prev.filter((_, idx) => idx !== i))}

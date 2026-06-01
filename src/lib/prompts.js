@@ -325,6 +325,27 @@ export function buildCommentAnalysisPrompt({ topic, comment, photoCount }) {
 {"planHints":"підказки для СТРУКТУРИ ПЛАНУ: к-сть розділів, назви розділів, висновки до розділів тощо. null якщо немає","textStructureHints":"підказки для СТРУКТУРИ ТЕКСТУ: що має бути у вступі чи висновках, вимоги до обсягів розділів у сторінках, особливі акценти. null якщо немає","writingHints":"підказки для СТИЛЮ ТА ЗМІСТУ написання: термінологія, підходи, що підкреслити, на що звернути увагу. null якщо немає","sourcesHints":"підказки для ДЖЕРЕЛ ТА ОФОРМЛЕННЯ: к-сть джерел, мова джерел, стиль цитування, конкретні автори або видання. null якщо немає","researchDesign":"ВАЖЛИВО: якщо в коментарі є будь-які ознаки емпіричного дослідження (анкетування, опитування, тестування, методика, вибірка, групи учасників, порівняння груп) — ОБОВ’ЯЗКОВО заміни цей рядок на JSON-обʼєкт (не рядок): {\"instrumentType\":\"questionnaire або psycho_scale або fitness_test або pedagogical_experiment або mixed\",\"groups\":[{\"name\":\"назва групи\",\"minN\":30,\"criteria\":\"критерії або null\"}],\"biographicalFields\":[\"ПІБ\",\"вік\",\"стаж\"],\"comparisonRequired\":true,\"statisticalMinN\":30}. instrumentType: questionnaire — анкета/опитування, psycho_scale — психологічна методика/шкала, fitness_test — фізичні тести/нормативи, pedagogical_experiment — педагогічний експеримент, mixed — кілька методів. groups — масив груп з кількістю та критеріями. biographicalFields — поля біографічного блоку якщо згадані. Якщо ознак дослідження немає — null","practicalApproach":"визнач тип практичної частини для педагогічних та гуманітарних робіт ТІЛЬКИ з теми роботи: questionnaire (тема вказує на анкетування, опитування, ставлення або мотивацію учасників), textbook_analysis (тема вказує на аналіз підручників або навчальних посібників), lesson_observation (тема вказує на аналіз або спостереження уроків, методику проведення уроків), materials_development (тема вказує на розробку вправ, план-конспект, дидактичні матеріали або систему завдань). null якщо тип не визначається або якщо тема не педагогічна","practicalApproachDetails":"якщо визначено practicalApproach: для textbook_analysis — які підручники і за якими критеріями якщо зазначено; для lesson_observation — скільки уроків і який клас якщо зазначено; для materials_development — що саме розробляється і для якого класу якщо зазначено. null якщо немає деталей або practicalApproach є questionnaire або null","photoTOC":"якщо на фото є готовий план/зміст роботи (рядки виду Chapter 1 / Розділ 1, 1.1, 1.2, Introduction тощо) — скопіюй його текст дослівно. Якщо плану на фото немає — null","formattingHints":{"margins":{"left":"ліве поле мм або null","right":"праве поле мм або null","top":"верхнє поле мм або null","bottom":"нижнє поле мм або null"}}}`;
 }
 
+// ── Промпт для опису ілюстрацій клієнта ──
+export function buildIllustrationsPrompt({ topic, illustrations, planSections = [], lang = "Українська" }) {
+  const captionLines = illustrations.map((ill, i) =>
+    `Рис. ${i + 1}: ${ill.caption?.trim() || "(без підпису)"}`
+  ).join("\n");
+  const sectionsBlock = planSections.length
+    ? `\nПЛАН РОБОТИ (підрозділи):\n${planSections.map(s => `${s.id}: ${s.label}`).join("\n")}\n`
+    : "";
+  return `Ти аналізуєш ілюстрації для академічної роботи на тему "${topic || ""}".
+
+ІЛЮСТРАЦІЇ (${illustrations.length} шт.):
+${captionLines}
+${sectionsBlock}
+ЗАВДАННЯ: для кожної ілюстрації:
+1. Напиши академічний опис (2-3 речення, мова: ${lang}) — що зображено, яка наукова цінність для роботи
+2. Визнач id підрозділу плану куди найбільше підходить (напр. "1.2" або "2.3"). Якщо плану немає — вкажи номер глави (напр. "2")
+
+Поверни ТІЛЬКИ JSON масив (без markdown):
+[{"figureNum":1,"description":"...","suggestedSection":"1.2"}, ...]`;
+}
+
 // ── Промпт для аналізу матеріалів клієнта ──
 export function buildClientMaterialsAnalysisPrompt({ topic, materialsText }) {
   return `Ти аналізуєш матеріали клієнта для академічної роботи на тему "${topic || ""}".

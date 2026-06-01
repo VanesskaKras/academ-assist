@@ -2,6 +2,7 @@ import { TA } from "../../shared.jsx";
 import { FieldBox, Heading, PrimaryBtn } from "../Buttons.jsx";
 import { DropZone } from "../DropZone.jsx";
 import { PhotoDropZone } from "../PhotoDropZone.jsx";
+import { IllustrationsZone } from "../IllustrationsZone.jsx";
 import { ClientPlanInput } from "../ClientPlanInput.jsx";
 import { ClientMaterialsZone } from "../ClientMaterialsZone.jsx";
 
@@ -9,6 +10,7 @@ export function InputStage({
   tplText, setTplText, clientPlan, setClientPlan, comment, setComment,
   appendicesText, setAppendicesText,
   fileLabel, fileB64, methodInfo, photos, setPhotos,
+  illustrations, setIllustrations,
   clientMaterials, onAddClientMaterial, onRemoveClientMaterial,
   clientMaterialsText, setClientMaterialsText,
   info, running, loadMsg,
@@ -56,6 +58,14 @@ export function InputStage({
           photos={photos}
           onAdd={p => setPhotos(prev => [...prev, p])}
           onRemove={i => setPhotos(prev => prev.filter((_, idx) => idx !== i))}
+        />
+      </FieldBox>
+      <FieldBox label="Ілюстрації до роботи (необов'язково, макс. 5) — ШІ опише їх та вставить у потрібні розділи">
+        <IllustrationsZone
+          illustrations={illustrations}
+          onAdd={ill => setIllustrations(prev => [...prev, ill])}
+          onUpdate={(i, ill) => setIllustrations(prev => prev.map((x, idx) => idx === i ? ill : x))}
+          onRemove={i => setIllustrations(prev => prev.filter((_, idx) => idx !== i))}
         />
       </FieldBox>
       <FieldBox label="Матеріали клієнта — PDF, TXT або текст (необов'язково, до 10 файлів)">
