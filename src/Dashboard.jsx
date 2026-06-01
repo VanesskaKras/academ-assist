@@ -641,6 +641,9 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
                                 ✏ Правки до файлу
                             </button>
                         )}
+                        <button onClick={() => onNew("practice")} style={{ background: "transparent", color: "#5a1a8a", border: "1.5px solid #5a1a8a", borderRadius: 7, padding: "9px 18px", fontSize: 12, fontWeight: 600, cursor: "pointer", letterSpacing: 1, fontFamily: "inherit" }}>
+                            + Практика
+                        </button>
                         <button onClick={() => onNew("small")} style={{ background: "transparent", color: "#1a1a14", border: "1.5px solid #1a1a14", borderRadius: 7, padding: "9px 18px", fontSize: 12, fontWeight: 600, cursor: "pointer", letterSpacing: 1, fontFamily: "inherit" }}>
                             + Мала робота
                         </button>
@@ -740,6 +743,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
                                 ? STATUS_LABELS.file_corrections
                                 : (needsSources(order) ? STATUS_LABELS.sources : null) || STATUS_LABELS[order.status] || STATUS_LABELS.new;
                             const isSmall = order.mode === "small";
+                            const isPractice = order.mode === "practice";
                             return (
                                 <div key={order.id} onClick={() => onOpen(order.id, isCorrections ? "file_corrections" : (order.mode || "large"))}
                                     style={{ background: "#fff", borderRadius: 10, padding: "16px 20px", cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,0.05)", display: "flex", alignItems: "center", gap: 14, transition: "box-shadow .2s" }}
@@ -757,6 +761,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
                                         <div style={{ fontSize: 12, color: "#888", display: "flex", gap: 12, flexWrap: "wrap" }}>
                                             {isAdmin && order.managerName && <span style={{ background: "#e8f0ff", color: "#1a3a8a", padding: "1px 8px", borderRadius: 8, fontSize: 11, fontWeight: 600 }}>👤 {order.managerName}</span>}
                                             {isCorrections && <span style={{ background: "#fff0e0", color: "#6a3a00", padding: "1px 8px", borderRadius: 8, fontSize: 11 }}>✏ Правки</span>}
+                                            {isPractice && <span style={{ background: "#f0e4ff", color: "#5a1a8a", padding: "1px 8px", borderRadius: 8, fontSize: 11 }}>🏭 Практика</span>}
                                             {isSmall && <span style={{ background: "#f0e4ff", color: "#5a1a8a", padding: "1px 8px", borderRadius: 8, fontSize: 11 }}>📝 Мала</span>}
                                             {order.type && <span>{order.type}</span>}
                                             {order.pages && <span>{order.pages} стор.</span>}
