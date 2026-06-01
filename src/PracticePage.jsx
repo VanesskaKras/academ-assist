@@ -165,6 +165,8 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
   const [regenPrompt, setRegenPrompt] = useState("");
   const [regenLoading, setRegenLoading] = useState(false);
   const [docxLoading, setDocxLoading] = useState(false);
+  const [namingId, setNamingId] = useState(null);
+  const [namingAllLoading, setNamingAllLoading] = useState(false);
 
   const currentIdRef = useRef(orderId || null);
   const tokenAccRef = useRef({ inTok: 0, outTok: 0, costUsd: 0 });
@@ -563,6 +565,95 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
     navigator.clipboard.writeText(parts.join("\n\n---\n\n"));
   };
 
+  // ── Переміщення секцій ────────────────────────────────────────────────────────
+  const FIXED = ["intro", "conclusions", "sources"];
+  const movableFilter = s => !FIXED.includes(s.id);
+
+  const moveSectionUp = (id) => {
+    setSections(prev => {
+      const movable = prev.filter(movableFilter);
+      const idx = movable.findIndex(s => s.id === id);
+      if (idx <= 0) return prev;
+      const fullIdx = prev.findIndex(s => s.id === id);
+      const prevMovIdx = prev.findIndex(s => s.id === movable[idx - 1].id);
+      const next = [...prev];
+      [next[prevMovIdx], next[fullIdx]] = [next[fullIdx], next[prevMovIdx]];
+      saveToFirestore({ sections: next });
+      return next;
+    });
+  };
+
+  const moveSectionDown = (id) => {
+    setSections(prev => {
+      const movable = prev.filter(movableFilter);
+      const idx = movable.findIndex(s => s.id === id);
+      if (idx >= movable.length - 1) return prev;
+      const fullIdx = prev.findIndex(s => s.id === id);
+      const nextMovIdx = prev.findIndex(s => s.id === movable[idx + 1].id);
+      const next = [...prev];
+      [next[fullIdx], next[nextMovIdx]] = [next[nextMovIdx], next[fullIdx]];
+      saveToFirestore({ sections: next });
+      return next;
+    });
+  };
+
+  const recalcPages = () => {
+    const target = parseInt(pages) || 30;
+    setSections(prev => {
+      const movable = prev.filter(movableFilter);
+      const fixed = prev.filter(s => ["intro", "conclusions"].includes(s.id));
+      const fixedP = fixed.reduce((a, s) => a + (s.pages || 0), 0);
+      const mainP = target - fixedP;
+      const perSec = Math.max(2, Math.round(mainP / Math.max(movable.length, 1)));
+      const next = prev.map(s => movableFilter(s) ? { ...s, pages: perSec } : s);
+      saveToFirestore({ sections: next });
+      return next;
+    });
+  };
+
+  const doNameSingle = async (id) => {
+    const sec = sections.find(s => s.id === id);
+    if (!sec) return;
+    setNamingId(id);
+    try {
+      const prompt = `Придумай конкретну назву розділу звіту з практики замість заглушки.
+Контекст практики: ${practiceText.slice(0, 500)}
+Заглушка: "${sec.label}"
+Інші розділи: ${sections.filter(s => !FIXED.includes(s.id) && s.id !== id).map(s => s.label).join("; ")}
+Поверни ТІЛЬКИ нову назву розділу (без лапок, без пояснень).`;
+      const name = (await callClaude([{ role: "user", content: prompt }], null, null, 200, null, MODEL_FAST)).trim();
+      setSections(prev => {
+        const next = prev.map(s => s.id === id ? { ...s, label: name } : s);
+        saveToFirestore({ sections: next });
+        return next;
+      });
+    } catch (e) { console.warn(e); }
+    setNamingId(null);
+  };
+
+  const doNameAllPlaceholders = async () => {
+    const placeholders = sections.filter(s => !FIXED.includes(s.id) && /\[|новий/i.test(s.label));
+    if (!placeholders.length) return;
+    setNamingAllLoading(true);
+    try {
+      const list = placeholders.map(s => `"${s.id}": "${s.label}"`).join(", ");
+      const others = sections.filter(s => !FIXED.includes(s.id) && !/\[|новий/i.test(s.label)).map(s => s.label).join("; ");
+      const prompt = `Придумай конкретні назви розділів звіту з практики замість заглушок.
+Контекст практики: ${practiceText.slice(0, 500)}
+Інші розділи вже мають назви: ${others}
+Заглушки: ${list}
+Поверни ТІЛЬКИ JSON: {"id":"нова назва",...}`;
+      const raw = await callClaude([{ role: "user", content: prompt }], null, null, 500, null, MODEL_FAST);
+      const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || "{}");
+      setSections(prev => {
+        const next = prev.map(s => parsed[s.id] ? { ...s, label: parsed[s.id] } : s);
+        saveToFirestore({ sections: next });
+        return next;
+      });
+    } catch (e) { console.warn(e); }
+    setNamingAllLoading(false);
+  };
+
   // ─── РЕНДЕР: шапка ──────────────────────────────────────────────────────────
   const renderHeader = () => (
     <div style={{ background: "#1a1a14", color: "#f5f2eb", padding: "14px 28px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
@@ -646,78 +737,152 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
 
   // ─── РЕНДЕР: крок 2 — Структура ─────────────────────────────────────────────
   const renderPlan = () => {
-    const writableSecs = sections.filter(s => s.id !== "sources");
-    const totalP = writableSecs.reduce((a, s) => a + (parseInt(s.pages) || 0), 0);
+    const targetPages = parseInt(pages) || 30;
+    const totalP = sections.reduce((a, s) => s.id !== "sources" ? a + (parseInt(s.pages) || 0) : a, 0);
+    const pagesOk = totalP === targetPages;
+    const movable = sections.filter(s => !FIXED.includes(s.id));
+    const hasPlaceholders = sections.some(s => !FIXED.includes(s.id) && /\[|новий/i.test(s.label));
 
-    const updateSec = (id, field, val) => {
+    const updateSec = (id, field, val) => setSections(prev => {
+      const next = prev.map(s => s.id === id ? { ...s, [field]: field === "pages" ? parseInt(val) || 0 : val } : s);
+      saveToFirestore({ sections: next });
+      return next;
+    });
+
+    const addChapter = () => {
+      const chNums = sections.filter(s => !FIXED.includes(s.id)).map(s => parseInt(s.id.replace(/\D/g, "")) || 0);
+      const newNum = (Math.max(0, ...chNums) + 1);
+      const newSec = { id: `ch${newNum}`, label: `[Новий розділ ${newNum}]`, pages: Math.max(3, Math.round(targetPages * 0.12)) };
       setSections(prev => {
-        const next = prev.map(s => s.id === id ? { ...s, [field]: field === "pages" ? parseInt(val) || 0 : val } : s);
+        const idx = prev.findIndex(s => s.id === "conclusions");
+        const next = idx >= 0 ? [...prev.slice(0, idx), newSec, ...prev.slice(idx)] : [...prev, newSec];
         saveToFirestore({ sections: next });
         return next;
       });
     };
-    const addSec = () => {
-      const newSec = { id: `ch${Date.now()}`, label: "Новий розділ", pages: 5 };
+
+    const addSubsection = () => {
+      const lastMovable = movable[movable.length - 1];
+      const parentLabel = lastMovable?.label?.replace(/^\[|\]$/g, "") || "розділу";
+      const subId = `sub${Date.now()}`;
+      const newSec = { id: subId, label: `[Підрозділ до: ${parentLabel.slice(0, 30)}]`, pages: Math.max(2, Math.round(targetPages * 0.07)) };
       setSections(prev => {
-        const insertBefore = prev.findIndex(s => s.id === "conclusions");
-        const next = insertBefore >= 0
-          ? [...prev.slice(0, insertBefore), newSec, ...prev.slice(insertBefore)]
-          : [...prev, newSec];
+        const idx = prev.findIndex(s => s.id === "conclusions");
+        const next = idx >= 0 ? [...prev.slice(0, idx), newSec, ...prev.slice(idx)] : [...prev, newSec];
         saveToFirestore({ sections: next });
         return next;
       });
     };
+
     const delSec = (id) => {
-      if (["intro", "conclusions", "sources"].includes(id)) return;
+      if (FIXED.includes(id)) return;
       setSections(prev => { const next = prev.filter(s => s.id !== id); saveToFirestore({ sections: next }); return next; });
     };
+
+    const COL = "36px 1fr 68px 68px 72px 36px";
 
     return (
       <div className="fade">
         <Heading>Структура звіту</Heading>
-        <div style={{ background: "#fff", borderRadius: 10, overflow: "hidden", boxShadow: "0 2px 8px rgba(0,0,0,0.06)", marginBottom: 20 }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-            <thead>
-              <tr style={{ background: "#f0ece2" }}>
-                <th style={thStyle}>#</th>
-                <th style={{ ...thStyle, textAlign: "left" }}>Назва розділу</th>
-                <th style={thStyle}>Стор.</th>
-                <th style={thStyle}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {sections.map((s, i) => (
-                <tr key={s.id} style={{ borderBottom: "1px solid #f0ece2" }}>
-                  <td style={{ ...tdStyle, color: "#aaa", textAlign: "center" }}>{i + 1}</td>
-                  <td style={tdStyle}>
-                    <input value={s.label} onChange={e => updateSec(s.id, "label", e.target.value)}
-                      style={{ width: "100%", border: "none", background: "transparent", fontSize: 13, fontFamily: "'Spectral',serif", color: "#1a1a14", outline: "none" }} />
-                  </td>
-                  <td style={{ ...tdStyle, textAlign: "center" }}>
-                    {s.id === "sources" ? "—" : (
-                      <input type="number" value={s.pages} min={0} max={99} onChange={e => updateSec(s.id, "pages", e.target.value)}
-                        style={{ width: 50, border: "1px solid #e0ddd4", borderRadius: 4, textAlign: "center", padding: "3px 4px", fontSize: 13, fontFamily: "'Spectral',serif" }} />
-                    )}
-                  </td>
-                  <td style={{ ...tdStyle, textAlign: "center" }}>
-                    {!["intro", "conclusions", "sources"].includes(s.id) && (
-                      <button onClick={() => delSec(s.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#ccc", fontSize: 16 }}
-                        onMouseEnter={e => e.currentTarget.style.color = "#c55"}
-                        onMouseLeave={e => e.currentTarget.style.color = "#ccc"}>✕</button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <p style={{ fontSize: 13, color: "#888", marginBottom: 14 }}>Відредагуйте назви та кількість сторінок. Затвердіть структуру перед переходом до джерел.</p>
+
+        {/* Таблиця */}
+        <div style={{ border: "1.5px solid #d4cfc4", borderRadius: 8, overflow: "hidden", marginBottom: 16 }}>
+          {/* Шапка */}
+          <div style={{ display: "grid", gridTemplateColumns: COL, background: "#1a1a14", color: "#e8ff47", padding: "9px 14px", fontSize: 11, letterSpacing: "1.5px", textTransform: "uppercase" }}>
+            <div>#</div><div>Назва розділу</div><div style={{ textAlign: "center" }}>Стор.</div><div style={{ textAlign: "center" }}>Перем.</div><div /><div />
+          </div>
+
+          {sections.map((s, i) => {
+            const isFixed = FIXED.includes(s.id);
+            const movIdx = movable.findIndex(x => x.id === s.id);
+            const canUp = !isFixed && movIdx > 0;
+            const canDown = !isFixed && movIdx < movable.length - 1;
+            const isPlaceholder = !isFixed && /\[|новий|підрозділ/i.test(s.label);
+            const isNaming = namingId === s.id;
+
+            return (
+              <div key={s.id} style={{ display: "grid", gridTemplateColumns: COL, borderBottom: i < sections.length - 1 ? "1px solid #e4dfd4" : "none", background: isFixed ? "#ede9e0" : i % 2 === 0 ? "#f5f2eb" : "#f0ece2", alignItems: "center" }}>
+                <div style={{ padding: "9px 10px", fontSize: 12, color: "#bbb" }}>{i + 1}</div>
+
+                {/* Назва + ✨ */}
+                <div style={{ display: "flex", alignItems: "center", overflow: "hidden" }}>
+                  <input
+                    value={s.label}
+                    onChange={e => updateSec(s.id, "label", e.target.value)}
+                    style={{ background: "transparent", border: "none", fontSize: 13, padding: "9px 8px", color: isFixed ? "#888" : "#1a1a14", fontStyle: isFixed ? "italic" : "normal", flex: 1, minWidth: 0, fontFamily: "'Spectral',serif", outline: "none" }}
+                  />
+                  {isPlaceholder && (
+                    <button onClick={() => doNameSingle(s.id)} disabled={isNaming} title="Згенерувати назву"
+                      style={{ background: "transparent", border: "none", fontSize: 14, cursor: isNaming ? "wait" : "pointer", padding: "2px 6px", color: isNaming ? "#ccc" : "#b8a020", flexShrink: 0 }}>
+                      {isNaming ? "…" : "✨"}
+                    </button>
+                  )}
+                </div>
+
+                {/* Сторінки */}
+                <div style={{ textAlign: "center", padding: "4px 6px" }}>
+                  {s.id === "sources" ? <span style={{ color: "#aaa" }}>—</span> : (
+                    <input type="number" value={s.pages} min={0} max={99} onChange={e => updateSec(s.id, "pages", e.target.value)}
+                      style={{ width: 52, border: "1px solid #e0ddd4", borderRadius: 4, textAlign: "center", padding: "4px", fontSize: 13, fontFamily: "'Spectral',serif" }} />
+                  )}
+                </div>
+
+                {/* ↑↓ */}
+                <div style={{ display: "flex", justifyContent: "center", gap: 2 }}>
+                  {!isFixed && (<>
+                    <button onClick={() => moveSectionUp(s.id)} disabled={!canUp} style={{ background: "transparent", border: "none", fontSize: 13, cursor: canUp ? "pointer" : "default", color: canUp ? "#555" : "#ddd", padding: "2px 4px" }}>↑</button>
+                    <button onClick={() => moveSectionDown(s.id)} disabled={!canDown} style={{ background: "transparent", border: "none", fontSize: 13, cursor: canDown ? "pointer" : "default", color: canDown ? "#555" : "#ddd", padding: "2px 4px" }}>↓</button>
+                  </>)}
+                </div>
+
+                <div />
+
+                {/* ✕ */}
+                <div style={{ display: "flex", justifyContent: "center" }}>
+                  {!isFixed && (
+                    <button onClick={() => delSec(s.id)}
+                      style={{ background: "transparent", border: "none", color: "#ccc", fontSize: 15, cursor: "pointer", padding: "2px 4px" }}
+                      onMouseEnter={e => e.currentTarget.style.color = "#c55"}
+                      onMouseLeave={e => e.currentTarget.style.color = "#ccc"}>✕</button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Нижня панель */}
+          <div style={{ padding: "10px 14px", background: "#f5f2eb", borderTop: "1px solid #e4dfd4", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ fontSize: 12, fontFamily: "'Spectral',serif", color: pagesOk ? "#5a8a2a" : "#c03030", fontWeight: "bold", marginRight: 4 }}>
+              {totalP} / {targetPages} стор. {pagesOk ? "✓" : "⚠"}
+            </span>
+            <button onClick={addChapter}
+              style={{ background: "transparent", border: "1.5px dashed #8ab060", color: "#6a9030", borderRadius: 6, padding: "6px 16px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer", letterSpacing: "0.5px" }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = "#3a6010"; e.currentTarget.style.color = "#3a6010"; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = "#8ab060"; e.currentTarget.style.color = "#6a9030"; }}>
+              + Розділ
+            </button>
+            <button onClick={addSubsection}
+              style={{ background: "transparent", border: "1.5px dashed #bbb4a0", color: "#888", borderRadius: 6, padding: "6px 16px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer", letterSpacing: "0.5px" }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = "#1a1a14"; e.currentTarget.style.color = "#1a1a14"; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = "#bbb4a0"; e.currentTarget.style.color = "#888"; }}>
+              + Підрозділ
+            </button>
+            <button onClick={recalcPages}
+              style={{ background: "transparent", border: "1.5px dashed #a0a0a0", color: "#888", borderRadius: 6, padding: "6px 12px", fontFamily: "'Spectral',serif", fontSize: 11, cursor: "pointer", whiteSpace: "nowrap" }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = "#555"; e.currentTarget.style.color = "#555"; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = "#a0a0a0"; e.currentTarget.style.color = "#888"; }}>
+              ⟳ стор.
+            </button>
+          </div>
         </div>
 
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-          <button onClick={addSec} style={{ background: "transparent", border: "1.5px dashed #aaa", color: "#888", borderRadius: 7, padding: "7px 16px", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
-            + Додати розділ
-          </button>
-          <div style={{ fontSize: 12, color: "#888" }}>Разом: {totalP} стор. (без джерел)</div>
-        </div>
+        {/* Кнопка назв для заглушок */}
+        {hasPlaceholders && (
+          <div style={{ marginBottom: 14 }}>
+            <GreenBtn onClick={doNameAllPlaceholders} disabled={namingAllLoading} loading={namingAllLoading} msg="Генерую назви..." label="✨ Придумати назви для заглушок" />
+          </div>
+        )}
 
         {error && <div style={{ color: "#c55", fontSize: 13, marginBottom: 12 }}>{error}</div>}
         <div style={{ display: "flex", gap: 12 }}>
