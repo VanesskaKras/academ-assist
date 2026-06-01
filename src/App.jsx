@@ -46,6 +46,9 @@ function AppRouter() {
   }
 
   if (view === "order") {
+    if (currentMode === "file_corrections") {
+      return <FileCorrectionsPage onBack={() => { setCurrentOrderId(null); setView("dashboard"); }} />;
+    }
     if (currentMode === "small") {
       return (
         <SmallWorks

@@ -252,6 +252,7 @@ const STATUS_LABELS = {
     writing: { label: "В роботі", color: "#2a7a6a", bg: "#e4f5f2", dot: "#3abfa0" },
     sources: { label: "Джерела", color: "#8a5a1a", bg: "#fff3e0", dot: "#e8a050" },
     done: { label: "Готово", color: "#1a6a1a", bg: "#e4ffe4", dot: "#4aba4a" },
+    file_corrections: { label: "Правки", color: "#6a3a00", bg: "#fff0e0", dot: "#c47a30" },
 };
 
 const MONTH_NAMES = ["Січень","Лютий","Березень","Квітень","Травень","Червень","Липень","Серпень","Вересень","Жовтень","Листопад","Грудень"];
@@ -523,6 +524,8 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
             if (filterStatus) {
                 result = result.filter(o => {
                     const s = o.status || "new";
+                    if (filterStatus === "corrections") return o.type === "file_corrections";
+                    if (o.type === "file_corrections") return false;
                     if (filterStatus === "sources") return needsSources(o);
                     if (filterStatus === "writing") return s === "writing" && o.stage !== "sources";
                     if (filterStatus === "plan_ready") return s === "plan_ready" || s === "plan_approved";
@@ -582,10 +585,11 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
     }, [orders, search, filterStatus, dlFrom, dlTo, filterManager]);
 
     const counts = useMemo(() => {
-        const c = { all: 0, done: 0, writing: 0, sources: 0, plan_ready: 0, new: 0, archived: 0 };
+        const c = { all: 0, done: 0, writing: 0, sources: 0, plan_ready: 0, new: 0, archived: 0, corrections: 0 };
         orders.forEach(o => {
             if (o.archived) { c.archived++; return; }
             c.all++;
+            if (o.type === "file_corrections") { c.corrections++; return; }
             const s = o.status || "new";
             if (needsSources(o)) c.sources++;
             else if (s === "done") c.done++;
@@ -655,6 +659,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
                             { label: "В роботі", val: counts.writing, color: "#2a7a6a", bg: "#e4f5f2", key: "writing" },
                             { label: "Джерела", val: counts.sources, color: "#8a5a1a", bg: "#fff3e0", key: "sources" },
                             { label: "Готово", val: counts.done, color: "#1a6a1a", bg: "#e4ffe4", key: "done" },
+                            ...(counts.corrections > 0 ? [{ label: "Правки", val: counts.corrections, color: "#6a3a00", bg: "#fff0e0", key: "corrections" }] : []),
                             ...(isAdmin && counts.archived > 0 ? [{ label: "Архів", val: counts.archived, color: "#666", bg: "#ebebeb", key: "archived" }] : []),
                         ].map(s => {
                             const isActive = filterStatus === s.key;
@@ -730,10 +735,13 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
                 ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                         {filtered.map(order => {
-                            const st = (needsSources(order) ? STATUS_LABELS.sources : null) || STATUS_LABELS[order.status] || STATUS_LABELS.new;
+                            const isCorrections = order.type === "file_corrections";
+                            const st = isCorrections
+                                ? STATUS_LABELS.file_corrections
+                                : (needsSources(order) ? STATUS_LABELS.sources : null) || STATUS_LABELS[order.status] || STATUS_LABELS.new;
                             const isSmall = order.mode === "small";
                             return (
-                                <div key={order.id} onClick={() => onOpen(order.id, order.mode || "large")}
+                                <div key={order.id} onClick={() => onOpen(order.id, isCorrections ? "file_corrections" : (order.mode || "large"))}
                                     style={{ background: "#fff", borderRadius: 10, padding: "16px 20px", cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,0.05)", display: "flex", alignItems: "center", gap: 14, transition: "box-shadow .2s" }}
                                     onMouseEnter={e => e.currentTarget.style.boxShadow = "0 4px 18px rgba(0,0,0,0.10)"}
                                     onMouseLeave={e => e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.05)"}>
@@ -744,10 +752,11 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
                                     {/* Info */}
                                     <div style={{ flex: 1, minWidth: 0 }}>
                                         <div style={{ fontSize: 15, fontWeight: 600, color: "#1a1a14", marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                            {order.topic || "Без теми"}
+                                            {order.topic || order.info?.topic || "Без теми"}
                                         </div>
                                         <div style={{ fontSize: 12, color: "#888", display: "flex", gap: 12, flexWrap: "wrap" }}>
                                             {isAdmin && order.managerName && <span style={{ background: "#e8f0ff", color: "#1a3a8a", padding: "1px 8px", borderRadius: 8, fontSize: 11, fontWeight: 600 }}>👤 {order.managerName}</span>}
+                                            {isCorrections && <span style={{ background: "#fff0e0", color: "#6a3a00", padding: "1px 8px", borderRadius: 8, fontSize: 11 }}>✏ Правки</span>}
                                             {isSmall && <span style={{ background: "#f0e4ff", color: "#5a1a8a", padding: "1px 8px", borderRadius: 8, fontSize: 11 }}>📝 Мала</span>}
                                             {order.type && <span>{order.type}</span>}
                                             {order.pages && <span>{order.pages} стор.</span>}

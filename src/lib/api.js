@@ -144,7 +144,7 @@ async function uploadLargeFile(base64Data, mimeType) {
 
 export async function callGemini(messages, signal, systemPrompt, maxTokens, onWait, model, jsonMode) {
   const MAX_RETRIES = 5;
-  const FALLBACK_MODEL = "gemini-2.0-flash";
+  const FALLBACK_MODEL = "gemini-2.5-flash";
   const FALLBACK_AFTER_503 = 2;
   let delay = 12000;
   let currentModel = model || "gemini-2.5-flash-lite";
@@ -233,7 +233,7 @@ export async function callGemini(messages, signal, systemPrompt, maxTokens, onWa
       throw new Error("Gemini: порожня відповідь" + (finishReason ? ` (${finishReason})` : ""));
     }
     if (data.usageMetadata) {
-      const GEMINI_PRICES = { "gemini-2.5-flash-lite": { in: 0.10, out: 0.40 }, "gemini-2.0-flash": { in: 0.10, out: 0.40 } };
+      const GEMINI_PRICES = { "gemini-2.5-flash-lite": { in: 0.10, out: 0.40 }, "gemini-2.5-flash": { in: 0.15, out: 0.60 } };
       const gp = GEMINI_PRICES[currentModel] || { in: 0.10, out: 0.40 };
       const cost = (data.usageMetadata.promptTokenCount * gp.in + data.usageMetadata.candidatesTokenCount * gp.out) / 1_000_000;
       window.dispatchEvent(new CustomEvent("apicost", { detail: { cost, model: currentModel, inTok: data.usageMetadata.promptTokenCount, outTok: data.usageMetadata.candidatesTokenCount } }));

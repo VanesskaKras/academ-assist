@@ -372,12 +372,6 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
       }
       if (firstContentLine && isDuplicateTitle(line, secLabel)) { firstContentLine = false; i++; continue; }
       firstContentLine = false;
-      if (/^#{1,6}\s/.test(line.trim()) && raw) {
-        result.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
-        result.push(headingSubsection(raw));
-        result.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
-        i++; continue;
-      }
       if (/^[–—]\s/.test(raw) || isHyphenList) {
         const listText = /^[–—]\s/.test(raw) ? raw : `– ${raw}`;
         result.push(listPara(listText));

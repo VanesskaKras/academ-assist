@@ -88,6 +88,7 @@ Vary paragraph length: short paragraphs (3-4 sentences) should alternate with lo
 Add short, clear examples to explain theoretical points.
 Use natural connectors appropriate for ${lang} academic writing.
 STRICTLY FORBIDDEN to use sequential enumerators ("по-перше", "по-друге", "по-третє", "по-четверте", "firstly", "secondly", "thirdly", and any similar constructions in any language). Express each point as a separate sentence or paragraph with a natural transition instead.
+STRICTLY FORBIDDEN to open a sentence with an ordinal number word that implies a list position: "Перша умова...", "Друга умова...", "Третя умова...", "Перший крок...", "Другий крок...", "Перша помилка...", "Друга помилка...", "Перша причина...", "Перший фактор...", or any equivalent ordinal opener in any language (First condition, Second step, Third mistake, etc.). Do NOT structure content as a hidden numbered list. Instead, name each item by its actual characteristic: "Важливою умовою є...", "Не менш суттєвим є...", "Окремої уваги заслуговує...".
 Insert simple metaphors for clarity where appropriate.
 Soften categorical statements into gentle propositions. Add short transitions between paragraphs.
 Reduce dramatic urgency and pathos. Keep all key facts intact.
@@ -160,6 +161,7 @@ Vary sentence and paragraph length for natural reading rhythm.
 Short paragraphs (3-4 sentences) must alternate with longer ones (5-7). FORBIDDEN to write single- or two-sentence paragraphs.
 Add short, clear examples to explain theoretical points. Use natural connectors appropriate for ${lang} academic writing.
 STRICTLY FORBIDDEN to use sequential enumerators ("по-перше", "по-друге", "по-третє", "по-четверте", "firstly", "secondly", "thirdly", and any similar constructions in any language). Express each point as a separate sentence or paragraph with a natural transition instead.
+STRICTLY FORBIDDEN to open a sentence with an ordinal number word that implies a list position: "Перша умова...", "Друга умова...", "Третя умова...", "Перший крок...", "Другий крок...", "Перша помилка...", "Друга помилка...", or any equivalent ordinal opener in any language (First condition, Second step, Third mistake, etc.). Do NOT structure content as a hidden numbered list. Name each item by its actual characteristic instead.
 Insert simple metaphors for clarity where appropriate. Soften categorical statements. Add short transitions between paragraphs.
 Keep all key facts intact. Adopt a simple, conversational yet academic tone.
 End the work logically with a complete sentence and concluding thought. Do not cut off the text.`;
@@ -464,6 +466,33 @@ ${correctionsText}
 - location: назва розділу, «Вступ», «Висновки», «Список літератури» або «Весь текст»
 - Якщо зауваження загальне — розбий на конкретні підзавдання
 - Повертай ТІЛЬКИ JSON`;
+}
+
+// ── Виправлення виділеного або прокоментованого фрагменту (Варіант А) ──
+export function buildAnnotationCorrectionPrompt({ documentText, annotatedText, context, instruction }) {
+  const instrLine = instruction
+    ? `ІНСТРУКЦІЯ: ${instruction}`
+    : "ІНСТРУКЦІЯ: Виправте або перепишіть виділений фрагмент, зберігаючи стиль і мову оригіналу.";
+
+  return `Ти виправляєш фрагмент академічної роботи.
+
+ПОВНИЙ ТЕКСТ РОБОТИ:
+${documentText}
+
+ФРАГМЕНТ ЩО ПОТРЕБУЄ ВИПРАВЛЕННЯ: "${annotatedText}"
+${context && context !== annotatedText ? `КОНТЕКСТ (абзац): "${context}"` : ""}
+${instrLine}
+
+Знайди цей фрагмент у тексті роботи і виправ його.
+
+Поверни ТІЛЬКИ JSON (без markdown):
+{"original":"точний фрагмент з тексту роботи який треба замінити (скопіюй дослівно)","replacement":"виправлений варіант цього фрагменту"}
+
+Правила:
+- "original" — дослівна цитата з документа, без змін
+- "replacement" — виправлений варіант, зберігаючи стиль і мову оригіналу
+- Якщо виділення підлягає видаленню — "replacement" пустий рядок
+- НЕ повертай весь документ — тільки JSON з двома полями`;
 }
 
 // ── Застосування одного виправлення до фрагменту тексту файлу ──

@@ -1338,7 +1338,7 @@ IMPORTANT: use already written sections (in context) for exact formulation of me
       instruction = `Напиши ВИСНОВКИ для ${d.type} на тему "${d.topic}".
 ${conclReq ? `ВИМОГИ МЕТОДИЧКИ: ${conclReq}\n` : ""}${commentAnalysis?.textStructureHints ? `ВИМОГИ КЛІЄНТА ДО СТРУКТУРИ (ОБОВ'ЯЗКОВО): ${commentAnalysis.textStructureHints}\n` : ""}
 ПРАВИЛА:
-- Обсяг: ~${(sec.pages || 2) * 320} слів (~${sec.pages} стор.). Не перевищуй вказаний обсяг.
+- Обсяг: ~${(sec.pages || 2) * 270} слів (~${sec.pages} стор.). Напиши НЕ МЕНШЕ вказаного обсягу.
 - Кожен абзац = один конкретний результат або висновок дослідження
 - Перший абзац — загальний підсумок мети і що вдалось досягти
 - Далі — по одному абзацу на кожен виконаний підрозділ/завдання, конкретні результати
@@ -1519,7 +1519,7 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ ДО ЦЬОГО РОЗДІЛУ: $
 ПЛАН РОБОТИ (для розуміння структури та уникнення повторів):
 ${planSummary}
 
-Обсяг: ~${Math.round((sec.pages || 1) * 360)} слів (~${sec.pages} стор.). Не перевищуй вказаний обсяг.
+Обсяг: ~${Math.round((sec.pages || 1) * 270)} слів (~${sec.pages} стор.). Напиши НЕ МЕНШЕ вказаного обсягу.
 Не обривай текст. Завершуй підсумковим абзацом. ${citNote} Без жирного.
 Абзаци мають різнитись за довжиною: чергуй короткі (2-3 речення) з довшими (5-7 речень).`;
     }
@@ -1783,7 +1783,7 @@ ${empHintRegen ? `ВИМОГА: ${empHintRegen}\n` : ""}Рекомендації
         : "";
       instruction = `Перепиши підрозділ "${sec.label}" для ${d.type} на тему "${d.topic}". Галузь: ${d.subject}.
 ${empiricalBlockRegen}${econBlockRegen}
-${clientReqsRegen ? `ВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО виконати):\n${clientReqsRegen}\n` : ""}Обсяг: ~${Math.round((sec.pages || 1) * 360)} слів (~${sec.pages} стор.). Не перевищуй вказаний обсяг.
+${clientReqsRegen ? `ВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО виконати):\n${clientReqsRegen}\n` : ""}Обсяг: ~${Math.round((sec.pages || 1) * 270)} слів (~${sec.pages} стор.). Напиши НЕ МЕНШЕ вказаного обсягу.
 Не обривай текст. Завершуй підсумковим абзацом. Без посилань. Без жирного.${customInstructions}${illBlockRegen}${clientMaterialsBlockRegen}`;
     }
     const regenMaxTokens = Math.min(60000, Math.max(8000, Math.round((sec.pages || 1) * 3000)));
@@ -2516,7 +2516,7 @@ ${methodInfo?.chapterConclusionRequirements ? `ВИМОГИ МЕТОДИЧКИ: 
 Тип: ${typeHints[sec.type] || "основний"}.
 ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBlock}
 
-Обсяг: ~${Math.round((sec.pages || 1) * 360)} слів (~${sec.pages} стор.). Не перевищуй вказаний обсяг.
+Обсяг: ~${Math.round((sec.pages || 1) * 270)} слів (~${sec.pages} стор.). Напиши НЕ МЕНШЕ вказаного обсягу.
 Не обривай текст. Завершуй підсумковим абзацом. Без посилань [1],[2]. Без жирного.
 Абзаци різняться за довжиною: чергуй короткі (2-3 речення) з довшими (5-7 речень).`;
       }
