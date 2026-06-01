@@ -165,6 +165,7 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
   const [regenPrompt, setRegenPrompt] = useState("");
   const [regenLoading, setRegenLoading] = useState(false);
   const [docxLoading, setDocxLoading] = useState(false);
+  const [diaryDocxLoading, setDiaryDocxLoading] = useState(false);
   const [namingId, setNamingId] = useState(null);
   const [namingAllLoading, setNamingAllLoading] = useState(false);
 
@@ -525,35 +526,45 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
     setRunning(false); runningRef.current = false; setLoadMsg("");
   };
 
-  // ── Експорт у .docx ──────────────────────────────────────────────────────────
-  const doExportDocx = async () => {
+  // ── Експорт звіту у .docx (без щоденника) ────────────────────────────────────
+  const doExportMain = async () => {
     setDocxLoading(true);
     try {
       const info = getPracticeInfo();
       const displayOrder = [
         ...sections.filter(s => s.id !== "sources"),
-        ...(diaryContent ? [{ id: "diary", label: "ЩОДЕННИК ПРАКТИКИ", pages: 0 }] : []),
         ...(refList ? [{ id: "sources", label: "СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ", pages: 0 }] : []),
       ];
-      const fullContent = {
+      const exportContent = {
         ...content,
-        ...(diaryContent ? { diary: diaryContent } : {}),
         ...(refList ? { sources: refList } : {}),
       };
       await exportToDocx({
-        content: fullContent,
-        info: {
-          topic: info.topic,
-          type: info.type,
-          language: info.language,
-          pages: info.pages,
-        },
+        content: exportContent,
+        info: { topic: info.topic, type: info.type, language: info.language, pages: info.pages },
         displayOrder,
         methodInfo,
         orderId: currentIdRef.current,
       });
     } catch (e) { setError(e.message); }
     setDocxLoading(false);
+  };
+
+  // ── Експорт щоденника у окремий .docx ────────────────────────────────────────
+  const doExportDiary = async () => {
+    if (!diaryContent) return;
+    setDiaryDocxLoading(true);
+    try {
+      const info = getPracticeInfo();
+      await exportToDocx({
+        content: { diary: diaryContent },
+        info: { topic: "Щоденник практики", type: "Щоденник", language: info.language, pages: "5" },
+        displayOrder: [{ id: "diary", label: "ЩОДЕННИК ПРАКТИКИ", pages: 0 }],
+        methodInfo,
+        orderId: currentIdRef.current ? `${currentIdRef.current}_diary` : null,
+      });
+    } catch (e) { setError(e.message); }
+    setDiaryDocxLoading(false);
   };
 
   // ── Копіювати текст ───────────────────────────────────────────────────────────
@@ -1088,8 +1099,15 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
           );
         })}
 
+        {/* Кнопка завантаження доступна як тільки є хоч одна секція */}
+        {Object.keys(content).length > 0 && (
+          <div style={{ display: "flex", gap: 10, marginTop: 16, padding: "14px 18px", background: "#f0f5e8", border: "1.5px solid #c8dfa0", borderRadius: 8 }}>
+            <GreenBtn onClick={doExportMain} disabled={docxLoading} loading={docxLoading} msg="Завантажую..." label="⬇ Завантажити звіт .docx" />
+          </div>
+        )}
+
         {allDone && (
-          <div style={{ display: "flex", gap: 12, marginTop: 8 }}>
+          <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
             <NavBtn onClick={() => setStage("sources")}>← Назад</NavBtn>
             <PrimaryBtn
               onClick={() => {
@@ -1118,14 +1136,15 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
         <div style={{ fontSize: 12, color: "#888", marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}><SpinDot />{loadMsg}</div>
       )}
 
-      <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+      <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
         <GreenBtn onClick={doGenerateDiary} disabled={running} loading={running} msg="Генерую..." label="Згенерувати щоденник" />
-        {diaryContent && (
+        {diaryContent && (<>
           <button onClick={() => navigator.clipboard.writeText(diaryContent)}
             style={{ background: "#f0ece2", border: "1.5px solid #d4cfc4", color: "#555", borderRadius: 7, padding: "9px 16px", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
             Копіювати
           </button>
-        )}
+          <GreenBtn onClick={doExportDiary} disabled={diaryDocxLoading} loading={diaryDocxLoading} msg="Завантажую..." label="⬇ Щоденник .docx" />
+        </>)}
       </div>
 
       {diaryContent && (
@@ -1159,12 +1178,15 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
       <div className="fade">
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
           <Heading style={{ marginBottom: 0 }}>Готово</Heading>
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button onClick={doCopyAll}
               style={{ background: "#f0ece2", border: "1.5px solid #d4cfc4", color: "#555", borderRadius: 7, padding: "9px 16px", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
               Копіювати текст
             </button>
-            <GreenBtn onClick={doExportDocx} disabled={docxLoading} loading={docxLoading} msg="Завантажую..." label="Завантажити .docx" />
+            <GreenBtn onClick={doExportMain} disabled={docxLoading} loading={docxLoading} msg="Завантажую..." label="⬇ Звіт .docx" />
+            {diaryContent && (
+              <GreenBtn onClick={doExportDiary} disabled={diaryDocxLoading} loading={diaryDocxLoading} msg="Завантажую..." label="⬇ Щоденник .docx" />
+            )}
           </div>
         </div>
 
