@@ -1,9 +1,26 @@
-import { memo } from "react";
+import { memo, useState } from "react";
 import { SpinDot } from "./SpinDot.jsx";
 
-export function FieldBox({ label, children }) {
+export function FieldBox({ label, children, tooltip, labelColor }) {
+  const [visible, setVisible] = useState(false);
   return <div style={{ marginBottom: 16 }}>
-    <div style={{ fontSize: 11, color: "#888", letterSpacing: "2px", textTransform: "uppercase", marginBottom: 6 }}>{label}</div>
+    <div style={{ fontSize: 11, color: labelColor || "#888", letterSpacing: "2px", textTransform: "uppercase", marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+      {label}
+      {tooltip && (
+        <span style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+          <span
+            onMouseEnter={() => setVisible(true)}
+            onMouseLeave={() => setVisible(false)}
+            style={{ width: 14, height: 14, borderRadius: "50%", background: "#555", color: "#ccc", fontSize: 9, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "default", flexShrink: 0, letterSpacing: 0, fontFamily: "sans-serif", textTransform: "none" }}
+          >i</span>
+          {visible && (
+            <span style={{ position: "absolute", left: 20, top: "50%", transform: "translateY(-50%)", background: "#222", color: "#ddd", fontSize: 11, lineHeight: "1.6", padding: "8px 12px", borderRadius: 6, whiteSpace: "pre-wrap", width: 260, zIndex: 100, boxShadow: "0 2px 10px rgba(0,0,0,0.4)", letterSpacing: 0, textTransform: "none", fontFamily: "'Spectral',serif", fontWeight: 400, pointerEvents: "none" }}>
+              {tooltip}
+            </span>
+          )}
+        </span>
+      )}
+    </div>
     {children}
   </div>;
 }
