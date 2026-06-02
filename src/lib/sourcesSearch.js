@@ -315,6 +315,8 @@ function mapOpenAlex(p, forceLang) {
     year: p.publication_year || '',
     venue: p.primary_location?.source?.display_name || '',
     doi,
+    volume: p.biblio?.volume || '',
+    issue: p.biblio?.issue || '',
     pages,
     lang,
     source: 'openalex',
@@ -356,6 +358,9 @@ function mapBASE(doc) {
   const idAsUrl = (rawId.startsWith('http') && !rawId.includes('doi.org')) ? rawId : '';
   const url = rawLink || (doi ? `https://doi.org/${doi}` : '') || idAsUrl;
   const abstract = Array.isArray(doc.dcdescription) ? doc.dcdescription[0] : (doc.dcdescription || '');
+  const rawSource = Array.isArray(doc.dcsource) ? doc.dcsource[0] : (doc.dcsource || '');
+  const volumeMatch = rawSource.match(/[Вв]ип\.?\s*(\d+)|[Vv]ol\.?\s*(\d+)/);
+  const issueMatch = rawSource.match(/[№#]\s*(\d+)|[Nn]o\.?\s*(\d+)/);
   return {
     id: rawId || url || String(Math.random()),
     title,
@@ -363,6 +368,8 @@ function mapBASE(doc) {
     year: doc.dcyear || '',
     venue: Array.isArray(doc.dcpublisher) ? doc.dcpublisher[0] : (doc.dcpublisher || ''),
     doi,
+    volume: volumeMatch ? (volumeMatch[1] || volumeMatch[2] || '') : '',
+    issue: issueMatch ? (issueMatch[1] || issueMatch[2] || '') : '',
     pages: extractPagesFromDoi(doi),
     lang: hasCyrillic(title) ? 'uk' : 'pl',
     source: 'base',
@@ -412,13 +419,16 @@ function mapCORE(result) {
   const url = result.downloadUrl || urls[0] || coLink
     || (doi ? `https://doi.org/${doi}` : '')
     || (coreId ? `https://core.ac.uk/works/${coreId}` : '');
+  const journal = (result.journals || [])[0];
   return {
     id: coreId ? `core-${coreId}` : String(Math.random()),
     title,
     authors: (result.authors || []).slice(0, 3).map(a => (typeof a === 'string' ? a : a.name || '')).filter(Boolean),
     year: result.yearPublished || '',
-    venue: (result.journals || [])[0]?.title || result.publisher || '',
+    venue: journal?.title || result.publisher || '',
     doi,
+    volume: journal?.volume || '',
+    issue: journal?.issue || '',
     pages: extractPagesFromDoi(doi),
     lang: hasCyrillic(title) ? 'uk' : 'en',
     source: 'core',
@@ -913,18 +923,21 @@ export async function enrichManualLine(line) {
 }
 
 export function paperToCitation(paper) {
+  const isUk = paper.lang !== 'en';
   const authorsList = Array.isArray(paper.authors) ? paper.authors : [];
   // ДСТУ: коли автор невідомий — починаємо з назви (без "Автор невідомий")
   const authorsPart = authorsList.length ? `${authorsList.join(', ')}. ` : '';
   const isDomainLike = paper.venue && /^[\w.-]+\.[a-zA-Z]{2,}$/.test(paper.venue.trim());
   const venue = (paper.venue && !isDomainLike) ? ` *${paper.venue}*.` : '';
+  let issuePart = '';
+  if (paper.volume) issuePart += isUk ? ` Вип. ${paper.volume}.` : ` Vol. ${paper.volume}.`;
+  if (paper.issue) issuePart += isUk ? ` № ${paper.issue}.` : ` No. ${paper.issue}.`;
   const pages = paper.pages
-    ? ` ${paper.lang === 'en' ? 'P.' : 'С.'} ${paper.pages}.`
+    ? ` ${isUk ? 'С.' : 'P.'} ${paper.pages}.`
     : '';
-  const urlPart = paper.url
-    ? ` ${paper.url}`
-    : paper.doi ? ` https://doi.org/${paper.doi}` : '';
-  return `${authorsPart}${normTitle(paper.title)}.${venue} ${paper.year}.${pages}${urlPart}`.replace(/\.\s*\./g, '.').replace(/\s{2,}/g, ' ').trim();
+  const rawUrl = paper.url || (paper.doi ? `https://doi.org/${paper.doi}` : '');
+  const urlPart = rawUrl ? ` URL: ${rawUrl}.` : '';
+  return `${authorsPart}${normTitle(paper.title)}.${venue} ${paper.year}.${issuePart}${pages}${urlPart}`.replace(/\.\s*\./g, '.').replace(/\s{2,}/g, ' ').trim();
 }
 
 export async function generateSearchPhrases(sectionLabel, topic, direction = '', subject = '') {
