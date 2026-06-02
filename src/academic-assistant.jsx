@@ -366,7 +366,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     clearTimeout(citSaveTimer.current);
     citSaveTimer.current = setTimeout(() => {
       saveToFirestore({ citInputs, citStructured, abstractsMap });
-    }, 1500);
+    }, 500);
     return () => clearTimeout(citSaveTimer.current);
   }, [citInputs]); // eslint-disable-line
 
@@ -2617,6 +2617,12 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
       }
 
       setSeenSourceKeys(prev => ({ ...prev, [secId]: globalSeen }));
+      // Явне збереження після завершення пошуку по секції — не залежить від дебаунс-таймерів
+      if (updatedGroups.length > 0) {
+        const finalSuggested = { ...suggestedSources, [secId]: updatedGroups.flatMap(g => g.papers) };
+        const finalGroups = { ...phraseGroups, [secId]: updatedGroups };
+        saveToFirestore({ suggestedSources: finalSuggested, phraseGroups: finalGroups, keywords });
+      }
     } catch (e) {
       console.error('Source search error:', e.message);
       setSourcesSearchError(prev => ({ ...prev, [secId]: e.message }));
@@ -3790,6 +3796,8 @@ ${refLines2.join("\n")}`;
               onFinish={async () => { await saveToFirestore({ stage: "done", status: "done", content, citInputs, citStructured, abstractsMap, refList }); setStage("done"); }}
               onProceedToWriting={() => setStage("writing")}
               setStage={setStage}
+              onSave={() => saveToFirestore({ citInputs, citStructured, abstractsMap, suggestedSources, phraseGroups, keywords })}
+              saving={saving}
               hasGeneratedContent={Object.keys(content).length > 0}
               onRegenWithNewSources={() => {
                 if (Object.keys(content).length > 0) {

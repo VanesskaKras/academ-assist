@@ -78,7 +78,7 @@ export function SourcesStage({
   allRefs, refList, showMissingSources, citInputsSnapshot, allCitLoading, info,
   suggestedSources, phraseGroups, sourcesSearchLoading, sourcesSearchError, doSearchSources, doRegenSectionSources,
   doGenKeywords, doAddAllCitations, onAddAbstracts, onFinish, onProceedToWriting, setStage,
-  onRegenWithNewSources, hasGeneratedContent,
+  onRegenWithNewSources, hasGeneratedContent, onSave, saving,
 }) {
   const [selectedSugg, setSelectedSugg] = useState({});
   const [suggOpen, setSuggOpen] = useState({});
@@ -552,6 +552,14 @@ export function SourcesStage({
 
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 8 }}>
         <NavBtn onClick={() => setStage("plan")}>← До плану</NavBtn>
+        {onSave && (
+          <button
+            onClick={onSave}
+            disabled={saving}
+            style={{ background: "transparent", border: "1.5px solid #8cc84b", color: saving ? "#aaa" : "#3a6010", borderRadius: 6, padding: "8px 18px", fontFamily: "'Spectral',serif", fontSize: 13, cursor: saving ? "default" : "pointer" }}>
+            {saving ? "Зберігаю..." : "💾 Зберегти"}
+          </button>
+        )}
         <>
           <button
             onClick={onRegenWithNewSources}
