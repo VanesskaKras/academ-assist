@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { AuthProvider, useAuth } from "./AuthContext";
 import LoginPage from "./LoginPage";
 import AdminPage from "./AdminPage";
@@ -11,9 +11,16 @@ import PracticePage from "./PracticePage";
 
 function AppRouter() {
   const { user, profile } = useAuth();
-  const [view, setView] = useState("dashboard");
-  const [currentOrderId, setCurrentOrderId] = useState(null);
-  const [currentMode, setCurrentMode] = useState("large"); // "large" | "small" | "file-corrections" | "practice"
+  const [view, setView] = useState(() => sessionStorage.getItem("appView") || "dashboard");
+  const [currentOrderId, setCurrentOrderId] = useState(() => sessionStorage.getItem("appOrderId") || null);
+  const [currentMode, setCurrentMode] = useState(() => sessionStorage.getItem("appMode") || "large");
+
+  useEffect(() => { sessionStorage.setItem("appView", view); }, [view]);
+  useEffect(() => {
+    if (currentOrderId) sessionStorage.setItem("appOrderId", currentOrderId);
+    else sessionStorage.removeItem("appOrderId");
+  }, [currentOrderId]);
+  useEffect(() => { sessionStorage.setItem("appMode", currentMode); }, [currentMode]);
 
   if (!user) return <LoginPage />;
 
