@@ -427,6 +427,16 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     setSaving(false);
   };
 
+  // Зберігаємо перед виходом — дебаунс-таймери скасовуються при розмонтуванні компонента
+  const handleBack = async () => {
+    clearTimeout(citSaveTimer.current);
+    clearTimeout(sourcesSaveTimer.current);
+    try {
+      await saveToFirestore({ citInputs, citStructured, abstractsMap, suggestedSources, phraseGroups, keywords });
+    } catch (e) { console.error("Pre-back save error:", e); }
+    onBack?.();
+  };
+
   const handleFile = useCallback((name, b64, type) => { setFileLabel(name); setFileB64(b64); setFileType(type); }, []);
 
   const handleNavigateMain = useCallback((s) => {
@@ -3551,7 +3561,7 @@ ${refLines2.join("\n")}`;
         {headerOpen && (
           <div style={{ color: "#f5f2eb", padding: "15px 32px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             {onBack && (
-              <button onClick={onBack} style={{ background: "transparent", border: "1px solid #555", color: "#aaa", borderRadius: 6, padding: "5px 14px", cursor: "pointer", fontFamily: "inherit", fontSize: 12, marginRight: 4 }}>
+              <button onClick={handleBack} style={{ background: "transparent", border: "1px solid #555", color: "#aaa", borderRadius: 6, padding: "5px 14px", cursor: "pointer", fontFamily: "inherit", fontSize: 12, marginRight: 4 }}>
                 ← Замовлення
               </button>
             )}
