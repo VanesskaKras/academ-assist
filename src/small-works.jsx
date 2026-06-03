@@ -11,6 +11,7 @@ import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
 import { FieldBox, Heading, NavBtn, PrimaryBtn, GreenBtn, SaveIndicator } from "./components/Buttons.jsx";
 import { DropZone } from "./components/DropZone.jsx";
 import { parsePagesAvg, exportSimpleDocx, TA, TA_WHITE, SHARED_STYLES } from "./shared.jsx";
+import mammoth from "mammoth";
 import { exportToDocx, exportSpeechToDocx } from "./lib/exportDocx.js";
 import { SYS_JSON_SHORT } from "./lib/prompts.js";
 import { exportToPptxFile } from "./lib/exportPptx.js";
@@ -1132,9 +1133,23 @@ ${sourcesList ? `\nПісля основного тексту додай (збе
   };
 
   // ── Допоміжна: fileContent для dopovid ──
-  const getDopovIdFileContent = () => {
-    if (!presFile) return [];
-    return [{ type: presFile.type.startsWith("image/") ? "image" : "document", source: { type: "base64", media_type: presFile.type, data: presFile.b64 } }];
+  // DOCX → витягуємо текст через mammoth; PDF/зображення → передаємо як файл
+  const getDopovIdFileContent = async () => {
+    if (!presFile) return { fileContent: [], extractedText: "" };
+    const isDocx = presFile.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      || presFile.name?.toLowerCase().endsWith(".docx")
+      || presFile.name?.toLowerCase().endsWith(".doc");
+    if (isDocx) {
+      try {
+        const bytes = Uint8Array.from(atob(presFile.b64), c => c.charCodeAt(0));
+        const result = await mammoth.extractRawText({ arrayBuffer: bytes.buffer });
+        return { fileContent: [], extractedText: result.value.trim() };
+      } catch { return { fileContent: [], extractedText: "" }; }
+    }
+    return {
+      fileContent: [{ type: presFile.type.startsWith("image/") ? "image" : "document", source: { type: "base64", media_type: presFile.type, data: presFile.b64 } }],
+      extractedText: "",
+    };
   };
 
   // ── Презентація для малих робіт (Gemini аналіз → Claude слайди) ──
@@ -1146,9 +1161,10 @@ ${sourcesList ? `\nПісля основного тексту додай (збе
       const fullText = getWorkFullText();
       const isDopovid = workType === "dopovid";
       const commentBlock = presComment.trim() ? `\nКОМЕНТАР ЗАМОВНИКА (виконай обов'язково): ${presComment.trim()}\n` : "";
-      const fileContent = isDopovid ? getDopovIdFileContent() : (presFile
-        ? [{ type: presFile.type.startsWith("image/") ? "image" : "document", source: { type: "base64", media_type: presFile.type, data: presFile.b64 } }]
-        : []);
+      const { fileContent, extractedText } = isDopovid
+        ? await getDopovIdFileContent()
+        : { fileContent: presFile ? [{ type: presFile.type.startsWith("image/") ? "image" : "document", source: { type: "base64", media_type: presFile.type, data: presFile.b64 } }] : [], extractedText: "" };
+      const workText = fullText || extractedText;
 
       // ── Крок 1: Gemini аналізує текст ──
       const geminiPrompt = `Проаналізуй наукову роботу та витягни всі дані для презентації. Поверни ТІЛЬКИ валідний JSON без markdown:
@@ -1178,7 +1194,7 @@ ${sourcesList ? `\nПісля основного тексту додай (збе
 - Мова: ${lang}
 ${commentBlock}
 ТЕКСТ РОБОТИ:
-${fullText}`;
+${workText}`;
 
       const geminiMsgs = isDopovid && fileContent.length > 0
         ? [{ role: "user", content: [...fileContent, { type: "text", text: geminiPrompt }] }]
@@ -1343,13 +1359,14 @@ ${commentBlock}
 
       const sectionText = getWorkFullText();
       const isDopovid = workType === "dopovid";
-      const dopFile = isDopovid ? getDopovIdFileContent() : [];
+      const { fileContent: dopFile, extractedText: dopText } = isDopovid ? await getDopovIdFileContent() : { fileContent: [], extractedText: "" };
+      const workText = sectionText || dopText;
 
       const prompt = `Напиши текст доповіді для захисту ${info?.type || cfg?.label || "роботи"} на тему "${info?.topic}".
 
 СТРУКТУРА ПРЕЗЕНТАЦІЇ (виступ іде паралельно зі слайдами):
 ${slidesOutline}
-${sectionText ? `\nПОВНИЙ ТЕКСТ РОБОТИ (витягуй конкретні факти, методи, результати, числа):\n${sectionText}\n` : ""}
+${workText ? `\nПОВНИЙ ТЕКСТ РОБОТИ (витягуй конкретні факти, методи, результати, числа):\n${workText}\n` : ""}
 ВИМОГИ:
 - Обсяг: 3-5 хвилин (2-3 сторінки), кожен слайд — 4-6 речень
 - Перед кожним блоком: "Слайд 1", "Слайд 2" і т.д. — окремим рядком
@@ -1399,10 +1416,11 @@ ${sectionText ? `\nПОВНИЙ ТЕКСТ РОБОТИ (витягуй конк
       const lang = info?.language || "Українська";
       const sectionText = getWorkFullText();
       const isDopovid = workType === "dopovid";
-      const dopFile = isDopovid ? getDopovIdFileContent() : [];
+      const { fileContent: dopFile, extractedText: dopText } = isDopovid ? await getDopovIdFileContent() : { fileContent: [], extractedText: "" };
+      const workText = sectionText || dopText;
 
       const prompt = `Напиши текст доповіді для захисту ${info?.type || cfg?.label || "роботи"} на тему "${info?.topic}".
-${sectionText ? `\nПОВНИЙ ТЕКСТ РОБОТИ (витягуй конкретні факти, методи, результати, числа):\n${sectionText}\n` : ""}
+${workText ? `\nПОВНИЙ ТЕКСТ РОБОТИ (витягуй конкретні факти, методи, результати, числа):\n${workText}\n` : ""}
 ВИМОГИ:
 - Обсяг: 3-5 хвилин (2-3 сторінки)
 - Структура: вступ → актуальність → мета і завдання → методи → результати → висновки → завершення
