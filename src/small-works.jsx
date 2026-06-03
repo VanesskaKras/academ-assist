@@ -108,6 +108,15 @@ const WORK_TYPES = {
     color: "#8a1a1a",
     bg: "#ffe4e4",
   },
+  dopovid: {
+    label: "Доповідь та презентація",
+    icon: "🎤",
+    hasplan: false,
+    stages: ["Дані", "Готово"],
+    stageKeys: ["input", "done"],
+    color: "#6a1a8a",
+    bg: "#f5e4ff",
+  },
 };
 
 // ─────────────────────────────────────────────
@@ -1115,10 +1124,17 @@ ${sourcesList ? `\nПісля основного тексту додай (збе
 
   // ── Допоміжна: текст роботи для прези/доповіді ──
   const getWorkFullText = () => {
+    if (workType === "dopovid") return "";
     if (workType === "referat") {
       return sections.filter(s => s.text).map(s => `### ${s.label}\n${s.text}`).join("\n\n");
     }
     return result || "";
+  };
+
+  // ── Допоміжна: fileContent для dopovid ──
+  const getDopovIdFileContent = () => {
+    if (!presFile) return [];
+    return [{ type: presFile.type.startsWith("image/") ? "image" : "document", source: { type: "base64", media_type: presFile.type, data: presFile.b64 } }];
   };
 
   // ── Презентація для малих робіт (Gemini аналіз → Claude слайди) ──
@@ -1128,10 +1144,11 @@ ${sourcesList ? `\nПісля основного тексту додай (збе
     try {
       const lang = info?.language || "Українська";
       const fullText = getWorkFullText();
+      const isDopovid = workType === "dopovid";
       const commentBlock = presComment.trim() ? `\nКОМЕНТАР ЗАМОВНИКА (виконай обов'язково): ${presComment.trim()}\n` : "";
-      const fileContent = presFile
+      const fileContent = isDopovid ? getDopovIdFileContent() : (presFile
         ? [{ type: presFile.type.startsWith("image/") ? "image" : "document", source: { type: "base64", media_type: presFile.type, data: presFile.b64 } }]
-        : [];
+        : []);
 
       // ── Крок 1: Gemini аналізує текст ──
       const geminiPrompt = `Проаналізуй наукову роботу та витягни всі дані для презентації. Поверни ТІЛЬКИ валідний JSON без markdown:
@@ -1163,8 +1180,11 @@ ${commentBlock}
 ТЕКСТ РОБОТИ:
 ${fullText}`;
 
+      const geminiMsgs = isDopovid && fileContent.length > 0
+        ? [{ role: "user", content: [...fileContent, { type: "text", text: geminiPrompt }] }]
+        : [{ role: "user", content: geminiPrompt }];
       const geminiRaw = await callGemini(
-        [{ role: "user", content: geminiPrompt }], null,
+        geminiMsgs, null,
         SYS_JSON_SHORT, 4000,
         (s) => setPresMsg(`Аналізую... зачекайте ${s}с`), "gemini-2.5-flash"
       );
@@ -1322,15 +1342,14 @@ ${commentBlock}
         .join("\n\n");
 
       const sectionText = getWorkFullText();
+      const isDopovid = workType === "dopovid";
+      const dopFile = isDopovid ? getDopovIdFileContent() : [];
 
       const prompt = `Напиши текст доповіді для захисту ${info?.type || cfg?.label || "роботи"} на тему "${info?.topic}".
 
 СТРУКТУРА ПРЕЗЕНТАЦІЇ (виступ іде паралельно зі слайдами):
 ${slidesOutline}
-
-ПОВНИЙ ТЕКСТ РОБОТИ (витягуй конкретні факти, методи, результати, числа):
-${sectionText}
-
+${sectionText ? `\nПОВНИЙ ТЕКСТ РОБОТИ (витягуй конкретні факти, методи, результати, числа):\n${sectionText}\n` : ""}
 ВИМОГИ:
 - Обсяг: 3-5 хвилин (2-3 сторінки), кожен слайд — 4-6 речень
 - Перед кожним блоком: "Слайд 1", "Слайд 2" і т.д. — окремим рядком
@@ -1342,8 +1361,11 @@ ${sectionText}
 - Мова: ${lang}
 - Без markdown, зірочок, жирного — тільки мітки "Слайд N" і звичайний текст`;
 
+      const speechMsgsWith = isDopovid && dopFile.length > 0
+        ? [{ role: "user", content: [...dopFile, { type: "text", text: prompt }] }]
+        : [{ role: "user", content: prompt }];
       const raw = await callGemini(
-        [{ role: "user", content: prompt }], null,
+        speechMsgsWith, null,
         "You are an expert academic writing assistant. Write a substantive, factual oral defense speech. Every sentence must state a concrete fact, method, result or conclusion — no filler phrases. No markdown formatting.", 5000,
         null, "gemini-2.5-flash"
       );
@@ -1376,12 +1398,11 @@ ${sectionText}
     try {
       const lang = info?.language || "Українська";
       const sectionText = getWorkFullText();
+      const isDopovid = workType === "dopovid";
+      const dopFile = isDopovid ? getDopovIdFileContent() : [];
 
       const prompt = `Напиши текст доповіді для захисту ${info?.type || cfg?.label || "роботи"} на тему "${info?.topic}".
-
-ПОВНИЙ ТЕКСТ РОБОТИ (витягуй конкретні факти, методи, результати, числа):
-${sectionText}
-
+${sectionText ? `\nПОВНИЙ ТЕКСТ РОБОТИ (витягуй конкретні факти, методи, результати, числа):\n${sectionText}\n` : ""}
 ВИМОГИ:
 - Обсяг: 3-5 хвилин (2-3 сторінки)
 - Структура: вступ → актуальність → мета і завдання → методи → результати → висновки → завершення
@@ -1393,8 +1414,11 @@ ${sectionText}
 - Мова: ${lang}
 - Без markdown, зірочок, жирного`;
 
+      const speechMsgsWithout = isDopovid && dopFile.length > 0
+        ? [{ role: "user", content: [...dopFile, { type: "text", text: prompt }] }]
+        : [{ role: "user", content: prompt }];
       const raw = await callGemini(
-        [{ role: "user", content: prompt }], null,
+        speechMsgsWithout, null,
         "You are an expert academic writing assistant. Write a substantive, factual oral defense speech. Every sentence must state a concrete fact, method, result or conclusion — no filler phrases. No markdown formatting.", 5000,
         null, "gemini-2.5-flash"
       );
@@ -1567,7 +1591,38 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
           <div className="fade">
             <Heading>{cfg.icon} {cfg.label} — Дані замовлення</Heading>
 
-            <FieldBox label="Шаблон замовлення *">
+            {/* ── Тип "Доповідь та презентація" — спрощена форма ── */}
+            {workType === "dopovid" && (
+              <>
+                <FieldBox label="Тема роботи *">
+                  <textarea value={tplText} onChange={e => setTplText(e.target.value)}
+                    placeholder={"Тема - ...\nДисципліна - ...\nТип роботи - (курсова, реферат, диплом...)\nАвтор - ...\nНауковий керівник - ..."}
+                    style={{ ...TA, minHeight: 120 }} />
+                </FieldBox>
+                <FieldBox label="Готова робота * (PDF, DOCX, зображення)">
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {presFile && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: "#eef5e4", borderRadius: 6, fontSize: 13 }}>
+                        <span>📄 {presFile.name}</span>
+                        <button onClick={() => setPresFile(null)} style={{ marginLeft: "auto", background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: 14 }}>✕</button>
+                      </div>
+                    )}
+                    {!presFile && (
+                      <DropZone fileLabel={null} onFile={(name, b64, type) => setPresFile({ name, b64, type })} accept=".pdf,.docx,.doc,.jpg,.jpeg,.png" />
+                    )}
+                  </div>
+                </FieldBox>
+                <FieldBox label="Коментар (необов'язково)">
+                  <textarea value={presComment} onChange={e => setPresComment(e.target.value)}
+                    placeholder="Вимоги до оформлення, стиль, що врахувати при генерації..."
+                    style={{ ...TA, minHeight: 70 }} />
+                </FieldBox>
+              </>
+            )}
+
+            {/* ── Інші типи робіт — стандартна форма ── */}
+            {workType !== "dopovid" && (
+            <><FieldBox label="Шаблон замовлення *">
               <textarea value={tplText} onChange={e => setTplText(e.target.value)}
                 placeholder={workType === "prezentatsiya"
                   ? `Тема - ...\nК-сть слайдів - ...\nДедлайн - ...\nДисципліна - ...\nВимоги - ...`
@@ -1704,6 +1759,21 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
               msg={loadMsg}
               label="Аналізувати →"
             />
+            </>
+            )}
+
+            {/* Кнопка для dopovid */}
+            {workType === "dopovid" && (
+              <PrimaryBtn
+                onClick={() => {
+                  if (!tplText.trim()) { alert("Введіть тему роботи."); return; }
+                  saveToFirestore({ tplText, presComment, stage: "done", status: "done" });
+                  setStage("done");
+                }}
+                disabled={!tplText.trim()}
+                label="Далі →"
+              />
+            )}
           </div>
         )}
 
@@ -2289,6 +2359,127 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
           <div className="fade">
             <Heading>✓ Готово!</Heading>
 
+            {/* ── Доповідь та презентація ── */}
+            {workType === "dopovid" && (
+              <div>
+                <p style={{ fontSize: 13, color: "#888", marginBottom: 24 }}>
+                  Завантажте матеріали та оберіть що генерувати.
+                </p>
+
+                {/* Інфо про завантажений файл */}
+                {presFile ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "#eef5e4", borderRadius: 8, marginBottom: 20, fontSize: 13 }}>
+                    <span style={{ color: "#2a6a2a" }}>✓</span>
+                    <span style={{ color: "#2a4a1a", fontWeight: 600 }}>{presFile.name}</span>
+                    <button onClick={() => setPresFile(null)} style={{ marginLeft: "auto", background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: 14 }}>✕</button>
+                  </div>
+                ) : (
+                  <div style={{ marginBottom: 20 }}>
+                    <div style={{ fontSize: 12, color: "#888", marginBottom: 8 }}>Завантажте файл готової роботи (PDF, DOCX, зображення):</div>
+                    <DropZone fileLabel={null} onFile={(name, b64, type) => setPresFile({ name, b64, type })} accept=".pdf,.docx,.doc,.jpg,.jpeg,.png" />
+                  </div>
+                )}
+
+                {/* Коментар */}
+                <div style={{ marginBottom: 24 }}>
+                  <textarea
+                    value={presComment}
+                    onChange={e => setPresComment(e.target.value)}
+                    placeholder="Коментар: вимоги до оформлення, стиль, що врахувати..."
+                    style={{ width: "100%", minHeight: 54, fontSize: 12, lineHeight: "1.7", color: "#2a2a1e", background: "#f5f2ea", borderRadius: 6, padding: "9px 12px", border: "1px solid #d4cfc4", fontFamily: "'Spectral',serif", resize: "vertical", boxSizing: "border-box" }}
+                  />
+                </div>
+
+                <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+
+                  {/* Презентація */}
+                  <div style={{ flex: 1, minWidth: 200, border: "1.5px solid #d4cfc4", borderRadius: 8, padding: "16px 18px" }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Презентація (.pptx)</div>
+                    <div style={{ fontSize: 12, color: "#888", marginBottom: 14 }}>10–13 слайдів для захисту з дизайном</div>
+                    <button
+                      onClick={generateSmallPresentation}
+                      disabled={presLoading || !presFile}
+                      style={{ background: (presLoading || !presFile) ? "#aaa" : "#1a1a14", color: (presLoading || !presFile) ? "#eee" : "#e8ff47", border: "none", borderRadius: 6, padding: "9px 20px", fontFamily: "'Spectral',serif", fontSize: 12, letterSpacing: "1px", cursor: (presLoading || !presFile) ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
+                      {presLoading ? <><SpinDot light />{presMsg || "Генерую..."}</> : presReady ? "Генерувати знову" : "Генерувати"}
+                    </button>
+                    {!presFile && !presLoading && <div style={{ marginTop: 8, fontSize: 11, color: "#bbb" }}>Спочатку завантажте файл</div>}
+                    {presReady && !presLoading && (
+                      <div style={{ marginTop: 10, fontSize: 12, color: "#2a6a2a", display: "flex", alignItems: "center", gap: 6 }}>✓ Файл завантажено</div>
+                    )}
+                    {!presReady && !presLoading && presFile && (
+                      <div style={{ marginTop: 10, fontSize: 11, color: "#aaa", lineHeight: 1.5 }}>Gemini аналізує текст, Claude генерує слайди</div>
+                    )}
+                  </div>
+
+                  {/* Доповідь з презентацією */}
+                  <div style={{ flex: 1, minWidth: 200, border: "1.5px solid #d4cfc4", borderRadius: 8, padding: "16px 18px" }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Доповідь з презентацією (.docx)</div>
+                    <div style={{ fontSize: 12, color: "#888", marginBottom: 14 }}>Текст виступу з мітками «Слайд N» (3–5 хв)</div>
+                    {!speechWithText ? (
+                      <button onClick={generateSpeechWith} disabled={speechWithLoading || !presFile}
+                        style={{ background: (speechWithLoading || !presFile) ? "#aaa" : "#1a1a14", color: (speechWithLoading || !presFile) ? "#eee" : "#e8ff47", border: "none", borderRadius: 6, padding: "9px 20px", fontFamily: "'Spectral',serif", fontSize: 12, letterSpacing: "1px", cursor: (speechWithLoading || !presFile) ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
+                        {speechWithLoading ? <><SpinDot light />Генерую...</> : "Генерувати"}
+                      </button>
+                    ) : (
+                      <div>
+                        <div style={{ fontSize: 12, lineHeight: "1.8", color: "#444", maxHeight: 140, overflowY: "auto", background: "#f5f2ea", borderRadius: 6, padding: "10px 12px", marginBottom: 10, whiteSpace: "pre-wrap" }}>
+                          {speechWithText.substring(0, 400)}...
+                        </div>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <button onClick={async () => { setSpeechWithLoading(true); try { await exportSpeechToDocx(speechWithText, info, methodInfo, currentIdRef.current); } catch (e) { alert("Помилка: " + e.message); } setSpeechWithLoading(false); }} disabled={speechWithLoading}
+                            style={{ background: speechWithLoading ? "#aaa" : "#1a4a1a", color: speechWithLoading ? "#eee" : "#a8e060", border: "none", borderRadius: 6, padding: "9px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: speechWithLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
+                            {speechWithLoading ? <><SpinDot light />...</> : "⬇ Завантажити .docx"}
+                          </button>
+                          <button onClick={() => { setSpeechWithText(""); saveToFirestore({ speechWithText: "" }); }}
+                            style={{ background: "transparent", border: "1.5px solid #d4cfc4", color: "#888", borderRadius: 6, padding: "9px 14px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>
+                            Переробити
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {!presReady && !speechWithText && !speechWithLoading && presFile && (
+                      <div style={{ marginTop: 8, fontSize: 11, color: "#bbb", lineHeight: 1.5 }}>Спочатку згенеруйте презентацію</div>
+                    )}
+                    {!presFile && !speechWithLoading && <div style={{ marginTop: 8, fontSize: 11, color: "#bbb" }}>Спочатку завантажте файл</div>}
+                  </div>
+
+                  {/* Доповідь без презентації */}
+                  <div style={{ flex: 1, minWidth: 200, border: "1.5px solid #d4cfc4", borderRadius: 8, padding: "16px 18px" }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Доповідь без презентації (.docx)</div>
+                    <div style={{ fontSize: 12, color: "#888", marginBottom: 14 }}>Суцільний текст виступу без слайдів (3–5 хв)</div>
+                    {!speechText ? (
+                      <button onClick={generateSpeechWithout} disabled={speechLoading || !presFile}
+                        style={{ background: (speechLoading || !presFile) ? "#aaa" : "#1a1a14", color: (speechLoading || !presFile) ? "#eee" : "#e8ff47", border: "none", borderRadius: 6, padding: "9px 20px", fontFamily: "'Spectral',serif", fontSize: 12, letterSpacing: "1px", cursor: (speechLoading || !presFile) ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
+                        {speechLoading ? <><SpinDot light />Генерую...</> : "Генерувати"}
+                      </button>
+                    ) : (
+                      <div>
+                        <div style={{ fontSize: 12, lineHeight: "1.8", color: "#444", maxHeight: 140, overflowY: "auto", background: "#f5f2ea", borderRadius: 6, padding: "10px 12px", marginBottom: 10, whiteSpace: "pre-wrap" }}>
+                          {speechText.substring(0, 400)}...
+                        </div>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <button onClick={async () => { setSpeechLoading(true); try { await exportSpeechToDocx(speechText, info, methodInfo, currentIdRef.current); } catch (e) { alert("Помилка: " + e.message); } setSpeechLoading(false); }} disabled={speechLoading}
+                            style={{ background: speechLoading ? "#aaa" : "#1a4a1a", color: speechLoading ? "#eee" : "#a8e060", border: "none", borderRadius: 6, padding: "9px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: speechLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
+                            {speechLoading ? <><SpinDot light />...</> : "⬇ Завантажити .docx"}
+                          </button>
+                          <button onClick={() => { setSpeechText(""); saveToFirestore({ speechText: "" }); }}
+                            style={{ background: "transparent", border: "1.5px solid #d4cfc4", color: "#888", borderRadius: 6, padding: "9px 14px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>
+                            Переробити
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {!presFile && !speechLoading && <div style={{ marginTop: 8, fontSize: 11, color: "#bbb" }}>Спочатку завантажте файл</div>}
+                  </div>
+
+                </div>
+
+                <div style={{ marginTop: 24 }}>
+                  <NavBtn onClick={() => setStage("input")}>← Назад</NavBtn>
+                </div>
+              </div>
+            )}
+
             {/* Реферат — всі секції */}
             {workType === "referat" && (
               <>
@@ -2492,128 +2683,6 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
                   </button>
                 </div>
               </>
-            )}
-
-            {/* ══ ДОДАТКОВІ МАТЕРІАЛИ (презентація + доповідь) ══ */}
-            {workType !== "prezentatsiya" && (
-              <div style={{ marginTop: 32, borderTop: "1.5px solid #d4cfc4", paddingTop: 24 }}>
-                <div style={{ fontSize: 11, color: "#888", letterSpacing: "2px", textTransform: "uppercase", marginBottom: 16 }}>Додаткові матеріали</div>
-
-                {/* Файл + коментар */}
-                <div style={{ marginBottom: 18, display: "flex", flexDirection: "column", gap: 10 }}>
-                  <div style={{ fontSize: 12, color: "#666", marginBottom: 2 }}>
-                    Завантажте файл (методичка, інструкція) та/або додайте коментар — враховуватиметься при генерації:
-                  </div>
-                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-start" }}>
-                    <label style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "#1a1a14", color: "#e8ff47", border: "none", borderRadius: 6, padding: "8px 16px", fontSize: 12, cursor: "pointer", fontFamily: "'Spectral',serif", letterSpacing: "0.5px" }}>
-                      {presFile ? `✓ ${presFile.name}` : "Завантажити файл"}
-                      <input type="file" accept="application/pdf,image/*,.docx,.doc" style={{ display: "none" }} onChange={e => {
-                        const f = e.target.files?.[0];
-                        if (!f) return;
-                        const reader = new FileReader();
-                        reader.onload = ev => setPresFile({ name: f.name, b64: ev.target.result.split(",")[1], type: f.type });
-                        reader.readAsDataURL(f);
-                      }} />
-                    </label>
-                    {presFile && (
-                      <button onClick={() => setPresFile(null)} style={{ background: "transparent", border: "1px solid #c4bfb4", color: "#888", borderRadius: 6, padding: "8px 12px", fontSize: 12, cursor: "pointer", fontFamily: "'Spectral',serif" }}>✕ Видалити</button>
-                    )}
-                  </div>
-                  <textarea
-                    value={presComment}
-                    onChange={e => setPresComment(e.target.value)}
-                    placeholder="Коментар: вимоги до оформлення, стиль, що врахувати..."
-                    style={{ width: "100%", minHeight: 54, fontSize: 12, lineHeight: "1.7", color: "#2a2a1e", background: "#f5f2ea", borderRadius: 6, padding: "9px 12px", border: "1px solid #d4cfc4", fontFamily: "'Spectral',serif", resize: "vertical", boxSizing: "border-box" }}
-                  />
-                </div>
-
-                <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-
-                  {/* Презентація */}
-                  <div style={{ flex: 1, minWidth: 200, border: "1.5px solid #d4cfc4", borderRadius: 8, padding: "16px 18px" }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Презентація (.pptx)</div>
-                    <div style={{ fontSize: 12, color: "#888", marginBottom: 14 }}>10–13 слайдів для захисту з дизайном</div>
-                    <button
-                      onClick={generateSmallPresentation}
-                      disabled={presLoading}
-                      style={{ background: presLoading ? "#aaa" : "#1a1a14", color: presLoading ? "#eee" : "#e8ff47", border: "none", borderRadius: 6, padding: "9px 20px", fontFamily: "'Spectral',serif", fontSize: 12, letterSpacing: "1px", cursor: presLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
-                      {presLoading
-                        ? <><SpinDot light />{presMsg || "Генерую..."}</>
-                        : presReady ? "Генерувати знову" : "Генерувати"}
-                    </button>
-                    {presReady && !presLoading && (
-                      <div style={{ marginTop: 10, fontSize: 12, color: "#2a6a2a", display: "flex", alignItems: "center", gap: 6 }}>
-                        <span>✓</span> Файл завантажено
-                      </div>
-                    )}
-                    {!presReady && !presLoading && (
-                      <div style={{ marginTop: 10, fontSize: 11, color: "#aaa", lineHeight: 1.5 }}>
-                        Gemini аналізує текст, Claude генерує слайди
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Доповідь з презентацією */}
-                  <div style={{ flex: 1, minWidth: 200, border: "1.5px solid #d4cfc4", borderRadius: 8, padding: "16px 18px" }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Доповідь з презентацією (.docx)</div>
-                    <div style={{ fontSize: 12, color: "#888", marginBottom: 14 }}>Текст виступу з мітками «Слайд N» (3–5 хв)</div>
-                    {!speechWithText ? (
-                      <button onClick={generateSpeechWith} disabled={speechWithLoading}
-                        style={{ background: speechWithLoading ? "#aaa" : "#1a1a14", color: speechWithLoading ? "#eee" : "#e8ff47", border: "none", borderRadius: 6, padding: "9px 20px", fontFamily: "'Spectral',serif", fontSize: 12, letterSpacing: "1px", cursor: speechWithLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
-                        {speechWithLoading ? <><SpinDot light />Генерую...</> : "Генерувати"}
-                      </button>
-                    ) : (
-                      <div>
-                        <div style={{ fontSize: 12, lineHeight: "1.8", color: "#444", maxHeight: 140, overflowY: "auto", background: "#f5f2ea", borderRadius: 6, padding: "10px 12px", marginBottom: 10, whiteSpace: "pre-wrap" }}>
-                          {speechWithText.substring(0, 400)}...
-                        </div>
-                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                          <button onClick={async () => { setSpeechWithLoading(true); try { await exportSpeechToDocx(speechWithText, info, methodInfo, currentIdRef.current); } catch (e) { alert("Помилка: " + e.message); } setSpeechWithLoading(false); }} disabled={speechWithLoading}
-                            style={{ background: speechWithLoading ? "#aaa" : "#1a4a1a", color: speechWithLoading ? "#eee" : "#a8e060", border: "none", borderRadius: 6, padding: "9px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: speechWithLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
-                            {speechWithLoading ? <><SpinDot light />...</> : "⬇ Завантажити .docx"}
-                          </button>
-                          <button onClick={() => { setSpeechWithText(""); saveToFirestore({ speechWithText: "" }); }}
-                            style={{ background: "transparent", border: "1.5px solid #d4cfc4", color: "#888", borderRadius: 6, padding: "9px 14px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>
-                            Переробити
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                    {!presReady && !speechWithText && !speechWithLoading && (
-                      <div style={{ marginTop: 8, fontSize: 11, color: "#bbb", lineHeight: 1.5 }}>Спочатку згенеруйте презентацію</div>
-                    )}
-                  </div>
-
-                  {/* Доповідь без презентації */}
-                  <div style={{ flex: 1, minWidth: 200, border: "1.5px solid #d4cfc4", borderRadius: 8, padding: "16px 18px" }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Доповідь без презентації (.docx)</div>
-                    <div style={{ fontSize: 12, color: "#888", marginBottom: 14 }}>Суцільний текст виступу без слайдів (3–5 хв)</div>
-                    {!speechText ? (
-                      <button onClick={generateSpeechWithout} disabled={speechLoading}
-                        style={{ background: speechLoading ? "#aaa" : "#1a1a14", color: speechLoading ? "#eee" : "#e8ff47", border: "none", borderRadius: 6, padding: "9px 20px", fontFamily: "'Spectral',serif", fontSize: 12, letterSpacing: "1px", cursor: speechLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
-                        {speechLoading ? <><SpinDot light />Генерую...</> : "Генерувати"}
-                      </button>
-                    ) : (
-                      <div>
-                        <div style={{ fontSize: 12, lineHeight: "1.8", color: "#444", maxHeight: 140, overflowY: "auto", background: "#f5f2ea", borderRadius: 6, padding: "10px 12px", marginBottom: 10, whiteSpace: "pre-wrap" }}>
-                          {speechText.substring(0, 400)}...
-                        </div>
-                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                          <button onClick={async () => { setSpeechLoading(true); try { await exportSpeechToDocx(speechText, info, methodInfo, currentIdRef.current); } catch (e) { alert("Помилка: " + e.message); } setSpeechLoading(false); }} disabled={speechLoading}
-                            style={{ background: speechLoading ? "#aaa" : "#1a4a1a", color: speechLoading ? "#eee" : "#a8e060", border: "none", borderRadius: 6, padding: "9px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: speechLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
-                            {speechLoading ? <><SpinDot light />...</> : "⬇ Завантажити .docx"}
-                          </button>
-                          <button onClick={() => { setSpeechText(""); saveToFirestore({ speechText: "" }); }}
-                            style={{ background: "transparent", border: "1.5px solid #d4cfc4", color: "#888", borderRadius: 6, padding: "9px 14px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>
-                            Переробити
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                </div>
-              </div>
             )}
 
             <div style={{ marginTop: 20, padding: "10px 14px", background: "#f0ece2", borderRadius: 6, fontSize: 12, color: "#888" }}>
