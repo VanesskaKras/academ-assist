@@ -1330,8 +1330,8 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
                           <button onClick={() => setInstrFiles(p => p.filter((_, j) => j !== i))} style={{ marginLeft: "auto", background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: 14 }}>✕</button>
                         </div>
                       ))}
-                      {instrFiles.length < 5 && (
-                        <DropZone fileLabel={null} multiple onFile={(name, b64, type) => setInstrFiles(p => p.length >= 5 ? [...p.slice(1), { name, b64, type }] : [...p, { name, b64, type }])} accept=".pdf,.jpg,.jpeg,.png,.webp" />
+                      {instrFiles.length < 20 && (
+                        <DropZone fileLabel={null} multiple onFile={(name, b64, type) => setInstrFiles(p => p.length >= 20 ? [...p.slice(1), { name, b64, type }] : [...p, { name, b64, type }])} accept=".pdf,.jpg,.jpeg,.png,.webp" />
                       )}
                     </div>
                     {instrFiles.length > 0 && (
