@@ -1170,10 +1170,10 @@ ${sourcesList ? `\nПісля основного тексту додай (збе
     };
   };
 
-  // ── Презентація для малих робіт (Gemini аналіз → Claude слайди) ──
+  // ── Презентація для малих робіт (один Claude виклик) ──
   const generateSmallPresentation = async () => {
     setPresLoading(true);
-    setPresMsg("Аналізую текст роботи...");
+    setPresMsg("Генерую презентацію...");
     try {
       const lang = info?.language || "Українська";
       const fullText = getWorkFullText();
@@ -1184,103 +1184,50 @@ ${sourcesList ? `\nПісля основного тексту додай (збе
         : { fileContent: presFile ? [{ type: presFile.type.startsWith("image/") ? "image" : "document", source: { type: "base64", media_type: presFile.type, data: presFile.b64 } }] : [], extractedText: "" };
       const workText = fullText || extractedText;
 
-      // ── Крок 1: Gemini — повний аналіз документу ──
-      const geminiPrompt = `Зроби детальний структурований аналіз роботи для підготовки презентації захисту. Витягни ВСЮ важливу інформацію.
+      const claudePrompt = `Уважно прочитай роботу і згенеруй JSON для презентації захисту.
+${workText ? `\nТЕКСТ РОБОТИ:\n${workText}\n` : ""}${commentBlock}
+КРИТИЧНІ ВИМОГИ ДО ТОЧНОСТІ:
+- Копіюй всі числа, параметри, назви ДОСЛІВНО з тексту — НЕ перефразовуй
+- ПІБ студента, керівника, назву закладу — точно як у роботі (якщо не знайдено — null, НЕ пиши "[Студент]" або плейсхолдери)
+- Назви таблиць, заголовки колонок — точно як у тексті
+- Всі рядки таблиць — повністю, нічого не скорочуй
 
-## 1. ЗАГАЛЬНА ІНФОРМАЦІЯ
-Студент, науковий керівник, навчальний заклад, тема, тип роботи, рік.
-
-## 2. АКТУАЛЬНІСТЬ
-Чому обрано саме цю тему, яку проблему вирішує, практична необхідність.
-
-## 3. ОБ'ЄКТ І ПРЕДМЕТ ДОСЛІДЖЕННЯ
-Точно як у роботі.
-
-## 4. МЕТА І ЗАВДАННЯ
-Мета — точно як у роботі. Всі завдання — перелічити кожне.
-
-## 5. МЕТОДИ ДОСЛІДЖЕННЯ
-Назва кожного методу + 1–2 речення опису.
-
-## 6. ГІПОТЕЗА (якщо є у вступі)
-
-## 7. ОСНОВНІ РЕЗУЛЬТАТИ
-Конкретні числа, відсотки, коефіцієнти, показники. Без загальних фраз.
-
-## 8. ТАБЛИЦІ — ПОВНІ ДАНІ
-Для КОЖНОЇ таблиці у роботі:
-- Назва таблиці
-- Всі заголовки колонок (точно)
-- Всі рядки з даними (точно, нічого не скорочувати)
-- 1 речення: що показує ця таблиця
-
-## 9. ПРАКТИЧНЕ ЗНАЧЕННЯ ТА НАУКОВА НОВИЗНА
-
-## 10. ВИСНОВКИ
-Всі висновки роботи з конкретними цифрами.
-
-## 11. ЕКОНОМІЧНА ЕФЕКТИВНІСТЬ (якщо є)
-Ключові показники: капіталовкладення, собівартість, виручка, прибуток, рентабельність, окупність.
-
-ВИМОГИ: зберігай всі числа і дані точно як у тексті. Мова відповіді: ${lang}.
-${commentBlock}
-ТЕКСТ РОБОТИ:
-${workText}`;
-
-      const geminiMsgs = isDopovid && fileContent.length > 0
-        ? [{ role: "user", content: [...fileContent, { type: "text", text: geminiPrompt }] }]
-        : [{ role: "user", content: geminiPrompt }];
-      const geminiAnalysis = await callGemini(
-        geminiMsgs, null,
-        "You are an expert academic analyst. Extract all information thoroughly and accurately. Preserve all numbers, table data, and specific details exactly as in the source.", 8000,
-        (s) => setPresMsg(`Аналізую документ... зачекайте ${s}с`), "gemini-2.5-flash"
-      );
-
-      // ── Крок 2: Claude генерує слайди на основі повного аналізу ──
-      setPresMsg("Генерую слайди...");
-
-      const claudePrompt = `Згенеруй JSON презентації для захисту роботи "${info?.topic || ""}".
-
-ПОВНИЙ АНАЛІЗ РОБОТИ (від Gemini — використовуй всю інформацію):
-${geminiAnalysis}
-${commentBlock}
-СТРУКТУРА ПРЕЗЕНТАЦІЇ:
-Слайд 1: layout "title_slide" — тема, тип роботи, студент, керівник, заклад, рік
-Слайд 2: layout "two_column" — Актуальність (ліво: обґрунтування, право: проблема)
-Слайд 3: layout "highlight_box" або "two_column" — Об'єкт, предмет, мета
-Слайд 4: layout "icon_list" — Мета (🎯) та всі завдання (→)
-Слайд 5: layout "numbered_steps" — Методи дослідження (якщо є)
-Слайди 6–N: ЗМІСТОВІ СЛАЙДИ — для КОЖНОЇ таблиці з аналізу зроби окремий слайд layout "table" з повними даними; для ключових результатів — layout "stat_callout" або "highlight_box"
-Слайд N-1: layout "icon_list" — Висновки (✅)
-Останній: layout "hero" — "Дякую за увагу!"
+СТРУКТУРА (у такому порядку):
+1. layout "title_slide" — тема, тип роботи, студент, керівник, заклад, рік
+2. layout "two_column" — Актуальність
+3. layout "two_column" або "highlight_box" — Об'єкт, предмет, мета
+4. layout "icon_list" — Мета (🎯) та завдання (→), макс 6 items
+5. layout "numbered_steps" — Методи (якщо є)
+6–N. ЗМІСТОВІ: для КОЖНОЇ таблиці → layout "table" з УСІМА рядками; для числових результатів → "stat_callout"; для решти → "highlight_box"
+N-1. layout "icon_list" — Висновки (✅)
+N. layout "hero" — "Дякую за увагу!", subtitle: ""
 
 ПРАВИЛА JSON:
-- Кількість слайдів: підбери сам відповідно до обсягу роботи (мін 10, макс 20)
+- Кількість слайдів: 12–20 залежно від обсягу роботи
 - Мова: ${lang}
-- title_slide: {title, work_type, student, supervisor, institution, year}
+- title_slide: {title, work_type, student, supervisor, institution, year} — null якщо не знайдено
 - two_column: {title, left, right_type:"text", right}
 - icon_list: {title, visual:{items:[{icon,header,text}]}}
 - numbered_steps: {title, visual:{items:[{num,title,text}]}}
 - stat_callout: {title, visual:{stats:[{value,label}]}, content}
 - highlight_box: {title, points:[], accent} (accent — реальний зміст або null; НІКОЛИ не пиши назви кольорів)
-- table: {title, visual:{headers:[...], rows:[[...],[...]]}, content:"підпис"}
-- hero: {title, subtitle}
-- У таблицях: переноси ВСІ рядки даних точно, не скорочуй
-- Числа, відсотки, показники — обов'язково включай у відповідні слайди
-- НІКОЛИ не додавай номер замовлення, ID або технічні ідентифікатори у текст будь-якого слайду
-- theme: вибери сам залежно від галузі: "midnight" (техніка), "forest" (природа/медицина), "coral" (соціальне), "slate" (економіка), "warm" (інше)
+- table: {title, visual:{headers:[...], rows:[[...]]}, content:"підпис що показує таблиця"}
+- hero: {title, subtitle:""}
+- НІКОЛИ не додавай номери замовлень, ID або технічні ідентифікатори
+- theme: "midnight" (техніка/інженерія), "forest" (природа/медицина/біологія), "coral" (соціальне/педагогіка), "slate" (економіка/фінанси), "warm" (решта)
 
 Поверни ТІЛЬКИ валідний JSON без markdown:
 {"theme":"...","slides":[...]}`;
 
+      setPresMsg("Аналізую та генерую слайди...");
       const userContent = [
         ...fileContent,
         { type: "text", text: claudePrompt },
       ];
       const claudeRaw = await callClaude(
         [{ role: "user", content: userContent }], null,
-        SYS_JSON_SHORT, 10000,
-        (s) => setPresMsg(`Генерую слайди... зачекайте ${s}с`), MODEL_FAST
+        SYS_JSON_SHORT, 12000,
+        (s) => setPresMsg(`Генерую... зачекайте ${s}с`), MODEL
       );
 
       let slideData;
