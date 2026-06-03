@@ -299,6 +299,7 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
           if (d.presSlideJson) setPresSlideJson(d.presSlideJson);
           if (d.speechWithText) setSpeechWithText(d.speechWithText);
           if (d.speechText) setSpeechText(d.speechText);
+          if (d.presComment) setPresComment(d.presComment);
           if (d.totalInTok !== undefined) {
             tokenAccRef.current = { inTok: d.totalInTok || 0, outTok: d.totalOutTok || 0, costUsd: d.totalCostUsd || 0 };
           }
@@ -1785,7 +1786,12 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
               <PrimaryBtn
                 onClick={() => {
                   if (!tplText.trim()) { alert("Введіть тему роботи."); return; }
-                  saveToFirestore({ tplText, presComment, stage: "done", status: "done" });
+                  const topicLine = tplText.split("\n").find(l => /тема\s*[-–:]/i.test(l));
+                  const topic = topicLine
+                    ? topicLine.replace(/^.*тема\s*[-–:]\s*/i, "").trim()
+                    : tplText.split("\n")[0].trim();
+                  const dopInfo = { topic, type: "Доповідь та презентація" };
+                  saveToFirestore({ tplText, presComment, info: dopInfo, stage: "done", status: "done" });
                   setStage("done");
                 }}
                 disabled={!tplText.trim()}
