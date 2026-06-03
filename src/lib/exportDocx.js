@@ -942,7 +942,7 @@ export async function exportAppendixToDocx(text, info, methodInfo, orderId) {
 // ─────────────────────────────────────────────
 // Доповідь (.docx)
 // ─────────────────────────────────────────────
-export async function exportSpeechToDocx(text, info, methodInfo, orderId) {
+export async function exportSpeechToDocx(text, info, methodInfo, orderId, speechLabel) {
   if (!window.docx) {
     await new Promise((resolve, reject) => {
       const s = document.createElement("script");
@@ -995,9 +995,13 @@ export async function exportSpeechToDocx(text, info, methodInfo, orderId) {
   const url = URL.createObjectURL(blob);
   try {
     const a = document.createElement("a");
-    const prefix = info?.orderNumber ? info.orderNumber + "_" : (orderId ? orderId + "_" : "");
-    const safeName = prefix + (info?.topic || "доповідь").replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
-    a.href = url; a.download = safeName + " - доповідь.docx";
+    const num = info?.orderNumber || (orderId ? orderId.slice(0, 10) : "");
+    const safeTopic = (info?.topic || "").replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
+    const label = speechLabel || "доповідь";
+    const fileName = num
+      ? (safeTopic ? `${num} - ${safeTopic} - ${label}.docx` : `${num} - ${label}.docx`)
+      : (safeTopic ? `${safeTopic} - ${label}.docx` : `${label}.docx`);
+    a.href = url; a.download = fileName;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
   } finally {
     URL.revokeObjectURL(url);

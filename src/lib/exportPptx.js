@@ -1,6 +1,6 @@
 import PptxGenJS from "pptxgenjs";
 
-export async function exportToPptxFile(slideData, info) {
+export async function exportToPptxFile(slideData, info, orderId) {
   const pptx = new PptxGenJS();
   pptx.layout = "LAYOUT_16x9";
 
@@ -439,7 +439,10 @@ export async function exportToPptxFile(slideData, info) {
     }
   }
 
-  const prefix = info?.orderNumber ? info.orderNumber + "_" : "";
-  const safeName = prefix + (info?.topic || "презентація").replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
-  await pptx.writeFile({ fileName: safeName + " - презентація.pptx" });
+  const num = info?.orderNumber || (orderId ? orderId.slice(0, 10) : "");
+  const safeTopic = (info?.topic || "").replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
+  const fileName = num
+    ? (safeTopic ? `${num} - ${safeTopic} - презентація.pptx` : `${num} - Презентація.pptx`)
+    : (safeTopic ? `${safeTopic} - презентація.pptx` : "презентація.pptx");
+  await pptx.writeFile({ fileName });
 }

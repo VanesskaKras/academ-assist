@@ -1318,7 +1318,7 @@ ${commentBlock}
 
       // ── Крок 3: Створюємо PPTX ──
       setPresMsg("Створюю файл...");
-      await exportToPptxFile(slideData, info);
+      await exportToPptxFile(slideData, info, currentIdRef.current);
 
       setPresSlideJson(slideData);
       setPresReady(true);
@@ -2450,7 +2450,7 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
                           {speechWithText.substring(0, 400)}...
                         </div>
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                          <button onClick={async () => { setSpeechWithLoading(true); try { await exportSpeechToDocx(speechWithText, info, methodInfo, currentIdRef.current); } catch (e) { alert("Помилка: " + e.message); } setSpeechWithLoading(false); }} disabled={speechWithLoading}
+                          <button onClick={async () => { setSpeechWithLoading(true); try { await exportSpeechToDocx(speechWithText, info, methodInfo, currentIdRef.current, "Доповідь з презентацією"); } catch (e) { alert("Помилка: " + e.message); } setSpeechWithLoading(false); }} disabled={speechWithLoading}
                             style={{ background: speechWithLoading ? "#aaa" : "#1a4a1a", color: speechWithLoading ? "#eee" : "#a8e060", border: "none", borderRadius: 6, padding: "9px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: speechWithLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
                             {speechWithLoading ? <><SpinDot light />...</> : "⬇ Завантажити .docx"}
                           </button>
@@ -2482,7 +2482,7 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
                           {speechText.substring(0, 400)}...
                         </div>
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                          <button onClick={async () => { setSpeechLoading(true); try { await exportSpeechToDocx(speechText, info, methodInfo, currentIdRef.current); } catch (e) { alert("Помилка: " + e.message); } setSpeechLoading(false); }} disabled={speechLoading}
+                          <button onClick={async () => { setSpeechLoading(true); try { await exportSpeechToDocx(speechText, info, methodInfo, currentIdRef.current, "Доповідь"); } catch (e) { alert("Помилка: " + e.message); } setSpeechLoading(false); }} disabled={speechLoading}
                             style={{ background: speechLoading ? "#aaa" : "#1a4a1a", color: speechLoading ? "#eee" : "#a8e060", border: "none", borderRadius: 6, padding: "9px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: speechLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
                             {speechLoading ? <><SpinDot light />...</> : "⬇ Завантажити .docx"}
                           </button>
