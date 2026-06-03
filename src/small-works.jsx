@@ -1305,7 +1305,7 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
                     </div>
                   ))}
                   {materialFiles.length < (["stattia", "ese", "referat"].includes(workType) ? 8 : workType === "prezentatsiya" ? 20 : 6) && (
-                    <DropZone fileLabel={null} onFile={(name, b64, type) => { const lim = ["stattia", "ese", "referat"].includes(workType) ? 8 : workType === "prezentatsiya" ? 20 : 6; setMaterialFiles(p => p.length >= lim ? [...p.slice(1), { name, b64, type }] : [...p, { name, b64, type }]); }} accept=".pdf,.docx,.jpg,.jpeg,.png" />
+                    <DropZone fileLabel={null} multiple={workType === "prezentatsiya"} onFile={(name, b64, type) => { const lim = ["stattia", "ese", "referat"].includes(workType) ? 8 : workType === "prezentatsiya" ? 20 : 6; setMaterialFiles(p => p.length >= lim ? [...p.slice(1), { name, b64, type }] : [...p, { name, b64, type }]); }} accept=".pdf,.docx,.jpg,.jpeg,.png" />
                   )}
                 </div>
                 {(materialText.trim() || materialFiles.length > 0) && (
@@ -1331,7 +1331,7 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
                         </div>
                       ))}
                       {instrFiles.length < 5 && (
-                        <DropZone fileLabel={null} onFile={(name, b64, type) => setInstrFiles(p => p.length >= 5 ? [...p.slice(1), { name, b64, type }] : [...p, { name, b64, type }])} accept=".pdf,.jpg,.jpeg,.png,.webp" />
+                        <DropZone fileLabel={null} multiple onFile={(name, b64, type) => setInstrFiles(p => p.length >= 5 ? [...p.slice(1), { name, b64, type }] : [...p, { name, b64, type }])} accept=".pdf,.jpg,.jpeg,.png,.webp" />
                       )}
                     </div>
                     {instrFiles.length > 0 && (
