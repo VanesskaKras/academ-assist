@@ -1145,6 +1145,8 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
 - "highlight_box" — основний текст (default). Поле: content (рядки через \\n), accent (виділений підсумок)
 - "table" — таблиця з даними. Поле: visual.headers ["Кол1","Кол2"], visual.rows [["а","б"],["в","г"]]
 - "chart" — графік. Поле: visual.type ("bar"|"line"|"pie"|"doughnut"), visual.series [{name,labels:[...],values:[...]}]
+- "image_placeholder" — весь слайд займає виділений жовтий блок із підписом де має бути зображення. Поле: image "Назва/опис зображення"
+- "two_column" з right_type:"image" — ліво текст, право виділений блок-заглушка. Поле: right "Назва зображення"
 
 ШРИФТ: якщо інструкції вказують конкретний шрифт — додай поле "font":"Назва шрифту" в корінь JSON (поруч з "slides"). Стандартні системні шрифти: Arial, Calibri, Times New Roman, Georgia, Verdana.
 
@@ -1156,6 +1158,7 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
 - stat_callout тільки якщо є реальні числа з матеріалів
 - table — коли потрібно порівняти кілька об'єктів по кількох параметрах
 - chart — коли є числові дані для відображення динаміки або розподілу
+- image_placeholder або two_column з right_type:"image" — коли за змістом має бути фото, схема, графік, діаграма, малюнок
 НЕ додавай слайд джерел.`;
 
       const msgs = [{ role: "user", content: [...fileContext, ...matFileContext, ...instrFileContext, { type: "text", text: prompt }] }];

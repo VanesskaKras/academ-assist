@@ -128,7 +128,9 @@ export async function exportToPptxFile(slideData, info) {
       x: RIGHT_X, y: COL_Y, w: RIGHT_W, h: COL_H,
       fill: { color: T.bg }, line: { type: "none" }, rectRadius: 0.1,
     });
-    if (data.right_type === "stat") {
+    if (data.right_type === "image") {
+      addImagePlaceholder(s, RIGHT_X, COL_Y, RIGHT_W, COL_H, data.right || data.image || "Додайте зображення");
+    } else if (data.right_type === "stat") {
       s.addText(data.right_value || "", {
         x: RIGHT_X, y: COL_Y + 0.35, w: RIGHT_W, h: 1.5,
         fontSize: 54, bold: true, color: T.accent,
@@ -316,6 +318,33 @@ export async function exportToPptxFile(slideData, info) {
     });
   };
 
+  // ── addImagePlaceholder: виділений блок-заглушка для зображення ──
+  const addImagePlaceholder = (s, x, y, w, h, label) => {
+    s.addShape(pptx.ShapeType.rect, {
+      x, y, w, h,
+      fill: { color: "FFF8E1" },
+      line: { color: "FFB300", w: 1.5 },
+    });
+    // діагональні смуги — два трикутники по кутах для візуального акценту
+    s.addShape(pptx.ShapeType.rect, {
+      x, y, w, h: 0.06,
+      fill: { color: "FFB300" }, line: { type: "none" },
+    });
+    s.addShape(pptx.ShapeType.rect, {
+      x, y: y + h - 0.06, w, h: 0.06,
+      fill: { color: "FFB300" }, line: { type: "none" },
+    });
+    s.addText("📷", {
+      x, y: y + h * 0.18, w, h: h * 0.38,
+      fontSize: Math.min(48, h * 30), align: "center", valign: "bottom",
+    });
+    s.addText(label || "Додайте зображення", {
+      x: x + 0.1, y: y + h * 0.56, w: w - 0.2, h: h * 0.35,
+      fontSize: 13, bold: true, color: "795548",
+      fontFace: FONT_BODY, align: "center", valign: "top", wrap: true,
+    });
+  };
+
   // ── renderTable: таблиця з заголовком і рядками ──
   const renderTable = (s, data) => {
     addTitle(s, data.title);
@@ -354,6 +383,14 @@ export async function exportToPptxFile(slideData, info) {
       border: { type: "solid", color: T.accent, pt: 0.5 },
       autoPage: false,
     });
+  };
+
+  // ── renderImagePlaceholder: слайд із великим placeholder для зображення ──
+  const renderImagePlaceholder = (s, data) => {
+    addTitle(s, data.title);
+    const PH_Y = TITLE_H + 0.2;
+    const PH_H = 5.625 - PH_Y - 0.2;
+    addImagePlaceholder(s, CONTENT_X, PH_Y, CONTENT_W, PH_H, data.image || data.content || "Додайте зображення");
   };
 
   // ── renderChart: графік bar / line / pie / doughnut ──
@@ -404,6 +441,7 @@ export async function exportToPptxFile(slideData, info) {
       case "timeline": renderNumberedSteps(s, slide); break;
       case "table": renderTable(s, slide); break;
       case "chart": renderChart(s, slide); break;
+      case "image_placeholder": renderImagePlaceholder(s, slide); break;
       default: renderHighlightBox(s, slide); break;
     }
   }
