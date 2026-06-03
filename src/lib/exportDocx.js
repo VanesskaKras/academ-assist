@@ -996,11 +996,8 @@ export async function exportSpeechToDocx(text, info, methodInfo, orderId, speech
   try {
     const a = document.createElement("a");
     const num = info?.orderNumber || (orderId ? orderId.slice(0, 10) : "");
-    const safeTopic = (info?.topic || "").replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
     const label = speechLabel || "доповідь";
-    const fileName = num
-      ? (safeTopic ? `${num} - ${safeTopic} - ${label}.docx` : `${num} - ${label}.docx`)
-      : (safeTopic ? `${safeTopic} - ${label}.docx` : `${label}.docx`);
+    const fileName = num ? `${num}_${label}.docx` : `${label}.docx`;
     a.href = url; a.download = fileName;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
   } finally {

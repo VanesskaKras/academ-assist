@@ -440,9 +440,6 @@ export async function exportToPptxFile(slideData, info, orderId) {
   }
 
   const num = info?.orderNumber || (orderId ? orderId.slice(0, 10) : "");
-  const safeTopic = (info?.topic || "").replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
-  const fileName = num
-    ? (safeTopic ? `${num} - ${safeTopic} - презентація.pptx` : `${num} - Презентація.pptx`)
-    : (safeTopic ? `${safeTopic} - презентація.pptx` : "презентація.pptx");
+  const fileName = num ? `${num}_презентація.pptx` : "презентація.pptx";
   await pptx.writeFile({ fileName });
 }
