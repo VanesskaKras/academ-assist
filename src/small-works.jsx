@@ -1188,10 +1188,19 @@ ${sourcesList ? `\nПісля основного тексту додай (збе
   "conclusions": ["висновок 1", "висновок 2", "висновок 3"],
   "practical_value": "Практичне значення (або null)",
   "novelty": "Новизна (або null)",
-  "field": "tech | medicine | social | economics | default"
+  "field": "tech | medicine | social | economics | default",
+  "tables": [
+    {
+      "title": "Назва таблиці (як у роботі)",
+      "headers": ["Колонка 1", "Колонка 2", "Колонка 3"],
+      "rows": [["значення", "значення", "значення"]],
+      "note": "1 речення — що демонструє ця таблиця"
+    }
+  ]
 }
 ПРАВИЛА:
 - main_results: 2-4 блоки з конкретними знахідками. Числа/відсотки → key_stat. Без числа → key_stat: null
+- tables: витягни ВСІ ключові таблиці з роботи (продуктовий розрахунок, обладнання, економічні показники, якість тощо). Якщо таблиць немає — порожній масив []. Максимум 4 таблиці. Зберігай реальні дані з роботи точно.
 - Мова: ${lang}
 ${commentBlock}
 ТЕКСТ РОБОТИ:
@@ -1266,6 +1275,13 @@ ${workText}`;
           : `points: [${(res.points || []).map(p => JSON.stringify(p)).join(", ")}]`}`);
       });
 
+      (analysis.tables || []).slice(0, 4).forEach((tbl) => {
+        slideSpecs.push(`Слайд ${next()}: layout "table" — title: ${JSON.stringify(tbl.title || "Таблиця")}
+  visual.headers: ${JSON.stringify(tbl.headers || [])}
+  visual.rows: ${JSON.stringify(tbl.rows || [])}
+  content: ${JSON.stringify(tbl.note || "")}`);
+      });
+
       slideSpecs.push(`Слайд ${next()}: layout "icon_list" — title: "Висновки"
   visual.items: до 5 висновків з analysis.conclusions → [{"icon":"✅","header":"Висновок N","text":"..."}]`);
 
@@ -1295,7 +1311,9 @@ ${commentBlock}
 - two_column: {title, left, right_type, right}
 - highlight_box: {title, points:[], accent} (accent — реальний зміст або null; НІКОЛИ не пиши назви кольорів)
 - hero: {title, subtitle}
+- table: {title, visual:{headers:["Кол1","Кол2",...], rows:[["а","б"],["в","г"]]}, content (підпис під таблицею або "")}
 - Числа та % з аналізу — обов'язково включай
+- У слайдах table: переноси реальні дані з analysis.tables точно, не скорочуй рядки
 - НЕ додавай зайвих слайдів, рівно ${totalSlides}
 
 Поверни ТІЛЬКИ валідний JSON без markdown:
