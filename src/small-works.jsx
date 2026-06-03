@@ -1120,54 +1120,36 @@ ${sourcesList ? `\nПісля основного тексту додай (збе
       : "";
 
     try {
-      // ── КРОК 1: Генерація змісту ──
-      setLoadMsg("Аналізую матеріали та генерую зміст...");
-      const step1Prompt = `Ти готуєш презентацію на тему "${info?.topic}". Галузь: ${info?.subject || ""}. Мова: ${lang}.
+      setLoadMsg("Аналізую матеріали та генерую презентацію...");
+      const prompt = `Створи презентацію на тему "${info?.topic}". Галузь: ${info?.subject || ""}. Мова: ${lang}.
 ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
-Створи детальний план змісту для ${totalSlides} слайдів (включно з титульним і завершальним "Дякую за увагу!").
+Поверни ТІЛЬКИ JSON без markdown — рівно ${totalSlides} слайдів:
+{"slides":[...]}
 
-Для КОЖНОГО слайду напиши:
-— Назву слайду
-— Повний текст/зміст (2-5 речень або пунктів з конкретними фактами з матеріалів)
-— Тип подачі: список / порівняння / статистика / кроки / текст
+СТРУКТУРА:
+- Слайд 1: layout "hero", title = назва теми, subtitle = коротка підназва
+- Слайди 2–${totalSlides - 1}: змістові слайди з конкретними фактами, цифрами, прикладами з матеріалів
+- Слайд ${totalSlides}: layout "hero", title "Дякую за увагу!", subtitle ""
 
-Перший слайд — титульний з назвою теми.
-Останній — "Дякую за увагу!"
-Використовуй конкретні дані, цифри та факти з наданих матеріалів — не загальні фрази.`;
+ТИПИ LAYOUT:
+- "hero" — тільки 1-й, останній, великі розділювачі
+- "icon_list" — перелік 3–5 рівнозначних пунктів. Поле: visual.items [{icon,header,text}]
+- "numbered_steps" — послідовний процес, кроки (3–4 елементи). Поле: visual.items [{num,title,text}]
+- "two_column" — порівняння або два аспекти. Поля: left, right (або right_type:"stat", right_value, right_label)
+- "stat_callout" — конкретні числа/відсотки. Поле: visual.stats [{value,label}], content (текст нижче)
+- "highlight_box" — основний текст (default). Поле: content (рядки через \\n), accent (виділений підсумок)
 
-      const step1Msgs = [{ role: "user", content: [...fileContext, ...matFileContext, { type: "text", text: step1Prompt }] }];
-      const contentPlan = await callClaude(step1Msgs, null, `You are a presentation content expert. Write in ${lang}.`, 3000, null, MODEL);
+ПРАВИЛА:
+- Кожен слайд — 1 чітка ідея
+- Конкретні дані з матеріалів, не загальні фрази
+- Заголовки слайдів — 3–6 слів
+- Текст у content — стислі тези, до 7 слів на рядок
+- stat_callout тільки якщо є реальні числа з матеріалів
+НЕ додавай слайд джерел.`;
 
-      // ── КРОК 2: Форматування в JSON ──
-      setLoadMsg("Оформлюю слайди...");
-      const step2Prompt = `Перетвори цей план презентації у JSON структуру для рендерингу. Точно ${totalSlides} слайдів.
-
-ПЛАН ЗМІСТУ:
-${contentPlan}
-
-Поверни ТІЛЬКИ JSON без markdown:
-{"slides":[
-  {"layout":"hero","title":"Назва теми","subtitle":"підзаголовок якщо є"},
-  {"layout":"icon_list","title":"Мета та завдання","visual":{"items":[{"icon":"🎯","header":"Мета","text":"..."},{"icon":"📋","header":"Завдання","text":"..."}]}},
-  {"layout":"highlight_box","title":"Назва розділу","content":"Теза 1\\nТеза 2\\nТеза 3"},
-  {"layout":"two_column","title":"...","left":"Текст ліворуч","right":"Ключовий факт"},
-  {"layout":"numbered_steps","title":"Методологія","visual":{"items":[{"num":"1","title":"Крок","text":"..."}]}},
-  {"layout":"stat_callout","title":"Результати","visual":{"stats":[{"value":"72%","label":"опис"}]}},
-  {"layout":"hero","title":"Висновки","subtitle":"підсумок"},
-  {"layout":"hero","title":"Дякую за увагу!","subtitle":""}
-]}
-
-Правила вибору layout:
-- hero — тільки для 1-го слайду, завершального, та слайдів-розділювачів
-- icon_list — перелік 3-5 пунктів (мета, особливості, висновки)
-- numbered_steps — процес або методологія (3-4 кроки)
-- two_column — порівняння або два аспекти
-- stat_callout — є конкретні числа/відсотки
-- highlight_box — основний текст (default для більшості слайдів)
-НЕ додавай слайд джерел. Слайд 1: hero. Останній: hero, title="Дякую за увагу!".`;
-
-      const step2Raw = await callClaude([{ role: "user", content: step2Prompt }], null, "Respond only with valid JSON. No markdown.", 4000, null, MODEL_FAST);
-      const parsed = JSON.parse(step2Raw.match(/\{[\s\S]*\}/)?.[0] || step2Raw);
+      const msgs = [{ role: "user", content: [...fileContext, ...matFileContext, { type: "text", text: prompt }] }];
+      const raw = await callClaude(msgs, null, `Ти експерт із презентацій. Відповідай ТІЛЬКИ валідним JSON без markdown. Мова контенту: ${lang}.`, 6000, null, MODEL);
+      const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || raw);
       let newSlides = parsed.slides || [];
 
       if (hasSources) {
