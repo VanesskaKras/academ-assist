@@ -2902,7 +2902,7 @@ ${secBlock}
     // ── СПОЧАТКУ: Форматування списку джерел (Gemini) ──
     const today = new Date();
     const accessDate = `${String(today.getDate()).padStart(2, "0")}.${String(today.getMonth() + 1).padStart(2, "0")}.${today.getFullYear()}`;
-    const isAlphabeticalOrder = methodInfo?.sourcesOrder === "alphabetical";
+    const isAlphabeticalOrder = !methodInfo?.sourcesOrder || methodInfo?.sourcesOrder === "alphabetical";
     const isApaStyle = /APA/i.test(sourcesStyle);
     const isDstu = /ДСТУ/i.test(sourcesStyle);
     const sourcesOrder = (isAlphabeticalOrder || isDstu) ? "Список відсортований за алфавітом." : "Список у порядку першої появи у тексті.";
@@ -3242,7 +3242,7 @@ ${secsSummary}
     const isAPA = /APA/i.test(sourcesStyle);
     const isMLA = /MLA/i.test(sourcesStyle);
     const isDstu = /ДСТУ/i.test(sourcesStyle);
-    const isAlphabeticalOrder = methodInfo?.sourcesOrder === "alphabetical";
+    const isAlphabeticalOrder = !methodInfo?.sourcesOrder || methodInfo?.sourcesOrder === "alphabetical";
 
     // ── 1. Локальна карта: secId → { localN: sourceText } ──
     const secLocalSources = {};
