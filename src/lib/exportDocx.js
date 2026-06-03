@@ -964,7 +964,19 @@ export async function exportSpeechToDocx(text, info, methodInfo, orderId, speech
   const INDENT = 709, LINE = 360;
   if (text) text = text.replace(/'/g, '\u2019');
 
-  const children = text.split("\n").map(line => {
+  const topic = info?.topic || "";
+  const workType = info?.type || "";
+  const typeMap = { "дипломн": "дипломної роботи", "кваліфікаційн": "кваліфікаційної роботи", "курсов": "курсової роботи", "магістерськ": "магістерської роботи", "бакалавр": "бакалаврської роботи", "реферат": "реферату", "стаття": "статті", "есе": "есе" };
+  const typeLabel = Object.entries(typeMap).find(([k]) => workType.toLowerCase().includes(k))?.[1] || (workType ? workType.toLowerCase() + "ї роботи" : "роботи");
+
+  const header = [
+    new Paragraph({ alignment: AlignmentType.CENTER, spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [new TextRun({ text: "ДОПОВІДЬ", font: FONT, size: SIZE, bold: true, color: "000000" })] }),
+    new Paragraph({ alignment: AlignmentType.CENTER, spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [new TextRun({ text: `до ${typeLabel} на тему:`, font: FONT, size: SIZE, color: "000000" })] }),
+    ...(topic ? [new Paragraph({ alignment: AlignmentType.CENTER, spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [new TextRun({ text: `«${topic}»`, font: FONT, size: SIZE, bold: true, color: "000000" })] })] : []),
+    new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }),
+  ];
+
+  const children = [...header, ...text.split("\n").map(line => {
     const raw = line.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1").trim();
     if (!raw) return new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] });
     if (/^Слайд\s+\d+/i.test(raw)) {
@@ -980,7 +992,7 @@ export async function exportSpeechToDocx(text, info, methodInfo, orderId, speech
       alignment: AlignmentType.BOTH,
       children: [new TextRun({ text: raw, font: FONT, size: SIZE, color: "000000" })],
     });
-  });
+  })];
 
   const doc = new Document({
     styles: { default: { document: { run: { font: FONT, size: SIZE, color: "000000", language: { value: langCode } }, paragraph: { spacing: { line: LINE, lineRule: "auto" } } } } },
