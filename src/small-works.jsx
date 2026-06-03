@@ -633,7 +633,7 @@ ${refLines}`;
     await saveToFirestore({ tezyCitations: citations, citText, stage: "writing", status: "sources_done" });
     setStage("writing");
     if (workType === "tezy") await doGenerateTezy(citations);
-    else if (workType === "prezentatsiya") await doGeneratePresentation(citations);
+    else if (workType === "prezentatsiya") { /* user picks theme first, then clicks generate manually */ }
     else if (workType !== "referat") await doGenerateSimple(citations);
   };
 
@@ -1807,7 +1807,7 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
                   saveToFirestore({ citText: "", tezyCitations: [], stage: "writing", status: "new" });
                   setStage("writing");
                   if (workType === "tezy") doGenerateTezy([]);
-                  else if (workType === "prezentatsiya") doGeneratePresentation([]);
+                  else if (workType === "prezentatsiya") { /* user picks theme first */ }
                   else doGenerateSimple([]);
                 }}>
                   Пропустити без джерел →
