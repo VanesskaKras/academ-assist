@@ -1167,41 +1167,45 @@ ${sourcesList ? `\nПісля основного тексту додай (збе
         : { fileContent: presFile ? [{ type: presFile.type.startsWith("image/") ? "image" : "document", source: { type: "base64", media_type: presFile.type, data: presFile.b64 } }] : [], extractedText: "" };
       const workText = fullText || extractedText;
 
-      // ── Крок 1: Gemini аналізує текст ──
-      const geminiPrompt = `Проаналізуй наукову роботу та витягни всі дані для презентації. Поверни ТІЛЬКИ валідний JSON без markdown:
-{
-  "student_info": {
-    "student": "ПІБ студента (або null)",
-    "supervisor": "ПІБ наукового керівника (або null)",
-    "institution": "Коротка назва навчального закладу (або null)"
-  },
-  "relevance": "Чому ця тема актуальна, яку проблему вирішує (2-3 речення)",
-  "object": "Об'єкт дослідження (або null)",
-  "subject": "Предмет дослідження (або null)",
-  "goal": "Мета роботи",
-  "tasks": ["завдання 1", "завдання 2", "завдання 3"],
-  "hypothesis": "Гіпотеза (якщо є, інакше null)",
-  "methods": [{"name": "Назва методу", "description": "1 речення"}],
-  "main_results": [
-    {"title": "Назва блоку результату", "points": ["результат 1", "результат 2"], "key_stat": {"value": "87%", "label": "точність"}}
-  ],
-  "conclusions": ["висновок 1", "висновок 2", "висновок 3"],
-  "practical_value": "Практичне значення (або null)",
-  "novelty": "Новизна (або null)",
-  "field": "tech | medicine | social | economics | default",
-  "tables": [
-    {
-      "title": "Назва таблиці (як у роботі)",
-      "headers": ["Колонка 1", "Колонка 2", "Колонка 3"],
-      "rows": [["значення", "значення", "значення"]],
-      "note": "1 речення — що демонструє ця таблиця"
-    }
-  ]
-}
-ПРАВИЛА:
-- main_results: 2-4 блоки з конкретними знахідками. Числа/відсотки → key_stat. Без числа → key_stat: null
-- tables: витягни ВСІ ключові таблиці з роботи (продуктовий розрахунок, обладнання, економічні показники, якість тощо). Якщо таблиць немає — порожній масив []. Максимум 4 таблиці. Зберігай реальні дані з роботи точно.
-- Мова: ${lang}
+      // ── Крок 1: Gemini — повний аналіз документу ──
+      const geminiPrompt = `Зроби детальний структурований аналіз роботи для підготовки презентації захисту. Витягни ВСЮ важливу інформацію.
+
+## 1. ЗАГАЛЬНА ІНФОРМАЦІЯ
+Студент, науковий керівник, навчальний заклад, тема, тип роботи, рік.
+
+## 2. АКТУАЛЬНІСТЬ
+Чому обрано саме цю тему, яку проблему вирішує, практична необхідність.
+
+## 3. ОБ'ЄКТ І ПРЕДМЕТ ДОСЛІДЖЕННЯ
+Точно як у роботі.
+
+## 4. МЕТА І ЗАВДАННЯ
+Мета — точно як у роботі. Всі завдання — перелічити кожне.
+
+## 5. МЕТОДИ ДОСЛІДЖЕННЯ
+Назва кожного методу + 1–2 речення опису.
+
+## 6. ГІПОТЕЗА (якщо є у вступі)
+
+## 7. ОСНОВНІ РЕЗУЛЬТАТИ
+Конкретні числа, відсотки, коефіцієнти, показники. Без загальних фраз.
+
+## 8. ТАБЛИЦІ — ПОВНІ ДАНІ
+Для КОЖНОЇ таблиці у роботі:
+- Назва таблиці
+- Всі заголовки колонок (точно)
+- Всі рядки з даними (точно, нічого не скорочувати)
+- 1 речення: що показує ця таблиця
+
+## 9. ПРАКТИЧНЕ ЗНАЧЕННЯ ТА НАУКОВА НОВИЗНА
+
+## 10. ВИСНОВКИ
+Всі висновки роботи з конкретними цифрами.
+
+## 11. ЕКОНОМІЧНА ЕФЕКТИВНІСТЬ (якщо є)
+Ключові показники: капіталовкладення, собівартість, виручка, прибуток, рентабельність, окупність.
+
+ВИМОГИ: зберігай всі числа і дані точно як у тексті. Мова відповіді: ${lang}.
 ${commentBlock}
 ТЕКСТ РОБОТИ:
 ${workText}`;
@@ -1209,115 +1213,47 @@ ${workText}`;
       const geminiMsgs = isDopovid && fileContent.length > 0
         ? [{ role: "user", content: [...fileContent, { type: "text", text: geminiPrompt }] }]
         : [{ role: "user", content: geminiPrompt }];
-      const geminiRaw = await callGemini(
+      const geminiAnalysis = await callGemini(
         geminiMsgs, null,
-        SYS_JSON_SHORT, 4000,
-        (s) => setPresMsg(`Аналізую... зачекайте ${s}с`), "gemini-2.5-flash"
+        "You are an expert academic analyst. Extract all information thoroughly and accurately. Preserve all numbers, table data, and specific details exactly as in the source.", 8000,
+        (s) => setPresMsg(`Аналізую документ... зачекайте ${s}с`), "gemini-2.5-flash"
       );
 
-      let analysis;
-      try {
-        analysis = JSON.parse(geminiRaw.replace(/```json\n?|\n?```/g, "").trim());
-      } catch { throw new Error("Gemini повернув некоректний JSON аналізу"); }
-
-      // ── Крок 2: Claude генерує зміст слайдів ──
+      // ── Крок 2: Claude генерує слайди на основі повного аналізу ──
       setPresMsg("Генерую слайди...");
 
-      const themeMap = { tech: "midnight", medicine: "forest", social: "coral", economics: "slate" };
-      const defaultTheme = themeMap[analysis.field] || "warm";
+      const claudePrompt = `Згенеруй JSON презентації для захисту роботи "${info?.topic || ""}".
 
-      const hasHypothesis = !!analysis.hypothesis;
-      const hasPractical = !!(analysis.practical_value || analysis.novelty);
-      const resultsCount = Math.min(Math.max((analysis.main_results || []).length, 2), 4);
-      let slideN = 0;
-      const next = () => ++slideN;
-
-      const slideSpecs = [];
-      slideSpecs.push(`Слайд ${next()}: layout "title_slide"
-  title: ${JSON.stringify(info?.topic || "")}
-  work_type: ${JSON.stringify(info?.type || cfg?.label || "Робота")}
-  student: ${JSON.stringify(analysis.student_info?.student || null)}
-  supervisor: ${JSON.stringify(analysis.student_info?.supervisor || null)}
-  institution: ${JSON.stringify(analysis.student_info?.institution || null)}
-  year: ${new Date().getFullYear()}`);
-
-      slideSpecs.push(`Слайд ${next()}: layout "two_column" — title: "Актуальність"
-  left: 2-3 речення чому тема важлива (з analysis.relevance)
-  right_type: "text", right: яку конкретну проблему вирішує`);
-
-      if (analysis.object || analysis.subject) {
-        slideSpecs.push(`Слайд ${next()}: layout "two_column" — title: "Об'єкт і предмет"
-  left: "Об'єкт:\\n${(analysis.object || "—").replace(/"/g, "'")}"
-  right_type: "text", right: "Предмет:\\n${(analysis.subject || "—").replace(/"/g, "'")}"`);
-      }
-
-      slideSpecs.push(`Слайд ${next()}: layout "icon_list" — title: "Мета та завдання"
-  visual.items: [{icon:"🎯",header:"Мета",text:${JSON.stringify(analysis.goal || "")}}, потім по одному item на кожне завдання {icon:"→",header:"Завдання N",text:...}]
-  Максимум 5 items загалом`);
-
-      if (hasHypothesis) {
-        slideSpecs.push(`Слайд ${next()}: layout "highlight_box" — title: "Гіпотеза"
-  points: [${JSON.stringify(analysis.hypothesis)}]
-  accent: "Перевіряється в ході дослідження"`);
-      }
-
-      if ((analysis.methods || []).length > 0) {
-        slideSpecs.push(`Слайд ${next()}: layout "numbered_steps" — title: "Методи дослідження"
-  visual.items: до 4 методів з analysis.methods → [{"num":"1","title":"назва","text":"1 речення"}]`);
-      }
-
-      (analysis.main_results || []).slice(0, resultsCount).forEach((res, i) => {
-        const hasStat = res.key_stat?.value;
-        const layout = hasStat ? "stat_callout" : "highlight_box";
-        slideSpecs.push(`Слайд ${next()}: layout "${layout}" — title: ${JSON.stringify(res.title || `Результати ${i + 1}`)}
-  ${hasStat
-          ? `visual.stats: [{"value":${JSON.stringify(res.key_stat.value)},"label":${JSON.stringify(res.key_stat.label || "")}}]\n  content: ${JSON.stringify((res.points || []).slice(0, 2).join(". "))}`
-          : `points: [${(res.points || []).map(p => JSON.stringify(p)).join(", ")}]`}`);
-      });
-
-      (analysis.tables || []).slice(0, 4).forEach((tbl) => {
-        slideSpecs.push(`Слайд ${next()}: layout "table" — title: ${JSON.stringify(tbl.title || "Таблиця")}
-  visual.headers: ${JSON.stringify(tbl.headers || [])}
-  visual.rows: ${JSON.stringify(tbl.rows || [])}
-  content: ${JSON.stringify(tbl.note || "")}`);
-      });
-
-      slideSpecs.push(`Слайд ${next()}: layout "icon_list" — title: "Висновки"
-  visual.items: до 5 висновків з analysis.conclusions → [{"icon":"✅","header":"Висновок N","text":"..."}]`);
-
-      if (hasPractical) {
-        slideSpecs.push(`Слайд ${next()}: layout "two_column" — title: "Практичне значення"
-  left: ${JSON.stringify(analysis.practical_value || "Практичне застосування результатів")}
-  right_type: "text", right: ${JSON.stringify(analysis.novelty || "Сфери впровадження")}`);
-      }
-
-      slideSpecs.push(`Слайд ${next()}: layout "hero" — title: "Дякую за увагу!", subtitle: ""`);
-      const totalSlides = slideN;
-
-      const claudePrompt = `Згенеруй JSON для презентації ${info?.type || cfg?.label || "наукової роботи"}.
-
-АНАЛІЗ РОБОТИ (від Gemini):
-${JSON.stringify(analysis, null, 2)}
-
-СПЕЦИФІКАЦІЯ — рівно ${totalSlides} слайдів:
-${slideSpecs.join("\n\n")}
+ПОВНИЙ АНАЛІЗ РОБОТИ (від Gemini — використовуй всю інформацію):
+${geminiAnalysis}
 ${commentBlock}
+СТРУКТУРА ПРЕЗЕНТАЦІЇ:
+Слайд 1: layout "title_slide" — тема, тип роботи, студент, керівник, заклад, рік
+Слайд 2: layout "two_column" — Актуальність (ліво: обґрунтування, право: проблема)
+Слайд 3: layout "highlight_box" або "two_column" — Об'єкт, предмет, мета
+Слайд 4: layout "icon_list" — Мета (🎯) та всі завдання (→)
+Слайд 5: layout "numbered_steps" — Методи дослідження (якщо є)
+Слайди 6–N: ЗМІСТОВІ СЛАЙДИ — для КОЖНОЇ таблиці з аналізу зроби окремий слайд layout "table" з повними даними; для ключових результатів — layout "stat_callout" або "highlight_box"
+Слайд N-1: layout "icon_list" — Висновки (✅)
+Останній: layout "hero" — "Дякую за увагу!"
+
 ПРАВИЛА JSON:
-- Мова всіх текстів: ${lang}
-- title_slide: поля title, work_type, student, supervisor, institution, year (null якщо невідомо)
-- icon_list items: [{"icon":"...","header":"...","text":"..."}]
-- numbered_steps items: [{"num":"...","title":"...","text":"..."}]
+- Кількість слайдів: підбери сам відповідно до обсягу роботи (мін 10, макс 20)
+- Мова: ${lang}
+- title_slide: {title, work_type, student, supervisor, institution, year}
+- two_column: {title, left, right_type:"text", right}
+- icon_list: {title, visual:{items:[{icon,header,text}]}}
+- numbered_steps: {title, visual:{items:[{num,title,text}]}}
 - stat_callout: {title, visual:{stats:[{value,label}]}, content}
-- two_column: {title, left, right_type, right}
 - highlight_box: {title, points:[], accent} (accent — реальний зміст або null; НІКОЛИ не пиши назви кольорів)
+- table: {title, visual:{headers:[...], rows:[[...],[...]]}, content:"підпис"}
 - hero: {title, subtitle}
-- table: {title, visual:{headers:["Кол1","Кол2",...], rows:[["а","б"],["в","г"]]}, content (підпис під таблицею або "")}
-- Числа та % з аналізу — обов'язково включай
-- У слайдах table: переноси реальні дані з analysis.tables точно, не скорочуй рядки
-- НЕ додавай зайвих слайдів, рівно ${totalSlides}
+- У таблицях: переноси ВСІ рядки даних точно, не скорочуй
+- Числа, відсотки, показники — обов'язково включай у відповідні слайди
+- theme: вибери сам залежно від галузі: "midnight" (техніка), "forest" (природа/медицина), "coral" (соціальне), "slate" (економіка), "warm" (інше)
 
 Поверни ТІЛЬКИ валідний JSON без markdown:
-{"theme":"${defaultTheme}","slides":[...рівно ${totalSlides} об'єктів...]}`;
+{"theme":"...","slides":[...]}`;
 
       const userContent = [
         ...fileContent,
@@ -1325,7 +1261,7 @@ ${commentBlock}
       ];
       const claudeRaw = await callClaude(
         [{ role: "user", content: userContent }], null,
-        SYS_JSON_SHORT, 6000,
+        SYS_JSON_SHORT, 10000,
         (s) => setPresMsg(`Генерую слайди... зачекайте ${s}с`), MODEL_FAST
       );
 
