@@ -348,6 +348,18 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   // Синхронізуємо ref з state для використання всередині async-функцій
   useEffect(() => { maxStageIdxRef.current = maxStageIdx; }, [maxStageIdx]);
 
+  // ── Авто-збереження полів введення (input stage) ──
+  const inputSaveTimer = useRef(null);
+  useEffect(() => {
+    if (stage !== "input") return;
+    if (!tplText.trim() && !comment.trim() && !clientPlan.trim() && !appendicesText.trim() && !clientMaterialsText.trim()) return;
+    clearTimeout(inputSaveTimer.current);
+    inputSaveTimer.current = setTimeout(() => {
+      saveToFirestore({ tplText, comment, clientPlan, appendicesText, clientMaterialsText, fileLabel, stage: "input", status: "new" });
+    }, 1500);
+    return () => clearTimeout(inputSaveTimer.current);
+  }, [tplText, comment, clientPlan, appendicesText, clientMaterialsText]); // eslint-disable-line
+
   // ── Авто-збереження sections при ручному редагуванні плану ──
   const planSaveTimer = useRef(null);
   useEffect(() => {
@@ -719,6 +731,21 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
       setSourceDist(dist); setSourceTotal(total);
       setInfo(p => p ? { ...p, sourceCount: String(total) } : p);
       await saveToFirestore({ sections: withPrompts, stage: "plan", status: "plan_ready", info: { ...d, sourceCount: String(total) } });
+      if (illustrations.length > 0) {
+        try {
+          const illContent = illustrations.map(ill => ({
+            type: "image", source: { type: "base64", media_type: ill.type, data: ill.b64 }
+          }));
+          illContent.push({ type: "text", text: buildIllustrationsPrompt({ topic: d?.topic, illustrations, planSections: withPrompts, lang: d?.language }) });
+          const illRaw = await callClaude([{ role: "user", content: illContent }], null, SYS_JSON_ARRAY, 1500, null, MODEL_FAST);
+          const illMatch = illRaw.match(/\[[\s\S]*\]/);
+          const illParsed = JSON.parse(illMatch?.[0] || illRaw);
+          setIllustrationDescs(illParsed);
+          await saveToFirestore({ illustrationDescs: illParsed });
+        } catch (e) {
+          console.warn("illustrationDescs re-analysis in plan:", e.message);
+        }
+      }
       setPlanLoading(false);
     };
 

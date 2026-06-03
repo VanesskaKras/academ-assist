@@ -11,7 +11,8 @@ import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
 import { FieldBox, Heading, NavBtn, PrimaryBtn, GreenBtn, SaveIndicator } from "./components/Buttons.jsx";
 import { DropZone } from "./components/DropZone.jsx";
 import { parsePagesAvg, exportSimpleDocx, TA, TA_WHITE, SHARED_STYLES } from "./shared.jsx";
-import { exportToDocx } from "./lib/exportDocx.js";
+import { exportToDocx, exportSpeechToDocx } from "./lib/exportDocx.js";
+import { SYS_JSON_SHORT } from "./lib/prompts.js";
 import { exportToPptxFile } from "./lib/exportPptx.js";
 import { ChecklistStage } from "./components/stages/ChecklistStage.jsx";
 
@@ -220,6 +221,18 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
   const [docxLoading, setDocxLoading] = useState(false);
   const [error, setError] = useState("");
 
+  // ── Презентація + доповідь (малі роботи) ──
+  const [presLoading, setPresLoading] = useState(false);
+  const [presMsg, setPresMsg] = useState("");
+  const [presReady, setPresReady] = useState(false);
+  const [presSlideJson, setPresSlideJson] = useState(null);
+  const [presComment, setPresComment] = useState("");
+  const [presFile, setPresFile] = useState(null); // { name, b64, type }
+  const [speechWithLoading, setSpeechWithLoading] = useState(false);
+  const [speechWithText, setSpeechWithText] = useState("");
+  const [speechLoading, setSpeechLoading] = useState(false);
+  const [speechText, setSpeechText] = useState("");
+
   const currentIdRef = useRef(orderId || null);
   const tokenAccRef = useRef({ inTok: 0, outTok: 0, costUsd: 0 });
 
@@ -272,6 +285,10 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
           if (d.methodRequirements) setMethodRequirements(d.methodRequirements);
           if (d.refSecPapers) setRefSecPapers(d.refSecPapers);
           if (d.refSecPhrases) setRefSecPhrases(d.refSecPhrases);
+          if (d.presReady) setPresReady(d.presReady);
+          if (d.presSlideJson) setPresSlideJson(d.presSlideJson);
+          if (d.speechWithText) setSpeechWithText(d.speechWithText);
+          if (d.speechText) setSpeechText(d.speechText);
           if (d.totalInTok !== undefined) {
             tokenAccRef.current = { inTok: d.totalInTok || 0, outTok: d.totalOutTok || 0, costUsd: d.totalCostUsd || 0 };
           }
@@ -1094,6 +1111,313 @@ ${sourcesList ? `\nПісля основного тексту додай (збе
       setStage("done");
     } catch (e) { setError(e.message); }
     setRunning(false); setLoadMsg("");
+  };
+
+  // ── Допоміжна: текст роботи для прези/доповіді ──
+  const getWorkFullText = () => {
+    if (workType === "referat") {
+      return sections.filter(s => s.text).map(s => `### ${s.label}\n${s.text}`).join("\n\n");
+    }
+    return result || "";
+  };
+
+  // ── Презентація для малих робіт (Gemini аналіз → Claude слайди) ──
+  const generateSmallPresentation = async () => {
+    setPresLoading(true);
+    setPresMsg("Аналізую текст роботи...");
+    try {
+      const lang = info?.language || "Українська";
+      const fullText = getWorkFullText();
+      const commentBlock = presComment.trim() ? `\nКОМЕНТАР ЗАМОВНИКА (виконай обов'язково): ${presComment.trim()}\n` : "";
+      const fileContent = presFile
+        ? [{ type: presFile.type.startsWith("image/") ? "image" : "document", source: { type: "base64", media_type: presFile.type, data: presFile.b64 } }]
+        : [];
+
+      // ── Крок 1: Gemini аналізує текст ──
+      const geminiPrompt = `Проаналізуй наукову роботу та витягни всі дані для презентації. Поверни ТІЛЬКИ валідний JSON без markdown:
+{
+  "student_info": {
+    "student": "ПІБ студента (або null)",
+    "supervisor": "ПІБ наукового керівника (або null)",
+    "institution": "Коротка назва навчального закладу (або null)"
+  },
+  "relevance": "Чому ця тема актуальна, яку проблему вирішує (2-3 речення)",
+  "object": "Об'єкт дослідження (або null)",
+  "subject": "Предмет дослідження (або null)",
+  "goal": "Мета роботи",
+  "tasks": ["завдання 1", "завдання 2", "завдання 3"],
+  "hypothesis": "Гіпотеза (якщо є, інакше null)",
+  "methods": [{"name": "Назва методу", "description": "1 речення"}],
+  "main_results": [
+    {"title": "Назва блоку результату", "points": ["результат 1", "результат 2"], "key_stat": {"value": "87%", "label": "точність"}}
+  ],
+  "conclusions": ["висновок 1", "висновок 2", "висновок 3"],
+  "practical_value": "Практичне значення (або null)",
+  "novelty": "Новизна (або null)",
+  "field": "tech | medicine | social | economics | default"
+}
+ПРАВИЛА:
+- main_results: 2-4 блоки з конкретними знахідками. Числа/відсотки → key_stat. Без числа → key_stat: null
+- Мова: ${lang}
+${commentBlock}
+ТЕКСТ РОБОТИ:
+${fullText}`;
+
+      const geminiRaw = await callGemini(
+        [{ role: "user", content: geminiPrompt }], null,
+        SYS_JSON_SHORT, 4000,
+        (s) => setPresMsg(`Аналізую... зачекайте ${s}с`), "gemini-2.5-flash"
+      );
+
+      let analysis;
+      try {
+        analysis = JSON.parse(geminiRaw.replace(/```json\n?|\n?```/g, "").trim());
+      } catch { throw new Error("Gemini повернув некоректний JSON аналізу"); }
+
+      // ── Крок 2: Claude генерує зміст слайдів ──
+      setPresMsg("Генерую слайди...");
+
+      const themeMap = { tech: "midnight", medicine: "forest", social: "coral", economics: "slate" };
+      const defaultTheme = themeMap[analysis.field] || "warm";
+
+      const hasHypothesis = !!analysis.hypothesis;
+      const hasPractical = !!(analysis.practical_value || analysis.novelty);
+      const resultsCount = Math.min(Math.max((analysis.main_results || []).length, 2), 4);
+      let slideN = 0;
+      const next = () => ++slideN;
+
+      const slideSpecs = [];
+      slideSpecs.push(`Слайд ${next()}: layout "title_slide"
+  title: ${JSON.stringify(info?.topic || "")}
+  work_type: ${JSON.stringify(info?.type || cfg?.label || "Робота")}
+  student: ${JSON.stringify(analysis.student_info?.student || null)}
+  supervisor: ${JSON.stringify(analysis.student_info?.supervisor || null)}
+  institution: ${JSON.stringify(analysis.student_info?.institution || null)}
+  year: ${new Date().getFullYear()}`);
+
+      slideSpecs.push(`Слайд ${next()}: layout "two_column" — title: "Актуальність"
+  left: 2-3 речення чому тема важлива (з analysis.relevance)
+  right_type: "text", right: яку конкретну проблему вирішує`);
+
+      if (analysis.object || analysis.subject) {
+        slideSpecs.push(`Слайд ${next()}: layout "two_column" — title: "Об'єкт і предмет"
+  left: "Об'єкт:\\n${(analysis.object || "—").replace(/"/g, "'")}"
+  right_type: "text", right: "Предмет:\\n${(analysis.subject || "—").replace(/"/g, "'")}"`);
+      }
+
+      slideSpecs.push(`Слайд ${next()}: layout "icon_list" — title: "Мета та завдання"
+  visual.items: [{icon:"🎯",header:"Мета",text:${JSON.stringify(analysis.goal || "")}}, потім по одному item на кожне завдання {icon:"→",header:"Завдання N",text:...}]
+  Максимум 5 items загалом`);
+
+      if (hasHypothesis) {
+        slideSpecs.push(`Слайд ${next()}: layout "highlight_box" — title: "Гіпотеза"
+  points: [${JSON.stringify(analysis.hypothesis)}]
+  accent: "Перевіряється в ході дослідження"`);
+      }
+
+      if ((analysis.methods || []).length > 0) {
+        slideSpecs.push(`Слайд ${next()}: layout "numbered_steps" — title: "Методи дослідження"
+  visual.items: до 4 методів з analysis.methods → [{"num":"1","title":"назва","text":"1 речення"}]`);
+      }
+
+      (analysis.main_results || []).slice(0, resultsCount).forEach((res, i) => {
+        const hasStat = res.key_stat?.value;
+        const layout = hasStat ? "stat_callout" : "highlight_box";
+        slideSpecs.push(`Слайд ${next()}: layout "${layout}" — title: ${JSON.stringify(res.title || `Результати ${i + 1}`)}
+  ${hasStat
+          ? `visual.stats: [{"value":${JSON.stringify(res.key_stat.value)},"label":${JSON.stringify(res.key_stat.label || "")}}]\n  content: ${JSON.stringify((res.points || []).slice(0, 2).join(". "))}`
+          : `points: [${(res.points || []).map(p => JSON.stringify(p)).join(", ")}]`}`);
+      });
+
+      slideSpecs.push(`Слайд ${next()}: layout "icon_list" — title: "Висновки"
+  visual.items: до 5 висновків з analysis.conclusions → [{"icon":"✅","header":"Висновок N","text":"..."}]`);
+
+      if (hasPractical) {
+        slideSpecs.push(`Слайд ${next()}: layout "two_column" — title: "Практичне значення"
+  left: ${JSON.stringify(analysis.practical_value || "Практичне застосування результатів")}
+  right_type: "text", right: ${JSON.stringify(analysis.novelty || "Сфери впровадження")}`);
+      }
+
+      slideSpecs.push(`Слайд ${next()}: layout "hero" — title: "Дякую за увагу!", subtitle: ""`);
+      const totalSlides = slideN;
+
+      const claudePrompt = `Згенеруй JSON для презентації ${info?.type || cfg?.label || "наукової роботи"}.
+
+АНАЛІЗ РОБОТИ (від Gemini):
+${JSON.stringify(analysis, null, 2)}
+
+СПЕЦИФІКАЦІЯ — рівно ${totalSlides} слайдів:
+${slideSpecs.join("\n\n")}
+${commentBlock}
+ПРАВИЛА JSON:
+- Мова всіх текстів: ${lang}
+- title_slide: поля title, work_type, student, supervisor, institution, year (null якщо невідомо)
+- icon_list items: [{"icon":"...","header":"...","text":"..."}]
+- numbered_steps items: [{"num":"...","title":"...","text":"..."}]
+- stat_callout: {title, visual:{stats:[{value,label}]}, content}
+- two_column: {title, left, right_type, right}
+- highlight_box: {title, points:[], accent} (accent — реальний зміст або null; НІКОЛИ не пиши назви кольорів)
+- hero: {title, subtitle}
+- Числа та % з аналізу — обов'язково включай
+- НЕ додавай зайвих слайдів, рівно ${totalSlides}
+
+Поверни ТІЛЬКИ валідний JSON без markdown:
+{"theme":"${defaultTheme}","slides":[...рівно ${totalSlides} об'єктів...]}`;
+
+      const userContent = [
+        ...fileContent,
+        { type: "text", text: claudePrompt },
+      ];
+      const claudeRaw = await callClaude(
+        [{ role: "user", content: userContent }], null,
+        SYS_JSON_SHORT, 6000,
+        (s) => setPresMsg(`Генерую слайди... зачекайте ${s}с`), MODEL_FAST
+      );
+
+      let slideData;
+      try {
+        slideData = JSON.parse(claudeRaw.replace(/```json\n?|\n?```/g, "").trim());
+      } catch { throw new Error("Claude повернув некоректний JSON слайдів"); }
+
+      // ── Крок 3: Створюємо PPTX ──
+      setPresMsg("Створюю файл...");
+      await exportToPptxFile(slideData, info);
+
+      setPresSlideJson(slideData);
+      setPresReady(true);
+      await saveToFirestore({ presReady: true, presSlideJson: slideData });
+    } catch (e) { alert("Помилка генерації презентації: " + e.message); }
+    setPresLoading(false);
+    setPresMsg("");
+  };
+
+  // ── Доповідь з прив'язкою до слайдів ──
+  const generateSpeechWith = async () => {
+    if (!presSlideJson?.slides?.length) {
+      alert("Спочатку згенеруйте презентацію.");
+      return;
+    }
+    setSpeechWithLoading(true);
+    try {
+      const lang = info?.language || "Українська";
+
+      const LAYOUT_LABEL = {
+        hero: "Титульний/фінальний", two_column: "Два стовпці", stat_callout: "Статистика",
+        icon_list: "Список з іконками", highlight_box: "Виділені пункти", numbered_steps: "Кроки",
+      };
+      const slidesOutline = presSlideJson.slides
+        .map((sl, i) => {
+          const label = LAYOUT_LABEL[sl.layout] || sl.layout;
+          const parts = [`Слайд ${i + 1} [${label}]: ${sl.title || ""}`];
+          if (sl.subtitle) parts.push(`  Підзаголовок: ${sl.subtitle}`);
+          if (sl.left) parts.push(`  Ліво: ${sl.left}`);
+          if (sl.right) parts.push(`  Право: ${sl.right}`);
+          if (sl.content) parts.push(`  Текст: ${sl.content}`);
+          if (sl.accent) parts.push(`  Акцент: ${sl.accent}`);
+          if (sl.visual?.stats?.length) parts.push(`  Статистика: ${sl.visual.stats.map(s => `${s.value} (${s.label})`).join(", ")}`);
+          if (sl.visual?.items?.length) parts.push(`  Пункти: ${sl.visual.items.map(it => typeof it === "object" ? `${it.header || ""}: ${it.text || ""}` : it).join(" | ")}`);
+          if (sl.points?.length) parts.push(`  Пункти: ${sl.points.join(" | ")}`);
+          return parts.join("\n");
+        })
+        .join("\n\n");
+
+      const sectionText = getWorkFullText();
+
+      const prompt = `Напиши текст доповіді для захисту ${info?.type || cfg?.label || "роботи"} на тему "${info?.topic}".
+
+СТРУКТУРА ПРЕЗЕНТАЦІЇ (виступ іде паралельно зі слайдами):
+${slidesOutline}
+
+ПОВНИЙ ТЕКСТ РОБОТИ (витягуй конкретні факти, методи, результати, числа):
+${sectionText}
+
+ВИМОГИ:
+- Обсяг: 3-5 хвилин (2-3 сторінки), кожен слайд — 4-6 речень
+- Перед кожним блоком: "Слайд 1", "Слайд 2" і т.д. — окремим рядком
+- Стиль: стриманий академічний усний
+- ОБОВ'ЯЗКОВО: конкретні назви методів, числа, відсотки з роботи
+- ЗАБОРОНЕНО: "тема є актуальною", "варто відмітити", "слід зазначити"
+- Переходи: "Перейдемо до...", "Наступний слайд демонструє...", "Звернімось до..."
+- НЕ виводь назви розділів та їх номери
+- Мова: ${lang}
+- Без markdown, зірочок, жирного — тільки мітки "Слайд N" і звичайний текст`;
+
+      const raw = await callGemini(
+        [{ role: "user", content: prompt }], null,
+        "You are an expert academic writing assistant. Write a substantive, factual oral defense speech. Every sentence must state a concrete fact, method, result or conclusion — no filler phrases. No markdown formatting.", 5000,
+        null, "gemini-2.5-flash"
+      );
+
+      const cleaned = raw
+        .split("\n")
+        .filter(line => {
+          const t = line.trim();
+          if (!t) return true;
+          if (/^Слайд\s+\d+/i.test(t)) return true;
+          if (/^\d+(\.\d+)+[\s\.]/.test(t)) return false;
+          if (/^#{1,6}\s/.test(t)) return false;
+          return true;
+        })
+        .join("\n")
+        .replace(/[ᄀ-ᇿ⺀-鿿ꀀ-꓿가-퟿豈-﫿]/g, "")
+        .replace(/[„""]([^"„""]*)["""]/g, "«$1»")
+        .replace(/"([^"]*)"/g, "«$1»")
+        .replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1");
+
+      setSpeechWithText(cleaned);
+      await saveToFirestore({ speechWithText: cleaned });
+    } catch (e) { alert("Помилка генерації доповіді: " + e.message); }
+    setSpeechWithLoading(false);
+  };
+
+  // ── Доповідь без прив'язки до слайдів ──
+  const generateSpeechWithout = async () => {
+    setSpeechLoading(true);
+    try {
+      const lang = info?.language || "Українська";
+      const sectionText = getWorkFullText();
+
+      const prompt = `Напиши текст доповіді для захисту ${info?.type || cfg?.label || "роботи"} на тему "${info?.topic}".
+
+ПОВНИЙ ТЕКСТ РОБОТИ (витягуй конкретні факти, методи, результати, числа):
+${sectionText}
+
+ВИМОГИ:
+- Обсяг: 3-5 хвилин (2-3 сторінки)
+- Структура: вступ → актуальність → мета і завдання → методи → результати → висновки → завершення
+- Стиль: стриманий академічний усний
+- ОБОВ'ЯЗКОВО: конкретні назви методів, числа, відсотки з роботи
+- ЗАБОРОНЕНО: "тема є актуальною", "варто відмітити", "слід зазначити"
+- БЕЗ міток "Слайд N" — суцільний академічний текст
+- НЕ виводь назви розділів та їх номери
+- Мова: ${lang}
+- Без markdown, зірочок, жирного`;
+
+      const raw = await callGemini(
+        [{ role: "user", content: prompt }], null,
+        "You are an expert academic writing assistant. Write a substantive, factual oral defense speech. Every sentence must state a concrete fact, method, result or conclusion — no filler phrases. No markdown formatting.", 5000,
+        null, "gemini-2.5-flash"
+      );
+
+      const cleaned = raw
+        .split("\n")
+        .filter(line => {
+          const t = line.trim();
+          if (!t) return true;
+          if (/^\d+(\.\d+)+[\s\.]/.test(t)) return false;
+          if (/^#{1,6}\s/.test(t)) return false;
+          return true;
+        })
+        .join("\n")
+        .replace(/[ᄀ-ᇿ⺀-鿿ꀀ-꓿가-퟿豈-﫿]/g, "")
+        .replace(/[„""]([^"„""]*)["""]/g, "«$1»")
+        .replace(/"([^"]*)"/g, "«$1»")
+        .replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1");
+
+      setSpeechText(cleaned);
+      await saveToFirestore({ speechText: cleaned });
+    } catch (e) { alert("Помилка генерації доповіді: " + e.message); }
+    setSpeechLoading(false);
   };
 
   // ── Генерація презентації (2 кроки) ──
@@ -2168,6 +2492,128 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
                   </button>
                 </div>
               </>
+            )}
+
+            {/* ══ ДОДАТКОВІ МАТЕРІАЛИ (презентація + доповідь) ══ */}
+            {workType !== "prezentatsiya" && (
+              <div style={{ marginTop: 32, borderTop: "1.5px solid #d4cfc4", paddingTop: 24 }}>
+                <div style={{ fontSize: 11, color: "#888", letterSpacing: "2px", textTransform: "uppercase", marginBottom: 16 }}>Додаткові матеріали</div>
+
+                {/* Файл + коментар */}
+                <div style={{ marginBottom: 18, display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div style={{ fontSize: 12, color: "#666", marginBottom: 2 }}>
+                    Завантажте файл (методичка, інструкція) та/або додайте коментар — враховуватиметься при генерації:
+                  </div>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-start" }}>
+                    <label style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "#1a1a14", color: "#e8ff47", border: "none", borderRadius: 6, padding: "8px 16px", fontSize: 12, cursor: "pointer", fontFamily: "'Spectral',serif", letterSpacing: "0.5px" }}>
+                      {presFile ? `✓ ${presFile.name}` : "Завантажити файл"}
+                      <input type="file" accept="application/pdf,image/*,.docx,.doc" style={{ display: "none" }} onChange={e => {
+                        const f = e.target.files?.[0];
+                        if (!f) return;
+                        const reader = new FileReader();
+                        reader.onload = ev => setPresFile({ name: f.name, b64: ev.target.result.split(",")[1], type: f.type });
+                        reader.readAsDataURL(f);
+                      }} />
+                    </label>
+                    {presFile && (
+                      <button onClick={() => setPresFile(null)} style={{ background: "transparent", border: "1px solid #c4bfb4", color: "#888", borderRadius: 6, padding: "8px 12px", fontSize: 12, cursor: "pointer", fontFamily: "'Spectral',serif" }}>✕ Видалити</button>
+                    )}
+                  </div>
+                  <textarea
+                    value={presComment}
+                    onChange={e => setPresComment(e.target.value)}
+                    placeholder="Коментар: вимоги до оформлення, стиль, що врахувати..."
+                    style={{ width: "100%", minHeight: 54, fontSize: 12, lineHeight: "1.7", color: "#2a2a1e", background: "#f5f2ea", borderRadius: 6, padding: "9px 12px", border: "1px solid #d4cfc4", fontFamily: "'Spectral',serif", resize: "vertical", boxSizing: "border-box" }}
+                  />
+                </div>
+
+                <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+
+                  {/* Презентація */}
+                  <div style={{ flex: 1, minWidth: 200, border: "1.5px solid #d4cfc4", borderRadius: 8, padding: "16px 18px" }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Презентація (.pptx)</div>
+                    <div style={{ fontSize: 12, color: "#888", marginBottom: 14 }}>10–13 слайдів для захисту з дизайном</div>
+                    <button
+                      onClick={generateSmallPresentation}
+                      disabled={presLoading}
+                      style={{ background: presLoading ? "#aaa" : "#1a1a14", color: presLoading ? "#eee" : "#e8ff47", border: "none", borderRadius: 6, padding: "9px 20px", fontFamily: "'Spectral',serif", fontSize: 12, letterSpacing: "1px", cursor: presLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
+                      {presLoading
+                        ? <><SpinDot light />{presMsg || "Генерую..."}</>
+                        : presReady ? "Генерувати знову" : "Генерувати"}
+                    </button>
+                    {presReady && !presLoading && (
+                      <div style={{ marginTop: 10, fontSize: 12, color: "#2a6a2a", display: "flex", alignItems: "center", gap: 6 }}>
+                        <span>✓</span> Файл завантажено
+                      </div>
+                    )}
+                    {!presReady && !presLoading && (
+                      <div style={{ marginTop: 10, fontSize: 11, color: "#aaa", lineHeight: 1.5 }}>
+                        Gemini аналізує текст, Claude генерує слайди
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Доповідь з презентацією */}
+                  <div style={{ flex: 1, minWidth: 200, border: "1.5px solid #d4cfc4", borderRadius: 8, padding: "16px 18px" }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Доповідь з презентацією (.docx)</div>
+                    <div style={{ fontSize: 12, color: "#888", marginBottom: 14 }}>Текст виступу з мітками «Слайд N» (3–5 хв)</div>
+                    {!speechWithText ? (
+                      <button onClick={generateSpeechWith} disabled={speechWithLoading}
+                        style={{ background: speechWithLoading ? "#aaa" : "#1a1a14", color: speechWithLoading ? "#eee" : "#e8ff47", border: "none", borderRadius: 6, padding: "9px 20px", fontFamily: "'Spectral',serif", fontSize: 12, letterSpacing: "1px", cursor: speechWithLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
+                        {speechWithLoading ? <><SpinDot light />Генерую...</> : "Генерувати"}
+                      </button>
+                    ) : (
+                      <div>
+                        <div style={{ fontSize: 12, lineHeight: "1.8", color: "#444", maxHeight: 140, overflowY: "auto", background: "#f5f2ea", borderRadius: 6, padding: "10px 12px", marginBottom: 10, whiteSpace: "pre-wrap" }}>
+                          {speechWithText.substring(0, 400)}...
+                        </div>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <button onClick={async () => { setSpeechWithLoading(true); try { await exportSpeechToDocx(speechWithText, info, methodInfo, currentIdRef.current); } catch (e) { alert("Помилка: " + e.message); } setSpeechWithLoading(false); }} disabled={speechWithLoading}
+                            style={{ background: speechWithLoading ? "#aaa" : "#1a4a1a", color: speechWithLoading ? "#eee" : "#a8e060", border: "none", borderRadius: 6, padding: "9px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: speechWithLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
+                            {speechWithLoading ? <><SpinDot light />...</> : "⬇ Завантажити .docx"}
+                          </button>
+                          <button onClick={() => { setSpeechWithText(""); saveToFirestore({ speechWithText: "" }); }}
+                            style={{ background: "transparent", border: "1.5px solid #d4cfc4", color: "#888", borderRadius: 6, padding: "9px 14px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>
+                            Переробити
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {!presReady && !speechWithText && !speechWithLoading && (
+                      <div style={{ marginTop: 8, fontSize: 11, color: "#bbb", lineHeight: 1.5 }}>Спочатку згенеруйте презентацію</div>
+                    )}
+                  </div>
+
+                  {/* Доповідь без презентації */}
+                  <div style={{ flex: 1, minWidth: 200, border: "1.5px solid #d4cfc4", borderRadius: 8, padding: "16px 18px" }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Доповідь без презентації (.docx)</div>
+                    <div style={{ fontSize: 12, color: "#888", marginBottom: 14 }}>Суцільний текст виступу без слайдів (3–5 хв)</div>
+                    {!speechText ? (
+                      <button onClick={generateSpeechWithout} disabled={speechLoading}
+                        style={{ background: speechLoading ? "#aaa" : "#1a1a14", color: speechLoading ? "#eee" : "#e8ff47", border: "none", borderRadius: 6, padding: "9px 20px", fontFamily: "'Spectral',serif", fontSize: 12, letterSpacing: "1px", cursor: speechLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
+                        {speechLoading ? <><SpinDot light />Генерую...</> : "Генерувати"}
+                      </button>
+                    ) : (
+                      <div>
+                        <div style={{ fontSize: 12, lineHeight: "1.8", color: "#444", maxHeight: 140, overflowY: "auto", background: "#f5f2ea", borderRadius: 6, padding: "10px 12px", marginBottom: 10, whiteSpace: "pre-wrap" }}>
+                          {speechText.substring(0, 400)}...
+                        </div>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <button onClick={async () => { setSpeechLoading(true); try { await exportSpeechToDocx(speechText, info, methodInfo, currentIdRef.current); } catch (e) { alert("Помилка: " + e.message); } setSpeechLoading(false); }} disabled={speechLoading}
+                            style={{ background: speechLoading ? "#aaa" : "#1a4a1a", color: speechLoading ? "#eee" : "#a8e060", border: "none", borderRadius: 6, padding: "9px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: speechLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
+                            {speechLoading ? <><SpinDot light />...</> : "⬇ Завантажити .docx"}
+                          </button>
+                          <button onClick={() => { setSpeechText(""); saveToFirestore({ speechText: "" }); }}
+                            style={{ background: "transparent", border: "1.5px solid #d4cfc4", color: "#888", borderRadius: 6, padding: "9px 14px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>
+                            Переробити
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                </div>
+              </div>
             )}
 
             <div style={{ marginTop: 20, padding: "10px 14px", background: "#f0ece2", borderRadius: 6, fontSize: 12, color: "#888" }}>

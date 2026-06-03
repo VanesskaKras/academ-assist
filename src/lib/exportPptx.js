@@ -1,14 +1,7 @@
-export async function exportToPptxFile(slideData, info) {
-  if (!window.PptxGenJS) {
-    await new Promise((resolve, reject) => {
-      const s = document.createElement("script");
-      s.src = "https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js";
-      s.onload = resolve; s.onerror = reject;
-      document.head.appendChild(s);
-    });
-  }
+import PptxGenJS from "pptxgenjs";
 
-  const pptx = new window.PptxGenJS();
+export async function exportToPptxFile(slideData, info) {
+  const pptx = new PptxGenJS();
   pptx.layout = "LAYOUT_16x9";
 
   const THEMES = {
