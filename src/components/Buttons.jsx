@@ -26,7 +26,7 @@ export function FieldBox({ label, children, tooltip, labelColor }) {
 }
 
 export function Heading({ children, style = {} }) {
-  return <div style={{ fontFamily: "'Spectral SC',serif", fontSize: 17, letterSpacing: 2, marginBottom: 20, ...style }}>{children}</div>;
+  return <div style={{ fontFamily: "'Spectral SC',serif", fontSize: 17, letterSpacing: 2, marginBottom: 20, userSelect: "none", cursor: "default", ...style }}>{children}</div>;
 }
 
 export function NavBtn({ onClick, children, disabled }) {
