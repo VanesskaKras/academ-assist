@@ -55,8 +55,12 @@ export async function exportToPptxFile(slideData, info, orderId) {
       fontSize: 34, bold: true, color: "FFFFFF",
       fontFace: FONT_TITLE, align: "left", valign: "middle", wrap: true,
     });
-    if (data.subtitle) {
-      s.addText(data.subtitle, {
+    const heroSubtitle = (data.subtitle || "")
+      .replace(/\|?\s*Замовлення\s*№?\s*\S+/gi, "")
+      .replace(/\|?\s*замовлення\s*#\S+/gi, "")
+      .trim().replace(/\s*\|\s*$/, "").trim();
+    if (heroSubtitle) {
+      s.addText(heroSubtitle, {
         x: 0.7, y: 3.4, w: 8.8, h: 1.2,
         fontSize: 16, color: T.accent, fontFace: FONT_BODY,
         align: "left", valign: "top", wrap: true,
