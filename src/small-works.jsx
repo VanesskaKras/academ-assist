@@ -1304,8 +1304,8 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
                       <button onClick={() => setMaterialFiles(p => p.filter((_, j) => j !== i))} style={{ marginLeft: "auto", background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: 14 }}>✕</button>
                     </div>
                   ))}
-                  {materialFiles.length < (["stattia", "ese", "referat"].includes(workType) ? 8 : workType === "prezentatsiya" ? 3 : 6) && (
-                    <DropZone fileLabel={null} onFile={(name, b64, type) => { const lim = ["stattia", "ese", "referat"].includes(workType) ? 8 : workType === "prezentatsiya" ? 3 : 6; setMaterialFiles(p => p.length >= lim ? [...p.slice(1), { name, b64, type }] : [...p, { name, b64, type }]); }} accept=".pdf,.docx,.jpg,.jpeg,.png" />
+                  {materialFiles.length < (["stattia", "ese", "referat"].includes(workType) ? 8 : workType === "prezentatsiya" ? 20 : 6) && (
+                    <DropZone fileLabel={null} onFile={(name, b64, type) => { const lim = ["stattia", "ese", "referat"].includes(workType) ? 8 : workType === "prezentatsiya" ? 20 : 6; setMaterialFiles(p => p.length >= lim ? [...p.slice(1), { name, b64, type }] : [...p, { name, b64, type }]); }} accept=".pdf,.docx,.jpg,.jpeg,.png" />
                   )}
                 </div>
                 {(materialText.trim() || materialFiles.length > 0) && (
