@@ -164,8 +164,8 @@ export async function exportToPptxFile(slideData, info, orderId) {
         });
         s.addText(st.value || "", {
           x: cx, y: CARD_Y + 0.1, w: cardW, h: 1.35,
-          fontSize: 54, bold: true, color: T.accent,
-          fontFace: FONT_BODY, align: "center", valign: "middle",
+          fontSize: 36, bold: true, color: T.accent,
+          fontFace: FONT_BODY, align: "center", valign: "middle", autoFit: true,
         });
         s.addText(st.label || "", {
           x: cx + 0.1, y: CARD_Y + 1.5, w: cardW - 0.2, h: 0.55,
