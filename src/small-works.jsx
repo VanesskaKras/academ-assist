@@ -244,14 +244,21 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
   const [speechText, setSpeechText] = useState("");
 
   const currentIdRef = useRef(orderId || null);
-  const tokenAccRef = useRef({ inTok: 0, outTok: 0, costUsd: 0 });
+  const tokenAccRef = useRef({ inTok: 0, outTok: 0, costUsd: 0, claudeInTok: 0, claudeOutTok: 0, claudeCostUsd: 0, geminiInTok: 0, geminiOutTok: 0, geminiCostUsd: 0 });
 
   useEffect(() => {
     const handler = (e) => {
+      const isGemini = (e.detail.model || "").startsWith("gemini");
+      const dIn = e.detail.inTok || 0, dOut = e.detail.outTok || 0, dCost = e.detail.cost || 0;
+      const t = tokenAccRef.current;
       tokenAccRef.current = {
-        inTok: tokenAccRef.current.inTok + (e.detail.inTok || 0),
-        outTok: tokenAccRef.current.outTok + (e.detail.outTok || 0),
-        costUsd: tokenAccRef.current.costUsd + (e.detail.cost || 0),
+        inTok: t.inTok + dIn, outTok: t.outTok + dOut, costUsd: t.costUsd + dCost,
+        claudeInTok:  t.claudeInTok  + (isGemini ? 0 : dIn),
+        claudeOutTok: t.claudeOutTok + (isGemini ? 0 : dOut),
+        claudeCostUsd: t.claudeCostUsd + (isGemini ? 0 : dCost),
+        geminiInTok:  t.geminiInTok  + (isGemini ? dIn  : 0),
+        geminiOutTok: t.geminiOutTok + (isGemini ? dOut : 0),
+        geminiCostUsd: t.geminiCostUsd + (isGemini ? dCost : 0),
       };
     };
     window.addEventListener("apicost", handler);
@@ -301,7 +308,11 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
           if (d.speechText) setSpeechText(d.speechText);
           if (d.presComment) setPresComment(d.presComment);
           if (d.totalInTok !== undefined) {
-            tokenAccRef.current = { inTok: d.totalInTok || 0, outTok: d.totalOutTok || 0, costUsd: d.totalCostUsd || 0 };
+            tokenAccRef.current = {
+              inTok: d.totalInTok || 0, outTok: d.totalOutTok || 0, costUsd: d.totalCostUsd || 0,
+              claudeInTok: d.claudeInTok || 0, claudeOutTok: d.claudeOutTok || 0, claudeCostUsd: d.claudeCostUsd || 0,
+              geminiInTok: d.geminiInTok || 0, geminiOutTok: d.geminiOutTok || 0, geminiCostUsd: d.geminiCostUsd || 0,
+            };
           }
         }
       } catch (e) { console.error(e); }
@@ -392,6 +403,12 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
         totalInTok: tokenAccRef.current.inTok,
         totalOutTok: tokenAccRef.current.outTok,
         totalCostUsd: tokenAccRef.current.costUsd,
+        claudeInTok: tokenAccRef.current.claudeInTok,
+        claudeOutTok: tokenAccRef.current.claudeOutTok,
+        claudeCostUsd: tokenAccRef.current.claudeCostUsd,
+        geminiInTok: tokenAccRef.current.geminiInTok,
+        geminiOutTok: tokenAccRef.current.geminiOutTok,
+        geminiCostUsd: tokenAccRef.current.geminiCostUsd,
         ...(patch.status === "done" ? { completedAt: new Date().toISOString() } : {}),
       };
       await setDoc(ref, serializeForFirestore({ ...base, ...patch, ...(isNew ? { createdAt: new Date().toISOString() } : {}) }), { merge: true });
@@ -1741,10 +1758,12 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
               <PrimaryBtn
                 onClick={() => {
                   if (!tplText.trim()) { alert("Введіть тему роботи."); return; }
-                  const topicLine = tplText.split("\n").find(l => /тема\s*[-–:]/i.test(l));
+                  const lines = tplText.split("\n").map(l => l.trim()).filter(Boolean);
+                  const topicLine = lines.find(l => /тема\s*[-–:]/i.test(l));
+                  const SKIP = [/^[№#]\s*замовл/i, /^статус/i, /^дедлайн/i, /^менеджер/i, /^uid/i, /^date-/i, /^\d{4,}$/];
                   const topic = topicLine
                     ? topicLine.replace(/^.*тема\s*[-–:]\s*/i, "").trim()
-                    : tplText.split("\n")[0].trim();
+                    : (lines.find(l => !SKIP.some(p => p.test(l)) && l.length > 8) || lines[0] || "").trim();
                   const dopInfo = { topic, type: "Доповідь та презентація" };
                   saveToFirestore({ tplText, presComment, info: dopInfo, stage: "done", status: "done" });
                   setStage("done");
