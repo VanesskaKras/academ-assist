@@ -1143,6 +1143,10 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
 - "two_column" — порівняння або два аспекти. Поля: left, right (або right_type:"stat", right_value, right_label)
 - "stat_callout" — конкретні числа/відсотки. Поле: visual.stats [{value,label}], content (текст нижче)
 - "highlight_box" — основний текст (default). Поле: content (рядки через \\n), accent (виділений підсумок)
+- "table" — таблиця з даними. Поле: visual.headers ["Кол1","Кол2"], visual.rows [["а","б"],["в","г"]]
+- "chart" — графік. Поле: visual.type ("bar"|"line"|"pie"|"doughnut"), visual.series [{name,labels:[...],values:[...]}]
+
+ШРИФТ: якщо інструкції вказують конкретний шрифт — додай поле "font":"Назва шрифту" в корінь JSON (поруч з "slides"). Стандартні системні шрифти: Arial, Calibri, Times New Roman, Georgia, Verdana.
 
 ПРАВИЛА:
 - Кожен слайд — 1 чітка ідея
@@ -1150,6 +1154,8 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
 - Заголовки слайдів — 3–6 слів
 - Текст у content — стислі тези, до 7 слів на рядок
 - stat_callout тільки якщо є реальні числа з матеріалів
+- table — коли потрібно порівняти кілька об'єктів по кількох параметрах
+- chart — коли є числові дані для відображення динаміки або розподілу
 НЕ додавай слайд джерел.`;
 
       const msgs = [{ role: "user", content: [...fileContext, ...matFileContext, ...instrFileContext, { type: "text", text: prompt }] }];

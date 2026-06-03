@@ -31,6 +31,10 @@ export async function exportToPptxFile(slideData, info) {
   const themeName = (slideData.theme && THEMES[slideData.theme]) ? slideData.theme : detectTheme(info);
   const T = THEMES[themeName];
 
+  // Font support — Claude може вказати шрифт у slideData.font
+  const FONT_TITLE = slideData.font?.title || slideData.font || "Georgia";
+  const FONT_BODY = slideData.font?.body || slideData.font || "Calibri";
+
   const STRIP_W = 0.18;
   const CONTENT_X = STRIP_W + 0.17;
   const CONTENT_W = 10 - CONTENT_X - 0.15;
@@ -43,7 +47,7 @@ export async function exportToPptxFile(slideData, info) {
     s.addText(title || "", {
       x: CONTENT_X - 0.05, y: 0.06, w: 10 - CONTENT_X, h: TITLE_H,
       fontSize: 22, bold: true, color: T.text,
-      fontFace: "Georgia", align: "center", valign: "middle",
+      fontFace: FONT_TITLE, align: "center", valign: "middle",
     });
   };
 
@@ -56,12 +60,12 @@ export async function exportToPptxFile(slideData, info) {
     s.addText(data.title || info?.topic || "", {
       x: 0.7, y: 1.2, w: 8.8, h: 2.1,
       fontSize: 34, bold: true, color: "FFFFFF",
-      fontFace: "Georgia", align: "left", valign: "middle", wrap: true,
+      fontFace: FONT_TITLE, align: "left", valign: "middle", wrap: true,
     });
     if (data.subtitle) {
       s.addText(data.subtitle, {
         x: 0.7, y: 3.4, w: 8.8, h: 1.2,
-        fontSize: 16, color: T.accent, fontFace: "Calibri",
+        fontSize: 16, color: T.accent, fontFace: FONT_BODY,
         align: "left", valign: "top", wrap: true,
       });
     }
@@ -76,35 +80,35 @@ export async function exportToPptxFile(slideData, info) {
     if (data.institution) {
       s.addText(data.institution, {
         x: 0.7, y: 0.18, w: 8.8, h: 0.48,
-        fontSize: 12, color: T.accent, fontFace: "Calibri", align: "left", valign: "middle", wrap: true,
+        fontSize: 12, color: T.accent, fontFace: FONT_BODY, align: "left", valign: "middle", wrap: true,
       });
     }
     s.addText(data.title || info?.topic || "", {
       x: 0.7, y: 0.82, w: 8.8, h: 2.4,
       fontSize: 26, bold: true, color: "FFFFFF",
-      fontFace: "Georgia", align: "left", valign: "middle", wrap: true,
+      fontFace: FONT_TITLE, align: "left", valign: "middle", wrap: true,
     });
     if (data.work_type) {
       s.addText(data.work_type, {
         x: 0.7, y: 3.32, w: 8.8, h: 0.38,
-        fontSize: 14, color: T.accent, fontFace: "Calibri", align: "left", valign: "middle",
+        fontSize: 14, color: T.accent, fontFace: FONT_BODY, align: "left", valign: "middle",
       });
     }
     if (data.student) {
       s.addText(`Виконав(ла): ${data.student}`, {
         x: 0.7, y: 3.8, w: 8.8, h: 0.36,
-        fontSize: 13, color: "CCCCCC", fontFace: "Calibri", align: "left",
+        fontSize: 13, color: "CCCCCC", fontFace: FONT_BODY, align: "left",
       });
     }
     if (data.supervisor) {
       s.addText(`Науковий керівник: ${data.supervisor}`, {
         x: 0.7, y: 4.18, w: 8.8, h: 0.36,
-        fontSize: 13, color: "CCCCCC", fontFace: "Calibri", align: "left",
+        fontSize: 13, color: "CCCCCC", fontFace: FONT_BODY, align: "left",
       });
     }
     s.addText(String(data.year || new Date().getFullYear()), {
       x: 0.7, y: 5.12, w: 8.8, h: 0.3,
-      fontSize: 13, color: T.accent, fontFace: "Calibri", align: "left",
+      fontSize: 13, color: T.accent, fontFace: FONT_BODY, align: "left",
     });
   };
 
@@ -115,7 +119,7 @@ export async function exportToPptxFile(slideData, info) {
     const COL_H = 5.625 - COL_Y - 0.25;
     s.addText(data.left || data.content || "", {
       x: CONTENT_X, y: COL_Y, w: 4.3, h: COL_H,
-      fontSize: 14, color: "333333", fontFace: "Calibri",
+      fontSize: 14, color: "333333", fontFace: FONT_BODY,
       valign: "top", wrap: true, paraSpaceAfter: 8,
     });
     const RIGHT_X = CONTENT_X + 4.5;
@@ -128,16 +132,16 @@ export async function exportToPptxFile(slideData, info) {
       s.addText(data.right_value || "", {
         x: RIGHT_X, y: COL_Y + 0.35, w: RIGHT_W, h: 1.5,
         fontSize: 54, bold: true, color: T.accent,
-        fontFace: "Calibri", align: "center", valign: "middle",
+        fontFace: FONT_BODY, align: "center", valign: "middle",
       });
       s.addText(data.right_label || "", {
         x: RIGHT_X + 0.1, y: COL_Y + 1.95, w: RIGHT_W - 0.2, h: 0.65,
-        fontSize: 14, color: "FFFFFF", fontFace: "Calibri", align: "center", wrap: true,
+        fontSize: 14, color: "FFFFFF", fontFace: FONT_BODY, align: "center", wrap: true,
       });
     } else {
       s.addText(data.right || data.key_point || "", {
         x: RIGHT_X + 0.2, y: COL_Y + 0.25, w: RIGHT_W - 0.35, h: COL_H - 0.4,
-        fontSize: 14, color: "FFFFFF", fontFace: "Calibri",
+        fontSize: 14, color: "FFFFFF", fontFace: FONT_BODY,
         valign: "top", wrap: true, paraSpaceAfter: 8,
       });
     }
@@ -166,18 +170,18 @@ export async function exportToPptxFile(slideData, info) {
         s.addText(st.value || "", {
           x: cx, y: CARD_Y + 0.1, w: cardW, h: 1.35,
           fontSize: 54, bold: true, color: T.accent,
-          fontFace: "Calibri", align: "center", valign: "middle",
+          fontFace: FONT_BODY, align: "center", valign: "middle",
         });
         s.addText(st.label || "", {
           x: cx + 0.1, y: CARD_Y + 1.5, w: cardW - 0.2, h: 0.55,
-          fontSize: 13, color: "FFFFFF", fontFace: "Calibri", align: "center", wrap: true,
+          fontSize: 13, color: "FFFFFF", fontFace: FONT_BODY, align: "center", wrap: true,
         });
       });
     }
     if (data.content) {
       s.addText(data.content, {
         x: CONTENT_X, y: CARD_Y + CARD_H + 0.2, w: CONTENT_W, h: 5.625 - (CARD_Y + CARD_H + 0.2) - 0.2,
-        fontSize: 14, color: "444444", fontFace: "Calibri", wrap: true, valign: "top",
+        fontSize: 14, color: "444444", fontFace: FONT_BODY, wrap: true, valign: "top",
       });
     }
   };
@@ -211,16 +215,16 @@ export async function exportToPptxFile(slideData, info) {
       if (header) {
         s.addText(header, {
           x: textX, y: ty + (itemH - circSize) / 2, w: textW, h: circSize * 0.42,
-          fontSize: 14, bold: true, color: T.text, fontFace: "Calibri", valign: "bottom",
+          fontSize: 14, bold: true, color: T.text, fontFace: FONT_BODY, valign: "bottom",
         });
         s.addText(String(text), {
           x: textX, y: ty + (itemH - circSize) / 2 + circSize * 0.42, w: textW, h: circSize * 0.58,
-          fontSize: 12, color: "555555", fontFace: "Calibri", valign: "top", wrap: true,
+          fontSize: 12, color: "555555", fontFace: FONT_BODY, valign: "top", wrap: true,
         });
       } else {
         s.addText(String(text), {
           x: textX, y: ty, w: textW, h: itemH,
-          fontSize: 14, color: T.text, fontFace: "Calibri", valign: "middle", wrap: true,
+          fontSize: 14, color: T.text, fontFace: FONT_BODY, valign: "middle", wrap: true,
         });
       }
     });
@@ -253,7 +257,7 @@ export async function exportToPptxFile(slideData, info) {
         const text = typeof pt === "object" ? (pt.text || pt.header) : pt;
         s.addText(String(text), {
           x: CONTENT_X + 0.18, y: ty + 0.05, w: CONTENT_W - 0.22, h: itemH - 0.1,
-          fontSize: 13, color: T.text, fontFace: "Calibri", valign: "middle", wrap: true,
+          fontSize: 13, color: T.text, fontFace: FONT_BODY, valign: "middle", wrap: true,
         });
       });
     }
@@ -262,7 +266,7 @@ export async function exportToPptxFile(slideData, info) {
       s.addShape(pptx.ShapeType.rect, { x: CONTENT_X, y: gy, w: CONTENT_W, h: footerH, fill: { color: T.accent }, line: { type: "none" } });
       s.addText(String(rawAccent), {
         x: CONTENT_X + 0.15, y: gy, w: CONTENT_W - 0.3, h: footerH,
-        fontSize: 13, bold: true, color: T.text, fontFace: "Calibri", align: "left", valign: "middle", wrap: true,
+        fontSize: 13, bold: true, color: T.text, fontFace: FONT_BODY, align: "left", valign: "middle", wrap: true,
       });
     }
   };
@@ -296,19 +300,92 @@ export async function exportToPptxFile(slideData, info) {
       });
       s.addText(st.num || String(i + 1), {
         x: cx + (cardW - cSize) / 2, y: COL_Y + 0.12, w: cSize, h: cSize,
-        fontSize: 16, bold: true, color: "FFFFFF", fontFace: "Calibri", align: "center", valign: "middle",
+        fontSize: 16, bold: true, color: "FFFFFF", fontFace: FONT_BODY, align: "center", valign: "middle",
       });
       if (st.title) {
         s.addText(st.title, {
           x: cx + 0.1, y: COL_Y + 0.78, w: cardW - 0.2, h: 0.55,
-          fontSize: 13, bold: true, color: T.text, fontFace: "Georgia", align: "center", valign: "middle", wrap: true,
+          fontSize: 13, bold: true, color: T.text, fontFace: FONT_TITLE, align: "center", valign: "middle", wrap: true,
         });
       }
       const textY = COL_Y + (st.title ? 1.42 : 0.82);
       s.addText(st.text || (typeof st === "string" ? st : ""), {
         x: cx + 0.1, y: textY, w: cardW - 0.2, h: COL_Y + cardH - textY - 0.1,
-        fontSize: 12, color: "444444", fontFace: "Calibri", align: "left", valign: "top", wrap: true,
+        fontSize: 12, color: "444444", fontFace: FONT_BODY, align: "left", valign: "top", wrap: true,
       });
+    });
+  };
+
+  // ── renderTable: таблиця з заголовком і рядками ──
+  const renderTable = (s, data) => {
+    addTitle(s, data.title);
+    const v = data.visual || {};
+    const headers = v.headers || [];
+    const rows = v.rows || [];
+    if (!headers.length && !rows.length) return;
+
+    const TABLE_Y = TITLE_H + 0.2;
+    const TABLE_H = 5.625 - TABLE_Y - 0.2;
+    const colCount = headers.length || (rows[0]?.length ?? 1);
+
+    const tableRows = [];
+    if (headers.length) {
+      tableRows.push(headers.map(h => ({
+        text: String(h),
+        options: { bold: true, color: "FFFFFF", fill: T.bg, fontSize: 13, fontFace: FONT_BODY, align: "center", valign: "middle" },
+      })));
+    }
+    rows.forEach((row, ri) => {
+      tableRows.push(row.map(cell => ({
+        text: String(cell ?? ""),
+        options: {
+          color: T.text,
+          fill: ri % 2 === 0 ? T.light : "FFFFFF",
+          fontSize: 12,
+          fontFace: FONT_BODY,
+          valign: "middle",
+        },
+      })));
+    });
+
+    s.addTable(tableRows, {
+      x: CONTENT_X, y: TABLE_Y, w: CONTENT_W, h: TABLE_H,
+      colW: Array(colCount).fill(CONTENT_W / colCount),
+      border: { type: "solid", color: T.accent, pt: 0.5 },
+      autoPage: false,
+    });
+  };
+
+  // ── renderChart: графік bar / line / pie / doughnut ──
+  const CHART_TYPE_MAP = {
+    bar: "bar", column: "bar", line: "line",
+    pie: "pie", doughnut: "doughnut", area: "area",
+  };
+  const renderChart = (s, data) => {
+    addTitle(s, data.title);
+    const v = data.visual || {};
+    const chartType = CHART_TYPE_MAP[v.type] || "bar";
+    const series = (v.series || []).map(sr => ({
+      name: sr.name || "",
+      labels: sr.labels || [],
+      values: (sr.values || []).map(Number),
+    }));
+    if (!series.length || !series[0].values.length) return;
+
+    const CHART_COLORS = [T.bg, T.accent, "888888", "AAAAAA", "CCCCCC"];
+
+    s.addChart(chartType, series, {
+      x: CONTENT_X, y: TITLE_H + 0.15, w: CONTENT_W, h: 5.625 - TITLE_H - 0.35,
+      showLegend: series.length > 1,
+      legendPos: "b",
+      legendFontSize: 11,
+      showTitle: false,
+      chartColors: CHART_COLORS,
+      dataLabelFontSize: 11,
+      dataLabelColor: "333333",
+      valAxisLabelFontSize: 11,
+      catAxisLabelFontSize: 11,
+      showValue: v.showValues !== false,
     });
   };
 
@@ -325,6 +402,8 @@ export async function exportToPptxFile(slideData, info) {
       case "icon_grid": renderIconList(s, slide); break;
       case "numbered_steps":
       case "timeline": renderNumberedSteps(s, slide); break;
+      case "table": renderTable(s, slide); break;
+      case "chart": renderChart(s, slide); break;
       default: renderHighlightBox(s, slide); break;
     }
   }
