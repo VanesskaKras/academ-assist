@@ -10,7 +10,7 @@ import { exportToDocx, exportPlanToDocx, exportAppendixToDocx, exportSpeechToDoc
 import { exportToPptxFile } from "./lib/exportPptx.js";
 import { callClaude, callGemini, MODEL, MODEL_FAST } from "./lib/api.js";
 import { playDoneSound } from "./lib/audio.js";
-import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildClientMaterialsAnalysisPrompt, buildCorrectionsAnalysisPrompt, buildCorrectionRewritePrompt, buildFileToSectionsPrompt } from "./lib/prompts.js";
+import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildIllustrationsPdfPrompt, buildClientMaterialsAnalysisPrompt, buildCorrectionsAnalysisPrompt, buildCorrectionRewritePrompt, buildFileToSectionsPrompt } from "./lib/prompts.js";
 import { FIELD_LABELS, isPsychoPed, isEcon, hasEmpiricalResearch, getEmpiricalSections, getEconSections, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, getLangLabels } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { searchByPhrase, filterSourcesWithGemini } from "./lib/sourcesSearch.js";
@@ -123,7 +123,8 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [commentAnalysis, setCommentAnalysis] = useState(null); // {planHints, writingHints}
   const [photos, setPhotos] = useState([]); // [{name, b64, type}] — додаткові фото
   const [illustrations, setIllustrations] = useState([]); // [{name, b64, type, caption, targetSection}]
-  const [illustrationDescs, setIllustrationDescs] = useState([]); // [{figureNum, description, suggestedSection}]
+  const [illustrationsPdf, setIllustrationsPdf] = useState(null); // {name, b64} — PDF із ілюстраціями
+  const [illustrationDescs, setIllustrationDescs] = useState([]); // [{figureNum, description, caption, suggestedSection}]
   const [clientMaterials, setClientMaterials] = useState([]); // [{name, text}] — файли клієнта
   const [clientMaterialsText, setClientMaterialsText] = useState(""); // ручний ввід
   const [clientMaterialsSummary, setClientMaterialsSummary] = useState(null); // {rawText, keyFacts, tablesMd, sectionHints}
@@ -599,20 +600,28 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     }
 
     // КРОК 3.5: Опис ілюстрацій клієнта
-    if (illustrations.length > 0) {
+    if (illustrations.length > 0 || illustrationsPdf) {
       setLoadMsg("Описую ілюстрації...");
       await new Promise(r => setTimeout(r, 500));
       try {
-        const illContent = [];
-        for (const ill of illustrations) {
-          illContent.push({ type: "image", source: { type: "base64", media_type: ill.type, data: ill.b64 } });
+        let illContent;
+        if (illustrationsPdf) {
+          illContent = [
+            { type: "document", source: { type: "base64", media_type: "application/pdf", data: illustrationsPdf.b64 } },
+            { type: "text", text: buildIllustrationsPdfPrompt({ topic: newInfo?.topic, planSections: sections, lang: newInfo?.language }) },
+          ];
+        } else {
+          illContent = [];
+          for (const ill of illustrations) {
+            illContent.push({ type: "image", source: { type: "base64", media_type: ill.type, data: ill.b64 } });
+          }
+          illContent.push({ type: "text", text: buildIllustrationsPrompt({ topic: newInfo?.topic, illustrations, planSections: sections, lang: newInfo?.language }) });
         }
-        illContent.push({ type: "text", text: buildIllustrationsPrompt({ topic: newInfo?.topic, illustrations, planSections: sections, lang: newInfo?.language }) });
         const illRaw = await callClaude([{ role: "user", content: illContent }], null, SYS_JSON_ARRAY, 1500, null, MODEL_FAST);
         const illMatch = illRaw.match(/\[[\s\S]*\]/);
         const illParsed = JSON.parse(illMatch?.[0] || illRaw);
         setIllustrationDescs(illParsed);
-        await saveToFirestore({ illustrations, illustrationDescs: illParsed });
+        await saveToFirestore({ ...(illustrationsPdf ? {} : { illustrations }), illustrationDescs: illParsed });
       } catch (e) {
         console.warn("illustrationDescs failed:", e.message);
         setIllustrationDescs([]);
@@ -641,23 +650,30 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   // ── Підбір ілюстрацій для розділу ──
   function getIllustrationsForSection(sec) {
     if (!illustrationDescs.length) return [];
-    return illustrations.map((ill, i) => {
-      const desc = illustrationDescs.find(d => d.figureNum === i + 1) || illustrationDescs[i];
-      if (!desc) return null;
-      const target = ill.targetSection?.trim();
-      if (target) {
-        const t = target.toLowerCase().replace(/^розділ\s+/i, "").trim();
-        if (sec.id?.toLowerCase() === t || sec.id?.toLowerCase().startsWith(t + ".") || sec.label?.toLowerCase().includes(t)) {
+    if (illustrations.length > 0) {
+      return illustrations.map((ill, i) => {
+        const desc = illustrationDescs.find(d => d.figureNum === i + 1) || illustrationDescs[i];
+        if (!desc) return null;
+        const target = ill.targetSection?.trim();
+        if (target) {
+          const t = target.toLowerCase().replace(/^розділ\s+/i, "").trim();
+          if (sec.id?.toLowerCase() === t || sec.id?.toLowerCase().startsWith(t + ".") || sec.label?.toLowerCase().includes(t)) {
+            return { ...desc, caption: ill.caption, index: i };
+          }
+          return null;
+        }
+        const suggested = desc.suggestedSection?.trim();
+        if (suggested && (sec.id === suggested || sec.id?.startsWith(suggested + ".") || suggested?.startsWith(sec.id))) {
           return { ...desc, caption: ill.caption, index: i };
         }
         return null;
-      }
+      }).filter(Boolean);
+    }
+    // PDF-режим: ілюстрації визначені тільки через illustrationDescs
+    return illustrationDescs.filter(desc => {
       const suggested = desc.suggestedSection?.trim();
-      if (suggested && (sec.id === suggested || sec.id?.startsWith(suggested + ".") || suggested?.startsWith(sec.id))) {
-        return { ...desc, caption: ill.caption, index: i };
-      }
-      return null;
-    }).filter(Boolean);
+      return suggested && (sec.id === suggested || sec.id?.startsWith(suggested + ".") || suggested?.startsWith(sec.id));
+    });
   }
 
   // ── Парсинг плану клієнта ──
@@ -731,12 +747,20 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
       setSourceDist(dist); setSourceTotal(total);
       setInfo(p => p ? { ...p, sourceCount: String(total) } : p);
       await saveToFirestore({ sections: withPrompts, stage: "plan", status: "plan_ready", info: { ...d, sourceCount: String(total) } });
-      if (illustrations.length > 0) {
+      if (illustrations.length > 0 || illustrationsPdf) {
         try {
-          const illContent = illustrations.map(ill => ({
-            type: "image", source: { type: "base64", media_type: ill.type, data: ill.b64 }
-          }));
-          illContent.push({ type: "text", text: buildIllustrationsPrompt({ topic: d?.topic, illustrations, planSections: withPrompts, lang: d?.language }) });
+          let illContent;
+          if (illustrationsPdf) {
+            illContent = [
+              { type: "document", source: { type: "base64", media_type: "application/pdf", data: illustrationsPdf.b64 } },
+              { type: "text", text: buildIllustrationsPdfPrompt({ topic: d?.topic, planSections: withPrompts, lang: d?.language }) },
+            ];
+          } else {
+            illContent = illustrations.map(ill => ({
+              type: "image", source: { type: "base64", media_type: ill.type, data: ill.b64 }
+            }));
+            illContent.push({ type: "text", text: buildIllustrationsPrompt({ topic: d?.topic, illustrations, planSections: withPrompts, lang: d?.language }) });
+          }
           const illRaw = await callClaude([{ role: "user", content: illContent }], null, SYS_JSON_ARRAY, 1500, null, MODEL_FAST);
           const illMatch = illRaw.match(/\[[\s\S]*\]/);
           const illParsed = JSON.parse(illMatch?.[0] || illRaw);
@@ -3292,7 +3316,7 @@ ${secsSummary}
 
     setContent(newContent);
     setCitInputsSnapshot(JSON.stringify(citInputs));
-    await saveToFirestore({ content: newContent, citInputs, citStructured, refList: fmtResult?.split("\n").filter(Boolean) || [], stage: "sources", status: "writing" });
+    await saveToFirestore({ content: newContent, citInputs, citStructured, refList: fmtResult?.split("\n").filter(Boolean) || [], ...(stage !== "done" ? { stage: "sources", status: "writing" } : {}) });
     setAllCitLoading(false);
   };
 
@@ -3810,6 +3834,7 @@ ${refLines2.join("\n")}`;
               fileLabel={fileLabel} fileB64={fileB64} methodInfo={methodInfo}
               photos={photos} setPhotos={setPhotos}
               illustrations={illustrations} setIllustrations={setIllustrations}
+              illustrationsPdf={illustrationsPdf} setIllustrationsPdf={setIllustrationsPdf}
               info={info}
               clientMaterials={clientMaterials}
               onAddClientMaterial={m => setClientMaterials(prev => [...prev, m])}

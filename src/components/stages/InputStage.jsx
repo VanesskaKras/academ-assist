@@ -21,6 +21,7 @@ export function InputStage({
   appendicesText, setAppendicesText,
   fileLabel, fileB64, methodInfo, photos, setPhotos,
   illustrations, setIllustrations,
+  illustrationsPdf, setIllustrationsPdf,
   clientMaterials, onAddClientMaterial, onRemoveClientMaterial,
   clientMaterialsText, setClientMaterialsText,
   info, running, loadMsg,
@@ -84,13 +85,25 @@ export function InputStage({
       </div>
 
       <div style={S(COLORS.illustrations)}>
-        <FieldBox label="Ілюстрації до роботи (необов'язково, макс. 5) — ШІ опише їх та вставить у потрібні розділи" labelColor={COLORS.illustrations} tooltip={"Зображення (графіки, схеми, таблиці) — AI опише кожне і автоматично вставить опис у відповідний розділ роботи."}>
+        <FieldBox label="Ілюстрації до роботи (необов'язково) — ШІ опише їх та вставить у потрібні розділи" labelColor={COLORS.illustrations} tooltip={"Зображення або PDF — AI знайде всі рисунки, опише кожен і вставить посилання у відповідний розділ роботи."}>
           <IllustrationsZone
             illustrations={illustrations}
             onAdd={ill => setIllustrations(prev => [...prev, ill])}
             onUpdate={(i, ill) => setIllustrations(prev => prev.map((x, idx) => idx === i ? ill : x))}
             onRemove={i => setIllustrations(prev => prev.filter((_, idx) => idx !== i))}
           />
+          <div style={{ margin: "10px 0 6px", fontSize: 11, color: "#bbb", textAlign: "center" }}>— або PDF із усіма ілюстраціями —</div>
+          {illustrationsPdf ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#555", background: "#f5f2ea", borderRadius: 6, padding: "6px 10px" }}>
+              <span>📄 {illustrationsPdf.name}</span>
+              <button
+                onClick={() => setIllustrationsPdf(null)}
+                style={{ background: "none", border: "none", cursor: "pointer", color: "#8a1a1a", fontSize: 14, lineHeight: 1, padding: 0 }}
+              >✕</button>
+            </div>
+          ) : (
+            <DropZone fileLabel={null} onFile={(name, b64) => setIllustrationsPdf({ name, b64 })} accept=".pdf" />
+          )}
         </FieldBox>
       </div>
 

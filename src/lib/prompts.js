@@ -90,6 +90,9 @@ Add short, clear examples to explain theoretical points.
 Use natural connectors appropriate for ${lang} academic writing.
 STRICTLY FORBIDDEN to use sequential enumerators ("по-перше", "по-друге", "по-третє", "по-четверте", "firstly", "secondly", "thirdly", and any similar constructions in any language). Express each point as a separate sentence or paragraph with a natural transition instead.
 STRICTLY FORBIDDEN to open a sentence with an ordinal number word that implies a list position: "Перша умова...", "Друга умова...", "Третя умова...", "Перший крок...", "Другий крок...", "Перша помилка...", "Друга помилка...", "Перша причина...", "Перший фактор...", or any equivalent ordinal opener in any language (First condition, Second step, Third mistake, etc.). Do NOT structure content as a hidden numbered list. Instead, name each item by its actual characteristic: "Важливою умовою є...", "Не менш суттєвим є...", "Окремої уваги заслуговує...".
+STRICTLY FORBIDDEN openers and phrases (AI-detection triggers — never use or derive from): "Варто зазначити", "Слід відмітити", "Слід зазначити", "Необхідно підкреслити", "Варто підкреслити", "Зазначимо що", "Необхідно зауважити", "В умовах сьогодення", "В сучасних умовах", "В сучасних реаліях", "На сучасному етапі розвитку", "відіграє важливу роль", "відіграє ключову роль", "відіграє значну роль", "має важливе значення", "слугує основою для"; English equivalents: "It is worth noting", "It should be noted", "It is important to note", "In today's world", "In the modern era", "plays a crucial role", "plays a key role", "is of great importance", "serves as a foundation".
+Do NOT start two consecutive paragraphs with the same grammatical construction. Do NOT start two consecutive sentences with the same word.
+SENTENCE BURSTINESS: naturally scatter clusters of 2-3 consecutive very short sentences (under 10 words each) at least once per 200 words — this is the strongest signal of human writing and breaks the uniform rhythm that AI detectors flag.
 Insert simple metaphors for clarity where appropriate.
 Soften categorical statements into gentle propositions. Add short transitions between paragraphs.
 Reduce dramatic urgency and pathos. Keep all key facts intact.
@@ -164,6 +167,9 @@ Short paragraphs (3-4 sentences) must alternate with longer ones (5-7). FORBIDDE
 Add short, clear examples to explain theoretical points. Use natural connectors appropriate for ${lang} academic writing.
 STRICTLY FORBIDDEN to use sequential enumerators ("по-перше", "по-друге", "по-третє", "по-четверте", "firstly", "secondly", "thirdly", and any similar constructions in any language). Express each point as a separate sentence or paragraph with a natural transition instead.
 STRICTLY FORBIDDEN to open a sentence with an ordinal number word that implies a list position: "Перша умова...", "Друга умова...", "Третя умова...", "Перший крок...", "Другий крок...", "Перша помилка...", "Друга помилка...", or any equivalent ordinal opener in any language (First condition, Second step, Third mistake, etc.). Do NOT structure content as a hidden numbered list. Name each item by its actual characteristic instead.
+STRICTLY FORBIDDEN openers and phrases (AI-detection triggers — never use or derive from): "Варто зазначити", "Слід відмітити", "Слід зазначити", "Необхідно підкреслити", "Варто підкреслити", "Зазначимо що", "Необхідно зауважити", "В умовах сьогодення", "В сучасних умовах", "В сучасних реаліях", "На сучасному етапі розвитку", "відіграє важливу роль", "відіграє ключову роль", "відіграє значну роль", "має важливе значення", "слугує основою для"; English equivalents: "It is worth noting", "It should be noted", "It is important to note", "In today's world", "In the modern era", "plays a crucial role", "plays a key role", "is of great importance", "serves as a foundation".
+Do NOT start two consecutive paragraphs with the same grammatical construction. Do NOT start two consecutive sentences with the same word.
+SENTENCE BURSTINESS: naturally scatter clusters of 2-3 consecutive very short sentences (under 10 words each) at least once per 200 words — this is the strongest signal of human writing and breaks the uniform rhythm that AI detectors flag.
 Insert simple metaphors for clarity where appropriate. Soften categorical statements. Add short transitions between paragraphs.
 Keep all key facts intact. Adopt a simple, conversational yet academic tone.
 End the work logically with a complete sentence and concluding thought. Do not cut off the text.`;
@@ -348,6 +354,23 @@ ${sectionsBlock}
 
 Поверни ТІЛЬКИ JSON масив (без markdown):
 [{"figureNum":1,"description":"...","suggestedSection":"1.2"}, ...]`;
+}
+
+// ── Промпт для опису ілюстрацій із PDF ──
+export function buildIllustrationsPdfPrompt({ topic, planSections = [], lang = "Українська" }) {
+  const sectionsBlock = planSections.length
+    ? `\nПЛАН РОБОТИ (підрозділи):\n${planSections.map(s => `${s.id}: ${s.label}`).join("\n")}\n`
+    : "";
+  return `Ти аналізуєш PDF-документ із ілюстраціями для академічної роботи на тему "${topic || ""}".
+${sectionsBlock}
+ЗАВДАННЯ: знайди всі ілюстрації (графіки, схеми, діаграми, таблиці, фото, рисунки). Для кожної:
+1. Присвій порядковий номер figureNum (1, 2, 3...)
+2. Напиши академічний опис (2–3 речення, мова: ${lang}) — що зображено, яка наукова цінність для роботи
+3. Витягни підпис якщо він є у документі, або null
+4. Визнач id підрозділу плану куди найбільше підходить (напр. "1.2" або "2.3"). Якщо плану немає — вкажи номер глави (напр. "2")
+
+Поверни ТІЛЬКИ JSON масив (без markdown):
+[{"figureNum":1,"description":"...","caption":"підпис або null","suggestedSection":"1.2"}, ...]`;
 }
 
 // ── Промпт для аналізу матеріалів клієнта ──

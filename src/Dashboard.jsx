@@ -27,7 +27,8 @@ function getStatStatus(o) {
         if (o.stage === "sources") return "sources";
         return s;
     }
-    if (o.stage === "sources" || (s === "done" && (!o.refList || o.refList.length === 0))) return "sources";
+    if (s !== "done" && o.stage === "sources") return "sources";
+    if (s === "done" && (!o.refList || o.refList.length === 0)) return "sources";
     return s;
 }
 
@@ -508,7 +509,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
 
     const needsSources = (o) => o.mode === "small"
         ? o.stage === "sources"
-        : o.stage === "sources" || (o.status === "done" && (!o.refList || o.refList.length === 0));
+        : (o.status !== "done" && o.stage === "sources") || (o.status === "done" && (!o.refList || o.refList.length === 0));
 
     const filtered = useMemo(() => {
         let result = orders;
