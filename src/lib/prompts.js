@@ -63,6 +63,7 @@ ${tableRules}
 ${figureRules}
 Do NOT bold anything in the subsection text.
 Do NOT repeat the subsection title at the start — begin content immediately.
+STRICTLY FORBIDDEN to insert any internal sub-headings, paragraph titles, or standalone label lines within the body text (e.g. "Загальна картина", "Результати аналізу", "Запити на організаційні зміни"). Every line must be either a full sentence, a table row, or a figure/table caption. No standalone short title-like lines allowed.
 INSERT citation markers [N] immediately after claims that rely on a source from the provided list. Use impersonal phrasing only — never write author names before a claim. If no sources are provided — do NOT add any citation markers.
 When citing multiple sources for the same claim, combine them in ONE bracket separated by semicolons: [2, с. 54; 3, с. 101]. NEVER write separate adjacent brackets like [2, с. 54] [3, с. 101] — this is FORBIDDEN.
 STRICTLY FORBIDDEN to invent author, researcher, or scholar names. Never write "Smith A. and Jones B. claim..." or similar name constructions. Instead use impersonal academic phrasing in ${lang}.
@@ -140,6 +141,7 @@ TABLES: place caption on a separate line before the first table row: ${tableWord
 FIGURES: when a diagram or chart is needed — create a data table (no "${tableWord}" caption above), place "${figWord} N – Figure name" BELOW the table, then add "⚠ ДІАГРАМА: виділіть таблицю вище → Вставка → Діаграма у Word." on the next line. For non-data figures — standalone placeholder: ${figWord} N – Figure name. Text before any figure MUST contain a referencing sentence, e.g.: "${figRef} N".
 STRICTLY FORBIDDEN: show the same data as both a "${tableWord}" and a diagram. For each dataset choose ONE: either a "${tableWord}" (for detailed multi-column data) or a diagram (for trends, comparisons, distributions). Tables and diagrams in the same section MUST show different data.
 Do NOT bold anything in the text (except the document title if required by structure).
+STRICTLY FORBIDDEN to insert any internal sub-headings, paragraph titles, or standalone label lines within the body text. Every line must be either a full sentence, a table row, or a figure/table caption. No standalone short title-like lines allowed.
 STRICTLY FORBIDDEN to invent author or researcher names. Use impersonal academic phrasing in ${lang}.
 STRICTLY FORBIDDEN to add a reference list at the end. No "${sourcesLabel}:", "References:", "Bibliography:" etc.
 STRICTLY FORBIDDEN to use em dash "—". Use a comma or rephrase. EXCEPTION: in table/figure captions use "–": "${tableWord} N – Name", "${figWord} N – Name".

@@ -1,5 +1,13 @@
 import PptxGenJS from "pptxgenjs";
 
+// Converts any value to string safely (Claude may return arrays/objects instead of strings)
+function toStr(v) {
+  if (v == null) return '';
+  if (Array.isArray(v)) return v.map(item => (typeof item === 'object' && item !== null ? (item.text || item.header || Object.values(item).join(' ')) : String(item))).join('\n');
+  if (typeof v === 'object') return v.text || v.label || String(Object.values(v).filter(Boolean).join(' ') || '');
+  return String(v);
+}
+
 export async function exportToPptxFile(slideData, info, orderId) {
   const pptx = new PptxGenJS();
   pptx.layout = "LAYOUT_16x9";
@@ -50,7 +58,7 @@ export async function exportToPptxFile(slideData, info, orderId) {
     s.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 10, h: 0.13, fill: { color: T.accent }, line: { type: "none" } });
     s.addShape(pptx.ShapeType.rect, { x: 0, y: 5.5, w: 10, h: 0.125, fill: { color: T.accent }, line: { type: "none" } });
     s.addShape(pptx.ShapeType.rect, { x: 0.45, y: 1.3, w: 0.07, h: 2.7, fill: { color: T.accent }, line: { type: "none" } });
-    s.addText(data.title || info?.topic || "", {
+    s.addText(toStr(data.title || info?.topic || ""), {
       x: 0.7, y: 1.2, w: 8.8, h: 2.1,
       fontSize: 34, bold: true, color: "FFFFFF",
       fontFace: FONT_TITLE, align: "left", valign: "middle", wrap: true,
@@ -80,7 +88,7 @@ export async function exportToPptxFile(slideData, info, orderId) {
         fontSize: 12, color: T.accent, fontFace: FONT_BODY, align: "left", valign: "middle", wrap: true,
       });
     }
-    s.addText(data.title || info?.topic || "", {
+    s.addText(toStr(data.title || info?.topic || ""), {
       x: 0.7, y: 0.82, w: 8.8, h: 2.4,
       fontSize: 26, bold: true, color: "FFFFFF",
       fontFace: FONT_TITLE, align: "left", valign: "middle", wrap: true,
@@ -114,7 +122,7 @@ export async function exportToPptxFile(slideData, info, orderId) {
     addTitle(s, data.title);
     const COL_Y = TITLE_H + 0.25;
     const COL_H = 5.625 - COL_Y - 0.25;
-    s.addText(data.left || data.content || "", {
+    s.addText(toStr(data.left || data.content || ""), {
       x: CONTENT_X, y: COL_Y, w: 4.3, h: COL_H,
       fontSize: 14, color: "333333", fontFace: FONT_BODY,
       valign: "top", wrap: true, paraSpaceAfter: 8,
@@ -128,17 +136,17 @@ export async function exportToPptxFile(slideData, info, orderId) {
     if (data.right_type === "image") {
       addImagePlaceholder(s, RIGHT_X, COL_Y, RIGHT_W, COL_H, data.right || data.image || "Додайте зображення");
     } else if (data.right_type === "stat") {
-      s.addText(data.right_value || "", {
+      s.addText(toStr(data.right_value || ""), {
         x: RIGHT_X, y: COL_Y + 0.35, w: RIGHT_W, h: 1.5,
         fontSize: 54, bold: true, color: T.accent,
         fontFace: FONT_BODY, align: "center", valign: "middle",
       });
-      s.addText(data.right_label || "", {
+      s.addText(toStr(data.right_label || ""), {
         x: RIGHT_X + 0.1, y: COL_Y + 1.95, w: RIGHT_W - 0.2, h: 0.65,
         fontSize: 14, color: "FFFFFF", fontFace: FONT_BODY, align: "center", wrap: true,
       });
     } else {
-      s.addText(data.right || data.key_point || "", {
+      s.addText(toStr(data.right || data.key_point || ""), {
         x: RIGHT_X + 0.2, y: COL_Y + 0.25, w: RIGHT_W - 0.35, h: COL_H - 0.4,
         fontSize: 14, color: "FFFFFF", fontFace: FONT_BODY,
         valign: "top", wrap: true, paraSpaceAfter: 8,
@@ -166,19 +174,19 @@ export async function exportToPptxFile(slideData, info, orderId) {
           x: cx, y: CARD_Y, w: cardW, h: CARD_H,
           fill: { color: T.bg }, line: { type: "none" }, rectRadius: 0.12,
         });
-        s.addText(st.value || "", {
+        s.addText(toStr(st.value ?? ""), {
           x: cx, y: CARD_Y + 0.1, w: cardW, h: 1.35,
           fontSize: 36, bold: true, color: T.accent,
           fontFace: FONT_BODY, align: "center", valign: "middle", autoFit: true,
         });
-        s.addText(st.label || "", {
+        s.addText(toStr(st.label || ""), {
           x: cx + 0.1, y: CARD_Y + 1.5, w: cardW - 0.2, h: 0.55,
           fontSize: 13, color: "FFFFFF", fontFace: FONT_BODY, align: "center", wrap: true,
         });
       });
     }
     if (data.content) {
-      s.addText(data.content, {
+      s.addText(toStr(data.content), {
         x: CONTENT_X, y: CARD_Y + CARD_H + 0.2, w: CONTENT_W, h: 5.625 - (CARD_Y + CARD_H + 0.2) - 0.2,
         fontSize: 14, color: "444444", fontFace: FONT_BODY, wrap: true, valign: "top",
       });
@@ -297,18 +305,18 @@ export async function exportToPptxFile(slideData, info, orderId) {
         x: cx + (cardW - cSize) / 2, y: COL_Y + 0.12, w: cSize, h: cSize,
         fill: { color: T.bg }, line: { type: "none" },
       });
-      s.addText(st.num || String(i + 1), {
+      s.addText(toStr(st.num || String(i + 1)), {
         x: cx + (cardW - cSize) / 2, y: COL_Y + 0.12, w: cSize, h: cSize,
         fontSize: 16, bold: true, color: "FFFFFF", fontFace: FONT_BODY, align: "center", valign: "middle",
       });
       if (st.title) {
-        s.addText(st.title, {
+        s.addText(toStr(st.title), {
           x: cx + 0.1, y: COL_Y + 0.78, w: cardW - 0.2, h: 0.55,
           fontSize: 13, bold: true, color: T.text, fontFace: FONT_TITLE, align: "center", valign: "middle", wrap: true,
         });
       }
       const textY = COL_Y + (st.title ? 1.42 : 0.82);
-      s.addText(st.text || (typeof st === "string" ? st : ""), {
+      s.addText(toStr(st.text || (typeof st === "string" ? st : "")), {
         x: cx + 0.1, y: textY, w: cardW - 0.2, h: COL_Y + cardH - textY - 0.1,
         fontSize: 12, color: "444444", fontFace: FONT_BODY, align: "left", valign: "top", wrap: true,
       });

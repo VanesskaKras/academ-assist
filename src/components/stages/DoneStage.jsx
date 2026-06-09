@@ -191,31 +191,7 @@ export function DoneStage({
         <div style={{ fontSize: 11, color: "#888", letterSpacing: "2px", textTransform: "uppercase", marginBottom: 16 }}>Додаткові матеріали</div>
         <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
 
-          {/* Презентація */}
-          <div style={{ flex: 1, minWidth: 220, border: "1.5px solid #d4cfc4", borderRadius: 8, padding: "16px 18px" }}>
-            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Презентація (.pptx)</div>
-            <div style={{ fontSize: 12, color: "#888", marginBottom: 14 }}>13 слайдів для захисту з дизайном</div>
-            <button
-              onClick={generatePresentation}
-              disabled={presentationLoading}
-              style={{ background: presentationLoading ? "#aaa" : "#1a1a14", color: presentationLoading ? "#eee" : "#e8ff47", border: "none", borderRadius: 6, padding: "9px 20px", fontFamily: "'Spectral',serif", fontSize: 12, letterSpacing: "1px", cursor: presentationLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
-              {presentationLoading
-                ? <><SpinDot light />{presentationMsg || "Генерую..."}</>
-                : presentationReady ? "Генерувати знову" : "Генерувати"}
-            </button>
-            {presentationReady && !presentationLoading && (
-              <div style={{ marginTop: 10, fontSize: 12, color: "#2a6a2a", display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ fontSize: 14 }}>✓</span> Файл завантажено
-              </div>
-            )}
-            {!presentationReady && !presentationLoading && (
-              <div style={{ marginTop: 10, fontSize: 11, color: "#aaa", lineHeight: 1.5 }}>
-                Gemini аналізує текст, Claude генерує слайди
-              </div>
-            )}
-          </div>
-
-          {/* Доповідь */}
+          {/* Доповідь — окремо, без презентації (плоский текст без міток слайдів) */}
           <div style={{ flex: 1, minWidth: 220, border: "1.5px solid #d4cfc4", borderRadius: 8, padding: "16px 18px" }}>
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Доповідь (.docx)</div>
             <div style={{ fontSize: 12, color: "#888", marginBottom: 14 }}>Текст виступу на захист (5-7 хвилин)</div>
@@ -239,6 +215,35 @@ export function DoneStage({
                     Переробити
                   </button>
                 </div>
+              </div>
+            )}
+            {presentationReady && (
+              <div style={{ marginTop: 8, fontSize: 11, color: "#aaa", lineHeight: 1.5 }}>
+                Презентація вже згенерована — натисніть «Презентація», щоб узгодити доповідь зі слайдами й додати мітки «Слайд N»
+              </div>
+            )}
+          </div>
+
+          {/* Презентація — генерує (за потреби) доповідь, слайди, узгоджені з нею, і розмічає доповідь мітками */}
+          <div style={{ flex: 1, minWidth: 220, border: "1.5px solid #d4cfc4", borderRadius: 8, padding: "16px 18px" }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Презентація (.pptx)</div>
+            <div style={{ fontSize: 12, color: "#888", marginBottom: 14 }}>13 слайдів для захисту з дизайном</div>
+            <button
+              onClick={generatePresentation}
+              disabled={presentationLoading}
+              style={{ background: presentationLoading ? "#aaa" : "#1a1a14", color: presentationLoading ? "#eee" : "#e8ff47", border: "none", borderRadius: 6, padding: "9px 20px", fontFamily: "'Spectral',serif", fontSize: 12, letterSpacing: "1px", cursor: presentationLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
+              {presentationLoading
+                ? <><SpinDot light />{presentationMsg || "Генерую..."}</>
+                : presentationReady ? "Генерувати знову" : "Генерувати"}
+            </button>
+            {presentationReady && !presentationLoading && (
+              <div style={{ marginTop: 10, fontSize: 12, color: "#2a6a2a", display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 14 }}>✓</span> Файл завантажено
+              </div>
+            )}
+            {!presentationReady && !presentationLoading && (
+              <div style={{ marginTop: 10, fontSize: 11, color: "#aaa", lineHeight: 1.5 }}>
+                {speechText ? "Слайди будуть побудовані так, щоб збігатися з доповіддю — і вона отримає мітки «Слайд N»" : "Спершу згенерує доповідь, потім — слайди, узгоджені з нею, і додасть мітки «Слайд N» в текст доповіді"}
               </div>
             )}
           </div>

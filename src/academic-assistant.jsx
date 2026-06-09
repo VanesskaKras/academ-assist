@@ -1558,6 +1558,7 @@ ${planSummary}
 
 Обсяг: ~${Math.round((sec.pages || 1) * 270)} слів (~${sec.pages} стор.). Напиши НЕ МЕНШЕ вказаного обсягу.
 Не обривай текст. Завершуй підсумковим абзацом. ${citNote} Без жирного.
+ЗАБОРОНЕНО вставляти будь-які внутрішні підназви, заголовки абзаців або окремі рядки-мітки ("Загальна картина", "Результати аналізу" тощо). Кожен рядок тексту — повне речення, рядок таблиці або підпис до таблиці/рисунка.
 Абзаци мають різнитись за довжиною: чергуй короткі (2-3 речення) з довшими (5-7 речень).`;
     }
     const clientWritingReqs = [
@@ -1821,7 +1822,8 @@ ${empHintRegen ? `ВИМОГА: ${empHintRegen}\n` : ""}Рекомендації
       instruction = `Перепиши підрозділ "${sec.label}" для ${d.type} на тему "${d.topic}". Галузь: ${d.subject}.
 ${empiricalBlockRegen}${econBlockRegen}
 ${clientReqsRegen ? `ВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО виконати):\n${clientReqsRegen}\n` : ""}Обсяг: ~${Math.round((sec.pages || 1) * 270)} слів (~${sec.pages} стор.). Напиши НЕ МЕНШЕ вказаного обсягу.
-Не обривай текст. Завершуй підсумковим абзацом. Без посилань. Без жирного.${customInstructions}${illBlockRegen}${clientMaterialsBlockRegen}`;
+Не обривай текст. Завершуй підсумковим абзацом. Без посилань. Без жирного.
+ЗАБОРОНЕНО вставляти будь-які внутрішні підназви, заголовки абзаців або окремі рядки-мітки. Кожен рядок тексту — повне речення, рядок таблиці або підпис до таблиці/рисунка.${customInstructions}${illBlockRegen}${clientMaterialsBlockRegen}`;
     }
     const regenMaxTokens = Math.min(60000, Math.max(8000, Math.round((sec.pages || 1) * 3000)));
     try {
@@ -1841,90 +1843,129 @@ ${clientReqsRegen ? `ВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО вико
     setRegenLoading(false);
   };
 
-  const generateSpeech = async () => {
-    setSpeechLoading(true);
-    try {
-      const lang = info?.language || "Українська";
+  // ── Текст доповіді (без міток слайдів) — джерело істини для змісту презентації ──
+  const generateSpeechText = async () => {
+    const lang = info?.language || "Українська";
 
-      // ── Контекст 1: слайди презентації (якщо є) ──
-      let slidesOutline = "";
-      if (slideJson?.slides?.length) {
-        const LAYOUT_LABEL = {
-          hero: "Титульний/фінальний", two_column: "Два стовпці", stat_callout: "Статистика",
-          icon_list: "Список з іконками", highlight_box: "Виділені пункти", numbered_steps: "Кроки",
-        };
-        slidesOutline = slideJson.slides
-          .map((sl, i) => {
-            const label = LAYOUT_LABEL[sl.layout] || sl.layout;
-            const parts = [`Слайд ${i + 1} [${label}]: ${sl.title || ""}`];
-            if (sl.subtitle) parts.push(`  Підзаголовок: ${sl.subtitle}`);
-            if (sl.left) parts.push(`  Ліво: ${sl.left}`);
-            if (sl.right) parts.push(`  Право: ${sl.right}`);
-            if (sl.right_value) parts.push(`  Ключове число: ${sl.right_value} — ${sl.right_label || ""}`);
-            if (sl.content) parts.push(`  Текст: ${sl.content}`);
-            if (sl.accent) parts.push(`  Акцент: ${sl.accent}`);
-            if (sl.visual?.stats?.length) parts.push(`  Статистика: ${sl.visual.stats.map(s => `${s.value} (${s.label})`).join(", ")}`);
-            if (sl.visual?.items?.length) parts.push(`  Пункти: ${sl.visual.items.map(it => typeof it === "object" ? `${it.header || ""}: ${it.text || ""}` : it).join(" | ")}`);
-            if (sl.points?.length) parts.push(`  Пункти: ${sl.points.join(" | ")}`);
-            if (sl.steps?.length) parts.push(`  Кроки: ${sl.steps.map(st => `${st.num}. ${st.title} — ${st.text}`).join(" | ")}`);
-            return parts.join("\n");
-          })
-          .join("\n\n");
-      }
+    const sectionSummaries = sections
+      .filter(s => s.type !== "sources")
+      .map(s => { const txt = content[s.id] || ""; return txt ? `### ${s.label}\n${txt}` : ""; })
+      .filter(Boolean).join("\n\n");
 
-      // ── Контекст 2: секції роботи ──
-      const sectionSummaries = sections
-        .filter(s => s.type !== "sources")
-        .map(s => { const txt = content[s.id] || ""; return txt ? `### ${s.label}\n${txt}` : ""; })
-        .filter(Boolean).join("\n\n");
+    const prompt = `Напиши текст доповіді для захисту ${info?.type || "наукової роботи"} перед науковою комісією на тему "${info?.topic}".
 
-      const prompt = `Напиши текст доповіді для захисту ${info?.type || "наукової роботи"} перед науковою комісією на тему "${info?.topic}".
-
-${slidesOutline ? `СТРУКТУРА ПРЕЗЕНТАЦІЇ (виступ іде паралельно зі слайдами — кожен блок відповідає одному слайду):
-${slidesOutline}
-
-` : ""}ПОВНИЙ ТЕКСТ РОБОТИ (витягуй звідси конкретні факти, методи, результати, числа):
+ПОВНИЙ ТЕКСТ РОБОТИ (витягуй звідси конкретні факти, методи, результати, числа):
 ${sectionSummaries}
 
 ВИМОГИ:
-- Обсяг: 9-12 хвилин (4-5 сторінок), кожен слайд — 5-7 речень
-- Перед кожним блоком: "Слайд 1", "Слайд 2" і т.д. — окремим рядком
+- Обсяг: 9-12 хвилин (4-5 сторінок)
+- Структура: вступ → актуальність → мета і завдання → методи → результати → висновки → завершення
 - Стиль: стриманий академічний усний. Науковець звітує перед комісією
 - ОБОВ'ЯЗКОВО: конкретні назви методів, числа, відсотки, коефіцієнти, розміри вибірки з роботи
 - ЗАБОРОНЕНО: "тема є актуальною", "у роботі розглядається", "варто відмітити", "слід зазначити"
 - Кожне речення — факт, метод, результат або висновок
-- Переходи: "Перейдемо до...", "Наступний слайд демонструє...", "Звернімось до..."
+- БЕЗ міток "Слайд N" — суцільний академічний текст
 - НЕ виводь назви розділів та їх номери (наприклад "Розділ 1.2")
 - Мова: ${lang}
-- Без markdown, зірочок, жирного — тільки мітки "Слайд N" і звичайний текст`;
+- Без markdown, зірочок, жирного`;
 
-      const raw = await callGemini(
-        [{ role: "user", content: prompt }], null,
-        `You are an expert academic writing assistant. Write a substantive, factual oral defense speech for a scientific committee. Every sentence must state a concrete fact, method, result or conclusion — no filler phrases. No markdown formatting.`, 6000,
-        null, "gemini-2.5-flash"
-      );
+    const raw = await callGemini(
+      [{ role: "user", content: prompt }], null,
+      `You are an expert academic writing assistant. Write a substantive, factual oral defense speech for a scientific committee. Every sentence must state a concrete fact, method, result or conclusion — no filler phrases. No markdown formatting.`, 6000,
+      null, "gemini-2.5-flash"
+    );
 
-      const result = raw
-        .split("\n")
-        .filter(line => {
-          const t = line.trim();
-          if (!t) return true;
-          if (/^Слайд\s+\d+/i.test(t)) return true; // мітки слайдів — залишаємо
-          if (/^\d+(\.\d+)+[\s\.]/.test(t)) return false; // "1.1 Назва", "2.3.1 ..."
-          if (/^(ВСТУП|ВИСНОВКИ|РОЗДІЛ|ЗМІСТ|ДОДАТКИ?|СПИСОК\s+ЛІТЕРАТУРИ)$/i.test(t)) return false;
-          if (/^#{1,6}\s/.test(t)) return false; // markdown заголовки
-          return true;
-        })
-        .join("\n")
-        .replace(/[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF]/g, "")
-        .replace(/[„""]([^"„""]*)["""]/g, "«$1»")
-        .replace(/"([^"]*)"/g, "«$1»")
-        .replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1");
+    return raw
+      .split("\n")
+      .filter(line => {
+        const t = line.trim();
+        if (!t) return true;
+        if (/^\d+(\.\d+)+[\s\.]/.test(t)) return false;
+        if (/^(ВСТУП|ВИСНОВКИ|РОЗДІЛ|ЗМІСТ|ДОДАТКИ?|СПИСОК\s+ЛІТЕРАТУРИ)$/i.test(t)) return false;
+        if (/^#{1,6}\s/.test(t)) return false;
+        return true;
+      })
+      .join("\n")
+      .replace(/[ᄀ-ᇿ⺀-鿿ꀀ-꓿가-퟿豈-﫿]/g, "")
+      .replace(/[„""]([^"„""]*)["""]/g, "«$1»")
+      .replace(/"([^"]*)"/g, "«$1»")
+      .replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1");
+  };
 
+  const generateSpeech = async () => {
+    setSpeechLoading(true);
+    try {
+      const result = await generateSpeechText();
       setSpeechText(result);
       await saveToFirestore({ speechText: result });
     } catch (e) { alert("Помилка генерації доповіді: " + e.message); }
     setSpeechLoading(false);
+  };
+
+  // ── Прибрати мітки "Слайд N" з тексту доповіді (щоб не дублювати при повторній розмітці) ──
+  const stripSlideLabels = (text) => (text || "")
+    .split("\n")
+    .filter(line => !/^Слайд\s+\d+\s*$/i.test(line.trim()))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  // ── Розмітка готового тексту доповіді мітками "Слайд N" відповідно до структури презентації ──
+  const labelSpeechWithSlides = async (plainSpeechText, slideData) => {
+    const lang = info?.language || "Українська";
+    const LAYOUT_LABEL = {
+      hero: "Титульний/фінальний", two_column: "Два стовпці", stat_callout: "Статистика",
+      icon_list: "Список з іконками", highlight_box: "Виділені пункти", numbered_steps: "Кроки",
+    };
+    const slidesOutline = slideData.slides
+      .map((sl, i) => {
+        const label = LAYOUT_LABEL[sl.layout] || sl.layout;
+        const parts = [`Слайд ${i + 1} [${label}]: ${sl.title || ""}`];
+        if (sl.subtitle) parts.push(`  Підзаголовок: ${sl.subtitle}`);
+        if (sl.left) parts.push(`  Ліво: ${sl.left}`);
+        if (sl.right) parts.push(`  Право: ${sl.right}`);
+        if (sl.right_value) parts.push(`  Ключове число: ${sl.right_value} — ${sl.right_label || ""}`);
+        if (sl.content) parts.push(`  Текст: ${sl.content}`);
+        if (sl.accent) parts.push(`  Акцент: ${sl.accent}`);
+        if (sl.visual?.stats?.length) parts.push(`  Статистика: ${sl.visual.stats.map(s => `${s.value} (${s.label})`).join(", ")}`);
+        if (sl.visual?.items?.length) parts.push(`  Пункти: ${sl.visual.items.map(it => typeof it === "object" ? `${it.header || ""}: ${it.text || ""}` : it).join(" | ")}`);
+        if (sl.points?.length) parts.push(`  Пункти: ${sl.points.join(" | ")}`);
+        if (sl.steps?.length) parts.push(`  Кроки: ${sl.steps.map(st => `${st.num}. ${st.title} — ${st.text}`).join(" | ")}`);
+        return parts.join("\n");
+      })
+      .join("\n\n");
+
+    const prompt = `Розклади наведений нижче ГОТОВИЙ текст доповіді по слайдах презентації — встав мітку "Слайд N" окремим рядком перед фрагментом, який відповідає цьому слайду.
+
+ГОТОВИЙ ТЕКСТ ДОПОВІДІ (використай ДОСЛІВНО — НЕ редагуй, НЕ перефразовуй, НЕ скорочуй і НЕ додавай нових речень, лише розбий його на фрагменти):
+${plainSpeechText.trim()}
+
+СТРУКТУРА ПРЕЗЕНТАЦІЇ (${slideData.slides.length} слайдів, виступ має йти паралельно з ними):
+${slidesOutline}
+
+ВИМОГИ:
+- Розбий наведений текст доповіді на фрагменти — по одному на кожен слайд (або групу суміжних слайдів, якщо для окремого слайду немає відповідного фрагменту) — і встав перед кожним мітку "Слайд N" окремим рядком
+- Збережи дослівний текст і його послідовність — це лише розмітка наявного тексту, а не новий текст
+- Мова: ${lang}
+- Без markdown, зірочок, жирного — тільки мітки "Слайд N" і незмінний текст доповіді`;
+
+    const raw = await callGemini(
+      [{ role: "user", content: prompt }], null,
+      "You only segment and label the given text into slide-aligned fragments — you must not rewrite, paraphrase, shorten or add anything to it.", 5000,
+      null, "gemini-2.5-flash"
+    );
+
+    return raw
+      .split("\n")
+      .filter(line => {
+        const t = line.trim();
+        if (!t) return true;
+        if (/^Слайд\s+\d+/i.test(t)) return true;
+        if (/^#{1,6}\s/.test(t)) return false;
+        return true;
+      })
+      .join("\n")
+      .replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1");
   };
 
   const doGenAppendices = async () => {
@@ -2127,10 +2168,20 @@ ${customBlock || `Включи один або два додатки що лог
 
   const generatePresentation = async () => {
     setPresentationLoading(true);
-    setPresentationMsg("Аналізую текст роботи...");
+    setPresentationMsg("Готую доповідь...");
     try {
       const lang = info?.language || "Українська";
 
+      // ── Крок 0: Доповідь — джерело істини для змісту слайдів (генеруємо, якщо її ще немає) ──
+      let baseSpeech = stripSlideLabels(speechText);
+      if (!baseSpeech) {
+        setPresentationMsg("Генерую доповідь...");
+        baseSpeech = await generateSpeechText();
+        setSpeechText(baseSpeech);
+        await saveToFirestore({ speechText: baseSpeech });
+      }
+
+      setPresentationMsg("Аналізую текст роботи...");
       // ── Крок 1: Gemini аналізує текст ──
       const fullText = sections
         .filter(s => s.type !== "sources")
@@ -2176,7 +2227,10 @@ ${customBlock || `Включи один або два додатки що лог
 ${titlePage ? titlePage.substring(0, 800) : "(не надана)"}
 
 ТЕКСТ РОБОТИ:
-${fullText}`;
+${fullText}
+
+ТЕКСТ ДОПОВІДІ ДЛЯ ЗАХИСТУ (ОБОВ'ЯЗКОВО — масиви "tasks", "methods", "main_results", "conclusions" мають збігатися з тим, що перелічено в доповіді: ТА Ж кількість елементів, нічого не пропускай і не додавай зайвого, аби виступ і слайди презентації не розходились):
+${baseSpeech}`;
 
       const geminiRaw = await callGemini(
         [{ role: "user", content: geminiPrompt }], null,
@@ -2294,6 +2348,14 @@ ${slideSpecs.join("\n\n")}
       setSlideJson(slideData);
       setPresentationReady(true);
       await saveToFirestore({ presentationReady: true, slideJson: slideData });
+
+      // ── Крок 4: Розмічаємо доповідь мітками "Слайд N" відповідно до готових слайдів ──
+      setPresentationMsg("Узгоджую доповідь зі слайдами...");
+      try {
+        const labeled = await labelSpeechWithSlides(baseSpeech, slideData);
+        setSpeechText(labeled);
+        await saveToFirestore({ speechText: labeled });
+      } catch { /* презентація вже готова — лишаємо доповідь без міток, якщо розмітка не вдалась */ }
     } catch (e) { alert("Помилка генерації презентації: " + e.message); }
     setPresentationLoading(false);
     setPresentationMsg("");
@@ -2556,6 +2618,7 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
 
 Обсяг: ~${Math.round((sec.pages || 1) * 270)} слів (~${sec.pages} стор.). Напиши НЕ МЕНШЕ вказаного обсягу.
 Не обривай текст. Завершуй підсумковим абзацом. Без посилань [1],[2]. Без жирного.
+ЗАБОРОНЕНО вставляти будь-які внутрішні підназви, заголовки абзаців або окремі рядки-мітки. Кожен рядок тексту — повне речення, рядок таблиці або підпис до таблиці/рисунка.
 Абзаци різняться за довжиною: чергуй короткі (2-3 речення) з довшими (5-7 речень).`;
       }
 

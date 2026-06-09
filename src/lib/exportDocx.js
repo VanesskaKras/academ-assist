@@ -966,8 +966,8 @@ export async function exportSpeechToDocx(text, info, methodInfo, orderId, speech
 
   const topic = info?.topic || "";
   const workType = info?.type || "";
-  const typeMap = { "дипломн": "дипломної роботи", "кваліфікаційн": "кваліфікаційної роботи", "курсов": "курсової роботи", "магістерськ": "магістерської роботи", "бакалавр": "бакалаврської роботи", "реферат": "реферату", "стаття": "статті", "есе": "есе" };
-  const typeLabel = Object.entries(typeMap).find(([k]) => workType.toLowerCase().includes(k))?.[1] || (workType ? workType.toLowerCase() + "ї роботи" : "роботи");
+  const typeMap = { "дипломн": "дипломної роботи", "кваліфікаційн": "кваліфікаційної роботи", "курсов": "курсової роботи", "магістерськ": "магістерської роботи", "бакалавр": "бакалаврської роботи", "реферат": "реферату", "стаття": "статті", "есе": "есе", "доповід": "роботи" };
+  const typeLabel = Object.entries(typeMap).find(([k]) => workType.toLowerCase().includes(k))?.[1] || "роботи";
 
   const header = [
     new Paragraph({ alignment: AlignmentType.CENTER, spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [new TextRun({ text: "ДОПОВІДЬ", font: FONT, size: SIZE, bold: true, color: "000000" })] }),
