@@ -258,7 +258,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
             children: [new Paragraph({
               alignment: isHeader ? AlignmentType.CENTER : AlignmentType.LEFT,
               spacing: { line: 240, lineRule: "exact", before: 0, after: 0 },
-              children: [new TextRun({ text: cellText, font: FONT, size: 24, color: isDiagram ? "1A5EAB" : "000000", bold: isHeader })],
+              children: [new TextRun({ text: cellText, font: FONT, size: 24, color: isDiagram ? "1A5EAB" : "000000", bold: methodInfo ? isHeader : false })],
             })],
           })
         ),
@@ -343,7 +343,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
         result.push(new Paragraph({
           alignment: AlignmentType.CENTER,
           spacing: { line: LINE, lineRule: "auto", before: 0, after: isDiagramCaption ? Math.round(LINE * 0.2) : Math.round(LINE * 0.5) },
-          children: [new TextRun({ text: line.trim(), font: FONT, size: SIZE, bold: isDiagramCaption || fBold, italics: isDiagramCaption, color: isDiagramCaption ? "1A5EAB" : "B85C00" })],
+          children: [new TextRun({ text: line.trim(), font: FONT, size: SIZE, bold: methodInfo ? (isDiagramCaption || fBold) : fBold, italics: methodInfo ? isDiagramCaption : false, color: isDiagramCaption ? "1A5EAB" : "B85C00" })],
         }));
         i++;
         continue;
@@ -815,7 +815,7 @@ export async function exportAppendixToDocx(text, info, methodInfo, orderId) {
             children: [new Paragraph({
               alignment: isHeader ? AlignmentType.CENTER : AlignmentType.LEFT,
               spacing: { line: 240, lineRule: "exact", before: 0, after: 0 },
-              children: [new TextRun({ text: cellText, font: FONT, size: 24, color: "000000", bold: isHeader })],
+              children: [new TextRun({ text: cellText, font: FONT, size: 24, color: "000000", bold: methodInfo ? isHeader : false })],
             })],
           })
         ),
