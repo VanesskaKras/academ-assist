@@ -3316,7 +3316,7 @@ ${secsSummary}
 
     setContent(newContent);
     setCitInputsSnapshot(JSON.stringify(citInputs));
-    await saveToFirestore({ content: newContent, citInputs, citStructured, refList: fmtResult?.split("\n").filter(Boolean) || [], ...(stage !== "done" ? { stage: "sources", status: "writing" } : {}) });
+    await saveToFirestore({ content: newContent, citInputs, citStructured, refList: fmtResult?.split("\n").filter(Boolean) || [], ...(!writingDoneRef.current ? { stage: "sources", status: "writing" } : {}) });
     setAllCitLoading(false);
   };
 
