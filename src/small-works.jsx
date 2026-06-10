@@ -247,6 +247,8 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
   const [speechText, setSpeechText] = useState("");
 
   const currentIdRef = useRef(orderId || null);
+  // true, якщо створення документа в Firestore вже підтверджено успішним збереженням
+  const createdConfirmedRef = useRef(!!orderId);
   const tokenAccRef = useRef({ inTok: 0, outTok: 0, costUsd: 0, claudeInTok: 0, claudeOutTok: 0, claudeCostUsd: 0, geminiInTok: 0, geminiOutTok: 0, geminiCostUsd: 0 });
 
   useEffect(() => {
@@ -399,7 +401,7 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
       if (isNew) { currentIdRef.current = id; onOrderCreated?.(id); }
       const ref = doc(db, "orders", id);
       const base = {
-        ...(isNew ? { uid: user.uid } : {}), mode: "small", workType,
+        uid: user.uid, mode: "small", workType,
         updatedAt: new Date().toISOString(),
         topic: patch.info?.topic || info?.topic || "",
         type: patch.info?.type || info?.type || workType || "",
@@ -416,7 +418,8 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
         geminiCostUsd: tokenAccRef.current.geminiCostUsd,
         ...(patch.status === "done" ? { completedAt: new Date().toISOString() } : {}),
       };
-      await setDoc(ref, serializeForFirestore({ ...base, ...patch, ...(isNew ? { createdAt: new Date().toISOString() } : {}) }), { merge: true });
+      await setDoc(ref, serializeForFirestore({ ...base, ...patch, ...(!createdConfirmedRef.current ? { createdAt: new Date().toISOString() } : {}) }), { merge: true });
+      createdConfirmedRef.current = true;
       setSaved(true); setTimeout(() => setSaved(false), 3000);
     } catch (e) { console.error(e); }
     setSaving(false);

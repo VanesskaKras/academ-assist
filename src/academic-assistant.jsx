@@ -231,6 +231,8 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
 
   // Зберігаємо актуальний id документа (може змінитись після першого збереження)
   const currentIdRef = useRef(orderId || null);
+  // true, якщо створення документа в Firestore вже підтверджено успішним збереженням
+  const createdConfirmedRef = useRef(!!orderId);
   const abortRef = useRef(null);
   const contentRef = useRef(content);
   const savedTimerRef = useRef(null);
@@ -408,7 +410,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
       }
       const ref = doc(db, "orders", id);
       const base = {
-        ...(isNew ? { uid: user.uid } : {}),
+        uid: user.uid,
         updatedAt: new Date().toISOString(),
         topic: patch.info?.topic || info?.topic || "",
         type: patch.info?.type || info?.type || "",
@@ -432,7 +434,8 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
         } : {}),
       };
       const data = serializeForFirestore({ ...base, ...patch });
-      await setDoc(ref, { ...data, ...(isNew ? { createdAt: new Date().toISOString() } : {}) }, { merge: true });
+      await setDoc(ref, { ...data, ...(!createdConfirmedRef.current ? { createdAt: new Date().toISOString() } : {}) }, { merge: true });
+      createdConfirmedRef.current = true;
       setSaved(true);
       clearTimeout(savedTimerRef.current);
       savedTimerRef.current = setTimeout(() => setSaved(false), 3000);
