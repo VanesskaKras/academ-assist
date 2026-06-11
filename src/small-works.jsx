@@ -249,6 +249,8 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
   const currentIdRef = useRef(orderId || null);
   // true, якщо створення документа в Firestore вже підтверджено успішним збереженням
   const createdConfirmedRef = useRef(!!orderId);
+  // true, якщо написання реферату вже завершено — щоб повторний візит на вкладку "Написання" не запускав генерацію знову
+  const writingDoneRef = useRef(false);
   const tokenAccRef = useRef({ inTok: 0, outTok: 0, costUsd: 0, claudeInTok: 0, claudeOutTok: 0, claudeCostUsd: 0, geminiInTok: 0, geminiOutTok: 0, geminiCostUsd: 0 });
 
   useEffect(() => {
@@ -293,6 +295,9 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
             setMaxStageIdx(loadedCfg.stageKeys.indexOf(d.stage));
           }
           if (d.genIdx !== undefined) setGenIdx(d.genIdx);
+          if (d.status === "done" || (d.sections?.length > 0 && d.genIdx >= d.sections.length)) {
+            writingDoneRef.current = true;
+          }
           if (d.authorData) setAuthorData(d.authorData);
           if (d.tezyCitations?.length) setTezyCitations(d.tezyCitations);
           if (d.tezyPapers?.length) setTezyPapers(d.tezyPapers);
@@ -945,9 +950,12 @@ ${chapEntries},
     if (workType !== "referat" || stage !== "writing" || running) return;
     if (runningRef.current) return;
     if (genIdx >= sections.length) {
-      playDoneSound();
-      saveToFirestore({ sections, stage: "done", status: "done" });
-      setStage("done");
+      if (!writingDoneRef.current) {
+        writingDoneRef.current = true;
+        playDoneSound();
+        saveToFirestore({ sections, stage: "done", status: "done" });
+        setStage("done");
+      }
       return;
     }
     const sec = sections[genIdx];

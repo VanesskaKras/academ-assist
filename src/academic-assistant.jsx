@@ -2808,6 +2808,10 @@ ${secBlocks}
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error?.message || JSON.stringify(data).slice(0, 200));
+        if (data.usageMetadata) {
+          const cost = (data.usageMetadata.promptTokenCount * 0.10 + data.usageMetadata.candidatesTokenCount * 0.40) / 1_000_000;
+          window.dispatchEvent(new CustomEvent("apicost", { detail: { cost, model: "gemini-2.5-flash-lite", inTok: data.usageMetadata.promptTokenCount, outTok: data.usageMetadata.candidatesTokenCount } }));
+        }
         const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
         const parsed = JSON.parse(raw);
         const thesesRaw = parsed.theses || {};
@@ -2898,6 +2902,10 @@ ${secBlock}
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error?.message || JSON.stringify(data).slice(0, 200));
+      if (data.usageMetadata) {
+        const cost = (data.usageMetadata.promptTokenCount * 0.10 + data.usageMetadata.candidatesTokenCount * 0.40) / 1_000_000;
+        window.dispatchEvent(new CustomEvent("apicost", { detail: { cost, model: "gemini-2.5-flash-lite", inTok: data.usageMetadata.promptTokenCount, outTok: data.usageMetadata.candidatesTokenCount } }));
+      }
       const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
       const parsed = JSON.parse(raw);
       const newTheses = (Array.isArray(parsed.theses) ? parsed.theses : [])
@@ -3912,7 +3920,7 @@ ${refLines2.join("\n")}`;
               doRegenSectionSources={doRegenSectionSources}
               doAddAllCitations={doAddAllCitations}
               onAddAbstracts={(entries) => setAbstractsMap(prev => ({ ...prev, ...entries }))}
-              onFinish={async () => { await saveToFirestore({ stage: "done", status: "done", content, citInputs, citStructured, abstractsMap, refList }); setStage("done"); }}
+              onFinish={doRemapCitations} remapLoading={remapLoading}
               onProceedToWriting={() => setStage("writing")}
               setStage={setStage}
               onSave={() => saveToFirestore({ citInputs, citStructured, abstractsMap, suggestedSources, phraseGroups, keywords })}

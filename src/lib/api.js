@@ -80,13 +80,13 @@ export async function callClaude(messages, signal, systemPrompt, maxTokens, onWa
         }
       } finally {
         reader.releaseLock();
-      }
-
-      if (inputTokens || outputTokens) {
-        const PRICES = { [MODEL]: { in: 3, out: 15 }, [MODEL_FAST]: { in: 0.80, out: 4 } };
-        const p = PRICES[model || MODEL] || PRICES[MODEL];
-        const cost = (inputTokens * p.in + outputTokens * p.out) / 1_000_000;
-        window.dispatchEvent(new CustomEvent("apicost", { detail: { cost, model: model || MODEL, inTok: inputTokens, outTok: outputTokens } }));
+        // Звітуємо про витрачені токени навіть при перериванні (abort) — Anthropic вже їх обробив
+        if (inputTokens || outputTokens) {
+          const PRICES = { [MODEL]: { in: 3, out: 15 }, [MODEL_FAST]: { in: 0.80, out: 4 } };
+          const p = PRICES[model || MODEL] || PRICES[MODEL];
+          const cost = (inputTokens * p.in + outputTokens * p.out) / 1_000_000;
+          window.dispatchEvent(new CustomEvent("apicost", { detail: { cost, model: model || MODEL, inTok: inputTokens, outTok: outputTokens } }));
+        }
       }
       return fullText;
     }

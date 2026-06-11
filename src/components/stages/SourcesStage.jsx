@@ -77,7 +77,7 @@ export function SourcesStage({
   keywords, kwLoading, kwError, setKwError, methodInfo, commentAnalysis,
   allRefs, refList, showMissingSources, citInputsSnapshot, allCitLoading, info,
   suggestedSources, phraseGroups, sourcesSearchLoading, sourcesSearchError, doSearchSources, doRegenSectionSources,
-  doGenKeywords, doAddAllCitations, onAddAbstracts, onFinish, onProceedToWriting, setStage,
+  doGenKeywords, doAddAllCitations, onAddAbstracts, onFinish, remapLoading, onProceedToWriting, setStage,
   onRegenWithNewSources, hasGeneratedContent, onSave, saving,
 }) {
   const [selectedSugg, setSelectedSugg] = useState({});
@@ -567,7 +567,7 @@ export function SourcesStage({
             → Почати генерацію тексту
           </button>
           {hasGeneratedContent && (
-            <PrimaryBtn onClick={onFinish} label="До готового тексту →" />
+            <PrimaryBtn onClick={onFinish} loading={remapLoading} msg="Формую список літератури..." label="До готового тексту →" />
           )}
         </>
       </div>
