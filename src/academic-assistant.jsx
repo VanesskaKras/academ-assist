@@ -525,6 +525,11 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
           if (structureInfo.introPages != null) parsed.introPages = structureInfo.introPages;
           if (structureInfo.conclusionsPages != null) parsed.conclusionsPages = structureInfo.conclusionsPages;
         }
+        // Нормалізуємо поля, які Gemini може повернути як масив замість рядка
+        if (Array.isArray(parsed.recommendedSources)) parsed.recommendedSources = parsed.recommendedSources.join('; ');
+        if (Array.isArray(parsed.sourcesStyle)) parsed.sourcesStyle = parsed.sourcesStyle.join(', ');
+        if (Array.isArray(parsed.citationStyle)) parsed.citationStyle = parsed.citationStyle.join('; ');
+        if (typeof parsed.sourcesMinCount === 'string') parsed.sourcesMinCount = parseInt(parsed.sourcesMinCount) || null;
         setMethodInfo(parsed);
         if (parsed.titlePageTemplate) {
           const currentYear = new Date().getFullYear().toString();

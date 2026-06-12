@@ -228,12 +228,12 @@ export function SourcesStage({
         <div style={{ fontSize: 13, color: "#888" }}>
           Загальна к-сть джерел: <strong style={{ color: "#1a1a14" }}>{sourceTotal}</strong>
           {methodInfo?.sourcesMinCount
-            ? <span style={{ marginLeft: 8, fontSize: 11, color: "#8a5a1a" }}>(мін. {methodInfo.sourcesMinCount} за методичкою)</span>
+            ? <span style={{ marginLeft: 8, fontSize: 11, color: "#8a5a1a" }}>(мін. {typeof methodInfo.sourcesMinCount === 'object' ? JSON.stringify(methodInfo.sourcesMinCount) : methodInfo.sourcesMinCount} за методичкою)</span>
             : null}
         </div>
         {methodInfo && (methodInfo.sourcesStyle || methodInfo.sourcesOrder) && (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {methodInfo.sourcesStyle && <span style={{ fontSize: 11, background: "#e4f0ff", color: "#1a5a8a", padding: "2px 10px", borderRadius: 10 }}>📋 {methodInfo.sourcesStyle}</span>}
+            {methodInfo.sourcesStyle && <span style={{ fontSize: 11, background: "#e4f0ff", color: "#1a5a8a", padding: "2px 10px", borderRadius: 10 }}>📋 {Array.isArray(methodInfo.sourcesStyle) ? methodInfo.sourcesStyle.join(', ') : typeof methodInfo.sourcesStyle === 'object' ? JSON.stringify(methodInfo.sourcesStyle) : methodInfo.sourcesStyle}</span>}
             {methodInfo.sourcesOrder && <span style={{ fontSize: 11, background: "#eef5e4", color: "#3a6010", padding: "2px 10px", borderRadius: 10 }}>{methodInfo.sourcesOrder === "alphabetical" ? "🔤 За алфавітом" : "🔢 За порядком появи"}</span>}
           </div>
         )}
@@ -275,7 +275,11 @@ export function SourcesStage({
           {methodInfo?.recommendedSources && (
             <div style={{ marginBottom: commentAnalysis?.sourcesHints ? 8 : 0 }}>
               <span style={{ fontSize: 11, color: "#8a6010", textTransform: "uppercase", letterSpacing: "0.5px" }}>З методички: </span>
-              {methodInfo.recommendedSources}
+              {Array.isArray(methodInfo.recommendedSources)
+                ? methodInfo.recommendedSources.join('; ')
+                : typeof methodInfo.recommendedSources === 'object'
+                  ? JSON.stringify(methodInfo.recommendedSources)
+                  : methodInfo.recommendedSources}
             </div>
           )}
           {commentAnalysis?.sourcesHints && (
