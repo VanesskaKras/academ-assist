@@ -281,6 +281,7 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
         const snap = await getDoc(doc(db, "orders", orderId));
         if (snap.exists()) {
           const d = snap.data();
+          if (!d.createdAt) createdConfirmedRef.current = false;
           if (d.workType) setWorkType(d.workType);
           if (d.tplText) setTplText(d.tplText);
           if (d.comment) setComment(d.comment);
@@ -326,6 +327,8 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
               geminiInTok: d.geminiInTok || 0, geminiOutTok: d.geminiOutTok || 0, geminiCostUsd: d.geminiCostUsd || 0,
             };
           }
+        } else {
+          createdConfirmedRef.current = false;
         }
       } catch (e) { console.error(e); }
       setDbLoading(false);

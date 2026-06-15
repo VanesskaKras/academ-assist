@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { db } from "./firebase";
-import { collection, query, where, orderBy, getDocs, deleteDoc, doc, setDoc } from "firebase/firestore";
+import { collection, query, where, getDocs, deleteDoc, doc, setDoc } from "firebase/firestore";
 import { useAuth } from "./AuthContext";
 
 const STAT_META = [
@@ -446,17 +446,19 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
             try {
                 if (isAdmin) {
                     const [ordersSnap, usersSnap] = await Promise.all([
-                        getDocs(query(collection(db, "orders"), orderBy("createdAt", "desc"))),
+                        getDocs(collection(db, "orders")),
                         getDocs(collection(db, "users")),
                     ]);
                     const map = {};
                     usersSnap.docs.forEach(d => { map[d.id] = d.data(); });
                     setUserMap(map);
-                    setOrders(ordersSnap.docs.map(d => ({
-                        id: d.id,
-                        ...d.data(),
-                        managerName: map[d.data().uid]?.name || d.data().uid || "—",
-                    })));
+                    setOrders(ordersSnap.docs
+                        .map(d => ({
+                            id: d.id,
+                            ...d.data(),
+                            managerName: map[d.data().uid]?.name || d.data().uid || "—",
+                        }))
+                        .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || "")));
                 } else {
                     const q = query(
                         collection(db, "orders"),

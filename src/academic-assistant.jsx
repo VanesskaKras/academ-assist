@@ -259,6 +259,8 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
         const snap = await getDoc(doc(db, "orders", orderId));
         if (snap.exists()) {
           const d = snap.data();
+          // якщо документ існує але без createdAt (збій першого save) — наступний save його додасть
+          if (!d.createdAt) createdConfirmedRef.current = false;
           if (d.tplText) setTplText(d.tplText);
           if (d.comment) setComment(d.comment);
           if (d.clientPlan) setClientPlan(d.clientPlan);
@@ -328,6 +330,9 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
           if (d.generationStartedAt && d.status !== "done") {
             generationStartRef.current = new Date(d.generationStartedAt).getTime();
           }
+        } else {
+          // документ не існує (ID в sessionStorage але перший setDoc впав) — наступний save додасть createdAt
+          createdConfirmedRef.current = false;
         }
       } catch (e) { console.error("Load error:", e); }
       setDbLoading(false);
