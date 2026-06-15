@@ -486,9 +486,22 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
         return () => document.removeEventListener("click", close);
     }, [transferOrderId]);
 
-    const deleteOrder = async (id, e) => {
+    const moveToTrash = async (id, e) => {
         e.stopPropagation();
-        if (!window.confirm("Видалити замовлення?")) return;
+        if (!window.confirm("Перемістити в кошик?")) return;
+        await setDoc(doc(db, "orders", id), { deleted: true, deletedAt: new Date().toISOString() }, { merge: true });
+        setOrders(p => p.map(o => o.id === id ? { ...o, deleted: true } : o));
+    };
+
+    const restoreOrder = async (id, e) => {
+        e.stopPropagation();
+        await setDoc(doc(db, "orders", id), { deleted: false }, { merge: true });
+        setOrders(p => p.map(o => o.id === id ? { ...o, deleted: false } : o));
+    };
+
+    const permanentDelete = async (id, e) => {
+        e.stopPropagation();
+        if (!window.confirm("Видалити назавжди? Це незворотна дія!")) return;
         await deleteDoc(doc(db, "orders", id));
         setOrders(p => p.filter(o => o.id !== id));
     };
@@ -519,11 +532,13 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
         if (filterManager !== "all") {
             result = result.filter(o => o.uid === filterManager);
         }
-        // Архів
-        if (filterStatus === "archived") {
-            result = result.filter(o => o.archived);
+        // Кошик / Архів
+        if (filterStatus === "deleted") {
+            result = result.filter(o => o.deleted);
+        } else if (filterStatus === "archived") {
+            result = result.filter(o => o.archived && !o.deleted);
         } else {
-            result = result.filter(o => !o.archived);
+            result = result.filter(o => !o.archived && !o.deleted);
             if (filterStatus) {
                 result = result.filter(o => {
                     const s = o.status || "new";
@@ -561,8 +576,8 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
                 return true;
             });
         }
-        // Сортування: архів — без змін; решта — активні за дедлайном (nearest first), Готово — внизу
-        if (filterStatus !== "archived") {
+        // Сортування: архів і кошик — без змін; решта — активні за дедлайном (nearest first), Готово — внизу
+        if (filterStatus !== "archived" && filterStatus !== "deleted") {
             const parseDeadline = (dl) => {
                 if (!dl) return null;
                 const parts = dl.split(".");
@@ -588,8 +603,9 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
     }, [orders, search, filterStatus, dlFrom, dlTo, filterManager]);
 
     const counts = useMemo(() => {
-        const c = { all: 0, done: 0, writing: 0, sources: 0, plan_ready: 0, new: 0, archived: 0, corrections: 0 };
+        const c = { all: 0, done: 0, writing: 0, sources: 0, plan_ready: 0, new: 0, archived: 0, corrections: 0, deleted: 0 };
         orders.forEach(o => {
+            if (o.deleted) { c.deleted++; return; }
             if (o.archived) { c.archived++; return; }
             c.all++;
             if (o.type === "file_corrections") { c.corrections++; return; }
@@ -667,6 +683,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
                             { label: "Готово", val: counts.done, color: "#1a6a1a", bg: "#e4ffe4", key: "done" },
                             ...(counts.corrections > 0 ? [{ label: "Правки", val: counts.corrections, color: "#6a3a00", bg: "#fff0e0", key: "corrections" }] : []),
                             ...(isAdmin && counts.archived > 0 ? [{ label: "Архів", val: counts.archived, color: "#666", bg: "#ebebeb", key: "archived" }] : []),
+                            ...(isAdmin && counts.deleted > 0 ? [{ label: "Кошик", val: counts.deleted, color: "#c00", bg: "#fff0f0", key: "deleted" }] : []),
                         ].map(s => {
                             const isActive = filterStatus === s.key;
                             return (
@@ -687,7 +704,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
                 )}
 
                 {/* Deadline + Manager filters (admin only, not in archive view) */}
-                {isAdmin && orders.length > 0 && filterStatus !== "archived" && (
+                {isAdmin && orders.length > 0 && filterStatus !== "archived" && filterStatus !== "deleted" && (
                     <div style={{ display: "flex", gap: 16, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 0 }}>
                         <DeadlinePicker dlFrom={dlFrom} dlTo={dlTo} setDlFrom={setDlFrom} setDlTo={setDlTo} />
                         <div style={{ marginBottom: 12 }}>
@@ -736,7 +753,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
                     </div>
                 ) : filtered.length === 0 ? (
                     <div style={{ textAlign: "center", padding: 40, color: "#888", fontSize: 14 }}>
-                        {filterStatus === "archived" ? "Архів порожній" : search ? `Нічого не знайдено за запитом «${search}»` : "Немає замовлень у цьому фільтрі"}
+                        {filterStatus === "archived" ? "Архів порожній" : filterStatus === "deleted" ? "Кошик порожній" : search ? `Нічого не знайдено за запитом «${search}»` : "Немає замовлень у цьому фільтрі"}
                     </div>
                 ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -810,21 +827,41 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
                                             )}
                                         </div>
                                     )}
-                                    {isAdmin && (
-                                        <button onClick={e => archiveOrder(order.id, !order.archived, e)}
-                                            title={order.archived ? "Розархівувати" : "Архівувати"}
-                                            style={{ background: "transparent", border: "1px solid #eee", color: "#bbb", borderRadius: 6, padding: "5px 10px", fontSize: 12, cursor: "pointer", flexShrink: 0 }}
-                                            onMouseEnter={e => { e.currentTarget.style.borderColor = "#bbb"; e.currentTarget.style.color = "#555"; }}
-                                            onMouseLeave={e => { e.currentTarget.style.borderColor = "#eee"; e.currentTarget.style.color = "#bbb"; }}>
-                                            {order.archived ? "↩" : "🗄"}
+                                    {filterStatus === "deleted" ? (
+                                        isAdmin && (<>
+                                            <button onClick={e => restoreOrder(order.id, e)}
+                                                title="Відновити"
+                                                style={{ background: "#e4ffe4", border: "1px solid #4aba4a50", color: "#1a6a1a", borderRadius: 6, padding: "5px 10px", fontSize: 12, cursor: "pointer", flexShrink: 0, fontWeight: 600 }}
+                                                onMouseEnter={e => { e.currentTarget.style.background = "#c8f0c8"; }}
+                                                onMouseLeave={e => { e.currentTarget.style.background = "#e4ffe4"; }}>
+                                                ↩ Відновити
+                                            </button>
+                                            <button onClick={e => permanentDelete(order.id, e)}
+                                                title="Видалити назавжди"
+                                                style={{ background: "transparent", border: "1px solid #f99", color: "#c55", borderRadius: 6, padding: "5px 10px", fontSize: 12, cursor: "pointer", flexShrink: 0 }}
+                                                onMouseEnter={e => { e.currentTarget.style.background = "#fff0f0"; }}
+                                                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+                                                ✕✕
+                                            </button>
+                                        </>)
+                                    ) : (<>
+                                        {isAdmin && (
+                                            <button onClick={e => archiveOrder(order.id, !order.archived, e)}
+                                                title={order.archived ? "Розархівувати" : "Архівувати"}
+                                                style={{ background: "transparent", border: "1px solid #eee", color: "#bbb", borderRadius: 6, padding: "5px 10px", fontSize: 12, cursor: "pointer", flexShrink: 0 }}
+                                                onMouseEnter={e => { e.currentTarget.style.borderColor = "#bbb"; e.currentTarget.style.color = "#555"; }}
+                                                onMouseLeave={e => { e.currentTarget.style.borderColor = "#eee"; e.currentTarget.style.color = "#bbb"; }}>
+                                                {order.archived ? "↩" : "🗄"}
+                                            </button>
+                                        )}
+                                        <button onClick={e => moveToTrash(order.id, e)}
+                                            title="В кошик"
+                                            style={{ background: "transparent", border: "1px solid #eee", color: "#ccc", borderRadius: 6, padding: "5px 10px", fontSize: 12, cursor: "pointer", flexShrink: 0 }}
+                                            onMouseEnter={e => { e.currentTarget.style.borderColor = "#f99"; e.currentTarget.style.color = "#c55"; }}
+                                            onMouseLeave={e => { e.currentTarget.style.borderColor = "#eee"; e.currentTarget.style.color = "#ccc"; }}>
+                                            🗑
                                         </button>
-                                    )}
-                                    <button onClick={e => deleteOrder(order.id, e)}
-                                        style={{ background: "transparent", border: "1px solid #eee", color: "#ccc", borderRadius: 6, padding: "5px 10px", fontSize: 12, cursor: "pointer", flexShrink: 0 }}
-                                        onMouseEnter={e => { e.currentTarget.style.borderColor = "#f99"; e.currentTarget.style.color = "#c55"; }}
-                                        onMouseLeave={e => { e.currentTarget.style.borderColor = "#eee"; e.currentTarget.style.color = "#ccc"; }}>
-                                        ✕
-                                    </button>
+                                    </>)}
                                 </div>
                             );
                         })}
