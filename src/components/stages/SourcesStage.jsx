@@ -285,7 +285,11 @@ export function SourcesStage({
           {commentAnalysis?.sourcesHints && (
             <div>
               <span style={{ fontSize: 11, color: "#8a6010", textTransform: "uppercase", letterSpacing: "0.5px" }}>Від клієнта: </span>
-              {commentAnalysis.sourcesHints}
+              {Array.isArray(commentAnalysis.sourcesHints)
+                ? commentAnalysis.sourcesHints.join('; ')
+                : typeof commentAnalysis.sourcesHints === 'object'
+                  ? JSON.stringify(commentAnalysis.sourcesHints)
+                  : commentAnalysis.sourcesHints}
             </div>
           )}
         </div>

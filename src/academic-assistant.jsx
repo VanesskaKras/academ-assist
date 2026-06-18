@@ -273,7 +273,14 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
           }
           if (d.methodInfo) setMethodInfo(d.methodInfo);
           if (d.fileLabel) setFileLabel(d.fileLabel);
-          if (d.commentAnalysis) setCommentAnalysis(d.commentAnalysis);
+          if (d.commentAnalysis) {
+            const ca = d.commentAnalysis;
+            if (Array.isArray(ca.sourcesHints)) ca.sourcesHints = ca.sourcesHints.join('; ');
+            if (Array.isArray(ca.planHints)) ca.planHints = ca.planHints.join('; ');
+            if (Array.isArray(ca.textStructureHints)) ca.textStructureHints = ca.textStructureHints.join('; ');
+            if (Array.isArray(ca.writingHints)) ca.writingHints = ca.writingHints.join('; ');
+            setCommentAnalysis(ca);
+          }
           if (d.illustrations?.length) setIllustrations(d.illustrations);
           if (d.illustrationDescs?.length) setIllustrationDescs(d.illustrationDescs);
           if (d.clientMaterialsSummary) setClientMaterialsSummary(d.clientMaterialsSummary);
@@ -602,6 +609,11 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
           null, SYS_JSON_SHORT, 600, null, MODEL_FAST);
         const caMatch = caRaw.match(/\{[\s\S]*\}/);
         const caParsed = JSON.parse(caMatch?.[0] || caRaw);
+        // Нормалізуємо поля, які AI може повернути як масив замість рядка
+        if (Array.isArray(caParsed.sourcesHints)) caParsed.sourcesHints = caParsed.sourcesHints.join('; ');
+        if (Array.isArray(caParsed.planHints)) caParsed.planHints = caParsed.planHints.join('; ');
+        if (Array.isArray(caParsed.textStructureHints)) caParsed.textStructureHints = caParsed.textStructureHints.join('; ');
+        if (Array.isArray(caParsed.writingHints)) caParsed.writingHints = caParsed.writingHints.join('; ');
         setCommentAnalysis(caParsed);
         await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, commentAnalysis: caParsed, ...(appendicesText?.trim() ? { appendicesText } : {}), stage: "parsed", status: "new" });
       } catch (e) {
