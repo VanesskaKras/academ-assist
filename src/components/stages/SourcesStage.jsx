@@ -79,6 +79,7 @@ export function SourcesStage({
   suggestedSources, phraseGroups, sourcesSearchLoading, sourcesSearchError, doSearchSources, doRegenSectionSources,
   doGenKeywords, doAddAllCitations, onAddAbstracts, onFinish, remapLoading, onProceedToWriting, setStage,
   onRegenWithNewSources, hasGeneratedContent, onSave, saving,
+  citStyleOverride, sourcesOrderOverride, onCitStyleChange, onSourcesOrderChange,
 }) {
   const [selectedSugg, setSelectedSugg] = useState({});
   const [suggOpen, setSuggOpen] = useState({});
@@ -90,6 +91,11 @@ export function SourcesStage({
   let runningIdx = 0;
   const missingSections = mainSections.filter(s => !(citInputs[s.id] || "").trim());
   const visibleSections = showMissingSources ? missingSections : mainSections;
+
+  const _extraHints = (methodInfo?.otherRequirements || "") + " " + (methodInfo?.citationStyle || "");
+  const defaultCitStyle = methodInfo?.sourcesStyle || (/APA/i.test(_extraHints) ? "APA" : /MLA/i.test(_extraHints) ? "MLA" : "ДСТУ 8302:2015");
+  const effectiveCitStyle = citStyleOverride || defaultCitStyle;
+  const effectiveSourcesOrder = sourcesOrderOverride || methodInfo?.sourcesOrder || "alphabetical";
 
   const isChecked = (secId, paperId) =>
     (selectedSugg[secId] || []).some(p => p.id === paperId);
@@ -247,6 +253,47 @@ export function SourcesStage({
           <div style={{ fontSize: 12, color: "#8a1a1a", background: "#fff5f5", border: "1px solid #e8b0b0", borderRadius: 6, padding: "4px 10px" }}>
             ⚠ {kwError}
           </div>
+        )}
+      </div>
+
+      {/* ── Налаштування оформлення джерел ── */}
+      <div style={{ padding: "10px 16px", background: "#f5f2eb", border: "1.5px solid #d4cfc4", borderRadius: 8, marginBottom: 18, display: "flex", gap: 20, flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ fontSize: 11, color: "#666", fontWeight: 600, flexShrink: 0 }}>Оформлення:</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+          <span style={{ fontSize: 11, color: "#888" }}>Стиль</span>
+          {["ДСТУ 8302:2015", "APA", "MLA"].map(s => {
+            const active = effectiveCitStyle === s;
+            return (
+              <button key={s} onClick={() => onCitStyleChange(s)}
+                style={{ fontSize: 11, padding: "3px 10px", borderRadius: 5, border: `1.5px solid ${active ? "#1a1a14" : "#c8c2b5"}`, background: active ? "#1a1a14" : "transparent", color: active ? "#f5f2eb" : "#555", cursor: "pointer", fontFamily: "inherit" }}>
+                {s}
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+          <span style={{ fontSize: 11, color: "#888" }}>Порядок</span>
+          {[["alphabetical", "🔤 Алфавіт"], ["appearance", "🔢 За порядком"]].map(([val, label]) => {
+            const active = effectiveSourcesOrder === val;
+            return (
+              <button key={val} onClick={() => onSourcesOrderChange(val)}
+                style={{ fontSize: 11, padding: "3px 10px", borderRadius: 5, border: `1.5px solid ${active ? "#1a1a14" : "#c8c2b5"}`, background: active ? "#1a1a14" : "transparent", color: active ? "#f5f2eb" : "#555", cursor: "pointer", fontFamily: "inherit" }}>
+                {label}
+              </button>
+            );
+          })}
+        </div>
+        {(citStyleOverride || sourcesOrderOverride) && (
+          <span style={{ fontSize: 10, color: "#e8a050", display: "flex", alignItems: "center", gap: 4 }}>
+            ✏ змінено вручну ·{" "}
+            <button onClick={() => { onCitStyleChange(null); onSourcesOrderChange(null); }}
+              style={{ fontSize: 10, background: "transparent", border: "none", color: "#e8a050", cursor: "pointer", textDecoration: "underline", padding: 0, fontFamily: "inherit" }}>
+              скинути
+            </button>
+          </span>
+        )}
+        {!citStyleOverride && !sourcesOrderOverride && (methodInfo?.sourcesStyle || methodInfo?.sourcesOrder) && (
+          <span style={{ fontSize: 10, color: "#888", fontStyle: "italic" }}>за методичкою</span>
         )}
       </div>
 

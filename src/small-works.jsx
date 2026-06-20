@@ -61,6 +61,48 @@ function renderWithTables(text) {
   });
 }
 
+// ── Компонент-панель налаштувань оформлення джерел ──
+function SmCitSettings({ effectiveCitStyle, effectiveSourcesOrder, citStyleOverride, sourcesOrderOverride, onCitStyleChange, onSourcesOrderChange }) {
+  return (
+    <div style={{ padding: "10px 14px", background: "#f5f2eb", border: "1.5px solid #d4cfc4", borderRadius: 8, marginBottom: 16, display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
+      <span style={{ fontSize: 11, color: "#666", fontWeight: 600, flexShrink: 0 }}>Оформлення:</span>
+      <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+        <span style={{ fontSize: 11, color: "#888" }}>Стиль</span>
+        {["ДСТУ 8302:2015", "APA", "MLA"].map(s => {
+          const active = effectiveCitStyle === s;
+          return (
+            <button key={s} onClick={() => onCitStyleChange(s)}
+              style={{ fontSize: 11, padding: "3px 10px", borderRadius: 5, border: `1.5px solid ${active ? "#1a1a14" : "#c8c2b5"}`, background: active ? "#1a1a14" : "transparent", color: active ? "#f5f2eb" : "#555", cursor: "pointer", fontFamily: "inherit" }}>
+              {s}
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+        <span style={{ fontSize: 11, color: "#888" }}>Порядок</span>
+        {[["alphabetical", "🔤 Алфавіт"], ["appearance", "🔢 За порядком"]].map(([val, label]) => {
+          const active = effectiveSourcesOrder === val;
+          return (
+            <button key={val} onClick={() => onSourcesOrderChange(val)}
+              style={{ fontSize: 11, padding: "3px 10px", borderRadius: 5, border: `1.5px solid ${active ? "#1a1a14" : "#c8c2b5"}`, background: active ? "#1a1a14" : "transparent", color: active ? "#f5f2eb" : "#555", cursor: "pointer", fontFamily: "inherit" }}>
+              {label}
+            </button>
+          );
+        })}
+      </div>
+      {(citStyleOverride || sourcesOrderOverride) && (
+        <span style={{ fontSize: 10, color: "#e8a050", display: "flex", alignItems: "center", gap: 4 }}>
+          ✏ змінено вручну ·{" "}
+          <button onClick={() => { onCitStyleChange(null); onSourcesOrderChange(null); }}
+            style={{ fontSize: 10, background: "transparent", border: "none", color: "#e8a050", cursor: "pointer", textDecoration: "underline", padding: 0, fontFamily: "inherit" }}>
+            скинути
+          </button>
+        </span>
+      )}
+    </div>
+  );
+}
+
 // ─────────────────────────────────────────────
 // Конфіг типів робіт
 // ─────────────────────────────────────────────
@@ -230,6 +272,8 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [dbLoading, setDbLoading] = useState(false);
+  const [citStyleOverride, setCitStyleOverride] = useState(null);        // "ДСТУ 8302:2015" | "APA" | "MLA" | null
+  const [sourcesOrderOverride, setSourcesOrderOverride] = useState(null); // "alphabetical" | "appearance" | null
   const [docxLoading, setDocxLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -312,6 +356,8 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
           if (d.sourcesFormatted) setSourcesFormatted(d.sourcesFormatted);
           if (d.methodInfo) setMethodInfo(d.methodInfo);
           if (d.methodRequirements) setMethodRequirements(d.methodRequirements);
+          if (d.citStyleOverride) setCitStyleOverride(d.citStyleOverride);
+          if (d.sourcesOrderOverride) setSourcesOrderOverride(d.sourcesOrderOverride);
           if (d.refSecPapers) setRefSecPapers(d.refSecPapers);
           if (d.refSecPhrases) setRefSecPhrases(d.refSecPhrases);
           if (d.presReady) setPresReady(d.presReady);
@@ -656,7 +702,16 @@ formatting — поля сторінки в мм якщо явно вказан�
   // ── Генерація із текстового поля джерел ──
   const doGenerateFromCitText = async () => {
     let citations = citText.split("\n").map(s => s.trim()).filter(Boolean);
-    if (info?.sortAlpha) citations.sort((a, b) => a.localeCompare(b, "uk"));
+    const _smEffOrder1 = sourcesOrderOverride || methodInfo?.sourcesOrder;
+    const _smShouldSort1 = _smEffOrder1 ? _smEffOrder1 === "alphabetical" : info?.sortAlpha;
+    if (_smShouldSort1) {
+      const _isLaw = s => /^(закон|кодекс|конституція|постанова|указ\s|декрет\s|наказ\s|розпорядження\s)/i.test(s.trim());
+      citations.sort((a, b) => {
+        const lawA = _isLaw(a), lawB = _isLaw(b);
+        if (lawA !== lawB) return lawA ? -1 : 1;
+        return a.localeCompare(b, "uk");
+      });
+    }
     setTezyCitations(citations);
     await saveToFirestore({ tezyCitations: citations, citText, stage: "writing", status: "sources_done" });
     setStage("writing");
@@ -674,7 +729,16 @@ formatting — поля сторінки в мм якщо явно вказан�
         if (!raw.includes(l)) raw.push(l);
       });
     });
-    if (info?.sortAlpha) raw.sort((a, b) => a.localeCompare(b, "uk"));
+    const _smEffOrder2 = sourcesOrderOverride || methodInfo?.sourcesOrder;
+    const _smShouldSort2 = _smEffOrder2 ? _smEffOrder2 === "alphabetical" : info?.sortAlpha;
+    if (_smShouldSort2) {
+      const _isLaw = s => /^(закон|кодекс|конституція|постанова|указ\s|декрет\s|наказ\s|розпорядження\s)/i.test(s.trim());
+      raw.sort((a, b) => {
+        const lawA = _isLaw(a), lawB = _isLaw(b);
+        if (lawA !== lawB) return lawA ? -1 : 1;
+        return a.localeCompare(b, "uk");
+      });
+    }
     setTezyCitations(raw);
     setSourcesFormatted(false);
     await saveToFirestore({ tezyCitations: raw, citInputs, stage: "writing", status: "sources_done", sourcesFormatted: false });
@@ -687,12 +751,13 @@ formatting — поля сторінки в мм якщо явно вказан�
     setRunning(true); setLoadMsg("Форматую та розставляю джерела...");
     try {
       const allStructured = Object.values(citStructured).flat();
+      const _effectiveSmOrder = sourcesOrderOverride || methodInfo?.sourcesOrder;
       const { refList, oldToNew, refCiteText } = await remapAndFormatCitations({
         citations: tezyCitations,
         citStructured: allStructured,
-        citStyle: info?.citStyle,
+        citStyle: citStyleOverride || info?.citStyle,
         language: info?.language,
-        sourcesOrder: methodInfo?.sourcesOrder,
+        sourcesOrder: _effectiveSmOrder,
         sourcesGrouping: methodInfo?.sourcesGrouping,
         sourcesFormatRules: methodInfo?.sourcesFormatRules,
         callClaude,
@@ -1888,9 +1953,19 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
             const chapSections = refSections.filter(s => !["intro", "conclusions"].includes(s.id));
             const perSec = Math.ceil(minSrc / Math.max(chapSections.length, 1));
             let runIdx = 0;
+            const _smDefaultStyle = methodInfo?.sourcesStyle || (info?.citStyle) || "ДСТУ 8302:2015";
+            const _smEffStyle = citStyleOverride || _smDefaultStyle;
+            const _smEffOrder = sourcesOrderOverride || methodInfo?.sourcesOrder || (info?.sortAlpha ? "alphabetical" : "appearance");
             return (
               <div className="fade">
                 <Heading>📚 Джерела</Heading>
+                {/* ── Налаштування оформлення ── */}
+                <SmCitSettings
+                  effectiveCitStyle={_smEffStyle} effectiveSourcesOrder={_smEffOrder}
+                  citStyleOverride={citStyleOverride} sourcesOrderOverride={sourcesOrderOverride}
+                  onCitStyleChange={(s) => { setCitStyleOverride(s); saveToFirestore({ citStyleOverride: s }); }}
+                  onSourcesOrderChange={(o) => { setSourcesOrderOverride(o); saveToFirestore({ sourcesOrderOverride: o }); }}
+                />
                 {refSections.map(sec => {
                   const isStructural = sec.id === "intro" || sec.id === "conclusions";
                   const secLines = (citInputs[sec.id] || "").split("\n").map(l => l.trim()).filter(Boolean);
@@ -2055,9 +2130,19 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
 
           // ── ТЕЗИ / СТАТТЯ / ЕСЕ: існуючий UI ──
           const scholaUrl = `https://scholar.google.com/scholar?hl=uk&as_sdt=0%2C5&as_ylo=2021&q=${encodeURIComponent(info?.topic || "")}&btnG=`;
+          const _smDefaultStyle2 = methodInfo?.sourcesStyle || info?.citStyle || "ДСТУ 8302:2015";
+          const _smEffStyle2 = citStyleOverride || _smDefaultStyle2;
+          const _smEffOrder2b = sourcesOrderOverride || methodInfo?.sourcesOrder || (info?.sortAlpha ? "alphabetical" : "appearance");
           return (
             <div className="fade">
               <Heading>📚 Джерела</Heading>
+              {/* ── Налаштування оформлення ── */}
+              <SmCitSettings
+                effectiveCitStyle={_smEffStyle2} effectiveSourcesOrder={_smEffOrder2b}
+                citStyleOverride={citStyleOverride} sourcesOrderOverride={sourcesOrderOverride}
+                onCitStyleChange={(s) => { setCitStyleOverride(s); saveToFirestore({ citStyleOverride: s }); }}
+                onSourcesOrderChange={(o) => { setSourcesOrderOverride(o); saveToFirestore({ sourcesOrderOverride: o }); }}
+              />
 
               {/* Інфо-блок */}
               <div style={{ background: "#f0f8e8", border: "1px solid #c8dfa0", borderRadius: 8, padding: "12px 16px", marginBottom: 18, fontSize: 13, color: "#3a6010" }}>

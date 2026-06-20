@@ -163,6 +163,8 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [saved, setSaved] = useState(false);
   const [dbLoading, setDbLoading] = useState(false);
   const [remapLoading, setRemapLoading] = useState(false);
+  const [citStyleOverride, setCitStyleOverride] = useState(null);       // "ДСТУ 8302:2015" | "APA" | "MLA" | null
+  const [sourcesOrderOverride, setSourcesOrderOverride] = useState(null); // "alphabetical" | "appearance" | null
   // For regenerating a single section
   const [regenId, setRegenId] = useState(null);
   const [regenPrompt, setRegenPrompt] = useState("");
@@ -307,6 +309,8 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
           if (d.slideJson) setSlideJson(d.slideJson);
           if (d.presentationReady) setPresentationReady(true);
           if (d.correctionHistory?.length) setCorrectionHistory(d.correctionHistory);
+          if (d.citStyleOverride) setCitStyleOverride(d.citStyleOverride);
+          if (d.sourcesOrderOverride) setSourcesOrderOverride(d.sourcesOrderOverride);
           if (d.stage) {
             const keys = STAGE_KEYS_SOURCES_FIRST;
             const stageIdx = keys.indexOf(d.stage);
@@ -2952,7 +2956,8 @@ ${secBlock}
   // ── Джерела ──
   const buildGlobalRefList = () => {
     const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
-    const isAlphabetical = !methodInfo?.sourcesOrder || methodInfo?.sourcesOrder === "alphabetical";
+    const _effectiveOrder = sourcesOrderOverride || methodInfo?.sourcesOrder;
+    const isAlphabetical = !_effectiveOrder || _effectiveOrder === "alphabetical";
 
     // Збираємо всі унікальні джерела з прив'язкою до секцій (за порядком появи)
     const rawRefs = [], secRefMapRaw = {}, seenRefs = new Map();
@@ -2972,17 +2977,20 @@ ${secBlock}
       });
     });
 
-    // Якщо алфавітний порядок — сортуємо і перебудовуємо індекси
+    // Якщо алфавітний порядок — сортуємо і перебудовуємо індекси (законодавчі акти першими)
     let allRefs, indexMap;
     if (isAlphabetical) {
       const _workLang = info?.language || "Українська";
       const _latinFirst = /англ|english|польськ|polish|нім|german|франц|french|іспан|spanish|італ|italian/i.test(_workLang);
+      const _isLaw = s => /^(закон|кодекс|конституція|постанова|указ\s|декрет\s|наказ\s|розпорядження\s)/i.test(s.trim());
       const langGroup = (s) => {
         const isCyrillic = /^[А-ЯҐЄІЇа-яґєії]/i.test(s);
         return _latinFirst ? (isCyrillic ? 1 : 0) : (isCyrillic ? 0 : 1);
       };
       const _groupLocales = _latinFirst ? ["en", "uk"] : ["uk", "en"];
       const sorted = [...rawRefs].sort((a, b) => {
+        const lawA = _isLaw(a), lawB = _isLaw(b);
+        if (lawA !== lawB) return lawA ? -1 : 1;
         const ga = langGroup(a), gb = langGroup(b);
         if (ga !== gb) return ga - gb;
         return a.localeCompare(b, _groupLocales[ga]);
@@ -3003,7 +3011,7 @@ ${secBlock}
     return { allRefs, secRefMap };
   };
 
-  const globalRefData = useMemo(() => buildGlobalRefList(), [citInputs, sections]); // eslint-disable-line
+  const globalRefData = useMemo(() => buildGlobalRefList(), [citInputs, sections, sourcesOrderOverride, methodInfo]); // eslint-disable-line
 
   const doAddAllCitations = async () => {
     const { allRefs, secRefMap } = globalRefData;
@@ -3015,7 +3023,8 @@ ${secBlock}
 
     // ── Визначаємо формат посилань за стилем ──
     const _extraText = (methodInfo?.otherRequirements || "") + " " + (methodInfo?.citationStyle || "") + " " + (commentAnalysis?.sourcesHints || "");
-    const sourcesStyle = methodInfo?.sourcesStyle
+    const sourcesStyle = citStyleOverride
+      || methodInfo?.sourcesStyle
       || (/APA/i.test(_extraText) ? "APA" : /MLA/i.test(_extraText) ? "MLA" : "ДСТУ 8302:2015");
     const isAPA = /APA/i.test(sourcesStyle);
     const isMLA = /MLA/i.test(sourcesStyle);
@@ -3023,7 +3032,8 @@ ${secBlock}
     // ── СПОЧАТКУ: Форматування списку джерел (Gemini) ──
     const today = new Date();
     const accessDate = `${String(today.getDate()).padStart(2, "0")}.${String(today.getMonth() + 1).padStart(2, "0")}.${today.getFullYear()}`;
-    const isAlphabeticalOrder = !methodInfo?.sourcesOrder || methodInfo?.sourcesOrder === "alphabetical";
+    const _effectiveOrderAdd = sourcesOrderOverride || methodInfo?.sourcesOrder;
+    const isAlphabeticalOrder = !_effectiveOrderAdd || _effectiveOrderAdd === "alphabetical";
     const isApaStyle = /APA/i.test(sourcesStyle);
     const isDstu = /ДСТУ/i.test(sourcesStyle);
     const sourcesOrder = (isAlphabeticalOrder || isDstu) ? "Список відсортований за алфавітом." : "Список у порядку першої появи у тексті.";
@@ -3353,17 +3363,28 @@ ${secsSummary}
     setAllCitLoading(false);
   };
 
+  const handleCitStyleChange = (style) => {
+    setCitStyleOverride(style);
+    saveToFirestore({ citStyleOverride: style });
+  };
+  const handleSourcesOrderChange = (order) => {
+    setSourcesOrderOverride(order);
+    saveToFirestore({ sourcesOrderOverride: order });
+  };
+
   // ── sources-first: ремаппінг локальних [N] → глобальні номери + форматування списку ──
   const doRemapCitations = async () => {
     setRemapLoading(true);
     const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
     const _extraText2 = (methodInfo?.otherRequirements || "") + " " + (methodInfo?.citationStyle || "") + " " + (commentAnalysis?.sourcesHints || "");
-    const sourcesStyle = methodInfo?.sourcesStyle
+    const sourcesStyle = citStyleOverride
+      || methodInfo?.sourcesStyle
       || (/APA/i.test(_extraText2) ? "APA" : /MLA/i.test(_extraText2) ? "MLA" : "ДСТУ 8302:2015");
     const isAPA = /APA/i.test(sourcesStyle);
     const isMLA = /MLA/i.test(sourcesStyle);
     const isDstu = /ДСТУ/i.test(sourcesStyle);
-    const isAlphabeticalOrder = !methodInfo?.sourcesOrder || methodInfo?.sourcesOrder === "alphabetical";
+    const _effectiveOrderRemap = sourcesOrderOverride || methodInfo?.sourcesOrder;
+    const isAlphabeticalOrder = !_effectiveOrderRemap || _effectiveOrderRemap === "alphabetical";
 
     // ── 1. Локальна карта: secId → { localN: sourceText } ──
     const secLocalSources = {};
@@ -3391,9 +3412,10 @@ ${secsSummary}
       });
     });
 
-    // ── 3. Алфавітне сортування якщо потрібно ──
+    // ── 3. Алфавітне сортування (законодавчі акти першими, потім за алфавітом) ──
     const _remapWorkLang = info?.language || "Українська";
     const _remapLatinFirst = /англ|english|польськ|polish|нім|german|франц|french|іспан|spanish|італ|italian/i.test(_remapWorkLang);
+    const _remapIsLaw = s => /^(закон|кодекс|конституція|постанова|указ\s|декрет\s|наказ\s|розпорядження\s)/i.test(s.trim());
     let allRefs, indexMap;
     if (isAlphabeticalOrder || isDstu) {
       const langGroup = s => {
@@ -3402,6 +3424,8 @@ ${secsSummary}
       };
       const _remapGroupLocales = _remapLatinFirst ? ["en", "uk"] : ["uk", "en"];
       const sorted = [...rawRefs].sort((a, b) => {
+        const lawA = _remapIsLaw(a), lawB = _remapIsLaw(b);
+        if (lawA !== lawB) return lawA ? -1 : 1;
         const ga = langGroup(a), gb = langGroup(b);
         if (ga !== gb) return ga - gb;
         return a.localeCompare(b, _remapGroupLocales[ga]);
@@ -3930,6 +3954,8 @@ ${refLines2.join("\n")}`;
               keywords={keywords} kwLoading={kwLoading}
               kwError={kwError} setKwError={setKwError}
               methodInfo={methodInfo} commentAnalysis={commentAnalysis}
+              citStyleOverride={citStyleOverride} sourcesOrderOverride={sourcesOrderOverride}
+              onCitStyleChange={handleCitStyleChange} onSourcesOrderChange={handleSourcesOrderChange}
               allRefs={globalRefData.allRefs} refList={refList}
               showMissingSources={showMissingSources}
               citInputsSnapshot={citInputsSnapshot} allCitLoading={allCitLoading}

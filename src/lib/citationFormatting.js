@@ -60,15 +60,18 @@ export async function remapAndFormatCitations({
 
   const latinFirst = /англ|english|польськ|polish|нім|german|франц|french|іспан|spanish|італ|italian/i.test(language || "");
 
-  // ── 1. Сортування (алфавіт + групування кирилиця/латиниця) ──
+  // ── 1. Сортування (алфавіт + групування кирилиця/латиниця + закони першими) ──
   let sorted;
   if (isAlphabeticalOrder || isDstu) {
+    const isLaw = s => /^(закон|кодекс|конституція|постанова|указ\s|декрет\s|наказ\s|розпорядження\s)/i.test(s.trim());
     const langGroup = s => {
       const isCyrillic = /^[А-ЯҐЄІЇа-яґєії]/i.test(s);
       return latinFirst ? (isCyrillic ? 1 : 0) : (isCyrillic ? 0 : 1);
     };
     const groupLocales = latinFirst ? ["en", "uk"] : ["uk", "en"];
     sorted = [...citations].sort((a, b) => {
+      const lawA = isLaw(a), lawB = isLaw(b);
+      if (lawA !== lawB) return lawA ? -1 : 1;
       const ga = langGroup(a), gb = langGroup(b);
       if (ga !== gb) return ga - gb;
       return a.localeCompare(b, groupLocales[ga]);
