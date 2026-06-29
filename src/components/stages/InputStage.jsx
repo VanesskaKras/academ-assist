@@ -66,6 +66,18 @@ export function InputStage({
         </div>
       </div>
 
+      <div style={S(COLORS.materials)}>
+        <FieldBox label="Матеріали клієнта — PDF, TXT або текст (необов'язково, до 10 файлів)" labelColor={COLORS.materials} tooltip={"PDF або TXT файли аналізуються і резюмуються.\nРезультат використовується при написанні тексту як додатковий контекст.\nПідходить для: статей, розділів підручника, власних матеріалів клієнта."}>
+          <ClientMaterialsZone
+            materials={clientMaterials}
+            onAdd={onAddClientMaterial}
+            onRemove={onRemoveClientMaterial}
+            manualText={clientMaterialsText}
+            onManualText={setClientMaterialsText}
+          />
+        </FieldBox>
+      </div>
+
       <div style={S(COLORS.anketa)}>
         <FieldBox label="Готова анкета / додаток (необов'язково)" labelColor={COLORS.anketa} tooltip={"Якщо заповнено — вставляється як Додаток А.\nВесь практичний розділ (методологія, таблиці, аналіз) будується точно по цій анкеті.\nЯкщо порожньо — анкета генерується автоматично перед початком написання."}>
           <textarea value={appendicesText} onChange={e => setAppendicesText(e.target.value)}
@@ -104,18 +116,6 @@ export function InputStage({
           ) : (
             <DropZone fileLabel={null} onFile={(name, b64) => setIllustrationsPdf({ name, b64 })} accept=".pdf" />
           )}
-        </FieldBox>
-      </div>
-
-      <div style={S(COLORS.materials)}>
-        <FieldBox label="Матеріали клієнта — PDF, TXT або текст (необов'язково, до 10 файлів)" labelColor={COLORS.materials} tooltip={"PDF або TXT файли аналізуються і резюмуються.\nРезультат використовується при написанні тексту як додатковий контекст.\nПідходить для: статей, розділів підручника, власних матеріалів клієнта."}>
-          <ClientMaterialsZone
-            materials={clientMaterials}
-            onAdd={onAddClientMaterial}
-            onRemove={onRemoveClientMaterial}
-            manualText={clientMaterialsText}
-            onManualText={setClientMaterialsText}
-          />
         </FieldBox>
       </div>
 
