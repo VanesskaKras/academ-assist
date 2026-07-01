@@ -348,14 +348,18 @@ function mapOpenAlex(p, forceLang) {
 }
 
 // ── BASE (Bielefeld Academic Search Engine) — індексує укр. репозиторії ──
+// Немає CORS у браузері — проксимо через /api/search-base (Vercel)
 async function fetchBASE(query, limit) {
   try {
     const q = `${query} dclanguage:uk`;
-    const url = `https://api.base-search.net/cgi-bin/BaseHttpSearchInterface.fcgi?func=PerformSearch&query=${encodeURIComponent(q)}&format=json&hits=${limit}`;
-    const r = await fetch(url, { cache: 'no-store' });
-    if (!r.ok) return [];
-    const d = await r.json();
-    return (d.response?.docs || []).filter(p => {
+    const res = await fetch('/api/search-base', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: q, limit }),
+    });
+    if (!res.ok) return [];
+    const d = await res.json();
+    return (d.docs || []).filter(p => {
       const title = Array.isArray(p.dctitle) ? p.dctitle[0] : p.dctitle;
       return title && !isBlocked(p);
     });
@@ -418,15 +422,16 @@ async function fetchScholar(query, limit) {
 }
 
 // ── CORE.ac.uk — агрегатор відкритого доступу, індексує репозиторії ──
-const CORE_KEY = typeof import.meta !== 'undefined' ? (import.meta.env?.VITE_CORE_API_KEY || '') : '';
-
+// Немає CORS у браузері — проксимо через /api/search-core (Vercel)
 async function fetchCORE(query, limit) {
-  if (!CORE_KEY) return [];
   try {
-    const url = `https://api.core.ac.uk/v3/search/works?q=${encodeURIComponent(query)}&limit=${limit}&apiKey=${CORE_KEY}`;
-    const r = await fetch(url, { cache: 'no-store' });
-    if (!r.ok) return [];
-    const d = await r.json();
+    const res = await fetch('/api/search-core', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, limit }),
+    });
+    if (!res.ok) return [];
+    const d = await res.json();
     return (d.results || []).filter(p => p.title && !isBlocked(p));
   } catch { return []; }
 }
