@@ -298,11 +298,15 @@ function applyYearFilter(papers, keywords = []) {
 }
 
 // ── OpenAlex ──
+// Анонімний пошук (search=/title.search) зараз обмежується OpenAlex 503-кою —
+// потрібен api_key для стабільного доступу
+const OA_KEY = typeof import.meta !== 'undefined' ? (import.meta.env?.VITE_OPENALEX_API_KEY || '') : '';
+const OA_KEY_PARAM = OA_KEY ? `&api_key=${OA_KEY}` : '';
 const OA_BASE = 'https://api.openalex.org/works';
 const OA_FIELDS = 'title,authorships,publication_year,primary_location,doi,language,id,biblio,abstract_inverted_index,type';
 
 async function openAlexSearch(query, filterStr, limit, page = 1) {
-  const url = `${OA_BASE}?search=${encodeURIComponent(query)}&filter=${filterStr}&per_page=${limit}&page=${page}&select=${OA_FIELDS}`;
+  const url = `${OA_BASE}?search=${encodeURIComponent(query)}&filter=${filterStr}&per_page=${limit}&page=${page}&select=${OA_FIELDS}${OA_KEY_PARAM}`;
   const r = await fetch(url, { cache: 'no-store' });
   if (!r.ok) return [];
   const d = await r.json();
@@ -312,7 +316,7 @@ async function openAlexSearch(query, filterStr, limit, page = 1) {
 // Пошук тільки по заголовках — набагато точніший
 async function openAlexTitleSearch(query, filters, limit, page = 1) {
   const filterParams = filters.map(f => `filter=${f}`).join('&');
-  const url = `${OA_BASE}?filter=title.search:${encodeURIComponent(query)}&${filterParams}&per_page=${limit}&page=${page}&select=${OA_FIELDS}`;
+  const url = `${OA_BASE}?filter=title.search:${encodeURIComponent(query)}&${filterParams}&per_page=${limit}&page=${page}&select=${OA_FIELDS}${OA_KEY_PARAM}`;
   const r = await fetch(url, { cache: 'no-store' });
   if (!r.ok) return [];
   const d = await r.json();
@@ -468,7 +472,7 @@ function mapCORE(result) {
 async function fetchOpenAlexBooks(query, limit) {
   try {
     const yr = `publication_year:>${YEAR_LOOSE - 1}`;
-    const url = `${OA_BASE}?search=${encodeURIComponent(query)}&filter=type:book,language:uk,${yr}&per_page=${limit}&select=${OA_FIELDS}`;
+    const url = `${OA_BASE}?search=${encodeURIComponent(query)}&filter=type:book,language:uk,${yr}&per_page=${limit}&select=${OA_FIELDS}${OA_KEY_PARAM}`;
     const r = await fetch(url, { cache: 'no-store' });
     if (!r.ok) return [];
     const d = await r.json();
