@@ -31,7 +31,7 @@ const DATE_RANGES = [
 
 function getOrderStatus(o) {
     const s = o.status || "new";
-    if (o.stage === "sources" || (s === "done" && (!o.refList || o.refList.length === 0))) return "sources";
+    if (s !== "done" && o.stage === "sources") return "sources";
     return s;
 }
 

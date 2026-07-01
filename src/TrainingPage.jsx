@@ -680,34 +680,46 @@ export default function TrainingPage({ onBack }) {
 
     useEffect(() => { loadSections(); }, []);
 
+    // Firestore disallows arrays directly nested inside arrays, so table rows (array of
+    // arrays) are stored as an array of {cells: [...]} objects instead. Carousel slides can
+    // themselves contain table blocks, so this conversion has to recurse into slide content too.
+    const deserializeBlocks = (blocks) => (blocks || []).map(block => {
+        if (block.type === "table") {
+            return {
+                ...block,
+                rows: (block.rows || []).map(row => (Array.isArray(row) ? row : (row.cells || []))),
+            };
+        }
+        if (block.type === "carousel") {
+            return {
+                ...block,
+                slides: (block.slides || []).map(slide => ({ ...slide, content: deserializeBlocks(slide.content) })),
+            };
+        }
+        return block;
+    });
+
+    const serializeBlocks = (blocks) => (blocks || []).map(block => {
+        if (block.type === "table") {
+            return { ...block, rows: (block.rows || []).map(row => ({ cells: row })) };
+        }
+        if (block.type === "carousel") {
+            return {
+                ...block,
+                slides: (block.slides || []).map(slide => ({ ...slide, content: serializeBlocks(slide.content) })),
+            };
+        }
+        return block;
+    });
+
     const deserializeSection = (raw) => ({
         ...raw,
-        subsections: (raw.subsections || []).map(sub => ({
-            ...sub,
-            content: (sub.content || []).map(block => {
-                if (block.type !== "table") return block;
-                return {
-                    ...block,
-                    rows: (block.rows || []).map(row =>
-                        Array.isArray(row) ? row : (row.cells || [])
-                    ),
-                };
-            }),
-        })),
+        subsections: (raw.subsections || []).map(sub => ({ ...sub, content: deserializeBlocks(sub.content) })),
     });
 
     const serializeSection = (sec) => ({
         ...sec,
-        subsections: (sec.subsections || []).map(sub => ({
-            ...sub,
-            content: (sub.content || []).map(block => {
-                if (block.type !== "table") return block;
-                return {
-                    ...block,
-                    rows: (block.rows || []).map(row => ({ cells: row })),
-                };
-            }),
-        })),
+        subsections: (sec.subsections || []).map(sub => ({ ...sub, content: serializeBlocks(sub.content) })),
     });
 
     const loadSections = async () => {

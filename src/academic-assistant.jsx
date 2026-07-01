@@ -10,10 +10,12 @@ import { exportToDocx, exportPlanToDocx, exportAppendixToDocx, exportSpeechToDoc
 import { exportToPptxFile } from "./lib/exportPptx.js";
 import { callClaude, callGemini, MODEL, MODEL_FAST } from "./lib/api.js";
 import { playDoneSound } from "./lib/audio.js";
-import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildIllustrationsPdfPrompt, buildClientMaterialsAnalysisPrompt, buildCorrectionsAnalysisPrompt, buildCorrectionRewritePrompt, buildFileToSectionsPrompt } from "./lib/prompts.js";
+import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildIllustrationsPdfPrompt, buildClientMaterialsAnalysisPrompt, buildCorrectionsAnalysisPrompt, buildCorrectionRewritePrompt, buildFileToSectionsPrompt, buildAnnotationPrompt, buildAnnotationRegenPrompt } from "./lib/prompts.js";
 import { FIELD_LABELS, isPsychoPed, isEcon, hasEmpiricalResearch, getEmpiricalSections, getEconSections, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, getLangLabels } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
+import { getAcademicDefaults, classifyAppendixItem, normalizeWorkType } from "./lib/academicDefaults.js";
 import { searchByPhrase, filterSourcesWithGemini } from "./lib/sourcesSearch.js";
+import { extractPageRange, pickPageInRange } from "./lib/citationFormatting.js";
 import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
 import { StagePills } from "./components/StagePills.jsx";
 import { FieldBox, Heading, NavBtn, PrimaryBtn, GreenBtn, SaveIndicator } from "./components/Buttons.jsx";
@@ -45,6 +47,23 @@ function fixMixedScript(text, lang) {
       : w
   );
 }
+
+// ── Профіль завдань дослідження у вступі: к-сть і характер за типом роботи ──
+function getIntroTasksProfile(type, course, mainSecsLength, isLarge) {
+  const wt = normalizeWorkType(type, course);
+  const PROFILES = {
+    course_1_2: { count: 4, nature: "переважно теоретичного й оглядового характеру (аналіз літератури, порівняння наукових підходів, узагальнення понять); практична складова мінімальна або відсутня" },
+    course_3_4: { count: 4, nature: "переважно теоретичного й оглядового характеру (аналіз літератури, порівняння наукових підходів, узагальнення понять); практична складова мінімальна або відсутня" },
+    bachelor: { count: 5, nature: "поєднання теоретичної частини з аналітичною/практичною складовою (аналіз конкретного підприємства, кейсу чи даних) — обов'язково" },
+    master: { count: 6, nature: "з вищою вимогою до наукової новизни: включають не лише аналіз, а й розробку власних пропозицій, моделей чи рекомендацій з обґрунтуванням їх ефективності" },
+  };
+  if (PROFILES[wt]) {
+    return { count: Math.min(PROFILES[wt].count, Math.max(mainSecsLength, 1)), nature: PROFILES[wt].nature };
+  }
+  return { count: Math.min(mainSecsLength, isLarge ? 8 : 5), nature: "" };
+}
+
+const INTRO_TASKS_MERGE_SPLIT_RULE = `Розділи плану — це змістова основа, а не буквальні назви завдань: сформулюй кожне завдання як дієслівну наукову конструкцію ("проаналізувати...", "систематизувати...", "розробити...", "обґрунтувати..." тощо). Якщо розділів більше, ніж потрібно завдань — об'єднай суміжні за змістом розділи в одне завдання; якщо розділів менше — розбий один розділ на 2 завдання за логічними частинами його підрозділів.`;
 
 // ── Helpers for section reordering ──
 
@@ -165,6 +184,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [remapLoading, setRemapLoading] = useState(false);
   const [citStyleOverride, setCitStyleOverride] = useState(null);       // "ДСТУ 8302:2015" | "APA" | "MLA" | null
   const [sourcesOrderOverride, setSourcesOrderOverride] = useState(null); // "alphabetical" | "appearance" | null
+  const [citFootnotes, setCitFootnotes] = useState(false);               // true → ДСТУ-посилання у виносках
   // For regenerating a single section
   const [regenId, setRegenId] = useState(null);
   const [regenPrompt, setRegenPrompt] = useState("");
@@ -184,6 +204,9 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [appendicesText, setAppendicesText] = useState("");
   const [appendicesLoading, setAppendicesLoading] = useState(false);
   const [appendicesCustomPrompt, setAppendicesCustomPrompt] = useState("");
+  const [annotationUk, setAnnotationUk] = useState("");
+  const [annotationEn, setAnnotationEn] = useState("");
+  const [annotationLoading, setAnnotationLoading] = useState(false);
   const [titlePage, setTitlePage] = useState("");
   const [titlePageLines, setTitlePageLines] = useState(null);
   const [showMissingSources, setShowMissingSources] = useState(false);
@@ -304,6 +327,8 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
           if (d.keywords) setKeywords(d.keywords);
           if (d.speechText) setSpeechText(d.speechText);
           if (d.appendicesText) setAppendicesText(d.appendicesText.replace(/\n{2,}/g, '\n'));
+          if (d.annotationUk) setAnnotationUk(d.annotationUk);
+          if (d.annotationEn) setAnnotationEn(d.annotationEn);
           if (d.titlePage) setTitlePage(d.titlePage);
           if (d.titlePageLines) setTitlePageLines(d.titlePageLines);
           if (d.slideJson) setSlideJson(d.slideJson);
@@ -311,6 +336,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
           if (d.correctionHistory?.length) setCorrectionHistory(d.correctionHistory);
           if (d.citStyleOverride) setCitStyleOverride(d.citStyleOverride);
           if (d.sourcesOrderOverride) setSourcesOrderOverride(d.sourcesOrderOverride);
+          if (d.citFootnotes !== undefined) setCitFootnotes(d.citFootnotes);
           if (d.stage) {
             const keys = STAGE_KEYS_SOURCES_FIRST;
             const stageIdx = keys.indexOf(d.stage);
@@ -377,7 +403,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
       saveToFirestore({ tplText, comment, clientPlan, appendicesText, clientMaterialsText, fileLabel, stage: "input", status: "new" });
     }, 1500);
     return () => clearTimeout(inputSaveTimer.current);
-  }, [tplText, comment, clientPlan, appendicesText, clientMaterialsText]); // eslint-disable-line
+  }, [tplText, comment, clientPlan, appendicesText, clientMaterialsText, stage]); // eslint-disable-line
 
   // ── Авто-збереження sections при ручному редагуванні плану ──
   const planSaveTimer = useRef(null);
@@ -902,6 +928,14 @@ Return ONLY JSON without markdown:
 
     const commentHasConcl = commentAnalysis?.planHints ? /висновк[^\s]*\s+до\s+/i.test(commentAnalysis.planHints) : false;
 
+    // Дефолти за типом роботи — fallback коли клієнт нічого не вказав
+    const acadDefaults = (!commentAnalysis?.practicalApproach && !commentAnalysis?.researchDesign)
+      ? getAcademicDefaults(d.subject, d.type, d.course, d.topic)
+      : null;
+    const acadDefaultsBlock = acadDefaults
+      ? `\nRESEARCH TYPE FOR PRACTICAL CHAPTER (use as context for subsection naming): ${acadDefaults.researchType}. Methods: ${acadDefaults.methods.join(", ")}.${acadDefaults.notes ? ` Note: ${acadDefaults.notes}.` : ""}`
+      : "";
+
     if (methodInfo) {
       // Маємо готову структурну інфу з методички — генеруємо план без PDF
       const chapCount = methodInfo.chaptersCount || (totalPages >= 40 ? 3 : 2);
@@ -920,7 +954,7 @@ Return ONLY JSON without markdown:
 
       const planPrompt = `Create a plan for ${d.type} on topic: "${d.topic}". Field: ${d.subject}. Pages: ${totalPages}.
 Language of work: ${d.language || "Ukrainian"} — all labels and titles must be in this language.
-${clientPlan?.trim() ? `\nCLIENT'S REQUIRED CHAPTER TITLES — use these EXACTLY as sectionTitle values, in this exact order, do NOT rename or reorder them:\n${clientPlan}\n` : (commentAnalysis?.planHints ? `\nCLIENT HINTS:\n${commentAnalysis.planHints}\n` : "")}
+${clientPlan?.trim() ? `\nCLIENT'S REQUIRED CHAPTER TITLES — use these EXACTLY as sectionTitle values, in this exact order, do NOT rename or reorder them:\n${clientPlan}\n` : (commentAnalysis?.planHints ? `\nCLIENT HINTS:\n${commentAnalysis.planHints}\n` : "")}${acadDefaultsBlock}
 GUIDE REQUIREMENTS:
 - Chapters: ${chapCount}
 ${subsCountLine}
@@ -988,7 +1022,7 @@ Order: subsections grouped by chapter, then intro, conclusions, sources.`;
     const psychoPedNamingHint = isPsychoPed(d)
       ? `\nIMPORTANT for Chapter ${empiricalChapNum} (empirical research): subsections should cover: research methodology and sample description, questionnaire/survey instrument, results analysis and interpretation.`
       : "";
-    const namingPrompt = `For ${d.type} on topic "${d.topic}" (field: ${d.subject}) create subsection titles.${commentAnalysis?.planHints ? `\nHINTS:\n${commentAnalysis.planHints}` : ""}${psychoPedNamingHint}\nFixed structure:\n${planSecs.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type)).map(s => `${s.id} [${s.sectionTitle}]`).join("\n")}\n\nReturn ONLY JSON without markdown:\n{"titles":{"1.1":"Title","1.2":"Title","2.1":"Title","2.2":"Title"}}`;
+    const namingPrompt = `For ${d.type} on topic "${d.topic}" (field: ${d.subject}) create subsection titles.${commentAnalysis?.planHints ? `\nHINTS:\n${commentAnalysis.planHints}` : ""}${psychoPedNamingHint}${acadDefaultsBlock}\nFixed structure:\n${planSecs.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type)).map(s => `${s.id} [${s.sectionTitle}]`).join("\n")}\n\nReturn ONLY JSON without markdown:\n{"titles":{"1.1":"Title","1.2":"Title","2.1":"Title","2.2":"Title"}}`;
     try {
       await new Promise(r => setTimeout(r, 2000)); // пауза перед запитом
       const raw = await callClaude([{ role: "user", content: namingPrompt }], null, SYS_JSON, 1000, null, MODEL_FAST);
@@ -1217,7 +1251,9 @@ Return ONLY JSON:
     setSections(prev => [...prev].sort((a, b) => ORDER.indexOf(a.type) - ORDER.indexOf(b.type)));
     setContent({}); setGenIdx(0); setPaused(false); writingDoneRef.current = false;
     const practicalApproachForGen = commentAnalysis?.practicalApproach;
-    if (!appendicesText && (practicalApproachForGen || isPsychoPed(info))) doGenAppendices();
+    const acadDefaultsForGen = getAcademicDefaults(info?.subject, info?.type, info?.course, info?.topic);
+    const needsAppendixForGen = practicalApproachForGen || isPsychoPed(info) || (acadDefaultsForGen?.appendicesAiGen?.length > 0);
+    if (!appendicesText && needsAppendixForGen) doGenAppendices();
     setStage("sources");
     generationStartRef.current = Date.now();
     saveToFirestore({ workflowMode: "sources-first", stage: "sources", status: "writing", generationStartedAt: new Date().toISOString() });
@@ -1325,7 +1361,8 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
         const label = s?.label || k;
         if (!isLargeWork) return `=== ${label} ===\n${v}`;
         const sameChapter = k.split(".")[0] === currentChapter;
-        if (sameChapter) return `=== ${label} ===\n${v}`;
+        const isIntroForConclusions = sec.type === "conclusions" && s?.type === "intro";
+        if (sameChapter || isIntroForConclusions) return `=== ${label} ===\n${v}`;
         // Інші розділи: лише перший змістовний абзац
         const firstPara = v.split("\n").find(p => p.trim().length > 60) || v.slice(0, 400);
         return `=== ${label} [перший абзац] ===\n${firstPara}`;
@@ -1353,7 +1390,8 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
     if (sec.type === "intro") {
       // Завдань — зазвичай стільки скільки підрозділів основної частини
       const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
-      const tasksCount = Math.min(mainSecs.length, isLarge ? 8 : 5);
+      const tasksProfile = getIntroTasksProfile(d.type, d.course, mainSecs.length, isLarge);
+      const tasksCount = tasksProfile.count;
 
       // Будуємо список елементів вступу: стандартні + з методички
       const lc = getLangLabels(lang);
@@ -1380,7 +1418,8 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
         }
         if (/завдання|tasks|zadania|aufgaben|tareas|úkoly|úlohy/i.test(comp)) {
           const phrase = il.tasks || "Завдання дослідження:";
-          return `${label} (${tasksCount}): write in format "${phrase}" — then numbered list matching sections:\n${mainSecs.map((s, j) => `   ${j + 1}) "${s.label}"`).join("\n")}`;
+          const natureLine = tasksProfile.nature ? ` Завдання мають бути ${tasksProfile.nature}.` : "";
+          return `${label}: write in format "${phrase}" — then exactly ${tasksCount} numbered tasks.${natureLine} ${INTRO_TASKS_MERGE_SPLIT_RULE}\nСтруктура плану роботи (змістова основа для завдань):\n${mainSecs.map((s, j) => `   ${j + 1}) "${s.label}"`).join("\n")}`;
         }
         if (/об.єкт|przedmiot|gegenstand|objeto/i.test(comp) && !/предмет|subject|obiekt/i.test(comp)) {
           const phrase = il.object || "Об'єкт дослідження –";
@@ -1424,19 +1463,21 @@ IMPORTANT: use already written sections (in context) for exact formulation of me
 
     } else if (sec.type === "conclusions") {
       const conclReq = methodInfo?.conclusionsRequirements || "";
+      const mainSecsForConcl = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
+      const conclTasksProfile = getIntroTasksProfile(d.type, d.course, mainSecsForConcl.length, isLarge);
 
       instruction = `Напиши ВИСНОВКИ для ${d.type} на тему "${d.topic}".
 ${conclReq ? `ВИМОГИ МЕТОДИЧКИ: ${conclReq}\n` : ""}${commentAnalysis?.textStructureHints ? `ВИМОГИ КЛІЄНТА ДО СТРУКТУРИ (ОБОВ'ЯЗКОВО): ${commentAnalysis.textStructureHints}\n` : ""}
 ПРАВИЛА:
-- Обсяг: ~${(sec.pages || 2) * 270} слів (~${sec.pages} стор.). Напиши НЕ МЕНШЕ вказаного обсягу.
-- Кожен абзац = один конкретний результат або висновок дослідження
+- Обсяг: приблизно ${(sec.pages || 2) * 225} слів, ±10% (~${sec.pages} стор.).
 - Перший абзац — загальний підсумок мети і що вдалось досягти
-- Далі — по одному абзацу на кожен виконаний підрозділ/завдання, конкретні результати
+- Далі — рівно ${conclTasksProfile.count} абзаців, по одному на кожне завдання дослідження, сформульоване у вступі (текст вступу є в контексті) — у тому самому порядку. Якщо завдання у вступі поєднувало кілька підрозділів плану — зведи їхні конкретні результати в одному абзаці; якщо завдання було розбите з одного підрозділу — розподіли результати на відповідну кількість абзаців
+- Кожен такий абзац = конкретний результат, що відповідає своєму завданню
 - Останній абзац — перспективи подальших досліджень
 - НЕ повторювати те що сказано у вступі, НЕ вводити нову інформацію
 - Без посилань. Без жирного. Без нумерації. Пиши суцільними абзацами, не використовуй жодних списків.
 
-Спирайся на весь написаний текст роботи (є в контексті) — формулюй конкретні висновки на основі реального змісту підрозділів.`;
+Спирайся на весь написаний текст роботи, включно з формулюваннями завдань у вступі (є в контексті) — формулюй конкретні висновки на основі реального змісту підрозділів.`;
 
     } else if (sec.type === "chapter_conclusion") {
       const chapNum = sec.chapterNum || sec.id.split(".")[0];
@@ -1498,6 +1539,14 @@ ${methodInfo?.chapterConclusionRequirements ? `ВИМОГИ МЕТОДИЧКИ: 
       // Якщо клієнт явно вказав нон-анкетний тип практики — не нав'язуємо емпіричний блок
       const practicalApproachEarly = commentAnalysis?.practicalApproach;
       const suppressEmpiricalBlock = !!(practicalApproachEarly && practicalApproachEarly !== "questionnaire");
+
+      // Дефолтні методи за типом роботи — fallback коли клієнт нічого не вказав
+      const secAcadDefaults = (!rd && !methodInfoHasEmpirical && !practicalApproachEarly && ["analysis", "recommendations"].includes(sec.type))
+        ? getAcademicDefaults(d.subject, d.type, d.course, d.topic)
+        : null;
+      const secMethodsHint = secAcadDefaults?.methods?.length
+        ? `\nМЕТОДИ ДОСЛІДЖЕННЯ (за типом роботи): ${secAcadDefaults.researchType}. Використовувані методи: ${secAcadDefaults.methods.join(", ")}.${secAcadDefaults.notes ? ` Примітка: ${secAcadDefaults.notes}.` : ""}`
+        : "";
 
       // Будуємо читабельний рядок з researchDesign або fallback
       const buildEmpHint = (rd, legacyHint) => {
@@ -1605,11 +1654,11 @@ ${appendixBlock}${empHint ? `ВИМОГА: ${empHint}\n` : ""}Рекоменда
 
       instruction = `Напиши підрозділ "${sec.label}" для ${d.type} на тему "${d.topic}". Галузь: ${d.subject}.
 Тип підрозділу: ${typeHints[sec.type] || "основний"}.
-${methodReq ? `ВИМОГИ МЕТОДИЧКИ ДО ЦЬОГО РОЗДІЛУ: ${methodReq}` : ""}${empiricalBlock}${practicalBlock}${econBlock}${sourcesBlock}
+${methodReq ? `ВИМОГИ МЕТОДИЧКИ ДО ЦЬОГО РОЗДІЛУ: ${methodReq}` : ""}${empiricalBlock}${practicalBlock}${econBlock}${secMethodsHint}${sourcesBlock}
 ПЛАН РОБОТИ (для розуміння структури та уникнення повторів):
 ${planSummary}
 
-Обсяг: ~${Math.round((sec.pages || 1) * 270)} слів (~${sec.pages} стор.). Напиши НЕ МЕНШЕ вказаного обсягу.
+Обсяг: приблизно ${Math.round((sec.pages || 1) * 225)} слів, ±10% (~${sec.pages} стор.).
 Не обривай текст. Завершуй підсумковим абзацом. ${citNote} Без жирного.
 ЗАБОРОНЕНО вставляти будь-які внутрішні підназви, заголовки абзаців або окремі рядки-мітки ("Загальна картина", "Результати аналізу" тощо). Кожен рядок тексту — повне речення, рядок таблиці або підпис до таблиці/рисунка.
 Абзаци мають різнитись за довжиною: чергуй короткі (2-3 речення) з довшими (5-7 речень).`;
@@ -1696,7 +1745,8 @@ ${planSummary}
 
     if (sec.type === "intro") {
       const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
-      const tasksCount = Math.min(mainSecs.length, isLarge ? 8 : 5);
+      const tasksProfile = getIntroTasksProfile(d.type, d.course, mainSecs.length, isLarge);
+      const tasksCount = tasksProfile.count;
       const lc = getLangLabels(lang);
       const il = lc.introLabels || {};
       const defaultComponents = lc.defaultIntroComponents || ["актуальність теми", "мета дослідження", "завдання дослідження", "об'єкт дослідження", "предмет дослідження", "методи дослідження", "практичне значення дослідження", "структура роботи"];
@@ -1717,7 +1767,8 @@ ${planSummary}
         }
         if (/завдання|tasks|zadania|aufgaben|tareas|úkoly/i.test(comp)) {
           const phrase = il.tasks || "Завдання дослідження:";
-          return `${label} (${tasksCount} tasks): write as "${phrase}" — numbered list.`;
+          const natureLine = tasksProfile.nature ? ` Tasks should be ${tasksProfile.nature}.` : "";
+          return `${label}: write as "${phrase}" — exactly ${tasksCount} numbered tasks.${natureLine} ${INTRO_TASKS_MERGE_SPLIT_RULE}\nPlan structure (content basis for tasks):\n${mainSecs.map((s, j) => `   ${j + 1}) "${s.label}"`).join("\n")}`;
         }
         if (/об.єкт|object|przedmiot\s+bad|gegenstand|objeto\s+de/i.test(comp)) {
           const phrase = il.object || "Об'єкт дослідження –";
@@ -1759,12 +1810,14 @@ ${methodInfo?.otherRequirements ? `\nMETHOD REQUIREMENTS: ${methodInfo.otherRequ
 IMPORTANT: use the written chapters (provided in context) for precise formulation of methods, sample, object. Follow the format of each element strictly. Do NOT bold or italicize anything. No citations. EXCEPTION: research tasks — write as a numbered list (1. 2. 3. ...), each task on a new line.${customInstructions}`;
 
     } else if (sec.type === "conclusions") {
+      const mainSecsForConcl = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
+      const conclTasksProfile = getIntroTasksProfile(d.type, d.course, mainSecsForConcl.length, isLarge);
       instruction = `Перепиши ВИСНОВКИ для ${d.type} на тему "${d.topic}".
 ${methodInfo?.conclusionsRequirements ? `ВИМОГИ МЕТОДИЧКИ: ${methodInfo.conclusionsRequirements}\n` : ""}
-Обсяг: ~${(sec.pages || 2) * 225} слів (~${sec.pages} стор.). Не перевищуй вказаний обсяг. Кожен абзац = один конкретний результат.
-Перший — загальний підсумок. Далі по одному на кожен підрозділ. Останній — перспективи.
+Обсяг: приблизно ${(sec.pages || 2) * 225} слів, ±10% (~${sec.pages} стор.). Кожен абзац = один конкретний результат.
+Перший — загальний підсумок. Далі — рівно ${conclTasksProfile.count} абзаців, по одному на кожне завдання дослідження, сформульоване у вступі (текст вступу є в контексті), у тому самому порядку; якщо завдання поєднувало кілька підрозділів — зведи результати в одному абзаці, якщо було розбите з одного підрозділу — розподіли на відповідну кількість абзаців. Останній — перспективи.
 НЕ повторювати вступ. НЕ вводити нове. Без посилань. Без жирного. Без нумерації.
-Спирайся на весь написаний текст роботи (є в контексті).${customInstructions}`;
+Спирайся на весь написаний текст роботи, включно з формулюваннями завдань у вступі (є в контексті).${customInstructions}`;
     } else {
       const empSecsRegen = getEmpiricalSections(sections, d, commentAnalysis, methodInfo);
       const isEmpChapterRegen = empSecsRegen.chapterSectionIds.includes(sec.id);
@@ -1874,7 +1927,7 @@ ${empHintRegen ? `ВИМОГА: ${empHintRegen}\n` : ""}Рекомендації
         : "";
       instruction = `Перепиши підрозділ "${sec.label}" для ${d.type} на тему "${d.topic}". Галузь: ${d.subject}.
 ${empiricalBlockRegen}${econBlockRegen}
-${clientReqsRegen ? `ВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО виконати):\n${clientReqsRegen}\n` : ""}Обсяг: ~${Math.round((sec.pages || 1) * 270)} слів (~${sec.pages} стор.). Напиши НЕ МЕНШЕ вказаного обсягу.
+${clientReqsRegen ? `ВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО виконати):\n${clientReqsRegen}\n` : ""}Обсяг: приблизно ${Math.round((sec.pages || 1) * 225)} слів, ±10% (~${sec.pages} стор.).
 Не обривай текст. Завершуй підсумковим абзацом. Без посилань. Без жирного.
 ЗАБОРОНЕНО вставляти будь-які внутрішні підназви, заголовки абзаців або окремі рядки-мітки. Кожен рядок тексту — повне речення, рядок таблиці або підпис до таблиці/рисунка.${customInstructions}${illBlockRegen}${clientMaterialsBlockRegen}`;
     }
@@ -2049,6 +2102,8 @@ ${slidesOutline}
 
       const rdApp = commentAnalysis?.researchDesign ?? (commentAnalysis?.empiricalHints ? { instrumentType: "questionnaire", groups: [], comparisonRequired: false, biographicalFields: [], statisticalMinN: null } : null);
       const hasEmpiricalApp = hasEmpiricalResearch(commentAnalysis, methodInfo) || isPsychoPed(info) || hasEmpChapter;
+      // Дефолти за типом роботи — скільки окремих інструментів (методик) очікується, якщо клієнт нічого не вказав
+      const acadDefaultsApp = !rdApp ? getAcademicDefaults(info?.subject, info?.type, info?.course, info?.topic) : null;
 
       // Будуємо блок вимог з researchDesign
       const empClientBlock = (() => {
@@ -2079,12 +2134,14 @@ ${bioFieldsLine}
 В кінці: "Дякуємо за участь у дослідженні!"`;
 
       const buildScalePrompt = (appendixLabel) => `Перший рядок: ${appendixLabel}
-Другий рядок: назва методики відповідно до теми роботи: "${info?.topic}".
-Опис методики: мета, сфера застосування, кількість тверджень.
-Інструкція для респондента (2-3 речення).
-20-25 тверджень або запитань відповідно до психологічної шкали за темою роботи: "${info?.topic}".
-Шкала відповідей: 1-4 або 1-5 балів, або варіанти "так/ні/важко відповісти".
-Ключ до обробки: розподіл балів, рівні (низький/середній/високий).`;
+Обери РЕАЛЬНУ, загальновідому стандартизовану психологічну методику (шкалу, опитувальник, тест), яка справді існує і відповідає темі роботи "${info?.topic}" (наприклад методики Айзенка, Розенберга, Кеттелла, Холмса-Рея, Спілбергера (оригінальна версія STAI, без російських адаптацій) та подібні залежно від теми).
+СТРОГО ЗАБОРОНЕНО обирати методику, автор або адаптатор якої є російським чи білоруським науковцем (наприклад НЕ використовуй "Спілбергера-Ханіна" — Ханін є радянським/російським психологом; НЕ використовуй методики з прізвищами авторів-адаптаторів з Росії чи Білорусі). Обирай лише методики західних, українських або інших міжнародних (не рос./білор.) авторів. Якщо загальновідома методика має поширену в СНД назву з російським прізвищем — використай оригінальну назву автора (напр. оригінал Spielberger State-Trait Anxiety Inventory, без "-Ханіна").
+Другий рядок: справжня назва цієї методики та автор(и).
+Опис методики: мета, сфера застосування, кількість тверджень — як в оригіналі.
+Інструкція для респондента — як в оригінальній методиці.
+Відтвори пункти методики максимально точно як в офіційному оригіналі (ця методика загальновідома і вільно публікується в методичних збірниках, тому відтворення доречне). Якщо не повністю впевнений у дослівному формулюванні якогось пункту — формулюй його максимально близько до відомої структури та змісту цієї методики, не вигадуй нову методику з нуля.
+Шкала відповідей та ключ до обробки — як в оригінальній методиці (розподіл балів, рівні).
+СТРОГО ЗАБОРОНЕНО видавати вигадану (неіснуючу) методику за реальну. Якщо для теми справді немає підходящої стандартизованої методики — обери найближчу за тематикою реальну (не рос./білор. автора) і зазнач можливість адаптації.`;
 
       const buildFitnessTestPrompt = (appendixLabel) => `Перший рядок: ${appendixLabel}
 Другий рядок: назва батареї тестів відповідно до теми роботи: "${info?.topic}".
@@ -2100,6 +2157,47 @@ ${bioFieldsLine}
 Формувальний етап: короткий опис педагогічного впливу або програми.
 Контрольний етап: ті самі діагностичні інструменти для порівняння.
 Протокол фіксації результатів до і після.`;
+
+      // ── Спеціалізовані білдери для генерації Додатків за таблицею academicDefaults (не-психологічні спеціальності) ──
+      const buildDataTableAppendixPart = (slot, itemName, topic) => `${slot} — ${itemName}.
+Створи ілюстративну таблицю markdown (|---|---| формат) з реалістичними, правдоподібними даними відповідно до теми "${topic}". Підпис таблиці одним рядком перед нею. За потреби короткий пояснювальний коментар під таблицею (2-3 речення).`;
+
+      const buildSchemeAppendixPart = (slot, itemName, topic) => `${slot} — ${itemName}.
+Опиши схему/структуру у вигляді чіткого структурованого тексту (список рівнів, блоків і зв'язків між ними) відповідно до теми "${topic}". Це текстовий опис схеми, графічний рендер недоступний.`;
+
+      const buildProgramAppendixPart = (slot, itemName, topic) => `${slot} — ${itemName}.
+Розроби структуровану програму/методику/стратегію відповідно до теми "${topic}": мета, етапи або напрями роботи, конкретні заходи чи кроки, очікувані результати.`;
+
+      const buildDocumentAppendixPart = (slot, itemName, topic) => `${slot} — ${itemName}.
+Сформуй перелік або документ-зразок відповідно до теми "${topic}" — конкретні пункти, назви, реквізити. Не вигадуй реальні номери судових справ чи назви конкретних організацій, якщо вони не підтверджені контекстом.`;
+
+      const buildFormAppendixPart = (slot, itemName, topic) => `${slot} — ${itemName}.
+Створи бланк/протокол/гайд відповідно до теми "${topic}": структура, поля для заповнення, інструкція, 8-15 пунктів де доречно.`;
+
+      const APPENDIX_BUILDERS = {
+        data_table: buildDataTableAppendixPart,
+        scheme: buildSchemeAppendixPart,
+        program: buildProgramAppendixPart,
+        document: buildDocumentAppendixPart,
+        form: buildFormAppendixPart,
+      };
+
+      // Будує блок промпту: список кандидатів-додатків з таблиці, AI сам обирає що згенерувати
+      const buildAcadDefaultsAppendixBlock = (candidates, topic) => {
+        const parts = candidates.map(item => {
+          const type = classifyAppendixItem(item);
+          const builder = APPENDIX_BUILDERS[type] || buildFormAppendixPart;
+          return builder("[ДОДАТОК]", item, topic);
+        });
+        const abc = getLangLabels(lang).appendixLetters;
+        const sample = abc.slice(0, 3).join(", ");
+        return `Можливі додатки для цієї роботи (оціни кожен і обери лише ті, що дійсно логічно потрібні для теми "${topic}" — не обов'язково всі, зазвичай достатньо 2-4):
+
+${parts.join("\n\n---\n\n")}
+
+Для кожного обраного додатку постав послідовну позначку ДОДАТОК ${sample}... з ${abc.length === 24 ? "цієї української абетки (без Ґ, Є, З, І, Ї, Й, О, Ч, Ь)" : "латинської абетки"} (тільки для тих що дійсно генеруєш, без пропусків у нумерації).
+Якщо для якогось додатку доречно посилатись на конкретну методику, теорію, модель або стандарт — СТРОГО ЗАБОРОНЕНО використовувати ті, чий автор є російським чи білоруським науковцем. Обирай лише західні, українські або інші міжнародні (не рос./білор.) джерела.`;
+      };
 
       const practicalApproach = commentAnalysis?.practicalApproach;
 
@@ -2187,6 +2285,26 @@ ${buildQuestionnairePrompt("ДОДАТОК А", g1.name)}
 ДОДАТОК Б — анкета для групи: ${g2.name}${g2.criteria ? ` (${g2.criteria})` : ""}.
 ${buildQuestionnairePrompt("ДОДАТОК Б", g2.name)}
 ${rdApp.groups.length > 2 ? `\nПримітка: якщо є третя група (${rdApp.groups[2]?.name}), використовують той самий інструмент що й для найближчої за профілем групи.` : ""}`;
+        } else if (acadDefaultsApp?.instrumentsCount > 1) {
+          // Клієнт нічого не вказав — використовуємо дефолтну кількість методик за типом роботи
+          const n = acadDefaultsApp.instrumentsCount;
+          const letters = (getLangLabels(lang).appendixLetters || []).slice(0, n);
+          const blocks = letters.map((letter, i) => {
+            const label = `ДОДАТОК ${letter}`;
+            if (i === 0) return `${label} — авторська анкета.\n${buildQuestionnairePrompt(label, "")}`;
+            return `${label} — окрема реальна психологічна методика (шкала/тест), відмінна від анкети та інших методик у цьому списку.\n${buildScalePrompt(label)}`;
+          }).join("\n\n---\n\n");
+          prompt = `${header}
+
+Згенеруй ${n} окремі додатки — інструменти дослідження для емпіричної частини (${letters[0]} — авторська анкета, решта — реальні стандартизовані психологічні методики, кожна відмінна від інших), усі відповідно до теми.
+
+${blocks}`;
+        } else if (acadDefaultsApp?.appendicesAiGen?.length > 0) {
+          // Психолого-педагогічна робота без researchDesign і без instrumentsCount (напр. педагогіка) —
+          // використовуємо таблицю academicDefaults замість generic анкети
+          prompt = `${header}
+
+${buildAcadDefaultsAppendixBlock(acadDefaultsApp.appendicesAiGen, info?.topic)}`;
         } else {
           prompt = `${header}
 
@@ -2195,6 +2313,16 @@ ${rdApp.groups.length > 2 ? `\nПримітка: якщо є третя груп
 
 ${buildQuestionnairePrompt("ДОДАТОК А", rdApp?.groups?.[0]?.name || "")}`;
         }
+      } else if (!appendicesCustomPrompt.trim() && acadDefaultsApp?.appendicesAiGen?.length > 0) {
+        // Не-психологічна/педагогічна спеціальність без researchDesign — генеруємо за таблицею academicDefaults
+        const header = `Згенеруй Додатки для ${info?.type || "наукової роботи"} на тему "${info?.topic}". Галузь: ${info?.subject}.
+${planBlock}
+${methodBlock}
+${clientBlock}
+Мова: ${lang}. БЕЗ markdown, зірочок, жирного. Звичайний текст.`;
+        prompt = `${header}
+
+${buildAcadDefaultsAppendixBlock(acadDefaultsApp.appendicesAiGen, info?.topic)}`;
       } else {
         prompt = `Згенеруй розділ "Додатки" для ${info?.type || "наукової роботи"} на тему "${info?.topic}". Галузь: ${info?.subject || ""}.
 ${planBlock}
@@ -2575,7 +2703,8 @@ ${slideSpecs.join("\n\n")}
 
       if (sec.type === "intro") {
         const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
-        const tasksCount = Math.min(mainSecs.length, isLarge ? 8 : 5);
+        const tasksProfile = getIntroTasksProfile(d.type, d.course, mainSecs.length, isLarge);
+        const tasksCount = tasksProfile.count;
         const lc = getLangLabels(lang);
         const il = lc.introLabels || {};
         const defaultComponents = lc.defaultIntroComponents || ["актуальність теми", "мета дослідження", "завдання дослідження", "об'єкт дослідження", "предмет дослідження", "методи дослідження", "структура роботи"];
@@ -2596,7 +2725,8 @@ ${slideSpecs.join("\n\n")}
           }
           if (/завдання|tasks|zadania|aufgaben|tareas|úkoly/i.test(comp)) {
             const phrase = il.tasks || "Для досягнення мети поставлено такі завдання:";
-            return `${label} (${tasksCount} tasks): starts with "${phrase}" — list according to subsections:\n${mainSecs.map((s, j) => `  ${j + 1}) "${s.label}"`).join("\n")}`;
+            const natureLine = tasksProfile.nature ? ` Завдання мають бути ${tasksProfile.nature}.` : "";
+            return `${label}: starts with "${phrase}" — exactly ${tasksCount} numbered tasks.${natureLine} ${INTRO_TASKS_MERGE_SPLIT_RULE}\nСтруктура плану роботи (змістова основа для завдань):\n${mainSecs.map((s, j) => `  ${j + 1}) "${s.label}"`).join("\n")}`;
           }
           if (/об.єкт|object|przedmiot\s+bad|gegenstand|objeto\s+de/i.test(comp)) {
             const phrase = il.object || "Об'єктом дослідження є";
@@ -2636,12 +2766,13 @@ Use the written chapters (provided in context) for precise formulation of sample
 Do NOT bold anything. Do NOT add citations. Write as continuous prose paragraphs.`;
 
       } else if (sec.type === "conclusions") {
-        const conclusionsParas = isLarge ? "10-12" : "7";
+        const mainSecsForConcl = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
+        const conclTasksProfile = getIntroTasksProfile(d.type, d.course, mainSecsForConcl.length, isLarge);
         instruction = `Напиши ВИСНОВКИ для ${d.type} на тему "${d.topic}".
 ${methodInfo?.conclusionsRequirements ? `ВИМОГИ МЕТОДИЧКИ: ${methodInfo.conclusionsRequirements}\n` : ""}
-Обсяг: ${conclusionsParas} абзаців. Перший — загальний підсумок мети і досягнутого. Далі по одному абзацу на кожен підрозділ з конкретними результатами. Останній — перспективи подальших досліджень.
+Перший абзац — загальний підсумок мети і досягнутого. Далі — рівно ${conclTasksProfile.count} абзаців, по одному на кожне завдання дослідження, сформульоване у вступі (текст вступу є в контексті), у тому самому порядку; якщо завдання поєднувало кілька підрозділів — зведи результати в одному абзаці, якщо було розбите з одного підрозділу — розподіли на відповідну кількість абзаців. Останній абзац — перспективи подальших досліджень.
 Без посилань. Без жирного. Без нумерації. Суцільними абзацами.
-Спирайся на весь написаний текст роботи (є в контексті).`;
+Спирайся на весь написаний текст роботи, включно з формулюваннями завдань у вступі (є в контексті).`;
 
       } else if (sec.type === "chapter_conclusion") {
         const chapNum = sec.chapterNum || sec.id.split(".")[0];
@@ -2669,7 +2800,7 @@ ${methodInfo?.chapterConclusionRequirements ? `ВИМОГИ МЕТОДИЧКИ: 
 Тип: ${typeHints[sec.type] || "основний"}.
 ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBlock}
 
-Обсяг: ~${Math.round((sec.pages || 1) * 270)} слів (~${sec.pages} стор.). Напиши НЕ МЕНШЕ вказаного обсягу.
+Обсяг: приблизно ${Math.round((sec.pages || 1) * 225)} слів, ±10% (~${sec.pages} стор.).
 Не обривай текст. Завершуй підсумковим абзацом. Без посилань [1],[2]. Без жирного.
 ЗАБОРОНЕНО вставляти будь-які внутрішні підназви, заголовки абзаців або окремі рядки-мітки. Кожен рядок тексту — повне речення, рядок таблиці або підпис до таблиці/рисунка.
 Абзаци різняться за довжиною: чергуй короткі (2-3 речення) з довшими (5-7 речень).`;
@@ -3036,6 +3167,7 @@ ${secBlock}
     const isAlphabeticalOrder = !_effectiveOrderAdd || _effectiveOrderAdd === "alphabetical";
     const isApaStyle = /APA/i.test(sourcesStyle);
     const isDstu = /ДСТУ/i.test(sourcesStyle);
+    const isFootnoteMode = citFootnotes && isDstu;
     const sourcesOrder = (isAlphabeticalOrder || isDstu) ? "Список відсортований за алфавітом." : "Список у порядку першої появи у тексті.";
     const _isLatinWork = /англ|english|польськ|polish|нім|german|франц|french|іспан|spanish|італ|italian/i.test(lang);
     const defaultGrouping = _isLatinWork
@@ -3141,9 +3273,12 @@ ${refLines.join("\n")}`;
 
     // Будуємо карту "номер → текст посилання" з ВІДФОРМАТОВАНОГО списку (щоб мати точні номери сторінок)
     // Якщо Gemini не повернув результат — fallback на raw
-    const fmtLines = fmtResult
+    // Якщо Claude повернув іншу кількість рядків ніж вхідних джерел — це невирівняний список;
+    // у такому разі повертаємось до сирого allRefs, щоб нумерація не "розʼїхалась"
+    const _parsedFmt = fmtResult
       ? fmtResult.split("\n").filter(Boolean).map(l => l.replace(/^\d+\.\s*/, ""))
-      : allRefs;
+      : null;
+    const fmtLines = (_parsedFmt && _parsedFmt.length === allRefs.length) ? _parsedFmt : allRefs;
     const refCiteText = {};
     fmtLines.forEach((ref, i) => {
       const n = i + 1;
@@ -3158,6 +3293,10 @@ ${refLines.join("\n")}`;
       } else if (isMLA) {
         const surnameMatch = ref.match(/(?:^|[\s,&])([А-ЯҐЄІЇа-яґєіїA-Za-z]{3,})/);
         refCiteText[n] = `(${surnameMatch?.[1] || `Автор${n}`})`;
+      } else if (isFootnoteMode) {
+        // Маркер для exportToDocx — буде замінений на справжню Word-виноску
+        // з повним описом джерела, узятим зі сформатованого списку.
+        refCiteText[n] = `%%FN${n}%%`;
       } else {
         // ДСТУ та інші нумеровані стилі — витягуємо сторінку з raw-запису (allRefs),
         // щоб не залежати від можливого переупорядкування Gemini (ДСТУ-групи)
@@ -3246,55 +3385,59 @@ ${secsSummary}
           newContent[sec.id] = result;
         });
 
-        // ── Фолбек: примусово вставити джерела що так і не потрапили в текст ──
-        const placedNums = new Set();
-        secsWithRefs.forEach(sec => {
-          const text = newContent[sec.id] || "";
-          const matches = [...text.matchAll(/\[(\d+)[,\]]/g)];
-          matches.forEach(m => placedNums.add(Number(m[1])));
-          // APA/MLA: витягуємо номери через refCiteText
-          Object.entries(refCiteText).forEach(([n, cite]) => {
-            if (text.includes(cite)) placedNums.add(Number(n));
-          });
-        });
-
-        const allSourceNums = allRefs.map((_, i) => i + 1);
-        const unplaced = allSourceNums.filter(n => !placedNums.has(n));
-
-        if (unplaced.length > 0) {
-          // Для кожного нерозставленого — знаходимо підрозділ де воно є в secRefMap,
-          // і вставляємо в перший підходящий абзац без посилання
-          const insertCite = (text, cite) => {
-            const lines = text.split("\n");
-            const hasCite = l => /\[\d+/.test(l) || Object.values(refCiteText).some(c => l.includes(c));
-            // Шукаємо перший непустий абзац без посилання
-            for (let i = 0; i < lines.length; i++) {
-              const l = lines[i];
-              if (!l.trim() || isTableRow(l) || hasCite(l)) continue;
-              const trimmed = l.trimEnd();
-              const last = trimmed.slice(-1);
-              lines[i] = [".", "!", "?", "…"].includes(last)
-                ? trimmed.slice(0, -1) + " " + cite + last
-                : trimmed + " " + cite + ".";
-              return lines.join("\n");
-            }
-            return text; // якщо не знайшли місця — повертаємо без змін
-          };
-
-          unplaced.forEach(n => {
-            if (!refCiteText[n]) return;
-            // Знаходимо підрозділи де це джерело має бути
-            const targetSecs = secsWithRefs.filter(sec => secRefMap[sec.id]?.includes(n));
-            // Якщо немає — беремо будь-який підрозділ з контентом
-            const candidates = targetSecs.length ? targetSecs : secsWithRefs;
-            for (const sec of candidates) {
-              const before = newContent[sec.id];
-              const after = insertCite(before, refCiteText[n]);
-              if (after !== before) { newContent[sec.id] = after; break; }
-            }
-          });
-        }
       } catch (e) { console.error("Citation batch error:", e); }
+    }
+
+    // ── Очищення: прибираємо номери поза діапазоном реального списку (будь-який стиль) ──
+    // Захищає від "осиротілих" [N] що виникають при розбіжності кількості рядків у Claude-відповіді
+    if (!isAPA && !isMLA) {
+      mainSecs.forEach(sec => {
+        if (!newContent[sec.id]) return;
+        newContent[sec.id] = newContent[sec.id].replace(/\[(\d+)(?:,\s*с\.\s*\d+)?\]/g, (match, n) => {
+          const num = Number(n);
+          return (num >= 1 && num <= fmtLines.length) ? match : "";
+        });
+      });
+    }
+
+    // ── Примусово вставляємо невикористані джерела — завжди, незалежно від результату LLM-виклику ──
+    if (secsWithRefs.length > 0) {
+      const placedNums = new Set();
+      secsWithRefs.forEach(sec => {
+        const text = newContent[sec.id] || "";
+        [...text.matchAll(/\[(\d+)[,\]]/g)].forEach(m => placedNums.add(Number(m[1])));
+        Object.entries(refCiteText).forEach(([n, cite]) => {
+          if (text.includes(cite)) placedNums.add(Number(n));
+        });
+      });
+      const unplaced = allRefs.map((_, i) => i + 1).filter(n => !placedNums.has(n));
+      if (unplaced.length > 0) {
+        const insertCite = (text, cite) => {
+          const lines = text.split("\n");
+          const hasCite = l => /\[\d+/.test(l) || Object.values(refCiteText).some(c => l.includes(c));
+          for (let i = 0; i < lines.length; i++) {
+            const l = lines[i];
+            if (!l.trim() || isTableRow(l) || hasCite(l)) continue;
+            const trimmed = l.trimEnd();
+            const last = trimmed.slice(-1);
+            lines[i] = [".", "!", "?", "…"].includes(last)
+              ? trimmed.slice(0, -1) + " " + cite + last
+              : trimmed + " " + cite + ".";
+            return lines.join("\n");
+          }
+          return text;
+        };
+        unplaced.forEach(n => {
+          if (!refCiteText[n]) return;
+          const targetSecs = secsWithRefs.filter(sec => secRefMap[sec.id]?.includes(n));
+          const candidates = targetSecs.length ? targetSecs : secsWithRefs;
+          for (const sec of candidates) {
+            const before = newContent[sec.id];
+            const after = insertCite(before, refCiteText[n]);
+            if (after !== before) { newContent[sec.id] = after; break; }
+          }
+        });
+      }
     }
 
     // ── Ренумерація для citation_order: привести номери до реального порядку появи в тексті ──
@@ -3371,6 +3514,68 @@ ${secsSummary}
     setSourcesOrderOverride(order);
     saveToFirestore({ sourcesOrderOverride: order });
   };
+  const handleCitFootnotesChange = (val) => {
+    setCitFootnotes(val);
+    saveToFirestore({ citFootnotes: val });
+  };
+
+  // ── Анотація (укр + англ) для магістерських/бакалаврських/дипломних робіт ──
+  const doGenAnnotation = async (contentForGen, refListForGen) => {
+    setAnnotationLoading(true);
+    try {
+      const intro = sections.find(s => s.type === "intro");
+      const concs = sections.find(s => s.type === "conclusions");
+      const introText = intro ? (contentForGen[intro.id] || "") : "";
+      const concsText = concs ? (contentForGen[concs.id] || "") : "";
+
+      const wt = normalizeWorkType(info?.type, info?.course);
+      const degreeLabel = wt === "master" ? "магістра (Master's)" : "бакалавра (Bachelor's)";
+      const chaptersCount = new Set(mainSections.map(s => s.id.split(".")[0])).size;
+      const sourcesCount = (refListForGen || refList || []).length;
+      const appendicesCount = (appendicesText.match(/^ДОДАТОК\s+[А-ЯA-Z]/gim) || []).length;
+      const pagesLabel = info?.pages || methodInfo?.totalPages || "";
+
+      const statsText = [
+        `Освітній ступінь: ${degreeLabel}`,
+        `Спеціальність/напрям: ${info?.subject || info?.direction || ""}`,
+        `Кількість розділів: ${chaptersCount}`,
+        `Кількість використаних джерел: ${sourcesCount}`,
+        appendicesCount ? `Кількість додатків: ${appendicesCount}` : "Додатків немає",
+        pagesLabel ? `Орієнтовний обсяг роботи: ${pagesLabel} сторінок` : "",
+      ].filter(Boolean).join("\n");
+
+      const prompt = buildAnnotationPrompt(info, methodInfo, statsText, introText, concsText);
+      const raw = await callClaude([{ role: "user", content: prompt }], null, SYS_JSON, 3000, null, MODEL);
+      const match = raw.match(/\{[\s\S]*\}/);
+      const parsed = JSON.parse(match?.[0] || raw.replace(/```json|```/g, "").trim());
+      setAnnotationUk(parsed.uk || "");
+      setAnnotationEn(parsed.en || "");
+      await saveToFirestore({ annotationUk: parsed.uk || "", annotationEn: parsed.en || "" });
+    } catch (e) {
+      console.error("doGenAnnotation error:", e);
+    }
+    setAnnotationLoading(false);
+  };
+
+  // ── Точкове редагування анотації за коментарем (без повної регенерації) ──
+  const doRegenAnnotation = async (comment) => {
+    setAnnotationLoading(true);
+    try {
+      const prompt = buildAnnotationRegenPrompt(annotationUk, annotationEn, comment);
+      const raw = await callClaude([{ role: "user", content: prompt }], null, SYS_JSON, 3000, null, MODEL);
+      const match = raw.match(/\{[\s\S]*\}/);
+      const parsed = JSON.parse(match?.[0] || raw.replace(/```json|```/g, "").trim());
+      const newUk = parsed.uk || annotationUk;
+      const newEn = parsed.en || annotationEn;
+      setAnnotationUk(newUk);
+      setAnnotationEn(newEn);
+      await saveToFirestore({ annotationUk: newUk, annotationEn: newEn });
+    } catch (e) {
+      console.error("doRegenAnnotation error:", e);
+      alert("Помилка: " + e.message);
+    }
+    setAnnotationLoading(false);
+  };
 
   // ── sources-first: ремаппінг локальних [N] → глобальні номери + форматування списку ──
   const doRemapCitations = async () => {
@@ -3383,6 +3588,7 @@ ${secsSummary}
     const isAPA = /APA/i.test(sourcesStyle);
     const isMLA = /MLA/i.test(sourcesStyle);
     const isDstu = /ДСТУ/i.test(sourcesStyle);
+    const isFootnoteMode = citFootnotes && isDstu;
     const _effectiveOrderRemap = sourcesOrderOverride || methodInfo?.sourcesOrder;
     const isAlphabeticalOrder = !_effectiveOrderRemap || _effectiveOrderRemap === "alphabetical";
 
@@ -3514,6 +3720,7 @@ ${secsSummary}
       if (p.volume) e.volume = p.volume;
       if (p.issue) e.issue = p.issue;
       if (p.pages) e.pages = p.pages;
+      if (p.totalPages) e.totalPages = p.totalPages;
       if (p.publisher) e.publisher = p.publisher;
       if (p.publisherLocation) e.city = p.publisherLocation;
       const url2 = p.url || (p.doi ? `https://doi.org/${p.doi}` : '');
@@ -3536,7 +3743,7 @@ ${sourcesOrder} ${sourcesGrouping}${methodSourcesRules2}
 - authors: [{family:"Прізвище", given:"Ім'я"}] → форматуй як "Прізвище І." (перша літера given). НЕ перекладай і НЕ транслітеруй.
 - authorsRaw: масив рядків → нормалізуй порядок (прізвище перед ініціалами), додай крапки після ініціалів.
 - journal + volume + issue → для ДСТУ: "Назва журналу. рік. Вип. N, № M. С. xx–xx."
-- _docType:"book" → це монографія/книга (Місто : Видавець, рік. Nс.)
+- _docType:"book" → це монографія/книга (Місто : Видавець, рік. Nс., де N — totalPages якщо є)
 Для сирого тексту: нормалізуй порядок слів і розділові знаки за вимогами стилю.
 КРИТИЧНО: НЕ перекладай і НЕ транслітеруй прізвища авторів та назви джерел. Переведення ВЕЛИКИХ ЛІТЕР у sentence case — дозволено і обов'язково.
 
@@ -3548,12 +3755,14 @@ ${refLines2.join("\n")}`;
         `Ти — асистент з бібліографічного форматування. Форматуй джерела строго за стилем ${sourcesStyle}. Не змішуй стилі цитування. Не перекладай і не транслітеруй прізвища авторів та назви джерел — зберігай мову оригіналу (українські джерела — українською, англійські — англійською). Перестав компоненти імені відповідно до вимог стилю (для APA: "Ім'я Прізвище" → "Прізвище, І."). Назви повністю ВЕЛИКИМИ ЛІТЕРАМИ переводь у sentence case. Повертай тільки відформатований список, без зайвого тексту.`, 16000);
     } catch (e) { console.error("remap fmt error:", e); }
 
-    const fmtLines = fmtResult
+    const _parsedFmt2 = fmtResult
       ? fmtResult.split("\n").filter(Boolean).map(l => l.replace(/^\d+\.\s*/, ""))
-      : allRefs;
+      : null;
+    const fmtLines = (_parsedFmt2 && _parsedFmt2.length === allRefs.length) ? _parsedFmt2 : allRefs;
 
     // ── 6. Формат inline-посилань по стилю ──
     const refCiteText = {};
+    const pageRanges2 = {};
     fmtLines.forEach((ref, i) => {
       const n = i + 1;
       if (isAPA) {
@@ -3578,36 +3787,61 @@ ${refLines2.join("\n")}`;
           ? beforeComma
           : ref.match(/(?:^|[\s,])([А-ЯҐЄІЇа-яґєіїA-Za-z]{3,})/)?.[1];
         refCiteText[n] = `(${rawSurname || `Автор${n}`})`;
+      } else if (isFootnoteMode) {
+        refCiteText[n] = `%%FN${n}%%`;
       } else {
-        // ДСТУ: витягуємо сторінку з raw-запису (allRefs), не з fmtLines,
-        // щоб не залежати від переупорядкування Gemini за ДСТУ-групами
+        // ДСТУ: витягуємо діапазон сторінок з raw-запису (allRefs), не з fmtLines,
+        // щоб не залежати від переупорядкування Gemini за ДСТУ-групами.
+        // Конкретну сторінку для кожного вживання підставляємо нижче, у кроці 7.
         const rawRef = allRefs[i] ?? ref;
-        const articlePageMatch = rawRef.match(/[Сс]\.\s*(\d+)\s*[–\-—]/);
-        const singlePageMatch = !articlePageMatch && rawRef.match(/[Сс]\.\s*(\d+)(?!\d*\s*с\.)/);
-        const engPageMatch = rawRef.match(/pp?\.\s*(\d+)/i);
-        const startPage = articlePageMatch?.[1] || singlePageMatch?.[1] || engPageMatch?.[1];
-        refCiteText[n] = startPage ? `[${n}, с. ${startPage}]` : `[${n}]`;
+        const sp = findStructured2(rawRef);
+        const range = extractPageRange(rawRef, sp);
+        if (range) pageRanges2[n] = range;
+        refCiteText[n] = `[${n}]`;
       }
     });
 
     // ── 7. Заміна в тексті: [localN] / [localN, с. X] → %%CITglobalN%% → фінал ──
+    // Сторінку, яку модель сама вписала при написанні, лишаємо (якщо вона в межах
+    // діапазону джерела); інакше підставляємо сторінку з діапазону. Кожна згадка
+    // джерела лишається окремою — повторне цитування одного джерела не видаляємо.
     const newContent = { ...content };
     mainSecs.forEach(sec => {
       if (!newContent[sec.id]) return;
       const mapping = secLocalToGlobal[sec.id];
       if (!mapping || !Object.keys(mapping).length) return;
-      // Крок A: локальні номери → placeholders (max 1 раз на підрозділ для кожного джерела)
+      // Крок A: локальні номери → placeholders (захоплюємо сторінку, яку вписала модель)
       const citCount = {};
-      let text = newContent[sec.id].replace(/\[(\d+)(?:,\s*с\.\s*\d+)?\]/g, (match, localN) => {
+      let text = newContent[sec.id].replace(/\[(\d+)(?:,\s*с\.\s*(\d+))?\]/g, (match, localN, localPage) => {
         const globalN = mapping[Number(localN)];
         if (!globalN) return ""; // хибний (галюцинований) локальний номер — прибираємо
         citCount[globalN] = (citCount[globalN] || 0) + 1;
-        return citCount[globalN] <= 1 ? `%%CIT${globalN}%%` : "";
+        return `%%CIT${globalN}_${localPage || ""}_${citCount[globalN]}%%`;
       });
-      // Крок B: placeholders → фінальний формат (для APA: (Прізвище, рік), для ДСТУ: [N])
-      text = text.replace(/%%CIT(\d+)%%/g, (_, n) => refCiteText[Number(n)] || `[${n}]`);
+      // Крок B: placeholders → фінальний формат (для APA: (Прізвище, рік), для ДСТУ: [N, с. X])
+      text = text.replace(/%%CIT(\d+)_(\d*)_(\d+)%%/g, (_, nStr, oldPageStr, occStr) => {
+        const n = Number(nStr);
+        const base = refCiteText[n] || `[${n}]`;
+        const range = pageRanges2[n];
+        if (!range) return base;
+        let page = oldPageStr ? Number(oldPageStr) : null;
+        if (page != null && (page < range.min || page > range.max)) page = null;
+        if (page == null) page = pickPageInRange(range, Number(occStr));
+        return `[${n}, с. ${page}]`;
+      });
       newContent[sec.id] = text;
     });
+
+    // ── 8а. Очищення: прибираємо номери поза діапазоном реального списку (будь-який стиль) ──
+    if (!isAPA && !isMLA) {
+      mainSecs.forEach(sec => {
+        if (!newContent[sec.id]) return;
+        newContent[sec.id] = newContent[sec.id].replace(/\[(\d+)(?:,\s*с\.\s*\d+)?\]/g, (match, n) => {
+          const num = Number(n);
+          return (num >= 1 && num <= fmtLines.length) ? match : "";
+        });
+      });
+    }
 
     // ── 8. Ренумерація для порядку за появою (не APA/MLA, не алфавітний) ──
     if (!isAPA && !isMLA && !isAlphabeticalOrder) {
@@ -3656,6 +3890,12 @@ ${refLines2.join("\n")}`;
     setContent(newContent);
     setCitInputsSnapshot(JSON.stringify(citInputs));
     await saveToFirestore({ content: newContent, citInputs, citStructured, refList: newRefList, stage: "done", status: "done" });
+
+    const wt = normalizeWorkType(info?.type, info?.course);
+    if (wt === "master" || wt === "bachelor") {
+      await doGenAnnotation(newContent, newRefList);
+    }
+
     setRemapLoading(false);
     setStage("done");
   };
@@ -3701,6 +3941,7 @@ ${refLines2.join("\n")}`;
     setPaused(false); setPlanLoading(false); setMethodInfo(null); setCommentAnalysis(null); setSourceDist({}); setSourceTotal(0);
     setKeywords({}); setCitInputs({}); setAllCitLoading(false); setRefList([]); setCitInputsSnapshot(null); setFigureRefs({}); setFigureKeywords([]); setFigKwLoading(false);
     setSpeechText(""); setAppendicesText("");
+    setAnnotationUk(""); setAnnotationEn(""); setAnnotationLoading(false); setAnnotationConfirmed(false);
     setPresentationReady(false); setPresentationMsg(""); setSlideJson(null);
     runningRef.current = false; setRunning(false);
   };
@@ -3956,6 +4197,7 @@ ${refLines2.join("\n")}`;
               methodInfo={methodInfo} commentAnalysis={commentAnalysis}
               citStyleOverride={citStyleOverride} sourcesOrderOverride={sourcesOrderOverride}
               onCitStyleChange={handleCitStyleChange} onSourcesOrderChange={handleSourcesOrderChange}
+              citFootnotes={citFootnotes} onCitFootnotesChange={handleCitFootnotesChange}
               allRefs={globalRefData.allRefs} refList={refList}
               showMissingSources={showMissingSources}
               citInputsSnapshot={citInputsSnapshot} allCitLoading={allCitLoading}
@@ -3989,6 +4231,9 @@ ${refLines2.join("\n")}`;
           )}
           {stage === "done" && (
             <DoneStage
+              annotationUk={annotationUk} setAnnotationUk={setAnnotationUk}
+              annotationEn={annotationEn} setAnnotationEn={setAnnotationEn}
+              annotationLoading={annotationLoading} doRegenAnnotation={doRegenAnnotation}
               content={content} displayOrder={displayOrder}
               titlePage={titlePage} setTitlePage={setTitlePage} titlePageLines={titlePageLines}
               regenId={regenId} setRegenId={setRegenId}

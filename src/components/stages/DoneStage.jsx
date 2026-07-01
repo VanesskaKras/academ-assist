@@ -1,9 +1,11 @@
+import { useState } from "react";
 import { isPsychoPed } from "../../lib/planUtils.js";
 import { exportToDocx, exportAppendixToDocx, exportSpeechToDocx } from "../../lib/exportDocx.js";
 import { SpinDot } from "../SpinDot.jsx";
 import { Heading, NavBtn } from "../Buttons.jsx";
 
 export function DoneStage({
+  annotationUk, setAnnotationUk, annotationEn, setAnnotationEn, annotationLoading, doRegenAnnotation,
   content, displayOrder, titlePage, setTitlePage, titlePageLines,
   regenId, setRegenId, regenPrompt, setRegenPrompt, regenLoading, regenAllLoading,
   loadMsg, appendicesText, setAppendicesText, appendicesLoading, setAppendicesLoading,
@@ -15,6 +17,9 @@ export function DoneStage({
   copyAll, resetAll, generatePresentation, generateSpeech, doScanAndGenFigures, setStage,
   orderId,
 }) {
+  const [annoRegenOpen, setAnnoRegenOpen] = useState(false);
+  const [annoRegenPrompt, setAnnoRegenPrompt] = useState("");
+
   return (
     <div className="fade">
       <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", marginBottom: 4 }}>
@@ -54,6 +59,44 @@ export function DoneStage({
           )}
         </div>
       </div>
+
+      {/* ── АНОТАЦІЯ ── */}
+      {(annotationUk || annotationEn) && (
+        <div style={{ border: "1.5px solid #aaa49a", borderRadius: 8, marginBottom: 10, overflow: "hidden" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 16px", background: "#1a1a14", borderBottom: "1px solid #2a2a20" }}>
+            <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#e8ff47", flexShrink: 0 }} />
+            <div style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "#f5f2eb" }}>АНОТАЦІЯ</div>
+            <button onClick={() => setAnnoRegenOpen(o => !o)} style={{ background: annoRegenOpen ? "#e8ff47" : "transparent", color: annoRegenOpen ? "#111" : "#aaa", border: "1px solid " + (annoRegenOpen ? "#e8ff47" : "#555"), borderRadius: 5, padding: "3px 10px", fontSize: 10, cursor: "pointer", fontFamily: "'Spectral',serif" }}>✏️ Переписати</button>
+          </div>
+          {annoRegenOpen && (
+            <div style={{ padding: "12px 16px", background: "#1a1a14", borderBottom: "1px solid #2a2a20" }}>
+              <div style={{ fontSize: 11, color: "#888", marginBottom: 6, letterSpacing: 1 }}>КОМЕНТАР ДЛЯ ПРАВОК:</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <input value={annoRegenPrompt} onChange={e => setAnnoRegenPrompt(e.target.value)} placeholder="Наприклад: скоротити виклад суті, додати акцент на..." style={{ flex: 1, background: "#2a2a20", border: "1px solid #444", borderRadius: 5, color: "#f5f2eb", fontSize: 12, padding: "7px 10px", fontFamily: "'Spectral',serif" }} />
+                <button onClick={() => doRegenAnnotation(annoRegenPrompt)} disabled={annotationLoading} style={{ background: annotationLoading ? "#444" : "#e8ff47", color: "#111", border: "none", borderRadius: 5, padding: "7px 18px", fontSize: 12, cursor: annotationLoading ? "default" : "pointer", fontFamily: "'Spectral',serif", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  {annotationLoading ? <><SpinDot />Генерую...</> : "Переписати →"}
+                </button>
+              </div>
+            </div>
+          )}
+          <div style={{ padding: "14px 18px", background: "#faf8f3" }}>
+            <div style={{ fontSize: 10, color: "#888", letterSpacing: 1, marginBottom: 4 }}>УКРАЇНСЬКОЮ</div>
+            <textarea
+              value={annotationUk}
+              onChange={e => setAnnotationUk(e.target.value)}
+              onBlur={e => saveToFirestore({ annotationUk: e.target.value })}
+              style={{ width: "100%", minHeight: 160, fontSize: 13, lineHeight: "1.85", color: "#2a2a1e", background: "#f5f2ea", borderRadius: 6, padding: "12px 14px", border: "1px solid #d4cfc4", fontFamily: "'Spectral',serif", resize: "vertical", boxSizing: "border-box", marginBottom: 14 }}
+            />
+            <div style={{ fontSize: 10, color: "#888", letterSpacing: 1, marginBottom: 4 }}>ENGLISH</div>
+            <textarea
+              value={annotationEn}
+              onChange={e => setAnnotationEn(e.target.value)}
+              onBlur={e => saveToFirestore({ annotationEn: e.target.value })}
+              style={{ width: "100%", minHeight: 160, fontSize: 13, lineHeight: "1.85", color: "#2a2a1e", background: "#f5f2ea", borderRadius: 6, padding: "12px 14px", border: "1px solid #d4cfc4", fontFamily: "'Spectral',serif", resize: "vertical", boxSizing: "border-box" }}
+            />
+          </div>
+        </div>
+      )}
 
       {displayOrder.map(sec => {
         const txt = content[sec.id];
@@ -176,7 +219,7 @@ export function DoneStage({
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 24 }}>
         <NavBtn onClick={() => setStage("sources")}>← Джерела</NavBtn>
         <button onClick={copyAll} style={{ background: "#1a1a14", color: "#e8ff47", border: "none", borderRadius: 7, padding: "11px 30px", fontFamily: "'Spectral',serif", fontSize: 13, letterSpacing: "1.5px", cursor: "pointer" }}>Скопіювати текст</button>
-        <button disabled={docxLoading} onClick={async () => { setDocxLoading(true); try { await exportToDocx({ sections, content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo, commentAnalysis, orderId }); } catch (e) { alert("Помилка: " + e.message); } setDocxLoading(false); }}
+        <button disabled={docxLoading} onClick={async () => { setDocxLoading(true); try { await exportToDocx({ sections, content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo, commentAnalysis, orderId, annotationUk, annotationEn }); } catch (e) { alert("Помилка: " + e.message); } setDocxLoading(false); }}
           style={{ background: docxLoading ? "#aaa" : "#1a4a1a", color: docxLoading ? "#eee" : "#a8e060", border: "none", borderRadius: 7, padding: "11px 30px", fontFamily: "'Spectral',serif", fontSize: 13, letterSpacing: "1.5px", cursor: docxLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
           {docxLoading ? <><SpinDot light />Генерую Word...</> : "⬇ Завантажити .docx"}
         </button>

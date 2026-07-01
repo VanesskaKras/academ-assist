@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { db } from "./firebase";
-import { collection, query, where, getDocs, deleteDoc, doc, setDoc } from "firebase/firestore";
+import { collection, query, where, orderBy, limit, startAfter, getDocs, deleteDoc, doc, setDoc } from "firebase/firestore";
 import { useAuth } from "./AuthContext";
 
 const STAT_META = [
@@ -28,7 +28,6 @@ function getStatStatus(o) {
         return s;
     }
     if (s !== "done" && o.stage === "sources") return "sources";
-    if (s === "done" && (!o.refList || o.refList.length === 0)) return "sources";
     return s;
 }
 
@@ -37,7 +36,7 @@ function UserStatsModal({ orders, onClose }) {
 
     const todayCount = useMemo(() =>
         orders.filter(o => o.createdAt?.slice(0, 10) === todayStr).length,
-    [orders]);
+    [orders, todayStr]);
 
     const overall = useMemo(() => {
         const c = { total: orders.length };
@@ -265,9 +264,11 @@ function DeadlinePicker({ dlFrom, dlTo, setDlFrom, setDlTo }) {
     const [calHov, setCalHov] = useState(null);
     const calRef = useRef(null);
 
+    const closeCal = () => { setCalOpen(false); setPicking(null); setCalHov(null); };
+
     useEffect(() => {
-        if (!calOpen) { setPicking(null); setCalHov(null); return; }
-        const h = e => { if (calRef.current && !calRef.current.contains(e.target)) setCalOpen(false); };
+        if (!calOpen) return;
+        const h = e => { if (calRef.current && !calRef.current.contains(e.target)) closeCal(); };
         document.addEventListener("mousedown", h);
         return () => document.removeEventListener("mousedown", h);
     }, [calOpen]);
@@ -297,22 +298,22 @@ function DeadlinePicker({ dlFrom, dlTo, setDlFrom, setDlTo }) {
         if (!picking) { setPicking(nd); }
         else {
             const [a, b] = nd < picking ? [nd, new Date(picking)] : [new Date(picking), nd];
-            setDlFrom(a); setDlTo(b); setPicking(null); setCalOpen(false);
+            setDlFrom(a); setDlTo(b); closeCal();
         }
     };
 
     const presets = [
-        { label: "Скинути", fn: () => { setDlFrom(null); setDlTo(null); setCalOpen(false); } },
-        { label: "Сьогодні", fn: () => { setDlFrom(new Date(today)); setDlTo(new Date(today)); setCalOpen(false); } },
+        { label: "Скинути", fn: () => { setDlFrom(null); setDlTo(null); closeCal(); } },
+        { label: "Сьогодні", fn: () => { setDlFrom(new Date(today)); setDlTo(new Date(today)); closeCal(); } },
         { label: "Поточний тиждень", fn: () => {
             const mon = new Date(today); mon.setDate(today.getDate()-(today.getDay()+6)%7);
             const sun = new Date(mon); sun.setDate(mon.getDate()+6);
-            setDlFrom(mon); setDlTo(sun); setCalOpen(false);
+            setDlFrom(mon); setDlTo(sun); closeCal();
         }},
         { label: "Поточний місяць", fn: () => {
             setDlFrom(new Date(today.getFullYear(), today.getMonth(), 1));
             setDlTo(new Date(today.getFullYear(), today.getMonth()+1, 0));
-            setCalOpen(false);
+            closeCal();
         }},
     ];
 
@@ -369,7 +370,7 @@ function DeadlinePicker({ dlFrom, dlTo, setDlFrom, setDlTo }) {
     return (
         <div style={{ marginBottom:12, position:"relative" }} ref={calRef}>
             <div style={{ fontSize:11, color:"#aaa", fontWeight:600, letterSpacing:1, textTransform:"uppercase", marginBottom:4 }}>Дедлайн</div>
-            <div onClick={() => setCalOpen(o => !o)}
+            <div onClick={() => calOpen ? closeCal() : setCalOpen(true)}
                 style={{ display:"inline-flex", alignItems:"center", gap:8, padding:"7px 14px", border:`1.5px solid ${dlFrom?"#1a1a14":"#d4cfc4"}`, borderRadius:8, background:"#fff", cursor:"pointer", fontSize:13, fontFamily:"'Spectral',serif", color:dlFrom?"#1a1a14":"#aaa", userSelect:"none", minWidth:240 }}>
                 <span style={{ fontSize:14 }}>📅</span>
                 <span style={{ flex:1 }}>
@@ -431,34 +432,74 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
     const [filterStatus, setFilterStatus] = useState(null); // null = всі
     const [dlFrom, setDlFrom] = useState(null);
     const [dlTo, setDlTo] = useState(null);
+    const [sortBy, setSortBy] = useState("deadline_asc");
     const [filterManager, setFilterManager] = useState("all");
     const [infoOrder, setInfoOrder] = useState(null); // модалка деталей
     const [showHelp, setShowHelp] = useState(false);
     const [showStats, setShowStats] = useState(false);
     const [showMyStats, setShowMyStats] = useState(false);
     const [transferOrderId, setTransferOrderId] = useState(null);
+    const [lastDoc, setLastDoc] = useState(null);
+    const [hasMore, setHasMore] = useState(false);
+    const [loadingMore, setLoadingMore] = useState(false);
+    const [serverCounts, setServerCounts] = useState(null);
 
     const isAdmin = profile?.role === "admin";
 
+    const needsSources = (o) => o.mode === "small"
+        ? o.stage === "sources"
+        : o.status !== "done" && o.stage === "sources";
+
     useEffect(() => {
+        const computeCounts = (docs) => {
+            const c = { all: 0, done: 0, writing: 0, sources: 0, plan_ready: 0, new: 0, archived: 0, corrections: 0, deleted: 0 };
+            docs.forEach(o => {
+                if (o.deleted) { c.deleted++; return; }
+                if (o.archived) { c.archived++; return; }
+                c.all++;
+                if (o.type === "file_corrections") { c.corrections++; return; }
+                const s = o.status || "new";
+                if (needsSources(o)) c.sources++;
+                else if (s === "done") c.done++;
+                else if (s === "writing") c.writing++;
+                else if (s === "plan_ready" || s === "plan_approved") c.plan_ready++;
+                else c.new++;
+            });
+            return c;
+        };
+
         const load = async () => {
             setLoading(true);
+            setLastDoc(null);
+            setHasMore(false);
+            setServerCounts(null);
             try {
                 if (isAdmin) {
+                    const ordersQuery = query(
+                        collection(db, "orders"),
+                        orderBy("createdAt", "desc"),
+                        limit(30)
+                    );
                     const [ordersSnap, usersSnap] = await Promise.all([
-                        getDocs(collection(db, "orders")),
+                        getDocs(ordersQuery),
                         getDocs(collection(db, "users")),
                     ]);
                     const map = {};
                     usersSnap.docs.forEach(d => { map[d.id] = d.data(); });
                     setUserMap(map);
-                    setOrders(ordersSnap.docs
-                        .map(d => ({
-                            id: d.id,
-                            ...d.data(),
-                            managerName: map[d.data().uid]?.name || d.data().uid || "—",
-                        }))
-                        .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || "")));
+                    const docs = ordersSnap.docs;
+                    setLastDoc(docs[docs.length - 1] || null);
+                    setHasMore(docs.length === 30);
+                    setOrders(docs.map(d => ({
+                        id: d.id,
+                        ...d.data(),
+                        managerName: map[d.data().uid]?.name || d.data().uid || "—",
+                    })));
+
+                    // фоновий підрахунок по всій колекції
+                    getDocs(collection(db, "orders")).then(allSnap => {
+                        setServerCounts(computeCounts(allSnap.docs.map(d => ({ id: d.id, ...d.data() }))));
+                    }).catch(() => {});
                 } else {
                     const q = query(
                         collection(db, "orders"),
@@ -478,6 +519,31 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
         };
         load();
     }, [user.uid, isAdmin]);
+
+    const loadMore = async () => {
+        if (!lastDoc || loadingMore) return;
+        setLoadingMore(true);
+        try {
+            const ordersQuery = query(
+                collection(db, "orders"),
+                orderBy("createdAt", "desc"),
+                startAfter(lastDoc),
+                limit(30)
+            );
+            const snap = await getDocs(ordersQuery);
+            const newOrders = snap.docs.map(d => ({
+                id: d.id,
+                ...d.data(),
+                managerName: userMap[d.data().uid]?.name || d.data().uid || "—",
+            }));
+            setOrders(prev => [...prev, ...newOrders]);
+            setLastDoc(snap.docs[snap.docs.length - 1] || lastDoc);
+            setHasMore(snap.docs.length === 30);
+        } catch (e) {
+            console.error(e);
+        }
+        setLoadingMore(false);
+    };
 
     useEffect(() => {
         if (!transferOrderId) return;
@@ -521,10 +587,6 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
         await setDoc(doc(db, "orders", id), { archived: archive }, { merge: true });
         setOrders(p => p.map(o => o.id === id ? { ...o, archived: archive } : o));
     };
-
-    const needsSources = (o) => o.mode === "small"
-        ? o.stage === "sources"
-        : (o.status !== "done" && o.stage === "sources") || (o.status === "done" && (!o.refList || o.refList.length === 0));
 
     const filtered = useMemo(() => {
         let result = orders;
@@ -576,7 +638,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
                 return true;
             });
         }
-        // Сортування: архів і кошик — без змін; решта — активні за дедлайном (nearest first), Готово — внизу
+        // Сортування: архів і кошик — без змін; решта — активні за обраним полем, Готово — внизу
         if (filterStatus !== "archived" && filterStatus !== "deleted") {
             const parseDeadline = (dl) => {
                 if (!dl) return null;
@@ -590,17 +652,25 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
                 // Готово — в кінець
                 if (aDone && !bDone) return 1;
                 if (!aDone && bDone) return -1;
+
+                if (sortBy === "created_asc" || sortBy === "created_desc") {
+                    const cA = a.createdAt || "";
+                    const cB = b.createdAt || "";
+                    if (cA === cB) return 0;
+                    return sortBy === "created_asc" ? cA.localeCompare(cB) : cB.localeCompare(cA);
+                }
+
                 // Обидва активні або обидва Готово — сортуємо за дедлайном
                 const dA = parseDeadline(a.deadline);
                 const dB = parseDeadline(b.deadline);
                 if (!dA && !dB) return 0;
                 if (!dA) return 1;  // без дедлайну — в кінець
                 if (!dB) return -1;
-                return dA - dB;
+                return sortBy === "deadline_desc" ? dB - dA : dA - dB;
             });
         }
         return result;
-    }, [orders, search, filterStatus, dlFrom, dlTo, filterManager]);
+    }, [orders, search, filterStatus, dlFrom, dlTo, sortBy, filterManager, isAdmin]);
 
     const counts = useMemo(() => {
         const c = { all: 0, done: 0, writing: 0, sources: 0, plan_ready: 0, new: 0, archived: 0, corrections: 0, deleted: 0 };
@@ -674,16 +744,16 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
 
                 {/* Stats */}
                 {!loading && orders.length > 0 && (
-                    <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
+                    <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap", alignItems: "center" }}>
                         {[
-                            { label: "Всього", val: counts.all, color: "#1a1a14", bg: "#e8e4d8", key: null },
-                            { label: "План", val: counts.plan_ready, color: "#1a5a8a", bg: "#e4f0ff", key: "plan_ready" },
-                            { label: "В роботі", val: counts.writing, color: "#2a7a6a", bg: "#e4f5f2", key: "writing" },
-                            { label: "Джерела", val: counts.sources, color: "#8a5a1a", bg: "#fff3e0", key: "sources" },
-                            { label: "Готово", val: counts.done, color: "#1a6a1a", bg: "#e4ffe4", key: "done" },
-                            ...(counts.corrections > 0 ? [{ label: "Правки", val: counts.corrections, color: "#6a3a00", bg: "#fff0e0", key: "corrections" }] : []),
-                            ...(isAdmin && counts.archived > 0 ? [{ label: "Архів", val: counts.archived, color: "#666", bg: "#ebebeb", key: "archived" }] : []),
-                            ...(isAdmin && counts.deleted > 0 ? [{ label: "Кошик", val: counts.deleted, color: "#c00", bg: "#fff0f0", key: "deleted" }] : []),
+                            { label: "Всього", val: (serverCounts ?? counts).all, color: "#1a1a14", bg: "#e8e4d8", key: null },
+                            { label: "План", val: (serverCounts ?? counts).plan_ready, color: "#1a5a8a", bg: "#e4f0ff", key: "plan_ready" },
+                            { label: "В роботі", val: (serverCounts ?? counts).writing, color: "#2a7a6a", bg: "#e4f5f2", key: "writing" },
+                            { label: "Джерела", val: (serverCounts ?? counts).sources, color: "#8a5a1a", bg: "#fff3e0", key: "sources" },
+                            { label: "Готово", val: (serverCounts ?? counts).done, color: "#1a6a1a", bg: "#e4ffe4", key: "done" },
+                            ...((serverCounts ?? counts).corrections > 0 ? [{ label: "Правки", val: (serverCounts ?? counts).corrections, color: "#6a3a00", bg: "#fff0e0", key: "corrections" }] : []),
+                            ...(isAdmin && (serverCounts ?? counts).archived > 0 ? [{ label: "Архів", val: (serverCounts ?? counts).archived, color: "#666", bg: "#ebebeb", key: "archived" }] : []),
+                            ...(isAdmin && (serverCounts ?? counts).deleted > 0 ? [{ label: "Кошик", val: (serverCounts ?? counts).deleted, color: "#c00", bg: "#fff0f0", key: "deleted" }] : []),
                         ].map(s => {
                             const isActive = filterStatus === s.key;
                             return (
@@ -700,23 +770,38 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
                                 </div>
                             );
                         })}
+                        {isAdmin && !serverCounts && (
+                            <span style={{ fontSize: 11, color: "#bbb", marginLeft: 4 }}>рахуємо...</span>
+                        )}
                     </div>
                 )}
 
-                {/* Deadline + Manager filters (admin only, not in archive view) */}
-                {isAdmin && orders.length > 0 && filterStatus !== "archived" && filterStatus !== "deleted" && (
+                {/* Deadline + Manager + Sort filters (not in archive/trash view) */}
+                {orders.length > 0 && filterStatus !== "archived" && filterStatus !== "deleted" && (
                     <div style={{ display: "flex", gap: 16, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 0 }}>
-                        <DeadlinePicker dlFrom={dlFrom} dlTo={dlTo} setDlFrom={setDlFrom} setDlTo={setDlTo} />
+                        {isAdmin && <DeadlinePicker dlFrom={dlFrom} dlTo={dlTo} setDlFrom={setDlFrom} setDlTo={setDlTo} />}
+                        {isAdmin && (
+                            <div style={{ marginBottom: 12 }}>
+                                <div style={{ fontSize: 11, color: "#aaa", fontWeight: 600, letterSpacing: 1, textTransform: "uppercase", marginBottom: 4 }}>Менеджер</div>
+                                <select value={filterManager} onChange={e => setFilterManager(e.target.value)}
+                                    style={{ padding: "7px 12px", border: `1.5px solid ${filterManager !== "all" ? "#1a1a14" : "#d4cfc4"}`, borderRadius: 8, fontSize: 13, fontFamily: "'Spectral',serif", background: "#fff", color: filterManager !== "all" ? "#1a1a14" : "#aaa", outline: "none", cursor: "pointer" }}>
+                                    <option value="all">Всі менеджери</option>
+                                    {Object.entries(userMap)
+                                        .filter(([, u]) => u.role === "manager" || u.role === "admin")
+                                        .map(([uid, u]) => (
+                                            <option key={uid} value={uid}>{u.name || u.email}</option>
+                                        ))}
+                                </select>
+                            </div>
+                        )}
                         <div style={{ marginBottom: 12 }}>
-                            <div style={{ fontSize: 11, color: "#aaa", fontWeight: 600, letterSpacing: 1, textTransform: "uppercase", marginBottom: 4 }}>Менеджер</div>
-                            <select value={filterManager} onChange={e => setFilterManager(e.target.value)}
-                                style={{ padding: "7px 12px", border: `1.5px solid ${filterManager !== "all" ? "#1a1a14" : "#d4cfc4"}`, borderRadius: 8, fontSize: 13, fontFamily: "'Spectral',serif", background: "#fff", color: filterManager !== "all" ? "#1a1a14" : "#aaa", outline: "none", cursor: "pointer" }}>
-                                <option value="all">Всі менеджери</option>
-                                {Object.entries(userMap)
-                                    .filter(([, u]) => u.role === "manager" || u.role === "admin")
-                                    .map(([uid, u]) => (
-                                        <option key={uid} value={uid}>{u.name || u.email}</option>
-                                    ))}
+                            <div style={{ fontSize: 11, color: "#aaa", fontWeight: 600, letterSpacing: 1, textTransform: "uppercase", marginBottom: 4 }}>Сортування</div>
+                            <select value={sortBy} onChange={e => setSortBy(e.target.value)}
+                                style={{ padding: "7px 12px", border: `1.5px solid ${sortBy !== "deadline_asc" ? "#1a1a14" : "#d4cfc4"}`, borderRadius: 8, fontSize: 13, fontFamily: "'Spectral',serif", background: "#fff", color: "#1a1a14", outline: "none", cursor: "pointer" }}>
+                                <option value="deadline_asc">Дедлайн: найближчі спочатку</option>
+                                <option value="deadline_desc">Дедлайн: найдальші спочатку</option>
+                                <option value="created_desc">Дата створення: нові спочатку</option>
+                                <option value="created_asc">Дата створення: старі спочатку</option>
                             </select>
                         </div>
                     </div>
@@ -757,6 +842,11 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
                     </div>
                 ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                        {isAdmin && hasMore && (
+                            <div style={{ textAlign: "center", padding: "4px 0 8px" }}>
+                                <span style={{ fontSize: 12, color: "#aaa" }}>Показано перші {orders.length} замовлень</span>
+                            </div>
+                        )}
                         {filtered.map(order => {
                             const isCorrections = order.type === "file_corrections";
                             const st = isCorrections
@@ -812,7 +902,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
                                                 <div style={{ position: "absolute", right: 0, top: "110%", background: "#fff", border: "1px solid #ddd", borderRadius: 8, boxShadow: "0 4px 16px rgba(0,0,0,0.12)", zIndex: 100, minWidth: 180, padding: "6px 0" }}>
                                                     <div style={{ fontSize: 11, color: "#888", padding: "4px 14px 6px", borderBottom: "1px solid #f0f0f0" }}>Передати замовлення:</div>
                                                     {Object.entries(userMap)
-                                                        .filter(([uid, u]) => u.role === "manager" || u.role === "admin")
+                                                        .filter(([, u]) => u.role === "manager" || u.role === "admin")
                                                         .map(([uid, u]) => (
                                                             <div key={uid}
                                                                 onClick={e => transferOrder(order.id, uid, e)}
@@ -865,6 +955,16 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
                                 </div>
                             );
                         })}
+                        {isAdmin && hasMore && (
+                            <div style={{ textAlign: "center", padding: "16px 0 4px" }}>
+                                <button
+                                    onClick={loadMore}
+                                    disabled={loadingMore}
+                                    style={{ background: loadingMore ? "#f0ece2" : "#fff", border: "1.5px solid #d4cfc4", color: "#555", borderRadius: 8, padding: "10px 28px", fontSize: 13, fontFamily: "'Spectral',serif", cursor: loadingMore ? "default" : "pointer", fontWeight: 500 }}>
+                                    {loadingMore ? "Завантаження..." : `Завантажити ще (показано ${orders.length})`}
+                                </button>
+                            </div>
+                        )}
                     </div>
                 )}
             </div>

@@ -1,20 +1,21 @@
 import { FIELD_LABELS, parsePagesAvg } from "../../lib/planUtils.js";
 import { Heading, NavBtn, PrimaryBtn } from "../Buttons.jsx";
+import { getAcademicDefaults } from "../../lib/academicDefaults.js";
 
-const PRACTICAL_OPTIONS = [
-  { key: "questionnaire", label: "Анкетування", desc: "Анкета у Додатку А, аналіз відповідей у практичних розділах" },
-  { key: "textbook_analysis", label: "Аналіз підручників", desc: "Порівняльна таблиця підручників у Додатку А" },
-  { key: "lesson_observation", label: "Аналіз уроків", desc: "Протокол спостереження уроків у Додатку А" },
-  { key: "materials_development", label: "Розробка матеріалів", desc: "Вправи / план-конспект / картки у Додатку А" },
-  { key: null, label: "Не потрібно", desc: "Без Додатку А" },
-];
+const SAMPLE_SIZE_KW = /осіб|респондент|пацієнт|клієнт|учнів|спортсмен|учасник/i;
 
 export function ParsedStage({
   info, setInfo, methodInfo, setMethodInfo, fileB64, apiError, sections,
   commentAnalysis, setCommentAnalysis,
   doGenPlan, setStage,
 }) {
-  const showPractical = info.workCategory === "Гуманітарне" || commentAnalysis?.practicalApproach != null;
+  const courseMissing = !String(info.course || "").trim();
+
+  const defaults = getAcademicDefaults(info.subject, info.type, info.course, info.topic);
+  const userMaterials = defaults?.appendicesUserProvide?.filter(Boolean) ?? [];
+  const showSampleSize = !!(commentAnalysis?.researchDesign || (defaults && SAMPLE_SIZE_KW.test(defaults.researchType || "")));
+  const sampleSize = commentAnalysis?.researchDesign?.statisticalMinN ?? "";
+
   return (
     <div className="fade">
       <Heading>02 / Перевірте дані</Heading>
@@ -38,14 +39,58 @@ export function ParsedStage({
 
       <div style={{ border: "1.5px solid #d4cfc4", borderRadius: 8, overflow: "hidden", marginBottom: 16 }}>
         {Object.entries(FIELD_LABELS).map(([k, l], i, arr) => (
-          <div key={k} style={{ display: "grid", gridTemplateColumns: "200px 1fr", borderBottom: i < arr.length - 1 ? "1px solid #e4dfd4" : "none" }}>
+          <div key={k} style={{ display: "grid", gridTemplateColumns: "200px 1fr", borderBottom: (i < arr.length - 1 || showSampleSize) ? "1px solid #e4dfd4" : "none" }}>
             <div style={{ padding: "11px 16px", fontSize: 11, color: "#888", letterSpacing: "1px", textTransform: "uppercase", borderRight: "1px solid #e4dfd4", display: "flex", alignItems: "center", background: "#ede9e0" }}>{l}</div>
             <input value={info[k] || ""} onChange={e => setInfo(p => ({ ...p, [k]: e.target.value }))}
               style={{ padding: "11px 16px", background: "transparent", border: "none", fontSize: 14, color: "#1a1a14", width: "100%", fontFamily: "'Spectral',serif" }} />
           </div>
         ))}
+        {showSampleSize && (
+          <div style={{ display: "grid", gridTemplateColumns: "200px 1fr" }}>
+            <div style={{ padding: "11px 16px", fontSize: 11, color: "#888", letterSpacing: "1px", textTransform: "uppercase", borderRight: "1px solid #e4dfd4", display: "flex", alignItems: "center", background: "#ede9e0" }}>Кількість осіб для вибірки</div>
+            <div style={{ padding: "11px 16px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <input type="number" min="1" value={sampleSize}
+                onChange={e => {
+                  const raw = e.target.value;
+                  setCommentAnalysis(p => ({
+                    ...(p || {}),
+                    researchDesign: {
+                      instrumentType: "questionnaire", groups: [], comparisonRequired: false, biographicalFields: [],
+                      ...(p?.researchDesign || {}),
+                      statisticalMinN: raw === "" ? null : Number(raw),
+                    },
+                  }));
+                }}
+                placeholder="Порожньо = автоматично"
+                style={{ width: 200, padding: 0, background: "transparent", border: "none", fontSize: 14, color: "#1a1a14", fontFamily: "'Spectral',serif" }} />
+              <span style={{ fontSize: 11, color: "#aaa" }}>Порожньо = система визначить сама{defaults?.researchType ? ` (за замовчуванням: ${defaults.researchType})` : ""}.</span>
+            </div>
+          </div>
+        )}
       </div>
       {info.pages?.includes("-") && <div style={{ fontSize: 12, color: "#888", marginBottom: 16, fontStyle: "italic" }}>Діапазон "{info.pages}" → середнє: {parsePagesAvg(info.pages)} стор.</div>}
+
+      {/* Підготуйте заздалегідь */}
+      {userMaterials.length > 0 && (
+        <div style={{ border: "1.5px solid #f0d080", borderRadius: 8, overflow: "hidden", marginBottom: 16 }}>
+          <div style={{ background: "#7a5a00", color: "#ffe89a", padding: "9px 16px", fontFamily: "'Spectral SC',serif", fontSize: 11, letterSpacing: 2 }}>
+            ℹ ПІДГОТУЙТЕ ЗАЗДАЛЕГІДЬ
+          </div>
+          <div style={{ padding: "12px 16px", background: "#fffbee" }}>
+            <div style={{ fontSize: 12, color: "#7a5a00", marginBottom: 8 }}>
+              Для цього типу роботи потрібні матеріали, які AI не може створити — підберіть їх до початку написання:
+            </div>
+            <ul style={{ margin: 0, padding: "0 0 0 18px" }}>
+              {userMaterials.map((m, i) => (
+                <li key={i} style={{ fontSize: 13, color: "#4a3800", marginBottom: 4 }}>{m}</li>
+              ))}
+            </ul>
+            <div style={{ fontSize: 12, color: "#7a5a00", marginTop: 10, fontStyle: "italic" }}>
+              Поверніться на крок 1 (кнопка "← Назад") і додайте ці матеріали через розділ "Матеріали клієнта", перед тим як генерувати план.
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Карточка методички або помилка */}
       {!methodInfo && fileB64 && apiError && (
@@ -86,44 +131,14 @@ export function ParsedStage({
         </div>
       )}
 
-      {/* Тип практичної частини */}
-      {showPractical && (
-        <div style={{ border: "1.5px solid #d4cfc4", borderRadius: 8, overflow: "hidden", marginBottom: 16 }}>
-          <div style={{ background: "#ede9e0", padding: "9px 16px", fontSize: 11, color: "#888", letterSpacing: "1px", textTransform: "uppercase" }}>
-            Тип практичної частини
-          </div>
-          <div style={{ padding: "14px 16px", background: "#f9f7f2" }}>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-              {PRACTICAL_OPTIONS.map(opt => {
-                const isSelected = (commentAnalysis?.practicalApproach ?? undefined) === opt.key;
-                return (
-                  <button key={String(opt.key)} onClick={() => setCommentAnalysis(p => ({ ...(p || {}), practicalApproach: opt.key }))}
-                    style={{ padding: "6px 16px", borderRadius: 20, fontSize: 12, cursor: "pointer", fontFamily: "inherit", border: "1.5px solid", transition: "all .15s",
-                      background: isSelected ? "#1a1a14" : "transparent",
-                      color: isSelected ? "#e8ff47" : "#555",
-                      borderColor: isSelected ? "#1a1a14" : "#ccc" }}>
-                    {opt.label}
-                  </button>
-                );
-              })}
-            </div>
-            {PRACTICAL_OPTIONS.filter(o => o.key != null).map(opt =>
-              (commentAnalysis?.practicalApproach ?? null) === opt.key
-                ? <div key={opt.key} style={{ fontSize: 12, color: "#4a7a1a", background: "#eef5e4", borderRadius: 6, padding: "6px 12px" }}>{opt.desc}</div>
-                : null
-            )}
-            {(commentAnalysis?.practicalApproach ?? null) === null && commentAnalysis?.practicalApproach !== undefined && (
-              <div style={{ fontSize: 12, color: "#888", fontStyle: "italic" }}>Додаток А не генерується</div>
-            )}
-            <div style={{ fontSize: 12, color: "#aaa", marginTop: 4 }}>Система обирає тип автоматично на основі теми. Якщо клієнт вказав інше — змініть вручну.</div>
-          </div>
-        </div>
+      {courseMissing && (
+        <div style={{ fontSize: 12, color: "#8a1a1a", marginBottom: 12 }}>⚠ Вкажіть курс, щоб продовжити</div>
       )}
 
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
         <NavBtn onClick={() => setStage("input")}>← Назад</NavBtn>
-        {sections.length > 0 && <NavBtn onClick={() => setStage("plan")}>Вперед (збережений план) →</NavBtn>}
-        <PrimaryBtn onClick={doGenPlan} label={sections.length > 0 ? "Перегенерувати план →" : "Генерувати план →"} />
+        {sections.length > 0 && <NavBtn onClick={() => setStage("plan")} disabled={courseMissing}>Вперед (збережений план) →</NavBtn>}
+        <PrimaryBtn onClick={doGenPlan} disabled={courseMissing} label={sections.length > 0 ? "Перегенерувати план →" : "Генерувати план →"} />
       </div>
     </div>
   );

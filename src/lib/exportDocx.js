@@ -1,4 +1,9 @@
 import { getLangLabels } from "./planUtils.js";
+import {
+  Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel,
+  TableOfContents, Table, TableRow, TableCell, WidthType, BorderStyle,
+  ExternalHyperlink, InternalHyperlink, Bookmark, FootnoteReferenceRun,
+} from "docx";
 
 // ─────────────────────────────────────────────
 // Перенумерація таблиць і рисунків
@@ -92,22 +97,27 @@ function getLangWordCode(lang) {
 // ─────────────────────────────────────────────
 // Word export (основний документ)
 // ─────────────────────────────────────────────
-export async function exportToDocx({ content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo, commentAnalysis, orderId }) {
-  if (!window.docx) {
-    await new Promise((resolve, reject) => {
-      const s = document.createElement("script");
-      s.src = "https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.min.js";
-      s.onload = resolve; s.onerror = reject;
-      document.head.appendChild(s);
-    });
-  }
+export async function exportToDocx({ content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo, commentAnalysis, orderId, annotationUk, annotationEn }) {
   const lc = getLangLabels(info?.language);
   const langCode = getLangWordCode(info?.language);
   const numberedContent = renumberTablesAndFigures(content, displayOrder, info?.language);
   Object.keys(numberedContent).forEach(k => { if (numberedContent[k]) numberedContent[k] = numberedContent[k].replace(/'/g, '\u2019'); });
   const normAppendices = appendicesText ? appendicesText.replace(/'/g, '\u2019') : appendicesText;
 
-  const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel, TableOfContents, Table, TableRow, TableCell, WidthType, BorderStyle, ExternalHyperlink, InternalHyperlink, Bookmark } = window.docx;
+  // \u2500\u2500 \u0412\u0438\u043d\u043e\u0441\u043a\u0438 (\u0414\u0421\u0422\u0423-\u0440\u0435\u0436\u0438\u043c): %%FN<n>%% \u0443 \u0442\u0435\u043a\u0441\u0442\u0456 \u2192 \u0440\u0435\u0430\u043b\u044c\u043d\u0430 Word-\u0432\u0438\u043d\u043e\u0441\u043a\u0430 \u2500\u2500
+  // n \u2192 \u043f\u043e\u0432\u043d\u0438\u0439 \u0442\u0435\u043a\u0441\u0442 \u0434\u0436\u0435\u0440\u0435\u043b\u0430, \u0440\u043e\u0437\u043f\u0430\u0440\u0441\u0435\u043d\u0438\u0439 \u0437\u0456 \u0441\u043f\u0438\u0441\u043a\u0443 \u0434\u0436\u0435\u0440\u0435\u043b ("\u0421\u041f\u0418\u0421\u041e\u041a \u0412\u0418\u041a\u041e\u0420\u0418\u0421\u0422\u0410\u041d\u0418\u0425 \u0414\u0416\u0415\u0420\u0415\u041b").
+  const footnoteTextByNum = {};
+  const sourcesSec = displayOrder.find(s => s.type === "sources");
+  if (sourcesSec && numberedContent[sourcesSec.id]) {
+    numberedContent[sourcesSec.id].split("\n").forEach(line => {
+      const cleaned = line.trim().replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1");
+      const m = cleaned.match(/^(\d+)[.)]\s*(.*)/);
+      if (m) footnoteTextByNum[parseInt(m[1])] = m[2];
+    });
+  }
+  const footnotesRegistry = {};
+  let footnoteCounter = 0;
+
   const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
   function _escRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
   const twRe = new RegExp("^" + _escRe(lc.tableWord) + "\\s+\\d");
@@ -137,7 +147,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
   }
   const FIG_INLINE_RE = /(?:рис(?:унок)?\.?\s*\d+(?:\.\d+)*|fig(?:ure)?\.?\s*\d+(?:\.\d+)*)/i;
   function parseTextWithCitations(text, color) {
-    const CITE_RE = /\[(\d+)\]/g;
+    const CITE_RE = /\[(\d+)\]|%%FN(\d+)%%/g;
     const result = [];
     let lastIndex = 0;
     let match;
@@ -145,10 +155,17 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
       if (match.index > lastIndex) {
         result.push(new TextRun({ text: text.slice(lastIndex, match.index), font: FONT, size: SIZE, color }));
       }
-      result.push(new InternalHyperlink({
-        anchor: `ref_${match[1]}`,
-        children: [new TextRun({ text: match[0], font: FONT, size: SIZE, color: "000000" })],
-      }));
+      if (match[2]) {
+        footnoteCounter++;
+        const fnText = footnoteTextByNum[Number(match[2])] || "";
+        footnotesRegistry[footnoteCounter] = { children: [new Paragraph({ children: [new TextRun({ text: fnText, font: FONT, size: SIZE_NUM, color: "000000" })] })] };
+        result.push(new TextRun({ children: [new FootnoteReferenceRun(footnoteCounter)], font: FONT, size: SIZE, color }));
+      } else {
+        result.push(new InternalHyperlink({
+          anchor: `ref_${match[1]}`,
+          children: [new TextRun({ text: match[0], font: FONT, size: SIZE, color: "000000" })],
+        }));
+      }
       lastIndex = match.index + match[0].length;
     }
     if (lastIndex < text.length) {
@@ -510,6 +527,24 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     children.push(new Paragraph({ spacing: { before: 0, after: 0, line: LINE, lineRule: "auto" }, children: [] }));
   }
 
+  // ── Анотація (укр + англ), кожна мова — окрема сторінка, перед змістом ──
+  [annotationUk, annotationEn].filter(a => a?.trim()).forEach(annotationText => {
+    let isFirstLine = true;
+    annotationText.replace(/'/g, '’').split("\n").forEach(line => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      const isHeading = isFirstLine && /^(АНОТАЦІЯ|РЕФЕРАТ|ABSTRACT)$/i.test(trimmed);
+      children.push(new Paragraph({
+        pageBreakBefore: isFirstLine,
+        alignment: isHeading ? AlignmentType.CENTER : AlignmentType.BOTH,
+        indent: isHeading ? { firstLine: 0 } : { firstLine: INDENT },
+        spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
+        children: [new TextRun({ text: trimmed, font: FONT, size: SIZE, bold: isHeading, color: "000000" })],
+      }));
+      isFirstLine = false;
+    });
+  });
+
   children.push(new Paragraph({
     pageBreakBefore: true,
     alignment: AlignmentType.CENTER,
@@ -671,6 +706,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
         { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", run: { font: FONT, size: SIZE, bold: true, color: "000000", language: { value: langCode } }, paragraph: { spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, alignment: AlignmentType.BOTH, indent: { firstLine: INDENT } } },
       ],
     },
+    footnotes: footnoteCounter > 0 ? footnotesRegistry : undefined,
     sections: [{
       properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: T, right: R, bottom: B, left: L } }, pageNumberStart: 1, titlePage: true },
       headers: {
@@ -698,15 +734,6 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
 // Export plan to docx
 // ─────────────────────────────────────────────
 export async function exportPlanToDocx({ sections, info, methodInfo }) {
-  if (!window.docx) {
-    await new Promise((resolve, reject) => {
-      const s = document.createElement("script");
-      s.src = "https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.min.js";
-      s.onload = resolve; s.onerror = reject;
-      document.head.appendChild(s);
-    });
-  }
-  const { Document, Packer, Paragraph, TextRun, AlignmentType, HeadingLevel } = window.docx;
   const FONT = "Times New Roman", SIZE = 28, LINE = 360, INDENT = 709;
   const langCode = getLangWordCode(info?.language);
   const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
@@ -776,15 +803,6 @@ export async function exportPlanToDocx({ sections, info, methodInfo }) {
 // Додатки (.docx)
 // ─────────────────────────────────────────────
 export async function exportAppendixToDocx(text, info, methodInfo, orderId) {
-  if (!window.docx) {
-    await new Promise((resolve, reject) => {
-      const s = document.createElement("script");
-      s.src = "https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.min.js";
-      s.onload = resolve; s.onerror = reject;
-      document.head.appendChild(s);
-    });
-  }
-  const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel, Table, TableRow, TableCell, WidthType, BorderStyle } = window.docx;
   const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
   const langCode = getLangWordCode(info?.language);
   const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
@@ -943,15 +961,6 @@ export async function exportAppendixToDocx(text, info, methodInfo, orderId) {
 // Доповідь (.docx)
 // ─────────────────────────────────────────────
 export async function exportSpeechToDocx(text, info, methodInfo, orderId, speechLabel) {
-  if (!window.docx) {
-    await new Promise((resolve, reject) => {
-      const s = document.createElement("script");
-      s.src = "https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.min.js";
-      s.onload = resolve; s.onerror = reject;
-      document.head.appendChild(s);
-    });
-  }
-  const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header } = window.docx;
   const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
   const langCode = getLangWordCode(info?.language);
   const mmToTwip = mm => Math.round(mm * 1440 / 25.4);

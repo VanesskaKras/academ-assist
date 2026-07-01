@@ -23,7 +23,7 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
       document.head.appendChild(s);
     });
   }
-  const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel, ExternalHyperlink, InternalHyperlink, Bookmark, Table, TableRow, TableCell, WidthType, BorderStyle } = window.docx;
+  const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel, ExternalHyperlink, InternalHyperlink, Bookmark, FootnoteReferenceRun, Table, TableRow, TableCell, WidthType, BorderStyle } = window.docx;
   const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
   const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
   const marg = methodInfo?.formatting?.margins || commentAnalysis?.formattingHints?.margins || {};
@@ -34,18 +34,29 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
   const B = mmToTwip(toMm(marg.bottom) ?? 20);
   const INDENT = 709, LINE = 360;
 
-  // [N] → внутрішнє гіперпосилання на закладку джерела
+  const footnotesRegistry = {};
+  let footnoteCounter = 0;
+  const footnoteTextByNum = {};
+
+  // [N] → внутрішнє гіперпосилання на закладку джерела; %%FN<n>%% → справжня Word-виноска
   function parseTextWithCitations(text, bold = false) {
-    const CITE_RE = /\[(\d+)\]/g;
+    const CITE_RE = /\[(\d+)\]|%%FN(\d+)%%/g;
     const result = [];
     let lastIndex = 0, match;
     while ((match = CITE_RE.exec(text)) !== null) {
       if (match.index > lastIndex)
         result.push(new TextRun({ text: text.slice(lastIndex, match.index), font: FONT, size: SIZE, bold, color: "000000" }));
-      result.push(new InternalHyperlink({
-        anchor: `ref_${match[1]}`,
-        children: [new TextRun({ text: match[0], font: FONT, size: SIZE, color: "000000" })],
-      }));
+      if (match[2]) {
+        footnoteCounter++;
+        const fnText = footnoteTextByNum[Number(match[2])] || "";
+        footnotesRegistry[footnoteCounter] = { children: [new Paragraph({ children: [new TextRun({ text: fnText, font: FONT, size: SIZE_NUM, color: "000000" })] })] };
+        result.push(new TextRun({ children: [new FootnoteReferenceRun(footnoteCounter)], font: FONT, size: SIZE, bold }));
+      } else {
+        result.push(new InternalHyperlink({
+          anchor: `ref_${match[1]}`,
+          children: [new TextRun({ text: match[0], font: FONT, size: SIZE, color: "000000" })],
+        }));
+      }
       lastIndex = match.index + match[0].length;
     }
     if (lastIndex < text.length)
@@ -127,6 +138,24 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
   const FIG_CAPTION_RE = /^рис\.?\s+\d/i;
   const FIG_INLINE_RE = /рис(?:унок)?\.?\s*\d+/i;
   const FIG_MARKER_RE = /^\[🔍 Рисунок \d+:/;
+
+  // ── Виноски (ДСТУ-режим): %%FN<n>%% у тексті → реальна Word-виноска ──
+  // n → повний текст джерела, узятий з explicit citations або розпарсений зі списку джерел у тексті.
+  if (citations && citations.length > 0) {
+    citations.forEach((c, i) => { footnoteTextByNum[i + 1] = c; });
+  } else {
+    sections.forEach(sec => {
+      if (!sec.text) return;
+      let inSrc = false;
+      sec.text.split("\n").forEach(line => {
+        const cleaned = line.trim().replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1");
+        if (SOURCES_HEADER_RE.test(cleaned)) { inSrc = true; return; }
+        if (!inSrc || !cleaned) return;
+        const m = cleaned.match(/^(\d+)[.)]\s*(.*)/);
+        if (m) footnoteTextByNum[parseInt(m[1])] = m[2];
+      });
+    });
+  }
 
   function makeSimpleTableDocx(tableLines) {
     const border = { style: BorderStyle.SINGLE, size: 1, color: "000000" };
@@ -254,6 +283,7 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
 
   const doc = new Document({
     styles: { default: { document: { run: { font: FONT, size: SIZE, color: "000000" }, paragraph: { spacing: { line: LINE, lineRule: "auto" } } } } },
+    footnotes: footnoteCounter > 0 ? footnotesRegistry : undefined,
     sections: [{
       properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: T, right: R, bottom: B, left: L } }, pageNumberStart: 1, titlePage: true },
       headers: {

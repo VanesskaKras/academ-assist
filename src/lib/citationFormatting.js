@@ -14,6 +14,7 @@ function buildStructuredEntry(p) {
   if (p.volume) e.volume = p.volume;
   if (p.issue) e.issue = p.issue;
   if (p.pages) e.pages = p.pages;
+  if (p.totalPages) e.totalPages = p.totalPages;
   if (p.publisher) e.publisher = p.publisher;
   if (p.publisherLocation) e.city = p.publisherLocation;
   const url = p.url || (p.doi ? `https://doi.org/${p.doi}` : "");
@@ -22,17 +23,66 @@ function buildStructuredEntry(p) {
   return e;
 }
 
-// Замінює [oldN] / [oldN, с. X] у тексті на нові номери у фінальному форматі стилю
-export function applyCitationRemap(text, oldToNew, refCiteText) {
+// Витягує валідний діапазон сторінок джерела для внутрітекстового цитування:
+// - стаття/дисертація з "С. X–Y" (або "pp. X–Y") → діапазон статті;
+// - книга без діапазону, але з відомим загальним обсягом (structuredPaper.totalPages
+//   або власний рядок "N с."/"N p.") → діапазон [1, N] звужений на пару сторінок з
+//   кожного краю (титул/зміст на початку, бібліографія/покажчик у кінці — не змістовні);
+// - закон/сайт (немає ні того, ні іншого) → null, сторінка не показується.
+export function extractPageRange(rawRef, structuredPaper) {
+  const rangeMatch = rawRef.match(/[Сс]\.\s*(\d+)\s*[–\-—]\s*(\d+)/);
+  if (rangeMatch) return { min: +rangeMatch[1], max: +rangeMatch[2] };
+  const engRangeMatch = rawRef.match(/pp\.\s*(\d+)\s*[–\-—]\s*(\d+)/i);
+  if (engRangeMatch) return { min: +engRangeMatch[1], max: +engRangeMatch[2] };
+  const singlePageMatch = rawRef.match(/[Сс]\.\s*(\d+)(?!\d*\s*[сp]\.)/);
+  if (singlePageMatch) return { min: +singlePageMatch[1], max: +singlePageMatch[1] };
+  const engSingleMatch = rawRef.match(/pp?\.\s*(\d+)/i);
+  if (engSingleMatch) return { min: +engSingleMatch[1], max: +engSingleMatch[1] };
+  const totalPages = structuredPaper?.totalPages || rawRef.match(/(\d+)\s*[сp]\.\s*$/i)?.[1];
+  if (totalPages) {
+    const n = +totalPages;
+    const buffer = Math.min(3, Math.max(1, Math.floor(n * 0.1)));
+    const min = buffer + 1;
+    const max = n - buffer;
+    return min < max ? { min, max } : { min: 1, max: n };
+  }
+  return null;
+}
+
+// Обирає конкретну сторінку з діапазону для N-го за рахунком вживання джерела —
+// щоб повторні цитування того самого джерела не показували щоразу однакову сторінку.
+export function pickPageInRange(range, occurrenceIndex) {
+  const span = range.max - range.min;
+  if (span <= 0) return range.min;
+  const fractions = [0, 0.5, 0.25, 0.75, 0.15, 0.85, 0.4, 0.6];
+  const frac = fractions[(occurrenceIndex - 1) % fractions.length];
+  return range.min + Math.round(span * frac);
+}
+
+// Замінює [oldN] / [oldN, с. X] у тексті на нові номери у фінальному форматі стилю.
+// Сторінку, яку вписала сама модель під час написання, зберігаємо як є (якщо вона
+// в межах відомого діапазону джерела); інакше підставляємо сторінку з діапазону.
+// Кожна згадка джерела лишається окремою (виноски й так завжди були окремі,
+// а для звичайних [N] повторне цитування — це нормально, не дублікат для видалення).
+export function applyCitationRemap(text, oldToNew, refCiteText, { pageRanges = {} } = {}) {
   if (!text) return text;
   const citCount = {};
-  let out = text.replace(/\[(\d+)(?:,\s*с\.\s*\d+)?\]/g, (match, oldN) => {
+  let out = text.replace(/\[(\d+)(?:,\s*с\.\s*(\d+))?\]/g, (match, oldN, oldPage) => {
     const newN = oldToNew[Number(oldN)];
     if (!newN) return ""; // хибний (галюцинований) номер — прибираємо
     citCount[newN] = (citCount[newN] || 0) + 1;
-    return citCount[newN] <= 1 ? `%%CIT${newN}%%` : "";
+    return `%%CIT${newN}_${oldPage || ""}_${citCount[newN]}%%`;
   });
-  out = out.replace(/%%CIT(\d+)%%/g, (_, n) => refCiteText[Number(n)] || `[${n}]`);
+  out = out.replace(/%%CIT(\d+)_(\d*)_(\d+)%%/g, (_, nStr, oldPageStr, occStr) => {
+    const n = Number(nStr);
+    const base = refCiteText[n] || `[${n}]`;
+    const range = pageRanges[n];
+    if (!range) return base; // немає діапазону (закон/сайт, або APA/MLA/виноска — там base вже повний)
+    let page = oldPageStr ? Number(oldPageStr) : null;
+    if (page != null && (page < range.min || page > range.max)) page = null; // хибна сторінка поза діапазоном
+    if (page == null) page = pickPageInRange(range, Number(occStr));
+    return `[${n}, с. ${page}]`;
+  });
   return out;
 }
 
@@ -47,9 +97,10 @@ export async function remapAndFormatCitations({
   sourcesOrder,        // methodInfo?.sourcesOrder (опційно)
   sourcesGrouping,     // methodInfo?.sourcesGrouping (опційно)
   sourcesFormatRules,  // methodInfo?.sourcesFormatRules (опційно)
+  citFootnotes,        // true → ДСТУ-посилання у вигляді посторінкових виносок замість [N]
   callClaude,
 }) {
-  if (!citations?.length) return { refList: [], oldToNew: {}, refCiteText: {} };
+  if (!citations?.length) return { refList: [], oldToNew: {}, refCiteText: {}, pageRanges: {} };
 
   const sourcesStyleRaw = citStyle || "ДСТУ 8302:2015";
   const isAPA = /APA/i.test(sourcesStyleRaw);
@@ -150,7 +201,7 @@ ${sourcesOrderText} ${sourcesGroupingText}${methodSourcesRules}
 - authors: [{family:"Прізвище", given:"Ім'я"}] → форматуй як "Прізвище І." (перша літера given). НЕ перекладай і НЕ транслітеруй.
 - authorsRaw: масив рядків → нормалізуй порядок (прізвище перед ініціалами), додай крапки після ініціалів.
 - journal + volume + issue → для ДСТУ: "Назва журналу. рік. Вип. N, № M. С. xx–xx."
-- _docType:"book" → це монографія/книга (Місто : Видавець, рік. Nс.)
+- _docType:"book" → це монографія/книга (Місто : Видавець, рік. Nс., де N — totalPages якщо є)
 Для сирого тексту: нормалізуй порядок слів і розділові знаки за вимогами стилю.
 КРИТИЧНО: НЕ перекладай і НЕ транслітеруй прізвища авторів та назви джерел. Переведення ВЕЛИКИХ ЛІТЕР у sentence case — дозволено і обов'язково.
 
@@ -168,6 +219,7 @@ ${refLines.join("\n")}`;
 
   // ── 4. Формат inline-посилань по стилю ──
   const refCiteText = {};
+  const pageRanges = {};
   fmtLines.forEach((ref, i) => {
     const n = i + 1;
     if (isAPA) {
@@ -190,15 +242,18 @@ ${refLines.join("\n")}`;
         ? beforeComma
         : ref.match(/(?:^|[\s,])([А-ЯҐЄІЇа-яґєіїA-Za-z]{3,})/)?.[1];
       refCiteText[n] = `(${rawSurname || `Автор${n}`})`;
+    } else if (citFootnotes) {
+      // Маркер для exportDocx — буде замінений на справжню Word-виноску
+      // з повним описом джерела (ref), узятим зі сформатованого списку.
+      refCiteText[n] = `%%FN${n}%%`;
     } else {
       const rawRef = sorted[i] ?? ref;
-      const articlePageMatch = rawRef.match(/[Сс]\.\s*(\d+)\s*[–\-—]/);
-      const singlePageMatch = !articlePageMatch && rawRef.match(/[Сс]\.\s*(\d+)(?!\d*\s*с\.)/);
-      const engPageMatch = rawRef.match(/pp?\.\s*(\d+)/i);
-      const startPage = articlePageMatch?.[1] || singlePageMatch?.[1] || engPageMatch?.[1];
-      refCiteText[n] = startPage ? `[${n}, с. ${startPage}]` : `[${n}]`;
+      const sp = findStructured(rawRef);
+      const range = extractPageRange(rawRef, sp);
+      if (range) pageRanges[n] = range;
+      refCiteText[n] = `[${n}]`;
     }
   });
 
-  return { refList: fmtLines, oldToNew, refCiteText };
+  return { refList: fmtLines, oldToNew, refCiteText, pageRanges };
 }

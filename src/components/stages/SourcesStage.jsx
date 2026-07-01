@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { lookupDoiMetadata, fetchPagesFromUrl, paperToCitation, lookupDOIByBiblio, enrichManualLine } from "../../lib/sourcesSearch.js";
+import { lookupDoiMetadata, fetchPagesFromUrl, paperToCitation, lookupDOIByBiblio, enrichManualLine, fetchGoogleBooksPageCount } from "../../lib/sourcesSearch.js";
 import { TA_WHITE } from "../../shared.jsx";
 import { Heading, NavBtn, PrimaryBtn, GreenBtn } from "../Buttons.jsx";
 import { SpinDot } from "../SpinDot.jsx";
@@ -80,6 +80,7 @@ export function SourcesStage({
   doGenKeywords, doAddAllCitations, onAddAbstracts, onFinish, remapLoading, onProceedToWriting, setStage,
   onRegenWithNewSources, hasGeneratedContent, onSave, saving,
   citStyleOverride, sourcesOrderOverride, onCitStyleChange, onSourcesOrderChange,
+  citFootnotes, onCitFootnotesChange,
 }) {
   const [selectedSugg, setSelectedSugg] = useState({});
   const [suggOpen, setSuggOpen] = useState({});
@@ -148,12 +149,21 @@ export function SourcesStage({
     const afterDoiBiblio = await Promise.all(afterDoi.map(p => lookupDOIByBiblio(p)));
 
     // Крок 2: для джерел без сторінок — пробуємо витягти з HTML мета-тегів сторінки журналу
-    const enriched = await Promise.all(afterDoiBiblio.map(async p => {
+    const afterMeta = await Promise.all(afterDoiBiblio.map(async p => {
       if (p.pages) return p;
       const pageUrl = p.url || (p.doi ? `https://doi.org/${p.doi}` : null);
       if (!pageUrl) return p;
       const pages = await fetchPagesFromUrl(pageUrl);
       return pages ? { ...p, pages } : p;
+    }));
+
+    // Крок 3: для книг без сторінок — загальний обсяг через Google Books
+    // (конкретна сторінка цитати з книги невідома, але діапазон 1–N дає з чого обрати)
+    const enriched = await Promise.all(afterMeta.map(async p => {
+      if (p.type !== 'book' || p.pages || p.totalPages) return p;
+      const firstAuthorSurname = (Array.isArray(p.authors) ? p.authors[0] : '').split(/[\s,]+/)[0] || '';
+      const totalPages = await fetchGoogleBooksPageCount(p.title, firstAuthorSurname);
+      return totalPages ? { ...p, totalPages } : p;
     }));
 
     // Обмежуємо зарубіжні до 30%
@@ -283,6 +293,20 @@ export function SourcesStage({
             );
           })}
         </div>
+        {effectiveCitStyle === "ДСТУ 8302:2015" && (
+          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <span style={{ fontSize: 11, color: "#888" }}>Посилання</span>
+            {[[false, "У тексті"], [true, "Виноски"]].map(([val, label]) => {
+              const active = !!citFootnotes === val;
+              return (
+                <button key={String(val)} onClick={() => onCitFootnotesChange(val)}
+                  style={{ fontSize: 11, padding: "3px 10px", borderRadius: 5, border: `1.5px solid ${active ? "#1a1a14" : "#c8c2b5"}`, background: active ? "#1a1a14" : "transparent", color: active ? "#f5f2eb" : "#555", cursor: "pointer", fontFamily: "inherit" }}>
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        )}
         {(citStyleOverride || sourcesOrderOverride) && (
           <span style={{ fontSize: 10, color: "#e8a050", display: "flex", alignItems: "center", gap: 4 }}>
             ✏ змінено вручну ·{" "}

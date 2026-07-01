@@ -31,6 +31,26 @@ const BLOCKED = [
   'белорус', 'беларус', 'minsk', 'минск', 'гродн', 'витебск', 'брест',
 ];
 
+// ── Чужі студентські роботи (магістерські, дипломні, курсові тощо) — не беремо як джерела ──
+const STUDENT_WORK_PATTERNS = [
+  'магістерська робота', 'магістерська дисертація', 'магістерської роботи',
+  'дипломна робота', 'дипломної роботи', 'кваліфікаційна робота', 'кваліфікаційної роботи',
+  'випускна кваліфікаційна робота', 'бакалаврська робота', 'бакалаврської роботи',
+  'курсова робота', 'курсової роботи',
+  "master's thesis", 'master thesis', 'bachelor thesis', "bachelor's thesis",
+  'diploma thesis', 'diploma work', 'coursework', 'term paper', 'graduation thesis',
+];
+const STUDENT_WORK_TYPES = new Set(['dissertation', 'thesis']);
+
+function isStudentWork(obj) {
+  const title = (Array.isArray(obj?.dctitle) ? obj.dctitle[0] : obj?.dctitle) || obj?.title || '';
+  const titleLower = title.toLowerCase();
+  if (STUDENT_WORK_PATTERNS.some(p => titleLower.includes(p))) return true;
+  const type = (obj?.type || obj?.documentType || '').toLowerCase();
+  if (STUDENT_WORK_TYPES.has(type)) return true;
+  return false;
+}
+
 function isRussianUrl(url = '') {
   return /\.ru(\/|$)/i.test(url.toLowerCase());
 }
@@ -51,6 +71,8 @@ function isBlocked(obj) {
   // Блокуємо джерела з російськомовним заголовком
   const title = (Array.isArray(obj?.dctitle) ? obj.dctitle[0] : obj?.dctitle) || obj?.title || '';
   if (isRussianText(title)) return true;
+  // Блокуємо чужі студентські роботи (магістерські, дипломні, курсові тощо)
+  if (isStudentWork(obj)) return true;
   return false;
 }
 
@@ -277,7 +299,7 @@ function applyYearFilter(papers, keywords = []) {
 
 // ── OpenAlex ──
 const OA_BASE = 'https://api.openalex.org/works';
-const OA_FIELDS = 'title,authorships,publication_year,primary_location,doi,language,id,biblio,abstract_inverted_index';
+const OA_FIELDS = 'title,authorships,publication_year,primary_location,doi,language,id,biblio,abstract_inverted_index,type';
 
 async function openAlexSearch(query, filterStr, limit, page = 1) {
   const url = `${OA_BASE}?search=${encodeURIComponent(query)}&filter=${filterStr}&per_page=${limit}&page=${page}&select=${OA_FIELDS}`;
@@ -841,6 +863,36 @@ export async function lookupDOIByBiblio(paper) {
   } catch { return paper; }
 }
 
+/**
+ * Шукає загальний обсяг книги (кількість сторінок) через Google Books API.
+ * Використовується коли CrossRef/OpenAlex/DOI не дають діапазону сторінок
+ * (типово для книг — вони мають лише "загальний обсяг", не "сторінки статті").
+ */
+export async function fetchGoogleBooksPageCount(title, authorSurname = '') {
+  const cleanTitle = (title || '').slice(0, 120).trim();
+  if (!cleanTitle || cleanTitle.length < 8) return null;
+  try {
+    const qParts = [`intitle:${cleanTitle}`];
+    if (authorSurname) qParts.push(`inauthor:${authorSurname}`);
+    const q = qParts.join('+');
+    const r = await fetch(
+      `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=1`,
+      { cache: 'no-store' },
+    );
+    if (!r.ok) return null;
+    const d = await r.json();
+    const item = d.items?.[0];
+    const pageCount = item?.volumeInfo?.pageCount;
+    if (!pageCount || pageCount < 4) return null;
+    // Перевірка збігу назви — щоб не причепити обсяг чужої книги
+    const foundTitle = (item.volumeInfo?.title || '').toLowerCase();
+    const ourWords = cleanTitle.toLowerCase().split(/\s+/).filter(w => w.length > 4);
+    const overlap = ourWords.filter(w => foundTitle.includes(w)).length;
+    if (ourWords.length > 2 && overlap < 2) return null;
+    return pageCount;
+  } catch { return null; }
+}
+
 function normTitle(str) {
   if (!str) return str;
   const letters = str.match(/[а-яґєіїА-ЯҐЄІЇa-zA-Z]/g) || [];
@@ -915,11 +967,25 @@ export async function enrichManualLine(line) {
 
   // ── Крок 3: HTML мета-теги через проксі (fallback) ──
   const urlMatch = trimmed.match(/https?:\/\/\S+/);
-  if (!urlMatch) return line;
-  const url = urlMatch[0].replace(/[.,;)#]+$/, '');
-  const pages = await fetchPagesFromUrl(url);
-  if (!pages) return line;
-  return insertPages(pages);
+  if (urlMatch) {
+    const url = urlMatch[0].replace(/[.,;)#]+$/, '');
+    const pages = await fetchPagesFromUrl(url);
+    if (pages) return insertPages(pages);
+  }
+
+  // ── Крок 4: без URL і без DOI — це, ймовірно, книга. Пробуємо загальний
+  // обсяг через Google Books (окрема сторінка для конкретної цитати з книги
+  // об'єктивно невідома — але хоча б діапазон 1–N дає з чого обрати) ──
+  const looksLikeArticle = /№|Вип\.|Vol\.|No\.|pp?\.\s*\d/i.test(textOnly);
+  if (!urlMatch && !looksLikeArticle && textOnly.length > 8) {
+    const pageCount = await fetchGoogleBooksPageCount(textOnly);
+    if (pageCount) {
+      const suffix = isUk ? `${pageCount} с.` : `${pageCount} p.`;
+      return line.trimEnd().replace(/[.\s]+$/, '') + `. ${suffix}`;
+    }
+  }
+
+  return line;
 }
 
 export function paperToCitation(paper) {

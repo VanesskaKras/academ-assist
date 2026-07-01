@@ -12,6 +12,7 @@ import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
 import { FieldBox, Heading, NavBtn, PrimaryBtn, GreenBtn, SaveIndicator } from "./components/Buttons.jsx";
 import { DropZone } from "./components/DropZone.jsx";
 import { parsePagesAvg, exportSimpleDocx, TA, TA_WHITE, SHARED_STYLES } from "./shared.jsx";
+import { getLangLabels } from "./lib/planUtils.js";
 import mammoth from "mammoth";
 import { exportToDocx, exportSpeechToDocx } from "./lib/exportDocx.js";
 import { SYS_JSON_SHORT } from "./lib/prompts.js";
@@ -62,7 +63,8 @@ function renderWithTables(text) {
 }
 
 // ── Компонент-панель налаштувань оформлення джерел ──
-function SmCitSettings({ effectiveCitStyle, effectiveSourcesOrder, citStyleOverride, sourcesOrderOverride, onCitStyleChange, onSourcesOrderChange }) {
+function SmCitSettings({ effectiveCitStyle, effectiveSourcesOrder, citStyleOverride, sourcesOrderOverride, onCitStyleChange, onSourcesOrderChange, citFootnotes, onCitFootnotesChange }) {
+  const isDstu = effectiveCitStyle === "ДСТУ 8302:2015";
   return (
     <div style={{ padding: "10px 14px", background: "#f5f2eb", border: "1.5px solid #d4cfc4", borderRadius: 8, marginBottom: 16, display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
       <span style={{ fontSize: 11, color: "#666", fontWeight: 600, flexShrink: 0 }}>Оформлення:</span>
@@ -90,6 +92,20 @@ function SmCitSettings({ effectiveCitStyle, effectiveSourcesOrder, citStyleOverr
           );
         })}
       </div>
+      {isDstu && (
+        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+          <span style={{ fontSize: 11, color: "#888" }}>Посилання</span>
+          {[[false, "У тексті"], [true, "Виноски"]].map(([val, label]) => {
+            const active = !!citFootnotes === val;
+            return (
+              <button key={String(val)} onClick={() => onCitFootnotesChange(val)}
+                style={{ fontSize: 11, padding: "3px 10px", borderRadius: 5, border: `1.5px solid ${active ? "#1a1a14" : "#c8c2b5"}`, background: active ? "#1a1a14" : "transparent", color: active ? "#f5f2eb" : "#555", cursor: "pointer", fontFamily: "inherit" }}>
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      )}
       {(citStyleOverride || sourcesOrderOverride) && (
         <span style={{ fontSize: 10, color: "#e8a050", display: "flex", alignItems: "center", gap: 4 }}>
           ✏ змінено вручну ·{" "}
@@ -247,7 +263,9 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
   const [searchPhrases, setSearchPhrases] = useState([]); // фрази для Google Scholar
 
   // Реферат — секції з текстом
-  const [sections, setSections] = useState([]); // [{id, label, text}]
+  const [sections, setSections] = useState([]); // [{id, label, text, pages, sectionTitle?}] — sectionTitle присутній лише у підрозділах
+  const [namingLoading, setNamingLoading] = useState(false);
+  const [singleNamingId, setSingleNamingId] = useState(null);
   const [genIdx, setGenIdx] = useState(0);
   const [maxStageIdx, setMaxStageIdx] = useState(0);
   const [running, setRunning] = useState(false);
@@ -267,6 +285,8 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
   const [refSecLoading, setRefSecLoading] = useState({});
   const [refSecSelected, setRefSecSelected] = useState({});
   const [refSecOpen, setRefSecOpen] = useState({});
+  const [allSecLoading, setAllSecLoading] = useState(false);
+  const [allSecProgress, setAllSecProgress] = useState({ done: 0, total: 0 });
 
   const [loadMsg, setLoadMsg] = useState("");
   const [saving, setSaving] = useState(false);
@@ -274,6 +294,7 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
   const [dbLoading, setDbLoading] = useState(false);
   const [citStyleOverride, setCitStyleOverride] = useState(null);        // "ДСТУ 8302:2015" | "APA" | "MLA" | null
   const [sourcesOrderOverride, setSourcesOrderOverride] = useState(null); // "alphabetical" | "appearance" | null
+  const [citFootnotes, setCitFootnotes] = useState(false);               // true → ДСТУ-посилання у виносках
   const [docxLoading, setDocxLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -358,6 +379,7 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
           if (d.methodRequirements) setMethodRequirements(d.methodRequirements);
           if (d.citStyleOverride) setCitStyleOverride(d.citStyleOverride);
           if (d.sourcesOrderOverride) setSourcesOrderOverride(d.sourcesOrderOverride);
+          if (d.citFootnotes !== undefined) setCitFootnotes(d.citFootnotes);
           if (d.refSecPapers) setRefSecPapers(d.refSecPapers);
           if (d.refSecPhrases) setRefSecPhrases(d.refSecPhrases);
           if (d.presReady) setPresReady(d.presReady);
@@ -397,17 +419,6 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
       doSearchTezyPapers();
     }
   }, [workType, stage, info?.topic]);
-
-  // ── Автозапуск пошуку джерел для кожного розділу реферату (не вступ/висновки) ──
-  useEffect(() => {
-    if (workType !== "referat" || stage !== "sources" || !info?.topic) return;
-    const chapSecs = sections.filter(s => !["intro", "conclusions", "sources"].includes(s.id));
-    for (const sec of chapSecs) {
-      if (!refSecPapers[sec.id] && !refSecLoading[sec.id]) {
-        doSearchForSection(sec.id, sec.label);
-      }
-    }
-  }, [workType, stage, info?.topic, sections.length]);
 
   // ── Авто-збереження вибраних джерел ──
   useEffect(() => {
@@ -656,6 +667,19 @@ formatting — поля сторінки в мм якщо явно вказан�
     setRefSecLoading(prev => ({ ...prev, [secId]: false }));
   };
 
+  // ── Пошук джерел для ВСІХ розділів і підрозділів реферату одразу ──
+  const doSearchAllSections = async () => {
+    const refSecs = sections.filter(s => !["sources", "intro", "conclusions"].includes(s.id));
+    if (!refSecs.length) return;
+    setAllSecLoading(true);
+    setAllSecProgress({ done: 0, total: refSecs.length });
+    for (const sec of refSecs) {
+      await doSearchForSection(sec.id, sec.label);
+      setAllSecProgress(prev => ({ ...prev, done: prev.done + 1 }));
+    }
+    setAllSecLoading(false);
+  };
+
   // ── Додавання вибраних джерел для секції реферату ──
   const doAddForSection = async (secId) => {
     const selected = (refSecPapers[secId] || []).filter(p => (refSecSelected[secId] || []).includes(p.id));
@@ -752,23 +776,27 @@ formatting — поля сторінки в мм якщо явно вказан�
     try {
       const allStructured = Object.values(citStructured).flat();
       const _effectiveSmOrder = sourcesOrderOverride || methodInfo?.sourcesOrder;
-      const { refList, oldToNew, refCiteText } = await remapAndFormatCitations({
+      const _smStyle = citStyleOverride || info?.citStyle || "ДСТУ 8302:2015";
+      const isFootnoteMode = citFootnotes && /ДСТУ/i.test(_smStyle) && workType !== "prezentatsiya";
+      const { refList, oldToNew, refCiteText, pageRanges } = await remapAndFormatCitations({
         citations: tezyCitations,
         citStructured: allStructured,
-        citStyle: citStyleOverride || info?.citStyle,
+        citStyle: _smStyle,
         language: info?.language,
         sourcesOrder: _effectiveSmOrder,
         sourcesGrouping: methodInfo?.sourcesGrouping,
         sourcesFormatRules: methodInfo?.sourcesFormatRules,
+        citFootnotes: isFootnoteMode,
         callClaude,
       });
       if (!refList.length) { setRunning(false); setLoadMsg(""); return; }
       const refBlock = refList.map((c, i) => `${i + 1}. ${c}`).join("\n");
+      const remapText = text => applyCitationRemap(text, oldToNew, refCiteText, { pageRanges });
 
       if (workType === "referat") {
         const updatedSections = sections.map(s => s.id === "sources"
           ? { ...s, text: refBlock }
-          : { ...s, text: applyCitationRemap(s.text, oldToNew, refCiteText) });
+          : { ...s, text: remapText(s.text) });
         // Оновлюємо citInputs — замінюємо сирі рядки на відформатовані відповідно до нового порядку
         const newCitInputs = {};
         sections.filter(s => s.id !== "sources").forEach(s => {
@@ -787,7 +815,7 @@ formatting — поля сторінки в мм якщо явно вказан�
       } else if (workType === "prezentatsiya") {
         const updatedSlides = slides.map(sl => /Список використаних джерел/i.test(sl.title || "")
           ? { ...sl, content: refBlock }
-          : { ...sl, content: applyCitationRemap(sl.content, oldToNew, refCiteText) });
+          : { ...sl, content: remapText(sl.content) });
         setSlides(updatedSlides);
         setTezyCitations(refList);
         setSourcesFormatted(true);
@@ -795,7 +823,7 @@ formatting — поля сторінки в мм якщо явно вказан�
       } else {
         const bibMatch = result.match(/\n\s*Список використаних джерел[^\n]*\n([\s\S]*)$/i);
         const body = bibMatch ? result.slice(0, bibMatch.index) : result;
-        const remappedBody = applyCitationRemap(body, oldToNew, refCiteText);
+        const remappedBody = applyCitationRemap(body, oldToNew, refCiteText, { pageRanges });
         const newResult = `${remappedBody}\n\nСписок використаних джерел:\n${refBlock}`;
         setResult(newResult);
         setTezyCitations(refList);
@@ -964,7 +992,7 @@ ${supervisorBlock}`;
         const lines = clientPlan.split("\n").map(l => l.trim()).filter(Boolean);
         const chapSecs = lines
           .filter(l => /^(розділ|chapter|\d+\.?\s+[А-ЯҐЄІЇа-яґєії])/i.test(l))
-          .map((l, i) => ({ id: `ch${i + 1}`, label: l, text: "", pages: pagesPerChap }));
+          .map((l, i) => ({ id: `${i + 1}`, label: l, text: "", pages: pagesPerChap }));
         if (chapSecs.length > 0) {
           newSections = [
             { id: "intro", label: "ВСТУП", text: "", pages: 1 },
@@ -980,7 +1008,7 @@ ${supervisorBlock}`;
         const fileContext = files.map(toClaudeFile);
 
         const chapEntries = Array.from({ length: chapCount }, (_, i) =>
-          `  {"id":"ch${i + 1}","label":"РОЗДІЛ ${i + 1}. Назва","pages":${pagesPerChap}}`
+          `  {"id":"${i + 1}","label":"РОЗДІЛ ${i + 1}. Назва","pages":${pagesPerChap}}`
         ).join(",\n");
 
         const prompt = `Склади план реферату.
@@ -1004,13 +1032,188 @@ ${chapEntries},
         const model = fileContext.length > 0 ? MODEL : MODEL_FAST;
         const raw = await callClaude(msgs, null, "Respond only with valid JSON. No markdown.", 1200, null, model);
         const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || raw);
-        newSections = (parsed.sections || []).map(s => ({ ...s, text: "" }));
+        // Ігноруємо id від AI для розділів — перенумеровуємо за позицією, щоб гарантувати "1","2","3"...
+        let chapN = 0;
+        newSections = (parsed.sections || []).map(s => {
+          if (["intro", "conclusions", "sources"].includes(s.id)) return { ...s, text: "" };
+          chapN++;
+          return { ...s, id: `${chapN}`, text: "" };
+        });
       }
 
       setSections(newSections);
       await saveToFirestore({ sections: newSections, stage: "plan", status: "plan_ready", clientPlan });
     } catch (e) { setError(e.message); }
     setRunning(false); setLoadMsg("");
+  };
+
+  // ── План реферату: перенумерація розділів/підрозділів за позицією у масиві ──
+  // Розділ без sectionTitle = "цілий розділ" (id "1","2"...). Підрозділ має sectionTitle = заголовок батьківського розділу, id "1.1","1.2"...
+  const renumberReferatSections = (list) => {
+    let chapNum = 0, lastTitle = null, subNum = 0;
+    const titleMap = {};
+    return list.map(s => {
+      if (["intro", "conclusions", "sources"].includes(s.id)) return s;
+      if (!s.sectionTitle) {
+        chapNum++; lastTitle = null;
+        const newLabel = /^РОЗДІЛ\s+\d+/i.test(s.label) ? s.label.replace(/^РОЗДІЛ\s+\d+/i, `РОЗДІЛ ${chapNum}`) : s.label;
+        return { ...s, id: `${chapNum}`, label: newLabel };
+      }
+      if (s.sectionTitle !== lastTitle) { chapNum++; lastTitle = s.sectionTitle; subNum = 0; }
+      subNum++;
+      const newId = `${chapNum}.${subNum}`;
+      if (!titleMap[s.sectionTitle]) {
+        titleMap[s.sectionTitle] = /^РОЗДІЛ\s+\d+/i.test(s.sectionTitle)
+          ? s.sectionTitle.replace(/^РОЗДІЛ\s+\d+/i, `РОЗДІЛ ${chapNum}`)
+          : s.sectionTitle;
+      }
+      const newLabel = /^\d+\.\d+/.test(s.label) ? s.label.replace(/^\d+\.\d+/, newId) : `${newId} ${s.label}`;
+      return { ...s, id: newId, sectionTitle: titleMap[s.sectionTitle], label: newLabel };
+    });
+  };
+
+  // Групує рядки-розділи у "блоки": цілий розділ = блок з 1 рядка, розбитий розділ = блок з його підрозділів
+  const getReferatBlocks = (mainRows) => {
+    const blocks = [];
+    let i = 0;
+    while (i < mainRows.length) {
+      const row = mainRows[i];
+      if (!row.sectionTitle) { blocks.push([row]); i++; continue; }
+      const title = row.sectionTitle;
+      const rows = [];
+      while (i < mainRows.length && mainRows[i].sectionTitle === title) { rows.push(mainRows[i]); i++; }
+      blocks.push(rows);
+    }
+    return blocks;
+  };
+
+  // Додати підрозділ: якщо клікнули на цілий розділ — розбиває його на 2 підрозділи; якщо на підрозділ — додає ще один поруч у тому ж розділі
+  const addReferatSubsection = (rowId) => {
+    setSections(prev => {
+      const idx = prev.findIndex(s => s.id === rowId);
+      if (idx < 0) return prev;
+      const row = prev[idx];
+      let next;
+      if (!row.sectionTitle) {
+        const half = Math.max(1, Math.round((row.pages || 2) / 2));
+        const sub1 = { id: `${row.id}.1`, label: `${row.id}.1 [Підрозділ]`, sectionTitle: row.label, pages: half, text: "" };
+        const sub2 = { id: `${row.id}.2`, label: `${row.id}.2 [Підрозділ]`, sectionTitle: row.label, pages: Math.max(1, (row.pages || 2) - half), text: "" };
+        next = [...prev.slice(0, idx), sub1, sub2, ...prev.slice(idx + 1)];
+      } else {
+        const chapNum = row.id.split(".")[0];
+        const siblings = prev.filter(s => s.sectionTitle === row.sectionTitle);
+        const maxSub = Math.max(...siblings.map(s => parseInt(s.id.split(".")[1], 10) || 0));
+        const newSub = { id: `${chapNum}.${maxSub + 1}`, label: `${chapNum}.${maxSub + 1} [Підрозділ]`, sectionTitle: row.sectionTitle, pages: 2, text: "" };
+        next = [...prev.slice(0, idx + 1), newSub, ...prev.slice(idx + 1)];
+      }
+      return renumberReferatSections(next);
+    });
+  };
+
+  // Додати новий цілий розділ (без підрозділів — за замовчуванням)
+  const addReferatChapter = () => {
+    setSections(prev => {
+      const mainNums = prev.filter(s => !["intro", "conclusions", "sources"].includes(s.id))
+        .map(s => parseInt(s.id.split(".")[0], 10) || 0);
+      const nextNum = (mainNums.length ? Math.max(...mainNums) : 0) + 1;
+      const newChap = { id: `${nextNum}`, label: `РОЗДІЛ ${nextNum}. [Назва розділу]`, pages: 3, text: "" };
+      const insertAt = prev.findIndex(s => s.id === "conclusions");
+      const at = insertAt >= 0 ? insertAt : prev.length;
+      return renumberReferatSections([...prev.slice(0, at), newChap, ...prev.slice(at)]);
+    });
+  };
+
+  // Переміщення: підрозділи — лише в межах свого розділу; цілі розділи — серед інших розділів
+  const moveReferatRow = (rowId, dir) => {
+    setSections(prev => {
+      const front = prev.filter(s => s.id === "intro");
+      const back = prev.filter(s => s.id === "conclusions" || s.id === "sources");
+      const mainRows = prev.filter(s => !["intro", "conclusions", "sources"].includes(s.id));
+      const blocks = getReferatBlocks(mainRows);
+      const blockIdx = blocks.findIndex(b => b.some(r => r.id === rowId));
+      if (blockIdx < 0) return prev;
+      const block = blocks[blockIdx];
+      if (block.length > 1) {
+        const rowIdx = block.findIndex(r => r.id === rowId);
+        const targetIdx = rowIdx + dir;
+        if (targetIdx < 0 || targetIdx >= block.length) return prev;
+        const newBlock = [...block];
+        [newBlock[rowIdx], newBlock[targetIdx]] = [newBlock[targetIdx], newBlock[rowIdx]];
+        const newBlocks = [...blocks]; newBlocks[blockIdx] = newBlock;
+        return renumberReferatSections([...front, ...newBlocks.flat(), ...back]);
+      }
+      const targetBlockIdx = blockIdx + dir;
+      if (targetBlockIdx < 0 || targetBlockIdx >= blocks.length) return prev;
+      const newBlocks = [...blocks];
+      [newBlocks[blockIdx], newBlocks[targetBlockIdx]] = [newBlocks[targetBlockIdx], newBlocks[blockIdx]];
+      return renumberReferatSections([...front, ...newBlocks.flat(), ...back]);
+    });
+  };
+  const moveReferatRowUp = (rowId) => moveReferatRow(rowId, -1);
+  const moveReferatRowDown = (rowId) => moveReferatRow(rowId, 1);
+
+  const deleteReferatRow = (rowId) => {
+    setSections(prev => renumberReferatSections(prev.filter(s => s.id !== rowId)));
+  };
+
+  const recalcReferatPages = () => {
+    const totalPages = parsePagesAvg(info?.pages);
+    setSections(prev => {
+      const mainRows = prev.filter(s => !["intro", "conclusions", "sources"].includes(s.id));
+      const pagesForMain = Math.max(mainRows.length, totalPages - 2);
+      const perRow = Math.max(1, Math.round(pagesForMain / Math.max(mainRows.length, 1)));
+      return prev.map(s => {
+        if (s.id === "intro" || s.id === "conclusions") return { ...s, pages: 1 };
+        if (s.id === "sources") return s;
+        return { ...s, pages: perRow };
+      });
+    });
+  };
+
+  // ── Придумати назви для заглушок (масово, якщо onlyId не задано, або для одного рядка) ──
+  const doNameReferatPlaceholders = async (onlyId = null) => {
+    if (onlyId) setSingleNamingId(onlyId); else setNamingLoading(true);
+    try {
+      const mainRows = sections.filter(s => !["intro", "conclusions", "sources"].includes(s.id));
+      const scope = onlyId ? mainRows.filter(s => s.id === onlyId) : mainRows;
+      const subPlaceholders = scope.filter(s => s.sectionTitle && /\[|новий/i.test(s.label));
+      const chapPlaceholderIds = [...new Set([
+        ...scope.filter(s => !s.sectionTitle && /\[|новий/i.test(s.label)).map(s => s.id),
+        ...scope.filter(s => s.sectionTitle && /\[/.test(s.sectionTitle)).map(s => s.id.split(".")[0]),
+      ])];
+      if (!subPlaceholders.length && !chapPlaceholderIds.length) { if (onlyId) setSingleNamingId(null); else setNamingLoading(false); return; }
+
+      const planContext = mainRows.map(s => `${s.id} — ${s.label}${s.sectionTitle ? ` (розділ: ${s.sectionTitle})` : ""}`).join("\n");
+      const prompt = `Реферат. Тема: "${info?.topic}". Галузь: ${info?.subject || ""}.
+Мова: ${info?.language || "Українська"} — усі назви мають бути цією мовою.
+
+ПОТОЧНИЙ ПЛАН:
+${planContext}
+
+Придумай назви лише для заглушок (де у назві є дужки [...]). Назви мають відповідати темі, не повторювати вже існуючі.
+
+Поверни ТІЛЬКИ JSON:
+{"chapters":{${chapPlaceholderIds.map(id => `"${id}":"назва розділу"`).join(",")}},"subsections":{${subPlaceholders.map(s => `"${s.id}":"назва підрозділу"`).join(",")}}}`;
+
+      const raw = await callClaude([{ role: "user", content: prompt }], null, "Respond only with valid JSON. No markdown.", 1200, null, MODEL_FAST);
+      const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || raw);
+      const chapTitles = parsed.chapters || {};
+      const subTitles = parsed.subsections || {};
+
+      setSections(prev => prev.map(s => {
+        if (!s.sectionTitle) {
+          return chapTitles[s.id] ? { ...s, label: `РОЗДІЛ ${s.id}. ${chapTitles[s.id]}` } : s;
+        }
+        const chapNum = s.id.split(".")[0];
+        const next = { ...s };
+        if (chapTitles[chapNum]) next.sectionTitle = `РОЗДІЛ ${chapNum}. ${chapTitles[chapNum]}`;
+        if (subTitles[s.id]) next.label = `${s.id} ${subTitles[s.id]}`;
+        return next;
+      }));
+    } catch (e) {
+      console.warn("referat naming failed:", e.message);
+    }
+    if (onlyId) setSingleNamingId(null); else setNamingLoading(false);
   };
 
   // ── Генерація тексту реферату (по секціях) ──
@@ -1120,8 +1323,8 @@ ${chapEntries},
       : [];
     const refFileContext = files.map(toClaudeFile);
 
-    // Номер розділу (для нумерації таблиць/рисунків X.Y)
-    const chapNum = sec.id.match(/^ch(\d+)/)?.[1] || null;
+    // Номер розділу (для нумерації таблиць/рисунків X.Y) — підтримує і цілий розділ ("2"), і підрозділ ("2.1")
+    const chapNum = sec.id.includes(".") ? sec.id.split(".")[0] : (/^\d+$/.test(sec.id) ? sec.id : null);
     const commentBlock = comment?.trim() ? `\nКОМЕНТАР ДО РОБОТИ: ${comment.trim()}\n` : "";
 
     let instruction = "";
@@ -1145,6 +1348,14 @@ ${!methodReqBlock && info?.requirements ? `\nДодаткові вимоги: ${
       instruction = `Напиши ВИСНОВКИ для реферату на тему "${info?.topic}".
 ${materialContext}${methodReqBlock}${commentBlock}Підсумуй основні результати по кожному розділу. Конкретні висновки без загальних фраз.
 ${!methodReqBlock && info?.requirements ? `Вимоги: ${info.requirements}\n` : ""}Обсяг: ~${approxParas} абзаців (~${pagesPerSec} стор.). Без цитат. Без жирного. Без нумерації. Пиши суцільними абзацами.`;
+    } else if (sec.sectionTitle) {
+      // Підрозділ — частина розбитого розділу
+      const tableNumInstr = chapNum
+        ? `Таблиці нумеруй: Таблиця ${chapNum}.Y – Назва (Y — порядковий номер у цьому розділі, починаючи з 1). Рисунки нумеруй: Рис. ${chapNum}.Y – Назва.`
+        : "";
+      instruction = `Напиши підрозділ "${sec.label}" розділу "${sec.sectionTitle}" для реферату на тему "${info?.topic}". Галузь: ${info?.subject || ""}.
+${materialContext}${methodReqBlock}${commentBlock}${sourcesBlock}${!methodReqBlock && info?.requirements ? `Вимоги до оформлення: ${info.requirements}\n` : ""}${tableNumInstr ? tableNumInstr + "\n" : ""}Обсяг: ~${approxParas} абзаців (~${pagesPerSec} стор.). ${citNote} Без жирного. Завершуй підсумковим реченням.
+НЕ включай назву підрозділу у відповідь — починай одразу з тексту.`;
     } else {
       const tableNumInstr = chapNum
         ? `Таблиці нумеруй: Таблиця ${chapNum}.Y – Назва (Y — порядковий номер у цьому розділі, починаючи з 1). Рисунки нумеруй: Рис. ${chapNum}.Y – Назва.`
@@ -1864,36 +2075,101 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
             ) : (
               <>
                 <p style={{ fontSize: 13, color: "#888", marginBottom: 16 }}>Перевірте та відредагуйте план. Після підтвердження — збір джерел.</p>
-                <div style={{ border: "1.5px solid #d4cfc4", borderRadius: 8, overflow: "hidden", marginBottom: 20 }}>
-                  {sections.map((sec, i) => (
-                    <div key={sec.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 16px", borderBottom: i < sections.length - 1 ? "1px solid #e4dfd4" : "none", background: ["intro", "conclusions", "sources"].includes(sec.id) ? "#ede9e0" : "#faf8f3" }}>
-                      <span style={{ fontSize: 11, color: "#bbb", width: 20, flexShrink: 0 }}>{i + 1}</span>
-                      <input value={sec.label} onChange={e => setSections(p => p.map((s, j) => j === i ? { ...s, label: e.target.value } : s))}
-                        style={{ flex: 1, background: "transparent", border: "none", fontSize: 13, fontFamily: "'Spectral',serif", color: "#1a1a14", minWidth: 0 }} />
-                      {sec.id !== "sources" ? (
-                        <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
-                          <input
-                            type="number" min="0.5" max="30" step="0.5"
-                            value={sec.pages ?? 1}
-                            onChange={e => setSections(p => p.map((s, j) => j === i ? { ...s, pages: parseFloat(e.target.value) || 1 } : s))}
-                            style={{ width: 42, textAlign: "center", padding: "2px 4px", border: "1px solid #d4cfc4", borderRadius: 4, fontSize: 12, fontFamily: "'Spectral',serif", background: "#fff", color: "#555" }}
-                          />
-                          <span style={{ fontSize: 11, color: "#aaa" }}>стор.</span>
-                        </div>
-                      ) : (
-                        <span style={{ fontSize: 11, color: "#aaa", whiteSpace: "nowrap", flexShrink: 0 }}>авто</span>
-                      )}
-                      {!["intro", "conclusions", "sources"].includes(sec.id) ? (
-                        <button onClick={() => setSections(p => p.filter((_, j) => j !== i))}
-                          style={{ background: "none", border: "none", color: "#ccc", cursor: "pointer", fontSize: 14, flexShrink: 0 }}
-                          onMouseEnter={e => e.currentTarget.style.color = "#c00"}
-                          onMouseLeave={e => e.currentTarget.style.color = "#ccc"}>✕</button>
-                      ) : (
-                        <span style={{ width: 18, flexShrink: 0 }} />
-                      )}
-                    </div>
-                  ))}
+                <div style={{ fontSize: 12, color: "#888", marginBottom: 10, padding: "8px 12px", background: "#f0ece2", borderRadius: 6, lineHeight: "1.6" }}>
+                  ✏️ Редагуй назви та сторінки прямо в таблиці. Кнопка <strong>+</strong> на розділі — розбити його на підрозділи (або додати ще один підрозділ), <strong>✕</strong> — видалити.
                 </div>
+                <div style={{ border: "1.5px solid #d4cfc4", borderRadius: 8, overflow: "hidden", marginBottom: 20 }}>
+                  {(() => {
+                    let lastTitle = null;
+                    let rowNum = 0;
+                    const mainRows = sections.filter(s => !["intro", "conclusions", "sources"].includes(s.id));
+                    const blocks = getReferatBlocks(mainRows);
+                    const rows = [];
+                    sections.forEach(s => {
+                      const isSpecial = ["intro", "conclusions", "sources"].includes(s.id);
+                      const isSub = !isSpecial && !!s.sectionTitle;
+                      if (isSub && s.sectionTitle !== lastTitle) {
+                        lastTitle = s.sectionTitle;
+                        rows.push(
+                          <div key={`hdr-${s.sectionTitle}`} style={{ padding: "7px 16px", background: "#ddd8c8", fontSize: 12, fontWeight: "bold", color: "#1a1a14", letterSpacing: "0.5px", textTransform: "uppercase", borderBottom: "1px solid #e4dfd4" }}>
+                            {s.sectionTitle}
+                          </div>
+                        );
+                      }
+                      if (!isSub) lastTitle = null;
+                      rowNum++;
+                      const isPlaceholder = !isSpecial && (/\[|новий/i.test(s.label) || (s.sectionTitle && /\[/.test(s.sectionTitle)));
+                      const block = !isSpecial ? blocks.find(b => b.some(r => r.id === s.id)) : null;
+                      const rowIdxInBlock = block ? block.findIndex(r => r.id === s.id) : -1;
+                      const blockIdx = block ? blocks.indexOf(block) : -1;
+                      const canUp = !isSpecial && (block.length > 1 ? rowIdxInBlock > 0 : blockIdx > 0);
+                      const canDown = !isSpecial && (block.length > 1 ? rowIdxInBlock < block.length - 1 : blockIdx < blocks.length - 1);
+                      rows.push(
+                        <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 16px", paddingLeft: isSub ? 30 : 16, borderBottom: "1px solid #e4dfd4", background: isSpecial ? "#ede9e0" : rowNum % 2 === 0 ? "#f5f2eb" : "#faf8f3" }}>
+                          <span style={{ fontSize: 11, color: "#bbb", width: 20, flexShrink: 0 }}>{rowNum}</span>
+                          <input value={s.label} onChange={e => { const val = e.target.value; setSections(p => p.map(x => x.id === s.id ? { ...x, label: val } : x)); }}
+                            style={{ flex: 1, background: "transparent", border: "none", fontSize: 13, fontFamily: "'Spectral',serif", color: isSpecial ? "#888" : "#1a1a14", fontStyle: isSpecial ? "italic" : "normal", minWidth: 0 }} />
+                          {isPlaceholder && (
+                            <button onClick={() => doNameReferatPlaceholders(s.id)} disabled={singleNamingId === s.id} title="Згенерувати назву"
+                              style={{ background: "transparent", border: "none", fontSize: 14, cursor: singleNamingId === s.id ? "wait" : "pointer", padding: "2px 4px", color: singleNamingId === s.id ? "#ccc" : "#b8a020", flexShrink: 0 }}
+                            >{singleNamingId === s.id ? "…" : "✨"}</button>
+                          )}
+                          {s.id !== "sources" ? (
+                            <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+                              <input
+                                type="number" min="0.5" max="30" step="0.5"
+                                value={s.pages ?? 1}
+                                onChange={e => { const v = parseFloat(e.target.value) || 1; setSections(p => p.map(x => x.id === s.id ? { ...x, pages: v } : x)); }}
+                                style={{ width: 42, textAlign: "center", padding: "2px 4px", border: "1px solid #d4cfc4", borderRadius: 4, fontSize: 12, fontFamily: "'Spectral',serif", background: "#fff", color: "#555" }}
+                              />
+                              <span style={{ fontSize: 11, color: "#aaa" }}>стор.</span>
+                            </div>
+                          ) : (
+                            <span style={{ fontSize: 11, color: "#aaa", whiteSpace: "nowrap", flexShrink: 0 }}>авто</span>
+                          )}
+                          {!isSpecial ? (
+                            <>
+                              <div style={{ display: "flex", gap: 2, flexShrink: 0 }}>
+                                <button onClick={() => moveReferatRowUp(s.id)} disabled={!canUp} title="Вгору"
+                                  style={{ background: "transparent", border: "none", fontSize: 12, cursor: canUp ? "pointer" : "default", color: canUp ? "#555" : "#ddd", padding: "1px 4px", lineHeight: 1 }}>↑</button>
+                                <button onClick={() => moveReferatRowDown(s.id)} disabled={!canDown} title="Вниз"
+                                  style={{ background: "transparent", border: "none", fontSize: 12, cursor: canDown ? "pointer" : "default", color: canDown ? "#555" : "#ddd", padding: "1px 4px", lineHeight: 1 }}>↓</button>
+                              </div>
+                              <button onClick={() => addReferatSubsection(s.id)} title="Додати підрозділ"
+                                style={{ background: "transparent", border: "1px dashed #8ab060", color: "#6a9030", fontSize: 12, cursor: "pointer", padding: "1px 6px", borderRadius: 4, flexShrink: 0 }}>+</button>
+                              <button onClick={() => deleteReferatRow(s.id)}
+                                style={{ background: "none", border: "none", color: "#ccc", cursor: "pointer", fontSize: 14, flexShrink: 0 }}
+                                onMouseEnter={e => e.currentTarget.style.color = "#c00"}
+                                onMouseLeave={e => e.currentTarget.style.color = "#ccc"}>✕</button>
+                            </>
+                          ) : (
+                            <span style={{ width: 88, flexShrink: 0 }} />
+                          )}
+                        </div>
+                      );
+                    });
+                    return rows;
+                  })()}
+                  <div style={{ padding: "10px 14px", background: "#f5f2eb", display: "flex", gap: 8, alignItems: "center" }}>
+                    <button onClick={addReferatChapter} style={{ background: "transparent", border: "1.5px dashed #8ab060", color: "#6a9030", borderRadius: 6, padding: "7px 20px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer", flex: 1, letterSpacing: "1px" }}
+                      onMouseEnter={e => { e.currentTarget.style.borderColor = "#3a6010"; e.currentTarget.style.color = "#3a6010"; }}
+                      onMouseLeave={e => { e.currentTarget.style.borderColor = "#8ab060"; e.currentTarget.style.color = "#6a9030"; }}>
+                      + Розділ
+                    </button>
+                    <button onClick={recalcReferatPages} style={{ background: "transparent", border: "1.5px dashed #a0a0a0", color: "#888", borderRadius: 6, padding: "7px 14px", fontFamily: "'Spectral',serif", fontSize: 11, cursor: "pointer", letterSpacing: "0.5px", whiteSpace: "nowrap" }}
+                      onMouseEnter={e => { e.currentTarget.style.borderColor = "#555"; e.currentTarget.style.color = "#555"; }}
+                      onMouseLeave={e => { e.currentTarget.style.borderColor = "#a0a0a0"; e.currentTarget.style.color = "#888"; }}>
+                      ⟳ стор.
+                    </button>
+                  </div>
+                </div>
+
+                {sections.some(s => !["intro", "conclusions", "sources"].includes(s.id) && (/\[|новий/i.test(s.label) || (s.sectionTitle && /\[/.test(s.sectionTitle)))) && (
+                  <div style={{ marginBottom: 14 }}>
+                    <GreenBtn onClick={() => doNameReferatPlaceholders(null)} loading={namingLoading} msg="Генерую назви..." label="✨ Придумати назви для заглушок" />
+                  </div>
+                )}
+
                 <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                   <NavBtn onClick={() => setSections([])}>Перегенерувати</NavBtn>
                   <PrimaryBtn onClick={() => { setStage("sources"); saveToFirestore({ sections, stage: "sources" }); }} label="До джерел →" />
@@ -1947,11 +2223,10 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
             : citLines;
           const totalCitCount = isReferat ? allRefCitations.length : citLines.length;
 
-          // ── РЕФЕРАТ: per-section cards ──
+          // ── РЕФЕРАТ: per-section cards (тільки розділи/підрозділи — без вступу і висновків) ──
           if (isReferat) {
-            const refSections = sections.filter(s => s.id !== "sources");
-            const chapSections = refSections.filter(s => !["intro", "conclusions"].includes(s.id));
-            const perSec = Math.ceil(minSrc / Math.max(chapSections.length, 1));
+            const refSections = sections.filter(s => !["sources", "intro", "conclusions"].includes(s.id));
+            const perSec = Math.ceil(minSrc / Math.max(refSections.length, 1));
             let runIdx = 0;
             const _smDefaultStyle = methodInfo?.sourcesStyle || (info?.citStyle) || "ДСТУ 8302:2015";
             const _smEffStyle = citStyleOverride || _smDefaultStyle;
@@ -1965,9 +2240,21 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
                   citStyleOverride={citStyleOverride} sourcesOrderOverride={sourcesOrderOverride}
                   onCitStyleChange={(s) => { setCitStyleOverride(s); saveToFirestore({ citStyleOverride: s }); }}
                   onSourcesOrderChange={(o) => { setSourcesOrderOverride(o); saveToFirestore({ sourcesOrderOverride: o }); }}
+                  citFootnotes={citFootnotes}
+                  onCitFootnotesChange={(v) => { setCitFootnotes(v); saveToFirestore({ citFootnotes: v }); }}
                 />
+                {/* ── Масовий пошук джерел для всіх розділів і підрозділів ── */}
+                <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 16 }}>
+                  <GreenBtn onClick={doSearchAllSections} disabled={allSecLoading} loading={allSecLoading}
+                    msg={`Шукаю... (${allSecProgress.done}/${allSecProgress.total})`}
+                    label="🔍 Згенерувати джерела для всіх розділів" />
+                  <a href={`https://scholar.google.com/scholar?hl=uk&as_sdt=0%2C5&as_ylo=2021&q=${encodeURIComponent(info?.topic || "")}&btnG=`}
+                    target="_blank" rel="noopener noreferrer"
+                    style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: "#1a5a8a", textDecoration: "none", background: "#e4f0ff", padding: "9px 16px", borderRadius: 7, border: "1px solid #b0d0f0" }}>
+                    🎓 Шукати на Google Scholar →
+                  </a>
+                </div>
                 {refSections.map(sec => {
-                  const isStructural = sec.id === "intro" || sec.id === "conclusions";
                   const secLines = (citInputs[sec.id] || "").split("\n").map(l => l.trim()).filter(Boolean);
                   const startIdx = runIdx + 1; runIdx += secLines.length;
                   const hasSources = secLines.length > 0;
@@ -1976,29 +2263,26 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
                   const filteredPapers = papers.filter(p => !alreadyAdded.includes((p.title || "").toLowerCase().slice(0, 60)));
                   const phrases = refSecPhrases[sec.id] || [];
                   const isLoadingSec = refSecLoading[sec.id] || false;
+                  const isSearched = refSecPapers[sec.id] !== undefined;
                   const isOpen = refSecOpen[sec.id] ?? filteredPapers.length > 0;
                   const selected = refSecSelected[sec.id] || [];
                   const ukCount = filteredPapers.filter(p => p.lang === "uk").length;
                   const scholarQuery = phrases[0] || `${sec.label} ${info?.topic || ""}`;
                   const scholarUrl = `https://scholar.google.com/scholar?hl=uk&as_sdt=0%2C5&as_ylo=2021&q=${encodeURIComponent(scholarQuery)}&btnG=`;
                   return (
-                    <div key={sec.id} style={{ border: `1.5px solid ${hasSources ? "#d4cfc4" : isStructural ? "#d4cfc4" : "#e8a050"}`, borderRadius: 8, overflow: "hidden", marginBottom: 14 }}>
+                    <div key={sec.id} style={{ border: `1.5px solid ${hasSources ? "#d4cfc4" : "#e8a050"}`, borderRadius: 8, overflow: "hidden", marginBottom: 14 }}>
                       <div style={{ background: "#1a1a14", padding: "11px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <span style={{ width: 8, height: 8, borderRadius: "50%", background: hasSources ? "#5ad060" : isStructural ? "#888" : "#e8a050", flexShrink: 0, display: "inline-block" }} />
+                          <span style={{ width: 8, height: 8, borderRadius: "50%", background: hasSources ? "#5ad060" : "#e8a050", flexShrink: 0, display: "inline-block" }} />
                           <span style={{ fontSize: 13, fontWeight: 600, color: "#f5f2eb" }}>{sec.label}</span>
                         </div>
                         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                           {secLines.length > 0 && <div style={{ fontSize: 11, color: "#888" }}>джерела [{startIdx}–{startIdx + secLines.length - 1}]</div>}
-                          {!isStructural && <div style={{ fontSize: 12, color: "#e8ff47", background: "#2a2a1a", padding: "2px 10px", borderRadius: 10 }}>потрібно: {perSec} дж.</div>}
+                          <div style={{ fontSize: 12, color: "#e8ff47", background: "#2a2a1a", padding: "2px 10px", borderRadius: 10 }}>потрібно: {perSec} дж.</div>
                         </div>
                       </div>
                       <div style={{ padding: "12px 16px", background: "#faf8f3" }}>
-                        {isStructural ? (
-                          <div style={{ fontSize: 12, color: "#888", marginBottom: 8, fontStyle: "italic" }}>
-                            Джерела для вступу та висновків не потрібні — посилання беруться з розділів.
-                          </div>
-                        ) : (
+                        {(isSearched || isLoadingSec) && (
                           <>
                             <div style={{ background: "#eef5e4", padding: "8px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", borderRadius: 6, marginBottom: 10 }}
                                  onClick={() => setRefSecOpen(prev => ({ ...prev, [sec.id]: !isOpen }))}>
@@ -2012,10 +2296,12 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
                                 }
                               </div>
                               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                <button onClick={e => { e.stopPropagation(); doSearchForSection(sec.id, sec.label); }} disabled={isLoadingSec}
-                                  style={{ fontSize: 11, background: "#fff", border: "1px solid #b8dfa0", borderRadius: 5, padding: "2px 10px", cursor: isLoadingSec ? "default" : "pointer", color: "#3a6010" }}>
-                                  ОНОВИТИ
-                                </button>
+                                {!isLoadingSec && (
+                                  <button onClick={e => { e.stopPropagation(); doSearchForSection(sec.id, sec.label); }}
+                                    style={{ fontSize: 10, background: "transparent", border: "1px solid #8cc84b", color: "#3a6010", borderRadius: 5, padding: "2px 8px", cursor: "pointer" }}>
+                                    оновити
+                                  </button>
+                                )}
                                 <span style={{ fontSize: 12, color: "#888" }}>{isOpen ? "▲" : "▼"}</span>
                               </div>
                             </div>
@@ -2027,18 +2313,6 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
                                     🔍 {ph}
                                   </span>
                                 ))}
-                                <a href={scholarUrl} target="_blank" rel="noopener noreferrer"
-                                  style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: "#1a5a8a", textDecoration: "none", background: "#e4f0ff", padding: "2px 9px", borderRadius: 10, border: "1px solid #b0d0f0" }}>
-                                  🎓 Google Scholar →
-                                </a>
-                              </div>
-                            )}
-                            {!phrases.length && (
-                              <div style={{ marginBottom: 10 }}>
-                                <a href={scholarUrl} target="_blank" rel="noopener noreferrer"
-                                  style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "#1a5a8a", textDecoration: "none", background: "#e4f0ff", padding: "6px 12px", borderRadius: 6, border: "1px solid #b0d0f0" }}>
-                                  🎓 Шукати на Google Scholar →
-                                </a>
                               </div>
                             )}
                             {isOpen && filteredPapers.length > 0 && (
@@ -2074,13 +2348,28 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
                             )}
                             {isOpen && filteredPapers.length > 0 && (
                               <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
+                                <button
+                                  onClick={() => doAddForSection(sec.id)}
+                                  disabled={selected.length === 0 || running}
+                                  style={{
+                                    fontSize: 12, fontWeight: 600,
+                                    background: selected.length > 0 && !running ? "#5a9a1a" : "#ccc",
+                                    color: "#fff", border: "none", borderRadius: 6,
+                                    padding: "6px 14px", cursor: selected.length > 0 && !running ? "pointer" : "default",
+                                    display: "inline-flex", alignItems: "center", gap: 6,
+                                  }}
+                                >
+                                  {running ? <><SpinDot light />{loadMsg}</> : `Додати вибрані (${selected.length}) →`}
+                                </button>
                                 <button onClick={() => setRefSecSelected(prev => ({ ...prev, [sec.id]: (refSecPapers[sec.id] || []).map(p => p.id) }))}
-                                  style={{ fontSize: 11, background: "#f5f3ef", border: "1px solid #d4cfc4", borderRadius: 5, padding: "4px 12px", cursor: "pointer", color: "#555" }}>
+                                  style={{ fontSize: 11, background: "transparent", border: "1px solid #8cc84b", color: "#3a6010", borderRadius: 5, padding: "4px 10px", cursor: "pointer" }}>
                                   вибрати всі
                                 </button>
                                 {selected.length > 0 && (
-                                  <PrimaryBtn onClick={() => doAddForSection(sec.id)} loading={running} msg={loadMsg}
-                                    label={`Додати вибрані (${selected.length}) →`} />
+                                  <button onClick={() => setRefSecSelected(prev => ({ ...prev, [sec.id]: [] }))}
+                                    style={{ fontSize: 11, background: "transparent", border: "1px solid #ccc", color: "#888", borderRadius: 5, padding: "4px 10px", cursor: "pointer" }}>
+                                    скинути
+                                  </button>
                                 )}
                               </div>
                             )}
@@ -2098,6 +2387,7 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
                           </div>
                           <textarea data-secid={sec.id} value={citInputs[sec.id] || ""}
                             onChange={e => setCitInputs(prev => ({ ...prev, [sec.id]: e.target.value }))}
+                            onBlur={() => saveToFirestore({ citInputs })}
                             placeholder="Петренко В.І. Психологія навчання. Київ: Наука, 2020. 245 с."
                             style={{ ...TA, width: "100%", minHeight: 80, resize: "vertical", boxSizing: "border-box", fontSize: 12, lineHeight: "1.7", fontFamily: "'Spectral',serif" }} />
                           {secLines.length > 0 && (
@@ -2142,6 +2432,8 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
                 citStyleOverride={citStyleOverride} sourcesOrderOverride={sourcesOrderOverride}
                 onCitStyleChange={(s) => { setCitStyleOverride(s); saveToFirestore({ citStyleOverride: s }); }}
                 onSourcesOrderChange={(o) => { setSourcesOrderOverride(o); saveToFirestore({ sourcesOrderOverride: o }); }}
+                citFootnotes={citFootnotes}
+                onCitFootnotesChange={(v) => { setCitFootnotes(v); saveToFirestore({ citFootnotes: v }); }}
               />
 
               {/* Інфо-блок */}
@@ -2271,6 +2563,7 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
                 <textarea
                   value={citText}
                   onChange={e => setCitText(e.target.value)}
+                  onBlur={() => saveToFirestore({ citText })}
                   placeholder={"Петренко В.І. Психологія навчання. Київ: Наука, 2020. 245 с.\nSmirnova O. Child development. Oxford: OUP, 2019."}
                   style={{ ...TA, width: "100%", minHeight: 120, resize: "vertical", boxSizing: "border-box", fontSize: 12, lineHeight: "1.7", fontFamily: "'Spectral',serif" }}
                 />
@@ -2649,6 +2942,7 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
                       const displayOrder = sections.map(s => ({
                         id: s.id,
                         label: s.label,
+                        sectionTitle: s.sectionTitle,
                         type: s.id === "intro" ? "intro"
                           : s.id === "conclusions" ? "conclusions"
                           : s.id === "sources" ? "sources"
