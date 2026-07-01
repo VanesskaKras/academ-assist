@@ -122,12 +122,6 @@ export function ParsedStage({
             {methodInfo.formatting?.margins && <span style={{ fontSize: 12, background: "#f0ece2", color: "#555", padding: "3px 10px", borderRadius: 10 }}>📐 Поля: Л{methodInfo.formatting.margins.left}мм П{methodInfo.formatting.margins.right}мм</span>}
             {methodInfo.citationStyle && <span style={{ fontSize: 12, background: "#f5e4ff", color: "#8a1a8a", padding: "3px 10px", borderRadius: 10 }}>🔗 {methodInfo.citationStyle}</span>}
           </div>
-          {methodInfo.exampleTOC && (
-            <div style={{ padding: "10px 18px", background: "#f0faf0", borderTop: "1px solid #c8dfa0" }}>
-              <div style={{ fontSize: 11, color: "#888", letterSpacing: 1, textTransform: "uppercase", marginBottom: 6 }}>Зразок змісту з методички:</div>
-              <pre style={{ fontSize: 12, color: "#3a6010", whiteSpace: "pre-wrap", fontFamily: "'Spectral',serif", lineHeight: 1.8, margin: 0 }}>{methodInfo.exampleTOC}</pre>
-            </div>
-          )}
         </div>
       )}
 

@@ -163,6 +163,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [searchAnchors, setSearchAnchors] = useState({});
   const [kwLoading, setKwLoading] = useState(false);
   const [kwError, setKwError] = useState("");
+  const stopSearchRef = useRef(false);
   const [citInputs, setCitInputs] = useState({});
   const [docxLoading, setDocxLoading] = useState(false);
   const [planDocxLoading, setPlanDocxLoading] = useState(false);
@@ -2861,8 +2862,10 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
         ? [{ thesis: '', phrases: thesesData }]
         : (thesesData || []);
 
+      outer:
       for (const { thesis, phrases } of normalizedTheses) {
         for (let pi = 0; pi < (phrases || []).length; pi++) {
+          if (stopSearchRef.current) break outer;
           const phrase = phrases[pi];
           const useScholar = pi === 0; // Scholar тільки для першої фрази тези
           const candidates = await searchByPhrase(phrase, 10, page, useScholar);
@@ -2908,6 +2911,7 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
   // ── Ключові слова ──
   const doGenKeywords = async () => {
     setKwLoading(true);
+    stopSearchRef.current = false;
     const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
     const labelToId = {};
     for (const s of mainSecs) {
@@ -2928,6 +2932,7 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
 
     try {
       for (let bStart = 0; bStart < mainSecs.length; bStart += BATCH_SIZE) {
+        if (stopSearchRef.current) break;
         const batch = mainSecs.slice(bStart, bStart + BATCH_SIZE);
         const secBlocks = batch.map(s => {
           const txt = content[s.id]
@@ -2993,6 +2998,7 @@ ${secBlocks}
       setKeywords(kwNorm);
 
       for (const s of mainSecs) {
+        if (stopSearchRef.current) break;
         const normalKey = normalizeKey(s.id);
         const thesesData = allThesesNorm[normalKey] || allThesesNorm[s.id] || [];
         if (thesesData.length) await doSearchSources(s.id, thesesData, s.label || '');
@@ -3000,6 +3006,8 @@ ${secBlocks}
     } catch (e) { console.error(e); setKwError(e.message); }
     setKwLoading(false);
   };
+
+  const doStopSearch = () => { stopSearchRef.current = true; };
 
   // ── Оновлення ключових слів + пошук для одного підрозділу ──
   const doRegenSectionSources = async (sec) => {
@@ -4194,6 +4202,7 @@ ${refLines2.join("\n")}`;
               sourceDist={sourceDist} sourceTotal={sourceTotal}
               keywords={keywords} kwLoading={kwLoading}
               kwError={kwError} setKwError={setKwError}
+              onStopSearch={doStopSearch}
               methodInfo={methodInfo} commentAnalysis={commentAnalysis}
               citStyleOverride={citStyleOverride} sourcesOrderOverride={sourcesOrderOverride}
               onCitStyleChange={handleCitStyleChange} onSourcesOrderChange={handleSourcesOrderChange}

@@ -74,7 +74,7 @@ function SourceCard({ paper, checked, onToggle }) {
 
 export function SourcesStage({
   mainSections, citInputs, setCitInputs, citStructured, setCitStructured, sourceDist, sourceTotal,
-  keywords, kwLoading, kwError, setKwError, methodInfo, commentAnalysis,
+  keywords, kwLoading, kwError, setKwError, methodInfo, commentAnalysis, onStopSearch,
   allRefs, refList, showMissingSources, citInputsSnapshot, allCitLoading, info,
   suggestedSources, phraseGroups, sourcesSearchLoading, sourcesSearchError, doSearchSources, doRegenSectionSources,
   doGenKeywords, doAddAllCitations, onAddAbstracts, onFinish, remapLoading, onProceedToWriting, setStage,
@@ -259,6 +259,14 @@ export function SourcesStage({
           msg="Генерую ключові слова та шукаю джерела..."
           label={Object.keys(keywords).length > 0 ? "Оновити ключові слова та джерела" : "Знайти джерела автоматично →"}
         />
+        {kwLoading && (
+          <button
+            onClick={onStopSearch}
+            style={{ background: "transparent", border: "1.5px solid #b03a3a", color: "#b03a3a", borderRadius: 7, padding: "9px 16px", fontFamily: "'Spectral',serif", fontSize: 12, letterSpacing: "1px", cursor: "pointer" }}
+          >
+            ⏹ Зупинити
+          </button>
+        )}
         {kwError && (
           <div style={{ fontSize: 12, color: "#8a1a1a", background: "#fff5f5", border: "1px solid #e8b0b0", borderRadius: 6, padding: "4px 10px" }}>
             ⚠ {kwError}
