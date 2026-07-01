@@ -2835,6 +2835,7 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
 
   // ── Автоматичний пошук джерел ──
   const doSearchSources = async (secId, thesesData, sectionLabel = '', resetPage = false) => {
+    stopSearchRef.current = false;
     const isFirstSearch = resetPage || (searchPageCount[secId] || 0) === 0;
     if (isFirstSearch) {
       setSuggestedSources(prev => ({ ...prev, [secId]: [] }));
