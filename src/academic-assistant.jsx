@@ -48,6 +48,10 @@ function fixMixedScript(text, lang) {
   );
 }
 
+function countWords(text) {
+  return text.trim().split(/\s+/).filter(Boolean).length;
+}
+
 // ── Профіль завдань дослідження у вступі: к-сть і характер за типом роботи ──
 function getIntroTasksProfile(type, course, mainSecsLength, isLarge) {
   const wt = normalizeWorkType(type, course);
@@ -1470,7 +1474,7 @@ IMPORTANT: use already written sections (in context) for exact formulation of me
       instruction = `Напиши ВИСНОВКИ для ${d.type} на тему "${d.topic}".
 ${conclReq ? `ВИМОГИ МЕТОДИЧКИ: ${conclReq}\n` : ""}${commentAnalysis?.textStructureHints ? `ВИМОГИ КЛІЄНТА ДО СТРУКТУРИ (ОБОВ'ЯЗКОВО): ${commentAnalysis.textStructureHints}\n` : ""}
 ПРАВИЛА:
-- Обсяг: приблизно ${(sec.pages || 2) * 225} слів, ±10% (~${sec.pages} стор.).
+- Обсяг: приблизно ${(sec.pages || 2) * 270} слів, ±10% (~${sec.pages} стор.).
 - Перший абзац — загальний підсумок мети і що вдалось досягти
 - Далі — рівно ${conclTasksProfile.count} абзаців, по одному на кожне завдання дослідження, сформульоване у вступі (текст вступу є в контексті) — у тому самому порядку. Якщо завдання у вступі поєднувало кілька підрозділів плану — зведи їхні конкретні результати в одному абзаці; якщо завдання було розбите з одного підрозділу — розподіли результати на відповідну кількість абзаців
 - Кожен такий абзац = конкретний результат, що відповідає своєму завданню
@@ -1659,7 +1663,7 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ ДО ЦЬОГО РОЗДІЛУ: $
 ПЛАН РОБОТИ (для розуміння структури та уникнення повторів):
 ${planSummary}
 
-Обсяг: приблизно ${Math.round((sec.pages || 1) * 225)} слів, ±10% (~${sec.pages} стор.).
+Обсяг: приблизно ${Math.round((sec.pages || 1) * 270)} слів, ±10% (~${sec.pages} стор.).
 Не обривай текст. Завершуй підсумковим абзацом. ${citNote} Без жирного.
 ЗАБОРОНЕНО вставляти будь-які внутрішні підназви, заголовки абзаців або окремі рядки-мітки ("Загальна картина", "Результати аналізу" тощо). Кожен рядок тексту — повне речення, рядок таблиці або підпис до таблиці/рисунка.
 Абзаци мають різнитись за довжиною: чергуй короткі (2-3 речення) з довшими (5-7 речень).`;
@@ -1682,16 +1686,41 @@ ${planSummary}
       instruction += `\n\nМАТЕРІАЛИ КЛІЄНТА (використовуй ці дані — не вигадуй, не замінюй):\n${clientMaterialsText.slice(0, 80000)}`;
     }
     const sectionMaxTokens = Math.min(60000, Math.max(8000, Math.round((sec.pages || 1) * 3000)));
+    const cleanResult = (raw) => fixMixedScript(raw, lang)
+      .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
+      .replace(/[ᄀ-ᇿ⺀-鿿ꀀ-꓿가-퟿豈-﫿]/g, "")
+      .replace(/[„""]([^"„""]*)["""]/g, "«$1»")
+      .replace(/"([^"]*)"/g, "«$1»")
+      .replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2")
+      .replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2");
+    // Ціль в словах для перевірки фактичного обсягу після генерації (окремо від тексту промпту)
+    const targetWords = sec.type === "chapter_conclusion" ? 135 : Math.round((sec.pages || 1) * 270);
+    const enforceWordCount = async (text) => {
+      if (sec.type === "sources") return text;
+      const n = countWords(text);
+      try {
+        if (n < targetWords * 0.85) {
+          const missing = targetWords - n;
+          setLoadMsg(`Дописую: ${sec.label}...`);
+          const contPrompt = `Ось поточний текст підрозділу "${sec.label}" (${n} слів):\n\n${text}\n\nДопиши ще приблизно ${missing} слів, органічно продовжуючи виклад далі. Не повторюй вже написане. Не додавай вступних фраз на кшталт "Продовжимо" чи "Отже". Просто продовжуй текст з того місця де він закінчився, без заголовків і міток.`;
+          const contRaw = await callClaude([{ role: "user", content: contPrompt }], ctrl.signal, buildSYS(lang, methodInfo), Math.min(20000, Math.max(2000, Math.round(missing * 3))));
+          return text + "\n\n" + cleanResult(contRaw).trim();
+        }
+        if (n > targetWords * 1.2) {
+          setLoadMsg(`Скорочую: ${sec.label}...`);
+          const shortenPrompt = `Ось поточний текст підрозділу "${sec.label}" (${n} слів):\n\n${text}\n\nСкороти його до приблизно ${targetWords} слів: прибери повтори та другорядні деталі, збережи головні тези і структуру абзаців. Поверни лише скорочений текст, без коментарів.`;
+          const shortRaw = await callClaude([{ role: "user", content: shortenPrompt }], ctrl.signal, buildSYS(lang, methodInfo), Math.min(30000, Math.max(4000, Math.round(targetWords * 3))));
+          return cleanResult(shortRaw).trim();
+        }
+      } catch (e) {
+        // Якщо допис/скорочення не вдалось - лишаємо початковий текст як є
+      }
+      return text;
+    };
     try {
       const raw = await callClaude(buildMessages(instruction), ctrl.signal, buildSYS(lang, methodInfo), sectionMaxTokens, (s) => setLoadMsg(`Генерую: ${sec.label}... зачекайте ${s}с`));
       // Видаляємо довге тире на всякий випадок (модель іноді ігнорує заборону)
-      const result = fixMixedScript(raw, lang)
-        .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
-        .replace(/[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF]/g, "")
-        .replace(/[„""]([^"„""]*)["""]/g, "«$1»")
-        .replace(/"([^"]*)"/g, "«$1»")
-        .replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2")
-        .replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2");
+      const result = await enforceWordCount(cleanResult(raw));
       const newContent = { ...contentRef.current, [sec.id]: result };
       setContent(newContent);
       runningRef.current = false; setRunning(false); setLoadMsg("");
