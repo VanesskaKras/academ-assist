@@ -1837,6 +1837,13 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
           <SaveIndicator saving={saving} saved={saved} />
           {workType && <StagePills stage={stage} workType={workType} onNavigate={setStage} maxStageIdx={maxStageIdx} />}
+          {cfg && (
+            <button
+              onClick={() => setMaxStageIdx(cfg.stageKeys.length - 1)}
+              style={{ background: "transparent", border: "1px solid #555", color: "#888", fontSize: 10, letterSpacing: 1, padding: "4px 10px", borderRadius: 20, cursor: "pointer" }}>
+              🔓 Розблокувати всі кроки
+            </button>
+          )}
         </div>
       </div>
 

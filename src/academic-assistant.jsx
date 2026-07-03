@@ -4106,6 +4106,11 @@ ${refLines2.join("\n")}`;
             <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0, marginLeft: "auto" }}>
               <SaveIndicator saving={saving} saved={saved} />
               <StagePills stage={stage} maxStageIdx={maxStageIdx} onNavigate={running ? null : handleNavigateMain} stages={activeStages} stageKeys={activeStageKeys} />
+              <button
+                onClick={() => setMaxStageIdx(activeStageKeys.length - 1)}
+                style={{ background: "transparent", border: "1px solid #555", color: "#888", fontSize: 10, letterSpacing: 1, padding: "4px 10px", borderRadius: 20, cursor: "pointer" }}>
+                🔓 Розблокувати всі кроки
+              </button>
             </div>
           </div>
         )}

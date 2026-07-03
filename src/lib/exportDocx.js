@@ -800,6 +800,71 @@ export async function exportPlanToDocx({ sections, info, methodInfo }) {
 }
 
 // ─────────────────────────────────────────────
+// Export practice report plan to docx (flat id/label shape, no `type` field)
+// ─────────────────────────────────────────────
+export async function exportPracticePlanToDocx({ sections, info, methodInfo }) {
+  const FONT = "Times New Roman", SIZE = 28, LINE = 360, INDENT = 709;
+  const langCode = getLangWordCode(info?.language);
+  const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
+  const marg = methodInfo?.formatting?.margins || {};
+  const toMm = v => (v != null && Number(v) > 0 ? Number(v) : null);
+  const L = mmToTwip(toMm(marg.left)   ?? 30);
+  const R = mmToTwip(toMm(marg.right)  ?? 15);
+  const T = mmToTwip(toMm(marg.top)    ?? 20);
+  const B = mmToTwip(toMm(marg.bottom) ?? 20);
+
+  const FIXED = ["intro", "conclusions", "sources"];
+  const children = [];
+  if (info?.topic) {
+    children.push(new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { line: LINE, lineRule: "auto", before: 0, after: LINE * 2 },
+      children: [new TextRun({ text: info.topic, font: FONT, size: SIZE, color: "000000" })],
+    }));
+  }
+  let lastChapterTitle = null;
+  for (const s of sections) {
+    const isSub = !FIXED.includes(s.id) && /^\d+\.\d+/.test(String(s.id));
+    if (isSub && s.sectionTitle && s.sectionTitle !== lastChapterTitle) {
+      lastChapterTitle = s.sectionTitle;
+      children.push(new Paragraph({
+        heading: HeadingLevel.HEADING_1,
+        spacing: { line: LINE, lineRule: "auto", before: LINE, after: Math.round(LINE / 2) },
+        alignment: AlignmentType.LEFT,
+        indent: { firstLine: 0 },
+        children: [new TextRun({ text: s.sectionTitle, font: FONT, size: SIZE, bold: true, color: "000000" })],
+      }));
+    } else if (!isSub) {
+      lastChapterTitle = null;
+    }
+    children.push(new Paragraph({
+      heading: isSub ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_1,
+      spacing: { line: LINE, lineRule: "auto", before: isSub ? Math.round(LINE / 2) : LINE, after: isSub ? 0 : Math.round(LINE / 2) },
+      alignment: AlignmentType.LEFT,
+      indent: { firstLine: isSub ? INDENT : 0 },
+      children: [new TextRun({ text: s.label, font: FONT, size: SIZE, bold: !isSub, color: "000000" })],
+    }));
+  }
+
+  const doc = new Document({
+    styles: { default: { document: { run: { font: FONT, size: SIZE, color: "000000", language: { value: langCode } }, paragraph: { spacing: { line: LINE, lineRule: "auto" } } } } },
+    sections: [{ properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: T, right: R, bottom: B, left: L } } }, children }],
+  });
+
+  const blob = await Packer.toBlob(doc);
+  const url = URL.createObjectURL(blob);
+  try {
+    const a = document.createElement("a");
+    const prefix = info?.orderNumber ? info.orderNumber + "_" : "";
+    const safeName = prefix + ("план_" + (info?.topic || "звіт")).replace(/[^\wА-ЯҐЄІЇа-яґєії\s]/g, "").trim().slice(0, 40);
+    a.href = url; a.download = safeName + ".docx";
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+// ─────────────────────────────────────────────
 // Додатки (.docx)
 // ─────────────────────────────────────────────
 export async function exportAppendixToDocx(text, info, methodInfo, orderId) {

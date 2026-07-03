@@ -617,8 +617,8 @@ ${instrLine}
 
 // ── Промпти для звіту з практики ──
 
-export function buildPracticePlanPrompt(info) {
-  const { practiceText = "", practiceCategory = "economy", pages = 30 } = info;
+export function buildPracticePlanPrompt(info, methodInfo) {
+  const { practiceText = "", practiceCategory = "economy", pages = 30, practiceGuidance } = info;
   const total = parseInt(pages) || 30;
   const main = total - 5;
 
@@ -671,7 +671,7 @@ export function buildPracticePlanPrompt(info) {
     ],
   };
 
-  const tmpl = templates[practiceCategory] || templates.economy;
+  const tmpl = templates[practiceCategory] || templates.other;
   const mainSecs = tmpl.map(s => ({ ...s, pages: Math.max(3, Math.round(main * s.w)) }));
   const usedPages = mainSecs.reduce((a, s) => a + s.pages, 0);
   const concl = Math.max(2, total - 2 - usedPages);
@@ -683,11 +683,55 @@ export function buildPracticePlanPrompt(info) {
     `  {"id":"sources","label":"СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ","pages":0}`,
   ].join(",\n");
 
+  const guidanceBlock = practiceGuidance
+    ? `\n\nОРІЄНТИР ЗА НАПРЯМОМ ТА ВИДОМ ПРАКТИКИ:
+Мета практики: ${practiceGuidance.purpose}
+Що має містити основна частина звіту: ${practiceGuidance.reportContent}
+Особливість: ${practiceGuidance.feature}`
+    : "";
+
+  // Якщо в методичці є власний зразок змісту з підрозділами (1.1, 1.2 ...) —
+  // будуємо структуру за ним замість плоского шаблону по категорії.
+  const toc = methodInfo?.exampleTOC || "";
+  const hasSubsections = /^\s*\d+\.\d+/m.test(toc);
+
+  if (hasSubsections) {
+    return `Склади структуру звіту з практики за зразком плану з методички.
+Загальний обсяг: ${total} сторінок.
+
+ДАНІ ПРАКТИКИ:
+${practiceText}
+${guidanceBlock}
+
+ЗРАЗОК ПЛАНУ З МЕТОДИЧКИ (відтвори ЦЮ структуру розділів і підрозділів — кількість, порядок і рівень вкладеності, адаптувавши лише назви під конкретне підприємство/установу та тип практики):
+${toc}
+
+Поверни ТІЛЬКИ JSON (без markdown):
+{"sections":[
+  {"id":"intro","label":"ВСТУП","pages":2},
+  {"id":"1.1","label":"1.1 Назва підрозділу","sectionTitle":"РОЗДІЛ 1. Назва розділу","pages":5},
+  {"id":"1.2","label":"1.2 Назва підрозділу","sectionTitle":"РОЗДІЛ 1. Назва розділу","pages":5},
+  {"id":"2.1","label":"2.1 Назва підрозділу","sectionTitle":"РОЗДІЛ 2. Назва розділу","pages":6},
+  {"id":"conclusions","label":"ВИСНОВКИ","pages":3},
+  {"id":"sources","label":"СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ","pages":0}
+]}
+
+Правила:
+- Кожен підрозділ зі зразка — окремий елемент масиву з id виду "N.M" (номер розділу.номер підрозділу за порядком у зразку)
+- "sectionTitle" — повна назва розділу з номером (напр. "РОЗДІЛ 1. ХАРАКТЕРИСТИКА БАЗИ ПРАКТИКИ"), ОДНАКОВА для всіх підрозділів одного розділу
+- "label" — номер і назва підрозділу (напр. "1.1 Загальна характеристика підприємства (бази практики)")
+- Якщо якийсь розділ зі зразка не має підрозділів — додай один елемент з id рівним номеру розділу (напр. "3", без крапки) і без "sectionTitle"
+- pages розподіли пропорційно між усіма підрозділами/розділами так, щоб їх сума дорівнювала ${main}
+- intro: 2 стор., conclusions: залишок сторінок (мінімум 2)
+- id "intro"/"conclusions"/"sources" залишати незмінними; для решти використовуй нумерацію зі зразка`;
+  }
+
   return `Склади структуру звіту з практики.
 Загальний обсяг: ${total} сторінок.
 
 ДАНІ ПРАКТИКИ:
 ${practiceText}
+${guidanceBlock}
 
 Поверни ТІЛЬКИ JSON (без markdown):
 {"sections":[
@@ -698,10 +742,14 @@ ${sectionsJson}
 }
 
 export function buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterialsSummary, citInputs) {
-  const { practiceText = "", language = "Українська" } = info;
+  const {
+    practiceText = "", language = "Українська", practiceGuidance,
+    companyName, supervisorCompany, supervisorUniversity, individualTask,
+  } = info;
 
   const isIntro = sec.id === "intro";
   const isConclusions = sec.id === "conclusions";
+  const isIndividualTask = /індивідуальн.*завданн/i.test(sec.label || "");
 
   const hint = isIntro
     ? "Вступ: мета та завдання практики, місце проходження, керівники. Обсяг не більше 2 сторінок."
@@ -713,17 +761,32 @@ export function buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterial
     ? [methodInfo.theoryRequirements, methodInfo.analysisRequirements, methodInfo.otherRequirements].filter(Boolean).join(". ")
     : "";
 
-  const secCit = citInputs?.[sec.id]?.trim();
-  const sourcesBlock = secCit
-    ? `\nДЖЕРЕЛА для цього розділу (вставляй маркери [N] після відповідних тверджень):\n${secCit}`
+  const secCitLines = (citInputs?.[sec.id] || "").split("\n").map(l => l.trim()).filter(Boolean);
+  const sourcesBlock = secCitLines.length
+    ? `\nДЖЕРЕЛА для цього розділу (вставляй маркери [N] після відповідних тверджень, де N — номер зі списку нижче):\n${secCitLines.map((l, i) => `${i + 1}. ${l}`).join("\n")}`
+    : "";
+
+  const guidanceLine = practiceGuidance
+    ? `\nОРІЄНТИР ЗА НАПРЯМОМ ПРАКТИКИ: ${practiceGuidance.reportContent}${practiceGuidance.feature ? ` (${practiceGuidance.feature})` : ""}`
+    : "";
+
+  const detailsLine = [
+    companyName && `Місце практики: ${companyName}`,
+    supervisorCompany && `Керівник від підприємства: ${supervisorCompany}`,
+    supervisorUniversity && `Керівник від університету: ${supervisorUniversity}`,
+  ].filter(Boolean).join("; ");
+
+  const individualTaskLine = (isIndividualTask && individualTask)
+    ? `\nІНДИВІДУАЛЬНЕ ЗАВДАННЯ (розкрий саме це завдання в розділі): ${individualTask}`
     : "";
 
   let instruction = `Напиши розділ "${sec.label}" звіту з практики. Мова: ${language}.
 
 ДАНІ ПРАКТИКИ:
 ${practiceText}
+${detailsLine ? `\n${detailsLine}` : ""}${individualTaskLine}
 ${hint ? `\nОСОБЛИВОСТІ РОЗДІЛУ: ${hint}` : ""}
-${methodReq ? `\nВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${sourcesBlock}
+${methodReq ? `\nВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${sourcesBlock}${guidanceLine}
 
 Обсяг: приблизно ${sec.pages * 225} слів, ±10% (~${sec.pages} стор.).
 Без markdown заголовків (#, ##). Не повторюй назву розділу на початку тексту.`;
@@ -735,14 +798,31 @@ ${methodReq ? `\nВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${sourcesBl
 }
 
 export function buildPracticeDiaryPrompt(info) {
-  const { practiceText = "", language = "Українська" } = info;
+  const {
+    practiceText = "", language = "Українська", practiceGuidance,
+    companyName, individualTask, dateStart, dateEnd,
+  } = info;
+  const taskGuidance = practiceGuidance?.diaryTasks
+    ? `\nТипові завдання для цього напряму та виду практики (орієнтуйся на них): ${practiceGuidance.diaryTasks}`
+    : "";
+  const periodLine = (dateStart && dateEnd)
+    ? `\nПЕРІОД ПРАКТИКИ (використовуй саме ці дати): ${dateStart} – ${dateEnd}`
+    : "";
+  const detailsLine = [
+    companyName && `Місце практики: ${companyName}`,
+    individualTask && `Індивідуальне завдання: ${individualTask}`,
+  ].filter(Boolean).join("; ");
+
   return `Склади щоденник практики у вигляді таблиці на основі наданих даних.
 Мова: ${language}.
 
 ДАНІ ПРАКТИКИ:
 ${practiceText}
+${periodLine}
+${detailsLine ? `\n${detailsLine}` : ""}
+${taskGuidance}
 
-Склади таблицю по робочих днях (понеділок–п'ятниця) у межах вказаних дат. Кожен день — окремий рядок.
+Склади таблицю по робочих днях (понеділок–п'ятниця) у межах вказаних дат${periodLine ? "" : " (визнач дати з тексту вище)"}. Кожен день — окремий рядок.
 Зміст роботи має бути конкретним і відповідати профілю підприємства та типу практики.
 В останні 2-3 дні включи: оформлення звіту, перевірку документів.
 
@@ -750,6 +830,30 @@ ${practiceText}
 | Дата | Зміст виконаної роботи | Підпис керівника |
 |------|------------------------|-----------------|
 | дд.мм.рррр | ... | |`;
+}
+
+export function buildPracticeDetailsPrompt(practiceText, comment) {
+  return `Проаналізуй дані про практику нижче і витягни конкретні деталі.
+
+ТЕКСТ:
+${practiceText}
+${comment ? `\nДОДАТКОВІ МАТЕРІАЛИ КЛІЄНТА:\n${comment}` : ""}
+
+Поверни ТІЛЬКИ JSON (без markdown):
+{"companyName":"","supervisorCompany":"","supervisorUniversity":"","individualTask":"","dateStart":"","dateEnd":"","sourceCount":null,"studentName":"","studentGroup":"","university":"","faculty":"","city":""}
+
+Правила:
+- companyName: назва підприємства/установи/закладу, де проходить практика. "" якщо не вказано.
+- supervisorCompany: ПІБ та посада керівника від підприємства/бази практики. "" якщо не вказано.
+- supervisorUniversity: ПІБ та посада керівника від університету/кафедри. "" якщо не вказано.
+- individualTask: текст індивідуального завдання, якщо воно наведене як текст (не плутай із темою роботи). "" якщо не вказано.
+- dateStart, dateEnd: дати початку і закінчення практики у форматі "дд.мм.рррр". "" якщо не вказано.
+- sourceCount: кількість джерел літератури, ЯКЩО явно вказана в тексті або коментарі (наприклад "джерел: 20-25", "не менше 15 джерел", "список літератури 25 позицій"). Рядок як у тексті (наприклад "20-25" або "15"). null якщо явно не вказано — НЕ вигадуй і не став дефолтне значення.
+- studentName: ПІБ студента, який проходить практику. "" якщо не вказано.
+- studentGroup: номер курсу та/або назва групи студента (наприклад "3 курс, ФБС-31"). "" якщо не вказано.
+- university: повна назва університету/закладу вищої освіти для титульної сторінки. "" якщо не вказано.
+- faculty: назва факультету або кафедри. "" якщо не вказано.
+- city: місто для титульної сторінки (напр. "Київ"). "" якщо не вказано.`;
 }
 
 export function buildPracticeSourcesKeywordsPrompt(sections, info) {

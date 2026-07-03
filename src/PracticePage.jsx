@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, Fragment } from "react";
 import { db } from "./firebase";
 import { useAuth } from "./AuthContext";
 import { doc, getDoc, setDoc, addDoc, collection } from "firebase/firestore";
@@ -10,14 +10,23 @@ import {
   buildMethodologyReadingPrompt,
   buildPracticePlanPrompt, buildPracticeWritingPrompt,
   buildPracticeDiaryPrompt, buildPracticeSourcesKeywordsPrompt,
+  buildTemplateAnalysisPrompt, buildPracticeDetailsPrompt,
 } from "./lib/prompts.js";
+import { parseTemplate } from "./lib/planUtils.js";
+import { detectSpecialty } from "./lib/academicDefaults.js";
+import {
+  CATEGORY_LABELS, PRACTICE_TYPES, getPracticeGuidance, detectPracticeType,
+  parsePracticeDetails, buildPracticeTitlePageLines,
+} from "./lib/practiceDefaults.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { playDoneSound } from "./lib/audio.js";
 import {
   generateSearchPhrases, buildSemanticKeywords,
   searchSourcesForSection, lookupDoiMetadata, lookupDOIByBiblio, paperToCitation,
+  filterSourcesWithGemini,
 } from "./lib/sourcesSearch.js";
-import { exportToDocx } from "./lib/exportDocx.js";
+import { exportToDocx, exportPracticePlanToDocx } from "./lib/exportDocx.js";
+import { remapAndFormatCitations, applyCitationRemap } from "./lib/citationFormatting.js";
 import { SpinDot } from "./components/SpinDot.jsx";
 import { DropZone } from "./components/DropZone.jsx";
 import { ClientMaterialsZone } from "./components/ClientMaterialsZone.jsx";
@@ -25,20 +34,10 @@ import { FieldBox, Heading, NavBtn, PrimaryBtn, GreenBtn, SaveIndicator } from "
 import { TA, TA_WHITE, SHARED_STYLES } from "./shared.jsx";
 
 // ─── Конфіг кроків ───────────────────────────────────────────────────────────
-const STAGE_LABELS = ["Дані", "Структура", "Джерела", "Написання", "Щоденник", "Готово"];
-const STAGE_KEYS   = ["input", "plan", "sources", "writing", "diary", "done"];
+const STAGE_LABELS = ["Дані", "Перевірка", "Структура", "Джерела", "Написання", "Щоденник", "Готово"];
+const STAGE_KEYS   = ["input", "parsed", "plan", "sources", "writing", "diary", "done"];
 
-const PRACTICE_TYPES = ["Навчальна", "Виробнича", "Переддипломна"];
 const LANGUAGES = ["Українська", "Англійська", "Польська"];
-
-const PRACTICE_CATEGORIES = [
-  { key: "economy",    label: "Економіка / Менеджмент", icon: "📊" },
-  { key: "pedagogy",   label: "Педагогічна",             icon: "📚" },
-  { key: "psychology", label: "Психологічна",            icon: "🧠" },
-  { key: "law",        label: "Юридична",                icon: "⚖️" },
-  { key: "it",         label: "ІТ / Технічна",           icon: "💻" },
-  { key: "other",      label: "Інший напрям",            icon: "📋" },
-];
 
 // ─── Render markdown tables ───────────────────────────────────────────────────
 function renderWithTables(text) {
@@ -81,6 +80,18 @@ function renderWithTables(text) {
   });
 }
 
+// ─── Текстове представлення структури (для копіювання) ───────────────────────
+const PLAN_FIXED_IDS = ["intro", "conclusions", "sources"];
+function buildPracticePlanText(sections) {
+  const lines = [];
+  sections.forEach((s, i) => {
+    const isSub = !PLAN_FIXED_IDS.includes(s.id) && /^\d+\.\d+/.test(String(s.id));
+    if (!isSub && i > 0) lines.push("");
+    lines.push(isSub ? `    ${s.label}` : s.label);
+  });
+  return lines.join("\n");
+}
+
 // ─── Компонент пілюль ─────────────────────────────────────────────────────────
 function StagePills({ stage, maxStageIdx, onNavigate }) {
   const cur = STAGE_KEYS.indexOf(stage);
@@ -117,10 +128,40 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
   const maxStageIdxRef = useRef(0);
 
   // Форма
-  const [practiceCategory, setPracticeCategory] = useState("economy");
+  const [practiceCategory, setPracticeCategory] = useState("other");
+  const [practiceType, setPracticeType] = useState("vyrobnycha");
+  const categoryManualRef = useRef(false);
+  const typeManualRef = useRef(false);
   const [practiceText, setPracticeText] = useState("");
   const [pages, setPages] = useState("30");
   const [language, setLanguage] = useState("Українська");
+
+  // Дані з аналізу шаблону замовлення
+  const [orderNumber, setOrderNumber] = useState("");
+  const [orderType, setOrderType] = useState("");
+  const [topic, setTopic] = useState("");
+  const [deadline, setDeadline] = useState("");
+  const [direction, setDirection] = useState("");
+  const [subject, setSubject] = useState("");
+  const [uniqueness, setUniqueness] = useState("");
+  const [course, setCourse] = useState("");
+  const [extras, setExtras] = useState("");
+
+  // Деталі практики (місце, керівники, дати, індивідуальне завдання)
+  const [companyName, setCompanyName] = useState("");
+  const [supervisorCompany, setSupervisorCompany] = useState("");
+  const [supervisorUniversity, setSupervisorUniversity] = useState("");
+  const [individualTask, setIndividualTask] = useState("");
+  const [dateStart, setDateStart] = useState("");
+  const [dateEnd, setDateEnd] = useState("");
+  const [sourceCountExplicit, setSourceCountExplicit] = useState(null);
+
+  // Дані для титульної сторінки
+  const [studentName, setStudentName] = useState("");
+  const [studentGroup, setStudentGroup] = useState("");
+  const [university, setUniversity] = useState("");
+  const [faculty, setFaculty] = useState("");
+  const [city, setCity] = useState("");
 
   // Методичка (PDF)
   const [fileLabel, setFileLabel] = useState("");
@@ -145,12 +186,16 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
 
   // Джерела
   const [citInputs, setCitInputs] = useState({});
+  const [citStructured, setCitStructured] = useState({});
+  const [citStyle, setCitStyle] = useState("ДСТУ 8302:2015");
+  const [sourcesOrder, setSourcesOrder] = useState("alphabetical");
   const [refList, setRefList] = useState("");
   const [refSecPapers, setRefSecPapers] = useState({});
   const [refSecPhrases, setRefSecPhrases] = useState({});
   const [refSecLoading, setRefSecLoading] = useState({});
   const [refSecSelected, setRefSecSelected] = useState({});
   const [refSecOpen, setRefSecOpen] = useState({});
+  const [searchingAll, setSearchingAll] = useState(false);
 
   // UI стан
   const [running, setRunning] = useState(false);
@@ -165,6 +210,8 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
   const [regenPrompt, setRegenPrompt] = useState("");
   const [regenLoading, setRegenLoading] = useState(false);
   const [docxLoading, setDocxLoading] = useState(false);
+  const [planDocxLoading, setPlanDocxLoading] = useState(false);
+  const [planCopied, setPlanCopied] = useState(false);
   const [diaryDocxLoading, setDiaryDocxLoading] = useState(false);
   const [namingId, setNamingId] = useState(null);
   const [namingAllLoading, setNamingAllLoading] = useState(false);
@@ -187,10 +234,20 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
 
   // Info-об'єкт для промптів
   const getPracticeInfo = useCallback(() => ({
-    practiceCategory, practiceText, pages, language,
-    topic: "Звіт із практики",
+    practiceCategory, practiceType, practiceText, pages, language,
+    topic: topic || "Звіт із практики",
     type: "Звіт із практики",
-  }), [practiceCategory, practiceText, pages, language]);
+    orderNumber, orderType, deadline, direction, subject, uniqueness, course, extras,
+    companyName, supervisorCompany, supervisorUniversity, individualTask, dateStart, dateEnd,
+    sourceCountExplicit,
+    studentName, studentGroup, university, faculty, city,
+    practiceGuidance: getPracticeGuidance(practiceCategory, practiceType),
+  }), [
+    practiceCategory, practiceType, practiceText, pages, language, topic,
+    orderNumber, orderType, deadline, direction, subject, uniqueness, course, extras,
+    companyName, supervisorCompany, supervisorUniversity, individualTask, dateStart, dateEnd,
+    sourceCountExplicit, studentName, studentGroup, university, faculty, city,
+  ]);
 
   // ── Збереження в Firestore ──────────────────────────────────────────────────
   const saveToFirestore = useCallback(async (patch = {}) => {
@@ -237,10 +294,37 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
           const d = snap.data();
           currentIdRef.current = orderId;
           const i = d.info || {};
-          if (i.practiceCategory) setPracticeCategory(i.practiceCategory);
+          if (i.practiceCategory) {
+            const cat = CATEGORY_LABELS[i.practiceCategory]
+              ? i.practiceCategory
+              : (detectSpecialty(`${i.direction || ""} ${i.subject || ""} ${i.practiceText || ""}`) || "other");
+            setPracticeCategory(cat);
+          }
+          if (i.practiceType) setPracticeType(i.practiceType);
           if (i.practiceText) setPracticeText(i.practiceText);
           if (i.pages) setPages(i.pages);
           if (i.language) setLanguage(i.language);
+          if (i.topic) setTopic(i.topic);
+          if (i.orderNumber) setOrderNumber(i.orderNumber);
+          if (i.orderType) setOrderType(i.orderType);
+          if (i.deadline) setDeadline(i.deadline);
+          if (i.direction) setDirection(i.direction);
+          if (i.subject) setSubject(i.subject);
+          if (i.uniqueness) setUniqueness(i.uniqueness);
+          if (i.course) setCourse(i.course);
+          if (i.extras) setExtras(i.extras);
+          if (i.companyName) setCompanyName(i.companyName);
+          if (i.supervisorCompany) setSupervisorCompany(i.supervisorCompany);
+          if (i.supervisorUniversity) setSupervisorUniversity(i.supervisorUniversity);
+          if (i.individualTask) setIndividualTask(i.individualTask);
+          if (i.dateStart) setDateStart(i.dateStart);
+          if (i.dateEnd) setDateEnd(i.dateEnd);
+          if (i.sourceCountExplicit) setSourceCountExplicit(i.sourceCountExplicit);
+          if (i.studentName) setStudentName(i.studentName);
+          if (i.studentGroup) setStudentGroup(i.studentGroup);
+          if (i.university) setUniversity(i.university);
+          if (i.faculty) setFaculty(i.faculty);
+          if (i.city) setCity(i.city);
           if (d.fileLabel) setFileLabel(d.fileLabel);
           if (d.methodInfo) setMethodInfo(d.methodInfo);
           if (d.clientMaterialsSummary) setClientMaterialsSummary(d.clientMaterialsSummary);
@@ -249,6 +333,9 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
           if (d.content) setContent(d.content);
           if (d.diaryContent) setDiaryContent(d.diaryContent);
           if (d.citInputs) setCitInputs(d.citInputs);
+          if (d.citStructured) setCitStructured(d.citStructured);
+          if (d.citStyle) setCitStyle(d.citStyle);
+          if (d.sourcesOrder) setSourcesOrder(d.sourcesOrder);
           if (d.refList) setRefList(d.refList);
           if (d.refSecPapers) setRefSecPapers(d.refSecPapers);
           if (d.refSecPhrases) setRefSecPhrases(d.refSecPhrases);
@@ -322,34 +409,94 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
       setClientMaterialsSummary(summary);
     }
 
-    // Витягуємо pages і language з тексту
-    const extractPrompt = `З тексту нижче витягни: кількість сторінок (ціле число, якщо не вказано — 30) і мову роботи (якщо не вказано — "Українська").
-Поверни ТІЛЬКИ JSON: {"pages":30,"language":"Українська"}
-ТЕКСТ: ${practiceText.slice(0, 1000)}`;
+    // Аналіз шаблону замовлення: regex-парсинг як база + LLM для гнучкості (шаблон може змінюватись)
+    setLoadMsg("Аналізую шаблон замовлення...");
+    let tpl = parseTemplate(practiceText);
     try {
-      const exRaw = await callClaude([{ role: "user", content: extractPrompt }], null, "Respond only with valid JSON.", 200, null, MODEL_FAST);
-      const ex = JSON.parse(exRaw.match(/\{[\s\S]*\}/)?.[0] || "{}");
-      if (ex.pages) { setPages(String(ex.pages)); info.pages = String(ex.pages); }
-      if (ex.language) { setLanguage(ex.language); info.language = ex.language; }
-    } catch {}
+      const tplRaw = await callClaude([{ role: "user", content: buildTemplateAnalysisPrompt(practiceText, combinedText) }], null, SYS_JSON, 1000, null, MODEL_FAST);
+      const tplParsed = JSON.parse(tplRaw.match(/\{[\s\S]*\}/)?.[0] || "{}");
+      tpl = { ...tpl, ...Object.fromEntries(Object.entries(tplParsed).filter(([, v]) => v != null && v !== "")) };
+    } catch (e) {
+      console.warn("template analysis fallback to regex:", e.message);
+    }
 
-    // Генерація плану
-    setLoadMsg("Генерую структуру звіту...");
+    if (tpl.pages) { setPages(String(tpl.pages)); info.pages = String(tpl.pages); }
+    if (tpl.language) { setLanguage(tpl.language); info.language = tpl.language; }
+    if (tpl.topic) { setTopic(tpl.topic); info.topic = tpl.topic; }
+    if (tpl.orderNumber) { setOrderNumber(tpl.orderNumber); info.orderNumber = tpl.orderNumber; }
+    if (tpl.type) { setOrderType(tpl.type); info.orderType = tpl.type; }
+    if (tpl.deadline) { setDeadline(tpl.deadline); info.deadline = tpl.deadline; }
+    if (tpl.direction) { setDirection(tpl.direction); info.direction = tpl.direction; }
+    if (tpl.subject) { setSubject(tpl.subject); info.subject = tpl.subject; }
+    if (tpl.uniqueness) { setUniqueness(tpl.uniqueness); info.uniqueness = tpl.uniqueness; }
+    if (tpl.course) { setCourse(String(tpl.course)); info.course = String(tpl.course); }
+    if (tpl.extras) { setExtras(tpl.extras); info.extras = tpl.extras; }
+
+    // Напрям практики: автовизначення з напряму/тематики/тексту (+ матеріали клієнта), якщо не обрано вручну
+    if (!categoryManualRef.current) {
+      const detected = detectSpecialty(`${tpl.direction || ""} ${tpl.subject || ""} ${practiceText} ${combinedText}`);
+      if (detected && CATEGORY_LABELS[detected]) { setPracticeCategory(detected); info.practiceCategory = detected; }
+    }
+    // Вид практики: автопідказка з курсу/типу, якщо користувач не обрав вручну
+    if (!typeManualRef.current) {
+      const suggestedType = detectPracticeType(tpl.course, tpl.type);
+      if (suggestedType) { setPracticeType(suggestedType); info.practiceType = suggestedType; }
+    }
+    info.practiceGuidance = getPracticeGuidance(info.practiceCategory, info.practiceType);
+
+    // Деталі практики: місце, керівники, дати, індивідуальне завдання (regex-фолбек + LLM)
+    setLoadMsg("Витягую деталі практики...");
+    let details = parsePracticeDetails(`${practiceText}\n${combinedText}`);
     try {
-      const prompt = buildPracticePlanPrompt(info);
+      const detRaw = await callClaude([{ role: "user", content: buildPracticeDetailsPrompt(practiceText, combinedText) }], null, SYS_JSON, 500, null, MODEL_FAST);
+      const detParsed = JSON.parse(detRaw.match(/\{[\s\S]*\}/)?.[0] || "{}");
+      details = { ...details, ...Object.fromEntries(Object.entries(detParsed).filter(([, v]) => v != null && v !== "")) };
+    } catch (e) {
+      console.warn("practice details fallback to regex:", e.message);
+    }
+    if (!companyName && details.companyName) { setCompanyName(details.companyName); info.companyName = details.companyName; }
+    if (!supervisorCompany && details.supervisorCompany) { setSupervisorCompany(details.supervisorCompany); info.supervisorCompany = details.supervisorCompany; }
+    if (!supervisorUniversity && details.supervisorUniversity) { setSupervisorUniversity(details.supervisorUniversity); info.supervisorUniversity = details.supervisorUniversity; }
+    if (!individualTask && details.individualTask) { setIndividualTask(details.individualTask); info.individualTask = details.individualTask; }
+    if (!dateStart && details.dateStart) { setDateStart(details.dateStart); info.dateStart = details.dateStart; }
+    if (!dateEnd && details.dateEnd) { setDateEnd(details.dateEnd); info.dateEnd = details.dateEnd; }
+    if (!sourceCountExplicit && details.sourceCount) {
+      const nums = String(details.sourceCount).match(/\d+/g);
+      if (nums) {
+        const avg = Math.round(nums.reduce((a, b) => a + parseInt(b), 0) / nums.length);
+        setSourceCountExplicit(avg);
+        info.sourceCountExplicit = avg;
+      }
+    }
+    if (!studentName && details.studentName) { setStudentName(details.studentName); info.studentName = details.studentName; }
+    if (!studentGroup && details.studentGroup) { setStudentGroup(details.studentGroup); info.studentGroup = details.studentGroup; }
+    if (!university && details.university) { setUniversity(details.university); info.university = details.university; }
+    if (!faculty && details.faculty) { setFaculty(details.faculty); info.faculty = details.faculty; }
+    if (!city && details.city) { setCity(details.city); info.city = details.city; }
+
+    await saveToFirestore({
+      info,
+      fileLabel: fileLabel || null,
+      methodInfo: parsedMethodInfo || null,
+      clientMaterialsSummary: summary || null,
+      clientMaterialsText: clientMaterialsText?.trim() || null,
+      stage: "parsed",
+      status: "new",
+    });
+    goToStage("parsed");
+    setRunning(false); runningRef.current = false; setLoadMsg("");
+  };
+
+  // ── Крок 2: Перевірка → генерація структури звіту ──────────────────────────
+  const doGenPlan = async () => {
+    setRunning(true); runningRef.current = true; setLoadMsg("Генерую структуру звіту...");
+    const info = getPracticeInfo();
+    try {
+      const prompt = buildPracticePlanPrompt(info, methodInfo);
       const raw = await callClaude([{ role: "user", content: prompt }], null, "Respond only with valid JSON. No markdown.", 1500, null, MODEL_FAST);
       const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || raw);
       if (parsed.sections?.length) setSections(parsed.sections);
-      await saveToFirestore({
-        info,
-        fileLabel: fileLabel || null,
-        methodInfo: parsedMethodInfo || null,
-        clientMaterialsSummary: summary || null,
-        clientMaterialsText: clientMaterialsText?.trim() || null,
-        sections: parsed.sections,
-        stage: "plan",
-        status: "new",
-      });
+      await saveToFirestore({ info, sections: parsed.sections, stage: "plan", status: "new" });
       goToStage("plan");
     } catch (e) {
       setError("Помилка генерації структури: " + e.message);
@@ -370,16 +517,34 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
       const ukPhrases = allPhrases.length ? allPhrases.slice(0, 4) : ukKw.slice(0, 4);
       const enPhrases = allPhrases.slice(4, 8);
       const displayPhrases = allPhrases.length ? allPhrases : ukKw.slice(0, 6);
-      const mainSecs = sections.filter(s => s.id !== "sources");
-      const needed = Math.ceil(15 / Math.max(mainSecs.length, 1)) + 4;
+      const mainSecs = sections.filter(s => !["sources", "intro", "conclusions"].includes(s.id));
+      const sourceTarget = calcSourceTarget(mainSecs);
+      const sourceDist = calcSourceDist(mainSecs, sourceTarget);
+      const needed = sourceDist[secId] || Math.ceil(15 / Math.max(mainSecs.length, 1)) + 4;
       const { flat } = await searchSourcesForSection(ukKw, enPhrases, needed, secLabel, topic, 1, [], [], ukPhrases);
-      const papers = (flat || []).slice(0, 15);
+      const candidates = (flat || []).slice(0, 15);
+      const filtered = await filterSourcesWithGemini(candidates, secLabel, topic, 15);
+      // Ліміт 30% іноземних джерел (як у великих роботах)
+      const maxForeign = Math.max(1, Math.round(needed * 0.3));
+      const ukPapers = filtered.filter(p => p.lang === "uk");
+      const foreignPapers = filtered.filter(p => p.lang !== "uk").slice(0, maxForeign);
+      const papers = [...ukPapers, ...foreignPapers];
       setRefSecPapers(prev => { const next = { ...prev, [secId]: papers }; saveToFirestore({ refSecPapers: next }); return next; });
       setRefSecPhrases(prev => { const next = { ...prev, [secId]: displayPhrases }; saveToFirestore({ refSecPhrases: next }); return next; });
       setRefSecOpen(prev => ({ ...prev, [secId]: true }));
       setRefSecSelected(prev => ({ ...prev, [secId]: [] }));
     } catch (e) { setError(e.message); }
     setRefSecLoading(prev => ({ ...prev, [secId]: false }));
+  };
+
+  // ── Джерела: пошук одразу для всіх розділів ─────────────────────────────────
+  const doSearchAllSections = async () => {
+    setSearchingAll(true);
+    const mainSecs = sections.filter(s => s.id !== "sources");
+    for (const sec of mainSecs) {
+      await doSearchForSection(sec.id, sec.label);
+    }
+    setSearchingAll(false);
   };
 
   // ── Джерела: додати вибрані до секції ──────────────────────────────────────
@@ -411,40 +576,98 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
         saveToFirestore({ citInputs: next });
         return next;
       });
+      setCitStructured(prev => {
+        const next = { ...prev, [secId]: [...(prev[secId] || []), ...enriched] };
+        saveToFirestore({ citStructured: next });
+        return next;
+      });
       setRefSecSelected(prev => ({ ...prev, [secId]: [] }));
     } catch (e) { setError(e.message); }
     setRunning(false); setLoadMsg("");
   };
 
   // ── Джерела: форматувати список ─────────────────────────────────────────────
-  const doFormatSources = async () => {
-    const allRaw = sections
-      .filter(s => s.id !== "sources")
-      .flatMap(s => (citInputs[s.id] || "").split("\n").map(l => l.trim()).filter(Boolean));
-    const unique = [...new Set(allRaw)];
-    if (!unique.length) return;
-    setRunning(true); setLoadMsg("Форматую список літератури...");
+  // Нормалізація рядка джерела для дедуплікації (як у великих роботах)
+  const normalizeRef = (s) => s.toLowerCase()
+    .replace(/https?:\/\/\S+/g, "")
+    .replace(/дата звернення[^)]*\)?/gi, "")
+    .replace(/[^\p{L}\p{N}]+/gu, "")
+    .trim();
+
+  // Цільова к-сть джерел: явно вказана клієнтом, інакше — з обсягу звіту (як calcSourceDist у великих роботах)
+  const calcSourceTarget = (mainSecs) => {
+    if (sourceCountExplicit) return sourceCountExplicit;
+    return Math.max(mainSecs.length * 2, parseInt(pages) || mainSecs.length * 3);
+  };
+  // Розподіл цільової к-сті по розділах пропорційно їхньому обсягу в сторінках
+  const calcSourceDist = (mainSecs, total) => {
+    const pagesSum = mainSecs.reduce((a, s) => a + (parseInt(s.pages) || 0), 0) || 1;
+    const minPerSec = Math.max(1, Math.floor(total / Math.max(mainSecs.length, 1) / 2));
+    const dist = {}; let assigned = 0;
+    mainSecs.forEach((s, i) => {
+      if (i === mainSecs.length - 1) { dist[s.id] = Math.max(minPerSec, total - assigned); }
+      else { const share = Math.max(minPerSec, Math.round((parseInt(s.pages) || 0) / pagesSum * total)); dist[s.id] = share; assigned += share; }
+    });
+    return dist;
+  };
+
+  const doFinalizeSources = async (contentOverride) => {
+    const baseContent = contentOverride || content;
+    const mainSecs = sections.filter(s => s.id !== "sources");
+    setRunning(true); setLoadMsg("Формую список літератури...");
     try {
-      const methodStyle = methodInfo?.sourcesStyle || "ДСТУ";
-      const isApa = methodStyle.toUpperCase().includes("APA");
-      const today = new Date();
-      const accessDate = `${String(today.getDate()).padStart(2, "0")}.${String(today.getMonth() + 1).padStart(2, "0")}.${today.getFullYear()}`;
-      const refLines = unique.map((r, i) => `${i + 1}. ${r}`).join("\n");
+      // 1. Дедуплікація по всіх розділах → глобальний список (порядок першої появи) + мапа локальний→сирий номер
+      const secLocalToRaw = {};
+      const rawRefs = [];
+      const seen = new Map();
+      mainSecs.forEach(sec => {
+        const lines = (citInputs[sec.id] || "").split("\n").map(l => l.trim()).filter(Boolean);
+        secLocalToRaw[sec.id] = {};
+        lines.forEach((line, i) => {
+          const localN = i + 1;
+          const key = normalizeRef(line);
+          let rawIdx = seen.get(key);
+          if (rawIdx == null) {
+            rawIdx = rawRefs.length;
+            rawRefs.push(line);
+            seen.set(key, rawIdx);
+          }
+          secLocalToRaw[sec.id][localN] = rawIdx + 1;
+        });
+      });
 
-      const fmtPrompt = isApa
-        ? `СТИЛЬ: APA 7th edition. ${refLines}`
-        : `СТИЛЬ: ДСТУ 8302:2015.\n- Ініціали ЗАВЖДИ після прізвища.\n- Назви журналів в *зірочках*.\n- Зберігай URL.\n- Sentence case для ВЕЛИКИХ назв.\nДата звернення: ${accessDate}.\n${refLines}`;
+      if (!rawRefs.length) { setRunning(false); setLoadMsg(""); return; }
 
-      const sysPrompt = isApa
-        ? "Ти — асистент з бібліографічного форматування APA 7th edition. Повертай тільки відформатований список."
-        : "Ти — асистент з бібліографічного форматування ДСТУ 8302:2015. Повертай тільки відформатований список.";
+      const flatStructured = mainSecs.flatMap(sec => citStructured[sec.id] || []);
+      const info = getPracticeInfo();
 
-      const fmtResult = await callGemini([{ role: "user", content: fmtPrompt }], null, sysPrompt, 4000);
-      const formatted = fmtResult.split("\n").filter(Boolean).map(l => l.replace(/^\d+\.\s*/, ""));
-      const list = formatted.length === unique.length ? formatted : unique;
-      const formattedText = list.map((c, i) => `${i + 1}. ${c}`).join("\n");
+      // 2. Сортування + форматування стилю (спільна функція, як у великих роботах)
+      const { refList: fmtList, oldToNew, refCiteText, pageRanges } = await remapAndFormatCitations({
+        citations: rawRefs,
+        citStructured: flatStructured,
+        citStyle,
+        language: info.language,
+        sourcesOrder,
+        citFootnotes: false,
+        callClaude,
+      });
+
+      // 3. Переписати [N] (і [N, с. X]) у тексті кожного розділу на нові глобальні номери —
+      // через спільну applyCitationRemap, яка ще й підставляє сторінки з pageRanges.
+      const nextContent = { ...baseContent };
+      mainSecs.forEach(sec => {
+        const text = nextContent[sec.id] || "";
+        if (!text) return;
+        const localMap = secLocalToRaw[sec.id] || {};
+        const sectionOldToNew = {};
+        Object.entries(localMap).forEach(([localN, rawIdx]) => { sectionOldToNew[localN] = oldToNew[rawIdx]; });
+        nextContent[sec.id] = applyCitationRemap(text, sectionOldToNew, refCiteText, { pageRanges });
+      });
+
+      const formattedText = fmtList.map((c, i) => `${i + 1}. ${c}`).join("\n");
+      setContent(nextContent);
       setRefList(formattedText);
-      await saveToFirestore({ citInputs, refList: formattedText });
+      await saveToFirestore({ content: nextContent, citInputs, citStructured, citStyle, sourcesOrder, refList: formattedText });
     } catch (e) { setError(e.message); }
     setRunning(false); setLoadMsg("");
   };
@@ -456,6 +679,7 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
     setRunning(true); runningRef.current = true;
     const lang = language;
     const info = getPracticeInfo();
+    let finalContent = { ...content };
 
     let idx = startIdx;
     while (idx < writableSecs.length && runningRef.current) {
@@ -471,6 +695,7 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
           buildSYS(lang, methodInfo),
           maxTok,
         );
+        finalContent = { ...finalContent, [sec.id]: text };
         setContent(prev => {
           const next = { ...prev, [sec.id]: text };
           saveToFirestore({ content: next, genIdx: idx + 1 });
@@ -484,6 +709,9 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
     }
 
     if (idx >= writableSecs.length && runningRef.current) {
+      // Передаємо свіжий вміст явно — content-стейт міг ще не встигнути оновитись
+      // у замиканні цього виклику doWrite (React стейт оновлюється асинхронно).
+      await doFinalizeSources(finalContent);
       playDoneSound();
       await saveToFirestore({ status: "writing", genIdx: idx });
     }
@@ -539,10 +767,16 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
         ...content,
         ...(refList ? { sources: refList } : {}),
       };
+      // Титульна сторінка: пріоритет — зразок із методички, інакше складаємо з витягнутих даних практики
+      const titlePageLines = methodInfo?.titlePageTemplate?.length
+        ? methodInfo.titlePageTemplate
+        : buildPracticeTitlePageLines(info);
       await exportToDocx({
         content: exportContent,
         info: { topic: info.topic, type: info.type, language: info.language, pages: info.pages },
         displayOrder,
+        titlePage: null,
+        titlePageLines,
         methodInfo,
         orderId: currentIdRef.current,
       });
@@ -674,6 +908,11 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
         <SaveIndicator saving={saving} saved={saved} />
       </div>
       <StagePills stage={stage} maxStageIdx={maxStageIdx} onNavigate={running ? null : (s) => setStage(s)} />
+      <button
+        onClick={() => { maxStageIdxRef.current = STAGE_KEYS.length - 1; setMaxStageIdx(STAGE_KEYS.length - 1); }}
+        style={{ background: "transparent", border: "1px solid #555", color: "#888", fontSize: 10, letterSpacing: 1, padding: "4px 10px", borderRadius: 20, cursor: "pointer" }}>
+        🔓 Розблокувати всі кроки
+      </button>
     </div>
   );
 
@@ -681,23 +920,6 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
   const renderInput = () => (
     <div className="fade">
       <Heading>Дані практики</Heading>
-
-      <FieldBox label="Напрям практики">
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 8 }}>
-          {PRACTICE_CATEGORIES.map(c => (
-            <button key={c.key} onClick={() => setPracticeCategory(c.key)}
-              style={{
-                padding: "8px 12px", borderRadius: 8, fontSize: 12, cursor: "pointer", textAlign: "left",
-                background: practiceCategory === c.key ? "#1a1a14" : "#f0ece2",
-                color: practiceCategory === c.key ? "#e8ff47" : "#333",
-                border: `1.5px solid ${practiceCategory === c.key ? "#1a1a14" : "#d4cfc4"}`,
-                display: "flex", alignItems: "center", gap: 6,
-              }}>
-              <span>{c.icon}</span><span>{c.label}</span>
-            </button>
-          ))}
-        </div>
-      </FieldBox>
 
       <FieldBox label="Дані практики" tooltip="Вставте будь-який текст — бланк завдання, опис підприємства, вимоги викладача. AI сам витягне всю потрібну інформацію.">
         <textarea
@@ -715,6 +937,57 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
 Індивідуальне завдання: ...`}
           style={{ ...TA_WHITE, minHeight: 200 }}
         />
+      </FieldBox>
+
+      <FieldBox label="Місце практики та керівники" tooltip="Підтягнеться автоматично з тексту вище після натискання «Далі», якщо там є ці дані. Можна заповнити вручну заздалегідь.">
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 8 }}>
+          <input value={companyName} onChange={e => setCompanyName(e.target.value)} placeholder="Місце практики (підприємство/установа)" style={{ ...TA_WHITE, minHeight: "auto", padding: "9px 10px", fontSize: 13 }} />
+          <input value={supervisorCompany} onChange={e => setSupervisorCompany(e.target.value)} placeholder="Керівник від підприємства" style={{ ...TA_WHITE, minHeight: "auto", padding: "9px 10px", fontSize: 13 }} />
+          <input value={supervisorUniversity} onChange={e => setSupervisorUniversity(e.target.value)} placeholder="Керівник від університету" style={{ ...TA_WHITE, minHeight: "auto", padding: "9px 10px", fontSize: 13 }} />
+        </div>
+      </FieldBox>
+
+      <FieldBox label="Дати практики" tooltip="Потрібні для щоденника — без них дати доведеться вигадувати. Підтягнуться автоматично, якщо є в тексті.">
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8 }}>
+          <input value={dateStart} onChange={e => setDateStart(e.target.value)} placeholder="Дата початку (дд.мм.рррр)" style={{ ...TA_WHITE, minHeight: "auto", padding: "9px 10px", fontSize: 13 }} />
+          <input value={dateEnd} onChange={e => setDateEnd(e.target.value)} placeholder="Дата закінчення (дд.мм.рррр)" style={{ ...TA_WHITE, minHeight: "auto", padding: "9px 10px", fontSize: 13 }} />
+        </div>
+      </FieldBox>
+
+      <FieldBox label="Дані для титульної сторінки" tooltip="Підтягнеться автоматично з тексту вище або з методички (якщо там є зразок титулки). Можна заповнити вручну.">
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 8 }}>
+          <input value={studentName} onChange={e => setStudentName(e.target.value)} placeholder="ПІБ студента" style={{ ...TA_WHITE, minHeight: "auto", padding: "9px 10px", fontSize: 13 }} />
+          <input value={studentGroup} onChange={e => setStudentGroup(e.target.value)} placeholder="Група" style={{ ...TA_WHITE, minHeight: "auto", padding: "9px 10px", fontSize: 13 }} />
+          <input value={university} onChange={e => setUniversity(e.target.value)} placeholder="Назва університету" style={{ ...TA_WHITE, minHeight: "auto", padding: "9px 10px", fontSize: 13 }} />
+          <input value={faculty} onChange={e => setFaculty(e.target.value)} placeholder="Факультет / кафедра" style={{ ...TA_WHITE, minHeight: "auto", padding: "9px 10px", fontSize: 13 }} />
+          <input value={city} onChange={e => setCity(e.target.value)} placeholder="Місто" style={{ ...TA_WHITE, minHeight: "auto", padding: "9px 10px", fontSize: 13 }} />
+        </div>
+      </FieldBox>
+
+      <FieldBox label="Індивідуальне завдання" tooltip="Персональне завдання від керівника, окреме від загальної програми практики. Якщо прийшло файлом/сканом — завантажте його нижче в «Матеріали клієнта» замість цього поля.">
+        <textarea
+          value={individualTask}
+          onChange={e => setIndividualTask(e.target.value)}
+          placeholder="Текст індивідуального завдання, якщо воно є окремим текстом..."
+          style={{ ...TA_WHITE, minHeight: 70 }}
+        />
+      </FieldBox>
+
+      <FieldBox label="Вид практики" tooltip="Підказується автоматично з курсу після натискання «Далі», але можна обрати вручну заздалегідь або виправити після аналізу.">
+        <div style={{ display: "flex", gap: 8 }}>
+          {PRACTICE_TYPES.map(t => (
+            <button key={t.key} type="button"
+              onClick={() => { typeManualRef.current = true; setPracticeType(t.key); }}
+              style={{
+                padding: "8px 14px", borderRadius: 8, fontSize: 12, cursor: "pointer",
+                background: practiceType === t.key ? "#1a1a14" : "#f0ece2",
+                color: practiceType === t.key ? "#e8ff47" : "#333",
+                border: `1.5px solid ${practiceType === t.key ? "#1a1a14" : "#d4cfc4"}`,
+              }}>
+              {t.label}
+            </button>
+          ))}
+        </div>
       </FieldBox>
 
       <FieldBox label="Методичка (PDF)" tooltip="Завантажте методичні вказівки — програма врахує всі вимоги до оформлення та структури">
@@ -745,6 +1018,114 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
       </div>
     </div>
   );
+
+  // ─── РЕНДЕР: крок 1.5 — Перевірка ────────────────────────────────────────────
+  const renderParsed = () => {
+    const courseMissing = !String(course || "").trim();
+    const recommendedMissing = [
+      !(dateStart && dateEnd) && "дати практики",
+      !companyName && "місце практики",
+      !individualTask && "індивідуальне завдання",
+      !studentName && "ПІБ студента (для титульної)",
+      !university && "університет (для титульної)",
+    ].filter(Boolean);
+    const hasExtras = !!extras?.trim();
+
+    const row = (label, value, onChange, opts = {}) => (
+      <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", borderBottom: "1px solid #e4dfd4" }}>
+        <div style={{ padding: "10px 14px", fontSize: 11, letterSpacing: "1px", textTransform: "uppercase", color: "#888", background: "#f0ece2", display: "flex", alignItems: "center" }}>{label}</div>
+        <div style={{ padding: "6px 10px", display: "flex", alignItems: "center" }}>
+          {opts.readOnly
+            ? <span style={{ fontSize: 13, color: "#1a1a14" }}>{value || "—"}</span>
+            : opts.textarea
+            ? <textarea value={value} onChange={onChange} style={{ ...TA_WHITE, minHeight: 60, border: "none", background: "transparent", padding: "4px 0", width: "100%" }} />
+            : <input value={value} onChange={onChange} style={{ border: "none", background: "transparent", fontSize: 13, fontFamily: "'Spectral',serif", padding: "4px 0", width: "100%", outline: "none" }} />}
+        </div>
+      </div>
+    );
+
+    return (
+      <div className="fade">
+        <Heading>Перевірка даних</Heading>
+        <p style={{ fontSize: 13, color: "#888", marginBottom: 14 }}>Клікніть на значення, щоб змінити. Перевірте дані перед генерацією структури звіту.</p>
+
+        <div style={{ border: "1.5px solid #d4cfc4", borderRadius: 8, overflow: "hidden", marginBottom: 12 }}>
+          {row("Номер замовлення", orderNumber, e => setOrderNumber(e.target.value))}
+          {row("Тип", orderType, e => setOrderType(e.target.value))}
+          <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", borderBottom: "1px solid #e4dfd4" }}>
+            <div style={{ padding: "10px 14px", fontSize: 11, letterSpacing: "1px", textTransform: "uppercase", color: "#888", background: "#f0ece2", display: "flex", alignItems: "center" }}>Напрям практики</div>
+            <div style={{ padding: "6px 10px", display: "flex", alignItems: "center" }}>
+              <select value={practiceCategory} onChange={e => { categoryManualRef.current = true; setPracticeCategory(e.target.value); }}
+                style={{ border: "none", background: "transparent", fontSize: 13, fontFamily: "'Spectral',serif", padding: "4px 0", width: "100%", outline: "none" }}>
+                {Object.entries(CATEGORY_LABELS).map(([key, c]) => (
+                  <option key={key} value={key}>{c.icon} {c.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", borderBottom: "1px solid #e4dfd4" }}>
+            <div style={{ padding: "10px 14px", fontSize: 11, letterSpacing: "1px", textTransform: "uppercase", color: "#888", background: "#f0ece2", display: "flex", alignItems: "center" }}>Вид практики</div>
+            <div style={{ padding: "6px 10px", display: "flex", gap: 6, alignItems: "center" }}>
+              {PRACTICE_TYPES.map(t => (
+                <button key={t.key} type="button"
+                  onClick={() => { typeManualRef.current = true; setPracticeType(t.key); }}
+                  style={{
+                    padding: "5px 10px", borderRadius: 6, fontSize: 11, cursor: "pointer",
+                    background: practiceType === t.key ? "#1a1a14" : "#f0ece2",
+                    color: practiceType === t.key ? "#e8ff47" : "#333",
+                    border: `1px solid ${practiceType === t.key ? "#1a1a14" : "#d4cfc4"}`,
+                  }}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {row("Курс", course, e => setCourse(e.target.value))}
+          {row("Тема", topic, e => setTopic(e.target.value))}
+          {row("Тематика / предмет", subject, e => setSubject(e.target.value))}
+          {row("Галузь / напрям", direction, e => setDirection(e.target.value))}
+          {row("К-сть сторінок", pages, e => setPages(e.target.value))}
+          {row("Мова роботи", language, e => setLanguage(e.target.value))}
+          {row("Дедлайн", deadline, e => setDeadline(e.target.value))}
+          {row("Унікальність", uniqueness, e => setUniqueness(e.target.value))}
+          {row("Додаткові матеріали", extras, e => setExtras(e.target.value))}
+          {row("Місце практики", companyName, e => setCompanyName(e.target.value))}
+          {row("Керівник від підприємства", supervisorCompany, e => setSupervisorCompany(e.target.value))}
+          {row("Керівник від університету", supervisorUniversity, e => setSupervisorUniversity(e.target.value))}
+          {row("Дата початку", dateStart, e => setDateStart(e.target.value))}
+          {row("Дата закінчення", dateEnd, e => setDateEnd(e.target.value))}
+          {row("Індивідуальне завдання", individualTask, e => setIndividualTask(e.target.value), { textarea: true })}
+          {row("ПІБ студента", studentName, e => setStudentName(e.target.value))}
+          {row("Група", studentGroup, e => setStudentGroup(e.target.value))}
+          {row("Університет", university, e => setUniversity(e.target.value))}
+          {row("Факультет / кафедра", faculty, e => setFaculty(e.target.value))}
+          {row("Місто", city, e => setCity(e.target.value))}
+          {row("Методичка", fileLabel || (methodInfo ? "прочитано" : "не завантажено"), null, { readOnly: true })}
+        </div>
+
+        {courseMissing && <div style={{ fontSize: 12, color: "#8a1a1a", marginBottom: 6 }}>⚠ Вкажіть курс, щоб продовжити</div>}
+        {recommendedMissing.length > 0 && (
+          <div style={{ fontSize: 12, color: "#8a6a1a", marginBottom: 6 }}>⚠ Рекомендується заповнити: {recommendedMissing.join(", ")}</div>
+        )}
+        {hasExtras && (
+          <div style={{ fontSize: 12, color: "#8a6a1a", marginBottom: 6 }}>⚠ Презентація/доповідь та подібні додаткові матеріали виконуються окремо в «Малих роботах» — практика їх не генерує</div>
+        )}
+
+        {error && <div style={{ color: "#c55", fontSize: 13, marginBottom: 12 }}>{error}</div>}
+
+        <div style={{ display: "flex", gap: 12, marginTop: 8 }}>
+          <NavBtn onClick={() => goToStage("input")}>← Назад</NavBtn>
+          <PrimaryBtn
+            onClick={doGenPlan}
+            disabled={running || courseMissing}
+            loading={running}
+            msg={loadMsg || "Генерую..."}
+            label="Генерувати структуру →"
+          />
+        </div>
+      </div>
+    );
+  };
 
   // ─── РЕНДЕР: крок 2 — Структура ─────────────────────────────────────────────
   const renderPlan = () => {
@@ -797,6 +1178,28 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
         <Heading>Структура звіту</Heading>
         <p style={{ fontSize: 13, color: "#888", marginBottom: 14 }}>Відредагуйте назви та кількість сторінок. Затвердіть структуру перед переходом до джерел.</p>
 
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          <button
+            onClick={() => {
+              navigator.clipboard.writeText(buildPracticePlanText(sections));
+              setPlanCopied(true);
+              setTimeout(() => setPlanCopied(false), 2000);
+            }}
+            style={{ background: "transparent", border: "1.5px solid #c4bfb4", color: "#666", borderRadius: 6, padding: "6px 16px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer", letterSpacing: "0.5px" }}>
+            {planCopied ? "✓ Скопійовано" : "COPY"}
+          </button>
+          <button
+            disabled={planDocxLoading}
+            onClick={async () => {
+              setPlanDocxLoading(true);
+              try { await exportPracticePlanToDocx({ sections, info: getPracticeInfo(), methodInfo }); } catch (e) { setError("Помилка експорту: " + e.message); }
+              setPlanDocxLoading(false);
+            }}
+            style={{ background: "transparent", border: "1.5px solid #8ab060", color: planDocxLoading ? "#aaa" : "#6a9030", borderRadius: 6, padding: "6px 16px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: planDocxLoading ? "wait" : "pointer", letterSpacing: "0.5px", display: "inline-flex", alignItems: "center", gap: 6 }}>
+            {planDocxLoading ? <><SpinDot />...</> : "⬇ .docx"}
+          </button>
+        </div>
+
         {/* Таблиця */}
         <div style={{ border: "1.5px solid #d4cfc4", borderRadius: 8, overflow: "hidden", marginBottom: 16 }}>
           {/* Шапка */}
@@ -811,9 +1214,16 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
             const canDown = !isFixed && movIdx < movable.length - 1;
             const isPlaceholder = !isFixed && /\[|новий|підрозділ/i.test(s.label);
             const isNaming = namingId === s.id;
+            const showChapterDivider = s.sectionTitle && s.sectionTitle !== sections[i - 1]?.sectionTitle;
 
             return (
-              <div key={s.id} style={{ display: "grid", gridTemplateColumns: COL, borderBottom: i < sections.length - 1 ? "1px solid #e4dfd4" : "none", background: isFixed ? "#ede9e0" : i % 2 === 0 ? "#f5f2eb" : "#f0ece2", alignItems: "center" }}>
+              <Fragment key={s.id}>
+              {showChapterDivider && (
+                <div style={{ gridColumn: "1 / -1", padding: "6px 14px", background: "#e4dfd4", fontSize: 11, fontWeight: "bold", letterSpacing: "0.5px", color: "#555" }}>
+                  {s.sectionTitle}
+                </div>
+              )}
+              <div style={{ display: "grid", gridTemplateColumns: COL, borderBottom: i < sections.length - 1 ? "1px solid #e4dfd4" : "none", background: isFixed ? "#ede9e0" : i % 2 === 0 ? "#f5f2eb" : "#f0ece2", alignItems: "center" }}>
                 <div style={{ padding: "9px 10px", fontSize: 12, color: "#bbb" }}>{i + 1}</div>
 
                 {/* Назва + ✨ */}
@@ -859,6 +1269,7 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
                   )}
                 </div>
               </div>
+              </Fragment>
             );
           })}
 
@@ -897,7 +1308,7 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
 
         {error && <div style={{ color: "#c55", fontSize: 13, marginBottom: 12 }}>{error}</div>}
         <div style={{ display: "flex", gap: 12 }}>
-          <NavBtn onClick={() => setStage("input")}>← Назад</NavBtn>
+          <NavBtn onClick={() => setStage("parsed")}>← Назад</NavBtn>
           <PrimaryBtn
             onClick={() => { saveToFirestore({ sections, stage: "sources", status: "new" }); goToStage("sources"); }}
             disabled={running}
@@ -910,19 +1321,84 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
 
   // ─── РЕНДЕР: крок 3 — Джерела ───────────────────────────────────────────────
   const renderSources = () => {
-    const mainSecs = sections.filter(s => s.id !== "sources");
+    const mainSecs = sections.filter(s => !["sources", "intro", "conclusions"].includes(s.id));
+    const totalRefsCount = (() => {
+      const seen = new Set();
+      mainSecs.forEach(sec => (citInputs[sec.id] || "").split("\n").map(l => l.trim()).filter(Boolean).forEach(l => seen.add(normalizeRef(l))));
+      return seen.size;
+    })();
+    const sourceTarget = calcSourceTarget(mainSecs);
+    const sourceDist = calcSourceDist(mainSecs, sourceTarget);
+    const scholarUrl = `https://scholar.google.com/scholar?q=${encodeURIComponent(getPracticeInfo().topic || "")}`;
+    const styleBtn = (label, val, cur, setter) => (
+      <button key={label} type="button" onClick={() => setter(val)}
+        style={{
+          padding: "4px 10px", borderRadius: 6, fontSize: 11, cursor: "pointer",
+          background: cur === val ? "#1a1a14" : "#f0ece2",
+          color: cur === val ? "#e8ff47" : "#333",
+          border: `1px solid ${cur === val ? "#1a1a14" : "#d4cfc4"}`,
+        }}>
+        {label}
+      </button>
+    );
 
     return (
       <div className="fade">
         <Heading>Джерела</Heading>
-        <p style={{ fontSize: 13, color: "#888", marginBottom: 20 }}>
+        <p style={{ fontSize: 13, color: "#888", marginBottom: 12 }}>
           Введіть джерела для кожного розділу або знайдіть їх автоматично. Після введення — сформуйте список літератури.
         </p>
 
-        {mainSecs.map(sec => (
-          <div key={sec.id} style={{ marginBottom: 24, background: "#fff", borderRadius: 10, padding: "16px 18px", boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, marginBottom: 12 }}>
+          <div style={{ fontSize: 13, color: "#555" }}>
+            Джерел додано: <b>{totalRefsCount}</b> / {sourceTarget}
+            {sourceCountExplicit ? " (вказано клієнтом)" : " (орієнтовно, за обсягом звіту)"}
+          </div>
+          <button
+            onClick={doSearchAllSections}
+            disabled={searchingAll || mainSecs.some(sec => refSecLoading[sec.id])}
+            style={{ background: "#1a3a10", border: "none", color: "#a8d060", borderRadius: 6, padding: "8px 16px", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+            {searchingAll ? <><SpinDot /> Шукаю для всіх розділів...</> : "Знайти джерела для всіх розділів →"}
+          </button>
+        </div>
+
+        <div style={{ border: "1.5px solid #d4cfc4", borderRadius: 8, padding: "10px 14px", display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 12, fontSize: 12 }}>
+          <span style={{ color: "#888" }}>Оформлення:</span>
+          <span style={{ color: "#888" }}>Стиль</span>
+          {styleBtn("ДСТУ 8302:2015", "ДСТУ 8302:2015", citStyle, setCitStyle)}
+          {styleBtn("APA", "APA", citStyle, setCitStyle)}
+          {styleBtn("MLA", "MLA", citStyle, setCitStyle)}
+          <span style={{ color: "#888", marginLeft: 8 }}>Порядок</span>
+          {styleBtn("Алфавіт", "alphabetical", sourcesOrder, setSourcesOrder)}
+          {styleBtn("За порядком", "appearance", sourcesOrder, setSourcesOrder)}
+        </div>
+
+        <div style={{ background: "#f5f8ee", border: "1px solid #d8e4c0", borderRadius: 8, padding: "12px 16px", fontSize: 12, color: "#3a4a2a", marginBottom: 20, lineHeight: 1.6 }}>
+          <b>Як це працює:</b> Натисніть "Знайти джерела для всіх розділів" — програма знайде відповідні джерела для кожного розділу. Виберіть потрібні галочкою та натисніть "Додати вибрані". Після заповнення натисніть "Сформувати список літератури".
+          <br />
+          Обмеження: іноземних джерел не більше 30% від загальної кількості. Російські та білоруські джерела заборонені.
+          <div style={{ marginTop: 10 }}>
+            <a href={scholarUrl} target="_blank" rel="noreferrer"
+              style={{
+                display: "inline-block", background: "#e8f0ff", border: "1.5px solid #4a9ade44", color: "#1a5a8a",
+                borderRadius: 6, padding: "6px 12px", fontSize: 12, textDecoration: "none", fontFamily: "inherit",
+              }}>
+              🎓 Шукати додатково на Google Scholar →
+            </a>
+          </div>
+        </div>
+
+        {mainSecs.map((sec, idx) => (
+          <Fragment key={sec.id}>
+          {sec.sectionTitle && sec.sectionTitle !== mainSecs[idx - 1]?.sectionTitle && (
+            <div style={{ fontSize: 12, fontWeight: "bold", letterSpacing: "0.5px", color: "#555", margin: "18px 0 8px" }}>{sec.sectionTitle}</div>
+          )}
+          <div style={{ marginBottom: 24, background: "#fff", borderRadius: 10, padding: "16px 18px", boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, gap: 10, flexWrap: "wrap" }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "#1a1a14" }}>{sec.label}</div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#1a1a14" }}>
+                {sec.label}
+                <span style={{ fontWeight: 400, fontSize: 11, color: "#999", marginLeft: 8 }}>(рекомендовано ~{sourceDist[sec.id] || 0} джерел)</span>
+              </div>
               <button
                 onClick={() => doSearchForSection(sec.id, sec.label)}
                 disabled={refSecLoading[sec.id]}
@@ -944,7 +1420,18 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
 
             {refSecOpen[sec.id] && refSecPapers[sec.id]?.length > 0 && (
               <div style={{ marginBottom: 10 }}>
-                <div style={{ fontSize: 10, color: "#aaa", marginBottom: 6 }}>Знайдені публікації:</div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                  <div style={{ fontSize: 10, color: "#aaa" }}>Знайдені публікації:</div>
+                  <button
+                    onClick={() => setRefSecSelected(prev => {
+                      const all = refSecPapers[sec.id].map(p => p.id);
+                      const isAllSelected = (prev[sec.id] || []).length === all.length;
+                      return { ...prev, [sec.id]: isAllSelected ? [] : all };
+                    })}
+                    style={{ background: "transparent", border: "none", color: "#4a9ade", fontSize: 11, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}>
+                    {(refSecSelected[sec.id] || []).length === refSecPapers[sec.id].length ? "Зняти всі" : "Вибрати всі"}
+                  </button>
+                </div>
                 {refSecPapers[sec.id].map(p => (
                   <div key={p.id} style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 5 }}>
                     <input type="checkbox"
@@ -978,32 +1465,20 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
               style={{ ...TA_WHITE, minHeight: 80, width: "100%" }}
             />
           </div>
+          </Fragment>
         ))}
 
         {error && <div style={{ color: "#c55", fontSize: 13, marginBottom: 12 }}>{error}</div>}
 
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", marginBottom: 20 }}>
-          <GreenBtn
-            onClick={doFormatSources}
-            disabled={running}
-            loading={running}
-            msg={loadMsg || "Форматую..."}
-            label="Сформувати список літератури"
-          />
-        </div>
-
-        {refList && (
-          <div style={{ background: "#fff", borderRadius: 10, padding: "16px 18px", boxShadow: "0 2px 8px rgba(0,0,0,0.05)", marginBottom: 20 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "#1a1a14", marginBottom: 8 }}>Список використаних джерел:</div>
-            <div style={{ fontSize: 12, whiteSpace: "pre-wrap", color: "#333", lineHeight: 1.7 }}>{refList}</div>
-          </div>
-        )}
+        <p style={{ fontSize: 12, color: "#999", marginBottom: 12 }}>
+          Список літератури формується автоматично одразу після написання всіх розділів — тоді ж посилання [N] у тексті розставляються за фінальними номерами.
+        </p>
 
         <div style={{ display: "flex", gap: 12 }}>
           <NavBtn onClick={() => setStage("plan")}>← Назад</NavBtn>
           <PrimaryBtn
             onClick={() => {
-              saveToFirestore({ citInputs, refList, stage: "writing", status: "plan_approved" });
+              saveToFirestore({ citInputs, stage: "writing", status: "plan_approved" });
               goToStage("writing");
               doWrite(0);
             }}
@@ -1053,8 +1528,13 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
           const secContent = content[sec.id];
           const isGenerating = running && genIdx === idx;
           const isRegen = regenId === sec.id;
+          const showChapterDivider = sec.sectionTitle && sec.sectionTitle !== writableSecs[idx - 1]?.sectionTitle;
           return (
-            <div key={sec.id} style={{ marginBottom: 20, background: "#fff", borderRadius: 10, padding: "16px 18px", boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
+            <Fragment key={sec.id}>
+            {showChapterDivider && (
+              <div style={{ fontSize: 12, fontWeight: "bold", letterSpacing: "0.5px", color: "#555", margin: "18px 0 8px" }}>{sec.sectionTitle}</div>
+            )}
+            <div style={{ marginBottom: 20, background: "#fff", borderRadius: 10, padding: "16px 18px", boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, gap: 10 }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: "#1a1a14" }}>{sec.label}</div>
                 <div style={{ display: "flex", gap: 6 }}>
@@ -1096,8 +1576,37 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
                 </div>
               )}
             </div>
+            </Fragment>
           );
         })}
+
+        {allDone && (
+          <div style={{ border: "1.5px solid #d4cfc4", borderRadius: 8, padding: "10px 14px", display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginTop: 16, marginBottom: 10, fontSize: 12 }}>
+            <span style={{ color: "#888" }}>Оформлення:</span>
+            <span style={{ color: "#888" }}>Стиль</span>
+            {["ДСТУ 8302:2015", "APA", "MLA"].map(s => (
+              <button key={s} type="button" onClick={() => setCitStyle(s)}
+                style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, cursor: "pointer", background: citStyle === s ? "#1a1a14" : "#f0ece2", color: citStyle === s ? "#e8ff47" : "#333", border: `1px solid ${citStyle === s ? "#1a1a14" : "#d4cfc4"}` }}>
+                {s}
+              </button>
+            ))}
+            <span style={{ color: "#888", marginLeft: 8 }}>Порядок</span>
+            {[{ key: "alphabetical", label: "Алфавіт" }, { key: "appearance", label: "За порядком" }].map(o => (
+              <button key={o.key} type="button" onClick={() => setSourcesOrder(o.key)}
+                style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, cursor: "pointer", background: sourcesOrder === o.key ? "#1a1a14" : "#f0ece2", color: sourcesOrder === o.key ? "#e8ff47" : "#333", border: `1px solid ${sourcesOrder === o.key ? "#1a1a14" : "#d4cfc4"}` }}>
+                {o.label}
+              </button>
+            ))}
+            <GreenBtn onClick={() => doFinalizeSources()} disabled={running} loading={running} msg={loadMsg || "Формую..."} label="Переформувати список літератури" />
+          </div>
+        )}
+
+        {refList && (
+          <div style={{ background: "#fff", borderRadius: 10, padding: "16px 18px", boxShadow: "0 2px 8px rgba(0,0,0,0.05)", marginBottom: 20 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "#1a1a14", marginBottom: 8 }}>Список використаних джерел:</div>
+            <div style={{ fontSize: 12, whiteSpace: "pre-wrap", color: "#333", lineHeight: 1.7 }}>{refList}</div>
+          </div>
+        )}
 
         {/* Кнопка завантаження доступна як тільки є хоч одна секція */}
         {Object.keys(content).length > 0 && (
@@ -1243,6 +1752,7 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
       {renderHeader()}
       <div style={{ maxWidth: 900, margin: "0 auto", padding: "32px clamp(16px,3vw,40px)" }}>
         {stage === "input"   && renderInput()}
+        {stage === "parsed"  && renderParsed()}
         {stage === "plan"    && renderPlan()}
         {stage === "sources" && renderSources()}
         {stage === "writing" && renderWriting()}

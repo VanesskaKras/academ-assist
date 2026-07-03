@@ -120,37 +120,51 @@ export function ClientMaterialsZone({ materials, onAdd, onRemove, manualText, on
 
   return (
     <div>
-      <div
-        onClick={() => canAdd && fileRef.current.click()}
-        onDrop={e => { e.preventDefault(); setDragging(false); if (canAdd) processFiles(e.dataTransfer.files); }}
-        onDragOver={e => { e.preventDefault(); setDragging(true); }}
-        onDragLeave={() => setDragging(false)}
-        style={{
-          minHeight: 64,
-          border: `1.5px dashed ${dragging && canAdd ? "#1a1a14" : "#c4bfb4"}`,
-          borderRadius: 6,
-          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-          gap: 4, cursor: canAdd ? "pointer" : "default",
-          padding: 12, background: dragging && canAdd ? "#e8e4d8" : "#ede9e0", transition: "all .2s",
-        }}
-      >
-        <div style={{ fontSize: 20 }}>{extracting ? "⏳" : "📎"}</div>
-        <div style={{ fontSize: 12, color: "#888", textAlign: "center" }}>
-          {extracting
-            ? "Витягую текст..."
-            : canAdd
-              ? `Перетягніть або клікніть — PDF, TXT, CSV, XLSX, XML (${materials.length}/${MAX_FILES})`
-              : `Максимум ${MAX_FILES} файлів завантажено`}
+      <div style={{ display: "flex", gap: 10, alignItems: "stretch" }}>
+        <textarea
+          value={manualText}
+          onChange={e => onManualText(e.target.value)}
+          placeholder="Або вставте текст вручну — власні напрацювання, дані дослідження, таблиці..."
+          style={{
+            flex: 1, minWidth: 0, minHeight: 64,
+            background: "#f0ece2", border: "1.5px solid #d4cfc4", borderRadius: 6,
+            color: "#1a1a14", fontSize: 13, padding: "10px 12px",
+            resize: "vertical", lineHeight: 1.7, fontFamily: "'Spectral',Georgia,serif",
+          }}
+        />
+
+        <div
+          onClick={() => canAdd && fileRef.current.click()}
+          onDrop={e => { e.preventDefault(); setDragging(false); if (canAdd) processFiles(e.dataTransfer.files); }}
+          onDragOver={e => { e.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          style={{
+            flex: 1, minWidth: 0, minHeight: 64,
+            border: `1.5px dashed ${dragging && canAdd ? "#1a1a14" : "#c4bfb4"}`,
+            borderRadius: 6,
+            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+            gap: 4, cursor: canAdd ? "pointer" : "default",
+            padding: 12, background: dragging && canAdd ? "#e8e4d8" : "#ede9e0", transition: "all .2s",
+          }}
+        >
+          <div style={{ fontSize: 20 }}>{extracting ? "⏳" : "📎"}</div>
+          <div style={{ fontSize: 12, color: "#888", textAlign: "center" }}>
+            {extracting
+              ? "Витягую текст..."
+              : canAdd
+                ? `Перетягніть або клікніть — PDF, TXT, CSV, XLSX, XML (${materials.length}/${MAX_FILES})`
+                : `Максимум ${MAX_FILES} файлів завантажено`}
+          </div>
         </div>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".pdf,.txt,.csv,.xlsx,.xls,.xml,text/plain,application/pdf,text/csv,text/xml,application/xml"
+          multiple
+          style={{ display: "none" }}
+          onChange={e => { processFiles(e.target.files); e.target.value = ""; }}
+        />
       </div>
-      <input
-        ref={fileRef}
-        type="file"
-        accept=".pdf,.txt,.csv,.xlsx,.xls,.xml,text/plain,application/pdf,text/csv,text/xml,application/xml"
-        multiple
-        style={{ display: "none" }}
-        onChange={e => { processFiles(e.target.files); e.target.value = ""; }}
-      />
 
       {materials.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
@@ -166,18 +180,6 @@ export function ClientMaterialsZone({ materials, onAdd, onRemove, manualText, on
           ))}
         </div>
       )}
-
-      <textarea
-        value={manualText}
-        onChange={e => onManualText(e.target.value)}
-        placeholder="Або вставте текст вручну — власні напрацювання, дані дослідження, таблиці..."
-        style={{
-          width: "100%", marginTop: 10, minHeight: 80,
-          background: "#f0ece2", border: "1.5px solid #d4cfc4", borderRadius: 6,
-          color: "#1a1a14", fontSize: 13, padding: "10px 12px",
-          resize: "vertical", lineHeight: 1.7, fontFamily: "'Spectral',Georgia,serif",
-        }}
-      />
     </div>
   );
 }
