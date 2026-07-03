@@ -15,7 +15,7 @@ export function WritingStage({
         <Heading style={{ margin: 0 }}>05 / Генерація тексту</Heading>
         {running && <button onClick={stopGen} style={{ background: "#7a1010", color: "#fff", border: "none", borderRadius: 6, padding: "6px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>⏹ Зупинити</button>}
         {!running && paused && genIdx < sections.length && <button onClick={resumeGen} style={{ background: "#0a4a0a", color: "#e8ff47", border: "none", borderRadius: 6, padding: "6px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>▶ Продовжити</button>}
-        {!running && !regenAllLoading && genIdx >= sections.length && <button onClick={doRegenAll} style={{ background: "transparent", border: "1px solid #555", color: "#ccc", borderRadius: 6, padding: "6px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>↺ Переписати всю роботу</button>}
+        {/* ↺ "Переписати всю роботу" тимчасово приховано на прохання користувача */}
         {regenAllLoading && <><span style={{ fontSize: 12, color: "#888", display: "inline-flex", alignItems: "center", gap: 6 }}><SpinDot />{loadMsg}</span><button onClick={() => regenAllAbortRef.current?.abort()} style={{ background: "#7a1010", color: "#fff", border: "none", borderRadius: 6, padding: "6px 14px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>⏹ Зупинити</button></>}
       </div>
       <div style={{ marginBottom: 22 }}>

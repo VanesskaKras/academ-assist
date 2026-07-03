@@ -10,7 +10,7 @@ import { exportToDocx, exportPlanToDocx, exportAppendixToDocx, exportSpeechToDoc
 import { exportToPptxFile } from "./lib/exportPptx.js";
 import { callClaude, callGemini, MODEL, MODEL_FAST } from "./lib/api.js";
 import { playDoneSound } from "./lib/audio.js";
-import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildIllustrationsPdfPrompt, buildClientMaterialsAnalysisPrompt, buildCorrectionsAnalysisPrompt, buildCorrectionRewritePrompt, buildFileToSectionsPrompt, buildAnnotationPrompt, buildAnnotationRegenPrompt } from "./lib/prompts.js";
+import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildIllustrationsPdfPrompt, buildClientMaterialsAnalysisPrompt, buildCorrectionsAnalysisPrompt, buildCorrectionRewritePrompt, buildFileToSectionsPrompt, buildAnnotationPrompt, buildAnnotationRegenPrompt, buildAntiPlagiarismSYS } from "./lib/prompts.js";
 import { FIELD_LABELS, isPsychoPed, isEcon, hasEmpiricalResearch, getEmpiricalSections, getEconSections, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, getLangLabels } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { getAcademicDefaults, classifyAppendixItem, normalizeWorkType } from "./lib/academicDefaults.js";
@@ -196,6 +196,12 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [regenLoading, setRegenLoading] = useState(false);
   const [regenAllLoading, setRegenAllLoading] = useState(false);
   const regenAllAbortRef = useRef(null);
+  // For reducing plagiarism (paraphrase existing text, not regenerate from scratch)
+  const [plagId, setPlagId] = useState(null);
+  const [plagLoading, setPlagLoading] = useState(false);
+  const [plagAllLoading, setPlagAllLoading] = useState(false);
+  const [plagAllMsg, setPlagAllMsg] = useState("");
+  const plagAllAbortRef = useRef(null);
   const writingDoneRef = useRef(false);
   const maxStageIdxRef = useRef(0);
   const generationStartRef = useRef(null);
@@ -1977,6 +1983,77 @@ ${clientReqsRegen ? `ВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО вико
       await saveToFirestore({ content: newContent });
     } catch (e) { console.error(e); }
     setRegenLoading(false);
+  };
+
+  // ── Перефразувати наявний текст секції, щоб знизити плагіат (не генерація з нуля) ──
+  const reduceSectionPlagiarismText = async (text, lang, signal) => {
+    const approxWords = text.trim().split(/\s+/).length;
+    const maxTokens = Math.min(60000, Math.max(4000, Math.round((approxWords / 225) * 3000)));
+    const raw = await callClaude(
+      [{ role: "user", content: text }],
+      signal,
+      buildAntiPlagiarismSYS(lang),
+      maxTokens
+    );
+    return fixMixedScript(raw, lang)
+      .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
+      .replace(/[„""]([^"„""]*)["""]/g, "«$1»")
+      .replace(/"([^"]*)"/g, "«$1»")
+      .replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2")
+      .replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2");
+  };
+
+  // ── Зменшити плагіат в одній секції ──
+  const doReducePlagiarism = async (sec) => {
+    const originalText = contentRef.current[sec.id] || "";
+    if (!originalText.trim()) return;
+    setPlagLoading(true);
+    setPlagId(sec.id);
+    setApiError("");
+    try {
+      const lang = info?.language || "Українська";
+      const result = await reduceSectionPlagiarismText(originalText, lang);
+      const newContent = { ...contentRef.current, [sec.id]: result };
+      setContent(newContent);
+      setPlagId(null);
+      await saveToFirestore({ content: newContent });
+    } catch (e) {
+      console.error(e);
+      setApiError(e.message);
+    }
+    setPlagLoading(false);
+  };
+
+  // ── Зменшити плагіат по всій роботі (послідовно, з можливістю зупинити) ──
+  const doReducePlagiarismAll = async () => {
+    if (!window.confirm("Перефразувати всі секції для зниження плагіату? Поточний текст буде замінено.")) return;
+    const ctrl = new AbortController();
+    plagAllAbortRef.current = ctrl;
+    setPlagAllLoading(true);
+    setApiError("");
+
+    const lang = info?.language || "Українська";
+    const secsToProcess = sections.filter(s => s.type !== "sources" && contentRef.current[s.id]);
+
+    for (let i = 0; i < secsToProcess.length; i++) {
+      if (ctrl.signal.aborted) break;
+      const sec = secsToProcess[i];
+      setPlagAllMsg(`Зменшую плагіат (${i + 1}/${secsToProcess.length}): ${sec.label}...`);
+      try {
+        const result = await reduceSectionPlagiarismText(contentRef.current[sec.id], lang, ctrl.signal);
+        const newContent = { ...contentRef.current, [sec.id]: result };
+        setContent(newContent);
+        await saveToFirestore({ content: newContent });
+      } catch (e) {
+        if (e.name === "AbortError") break;
+        console.error(e);
+        setApiError(e.message);
+        break;
+      }
+    }
+
+    setPlagAllMsg("");
+    setPlagAllLoading(false);
   };
 
   // ── Текст доповіді (без міток слайдів) — джерело істини для змісту презентації ──
@@ -4292,6 +4369,10 @@ ${refLines2.join("\n")}`;
               sections={sections} info={info} methodInfo={methodInfo} commentAnalysis={commentAnalysis}
               doRegenSection={doRegenSection} doRegenAll={doRegenAll}
               regenAllAbortRef={regenAllAbortRef}
+              plagId={plagId} setPlagId={setPlagId} plagLoading={plagLoading}
+              doReducePlagiarism={doReducePlagiarism}
+              plagAllLoading={plagAllLoading} plagAllMsg={plagAllMsg}
+              doReducePlagiarismAll={doReducePlagiarismAll} plagAllAbortRef={plagAllAbortRef}
               doGenAppendices={doGenAppendices} saveToFirestore={saveToFirestore}
               copyAll={copyAll} resetAll={resetAll}
               generatePresentation={generatePresentation} generateSpeech={generateSpeech}

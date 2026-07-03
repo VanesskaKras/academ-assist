@@ -443,6 +443,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
     const [hasMore, setHasMore] = useState(false);
     const [loadingMore, setLoadingMore] = useState(false);
     const [serverCounts, setServerCounts] = useState(null);
+    const [allOrdersFull, setAllOrdersFull] = useState(null); // для пошуку по всій колекції (адмін)
 
     const isAdmin = profile?.role === "admin";
 
@@ -496,9 +497,14 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
                         managerName: map[d.data().uid]?.name || d.data().uid || "—",
                     })));
 
-                    // фоновий підрахунок по всій колекції
+                    // фоновий підрахунок по всій колекції + повний список для пошуку
                     getDocs(collection(db, "orders")).then(allSnap => {
-                        setServerCounts(computeCounts(allSnap.docs.map(d => ({ id: d.id, ...d.data() }))));
+                        const allDocs = allSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+                        setServerCounts(computeCounts(allDocs));
+                        setAllOrdersFull(allDocs.map(o => ({
+                            ...o,
+                            managerName: map[o.uid]?.name || o.uid || "—",
+                        })));
                     }).catch(() => {});
                 } else {
                     const q = query(
@@ -589,7 +595,10 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
     };
 
     const filtered = useMemo(() => {
-        let result = orders;
+        const isSearching = !!search.trim();
+        // Під час пошуку в адміна беремо весь фоново завантажений список,
+        // а не лише перші 30 замовлень з пагінованого запиту
+        let result = (isSearching && isAdmin && allOrdersFull) ? allOrdersFull : orders;
         // Фільтр по менеджеру
         if (filterManager !== "all") {
             result = result.filter(o => o.uid === filterManager);
@@ -600,7 +609,9 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
         } else if (filterStatus === "archived") {
             result = result.filter(o => o.archived && !o.deleted);
         } else {
-            result = result.filter(o => !o.archived && !o.deleted);
+            if (!isSearching) {
+                result = result.filter(o => !o.archived && !o.deleted);
+            }
             if (filterStatus) {
                 result = result.filter(o => {
                     const s = o.status || "new";
@@ -623,7 +634,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
                 o.id?.toLowerCase().includes(q) ||
                 o.type?.toLowerCase().includes(q) ||
                 o.deadline?.toLowerCase().includes(q) ||
-                o.info?.orderNumber?.toLowerCase().includes(q) ||
+                o.info?.orderNumber?.toString().toLowerCase().includes(q) ||
                 (isAdmin && o.managerName?.toLowerCase().includes(q))
             );
         }
@@ -670,7 +681,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
             });
         }
         return result;
-    }, [orders, search, filterStatus, dlFrom, dlTo, sortBy, filterManager, isAdmin]);
+    }, [orders, allOrdersFull, search, filterStatus, dlFrom, dlTo, sortBy, filterManager, isAdmin]);
 
     const counts = useMemo(() => {
         const c = { all: 0, done: 0, writing: 0, sources: 0, plan_ready: 0, new: 0, archived: 0, corrections: 0, deleted: 0 };
@@ -870,6 +881,8 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
                                         </div>
                                         <div style={{ fontSize: 12, color: "#888", display: "flex", gap: 12, flexWrap: "wrap" }}>
                                             {isAdmin && order.managerName && <span style={{ background: "#e8f0ff", color: "#1a3a8a", padding: "1px 8px", borderRadius: 8, fontSize: 11, fontWeight: 600 }}>👤 {order.managerName}</span>}
+                                            {filterStatus !== "deleted" && order.deleted && <span style={{ background: "#ffe4e4", color: "#8a1a1a", padding: "1px 8px", borderRadius: 8, fontSize: 11, fontWeight: 600 }}>🗑 У кошику</span>}
+                                            {filterStatus !== "archived" && !order.deleted && order.archived && <span style={{ background: "#f0f0f0", color: "#555", padding: "1px 8px", borderRadius: 8, fontSize: 11, fontWeight: 600 }}>📦 В архіві</span>}
                                             {isCorrections && <span style={{ background: "#fff0e0", color: "#6a3a00", padding: "1px 8px", borderRadius: 8, fontSize: 11 }}>✏ Правки</span>}
                                             {isPractice && <span style={{ background: "#f0e4ff", color: "#5a1a8a", padding: "1px 8px", borderRadius: 8, fontSize: 11 }}>🏭 Практика</span>}
                                             {isSmall && <span style={{ background: "#f0e4ff", color: "#5a1a8a", padding: "1px 8px", borderRadius: 8, fontSize: 11 }}>📝 Мала</span>}

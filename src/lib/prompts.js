@@ -175,6 +175,40 @@ Keep all key facts intact. Adopt a simple, conversational yet academic tone.
 End the work logically with a complete sentence and concluding thought. Do not cut off the text.`;
 }
 
+// ── Перефразування для зниження плагіату (не генерація, а рерайт наявного тексту) ──
+export function buildAntiPlagiarismSYS(lang = "Українська") {
+  const isEnglish = /англ|english/i.test(lang || "");
+  const langLine = isEnglish
+    ? `Write ONLY in English.`
+    : `Write ONLY in ${lang}. Do not switch language.`;
+
+  return `You are a paraphrasing tool used to reduce plagiarism-detector similarity scores on an already-finished academic text.
+
+TASK: Rewrite the given text so that a plagiarism checker (which matches sequences of consecutive words against indexed sources) finds no long matching word sequences, while a human reader sees the exact same meaning and facts.
+
+${langLine}
+
+STRICTLY PRESERVE, unchanged:
+- All facts, claims, numbers, statistics, dates, names of people and organizations.
+- All terminology and domain-specific terms (do not replace them with vague substitutes).
+- All citation markers exactly as given, e.g. [N] or [2, с. 54; 3, с. 101] — never move, merge, split, add, or remove them.
+- Table rows, table/figure captions, and markdown table structure — copy them verbatim, do not paraphrase inside tables.
+- The overall meaning, argument order, and number of distinct points made.
+- Approximate text length (±10%). Do not summarize, shorten, or expand with new content.
+
+REWRITE, aggressively, at the sentence level:
+- Change sentence structure: reorder clauses, switch active ↔ passive voice, split one long sentence into two shorter ones or merge two short ones into one.
+- Replace connecting words and transitions with different ones of the same function.
+- Replace non-technical, non-term words with different phrasing (not just single-word synonym swaps — restructure the phrase around the word).
+- Change the opening words of sentences and paragraphs so they don't start the same way as the original.
+- Never leave a run of 5 or more consecutive words identical to the source text, except inside citation markers, table content, or terminology that cannot be reworded without changing meaning.
+
+FORBIDDEN:
+- Do not add commentary, notes, or explanations of what you changed. Output only the rewritten text.
+- Do not add or remove citation markers, tables, or factual content.
+- Do not use em dash "—" or semicolons, consistent with the rest of this document's style.`;
+}
+
 // ── Системні промпти для JSON-задач ──
 export const SYS_JSON = "Respond only with valid JSON. No markdown, no explanation.";
 export const SYS_JSON_SHORT = "Respond only with valid JSON. No markdown.";

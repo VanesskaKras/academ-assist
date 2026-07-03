@@ -9,6 +9,8 @@ export function DoneStage({
   content, displayOrder, titlePage, setTitlePage, titlePageLines,
   regenId, setRegenId, regenPrompt, setRegenPrompt, regenLoading, regenAllLoading,
   loadMsg, appendicesText, setAppendicesText, appendicesLoading, setAppendicesLoading,
+  plagId, setPlagId, plagLoading, doReducePlagiarism,
+  plagAllLoading, plagAllMsg, doReducePlagiarismAll, plagAllAbortRef,
   appendicesCustomPrompt, setAppendicesCustomPrompt, speechText, setSpeechText,
   speechLoading, setSpeechLoading, presentationLoading, presentationMsg, presentationReady,
   docxLoading, setDocxLoading, figureRefs, figureKeywords, figKwLoading,
@@ -24,8 +26,10 @@ export function DoneStage({
     <div className="fade">
       <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", marginBottom: 4 }}>
         <Heading style={{ margin: 0 }}>✓ Роботу завершено!</Heading>
-        {!regenAllLoading && <button onClick={doRegenAll} style={{ background: "transparent", border: "1px solid #555", color: "#ccc", borderRadius: 6, padding: "6px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>↺ Переписати всю роботу</button>}
+        {/* ↺ "Переписати всю роботу" тимчасово приховано на прохання користувача */}
         {regenAllLoading && <><span style={{ fontSize: 12, color: "#888", display: "inline-flex", alignItems: "center", gap: 6 }}><SpinDot />{loadMsg}</span><button onClick={() => regenAllAbortRef.current?.abort()} style={{ background: "#7a1010", color: "#fff", border: "none", borderRadius: 6, padding: "6px 14px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>⏹ Зупинити</button></>}
+        {!plagAllLoading && <button onClick={doReducePlagiarismAll} disabled={regenAllLoading} style={{ background: "transparent", border: "1px solid #6a9a6a", color: "#2a7a2a", borderRadius: 6, padding: "6px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: regenAllLoading ? "default" : "pointer" }}>🛡 Зменшити плагіат по всій роботі</button>}
+        {plagAllLoading && <><span style={{ fontSize: 12, color: "#888", display: "inline-flex", alignItems: "center", gap: 6 }}><SpinDot />{plagAllMsg}</span><button onClick={() => plagAllAbortRef.current?.abort()} style={{ background: "#7a1010", color: "#fff", border: "none", borderRadius: 6, padding: "6px 14px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>⏹ Зупинити</button></>}
       </div>
       <p style={{ fontSize: 13, color: "#888", marginBottom: 24 }}>Текст згенеровано. Скопіюйте або завантажте Word-файл.</p>
 
@@ -110,6 +114,11 @@ export function DoneStage({
               <button onClick={() => navigator.clipboard.writeText(txt)} style={{ background: "transparent", border: "1px solid #555", color: "#999", borderRadius: 5, padding: "3px 10px", fontSize: 10, cursor: "pointer", fontFamily: "'Spectral',serif", letterSpacing: 1 }}>COPY</button>
               {!["sources"].includes(sec.type) && (
                 <button onClick={() => setRegenId(isRegen ? null : sec.id)} style={{ background: isRegen ? "#e8ff47" : "transparent", color: isRegen ? "#111" : "#aaa", border: "1px solid " + (isRegen ? "#e8ff47" : "#555"), borderRadius: 5, padding: "3px 10px", fontSize: 10, cursor: "pointer", fontFamily: "'Spectral',serif" }}>✏️ Переписати</button>
+              )}
+              {!["sources"].includes(sec.type) && (
+                <button onClick={() => doReducePlagiarism(sec)} disabled={plagLoading || plagAllLoading} style={{ background: "transparent", color: plagId === sec.id ? "#a8e060" : "#aaa", border: "1px solid " + (plagId === sec.id ? "#6a9a6a" : "#555"), borderRadius: 5, padding: "3px 10px", fontSize: 10, cursor: (plagLoading || plagAllLoading) ? "default" : "pointer", fontFamily: "'Spectral',serif", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  {plagLoading && plagId === sec.id ? <><SpinDot />...</> : "🛡 Зменшити плагіат"}
+                </button>
               )}
             </div>
             {isRegen && (
