@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { TA } from "../../shared.jsx";
 import { FieldBox, Heading, PrimaryBtn } from "../Buttons.jsx";
 import { DropZone } from "../DropZone.jsx";
@@ -14,6 +15,7 @@ const COLORS = {
   photos: "#c050a0",
   illustrations: "#e08030",
   materials: "#4090c0",
+  readyWork: "#3a9a6a",
 };
 
 export function InputStage({
@@ -24,9 +26,11 @@ export function InputStage({
   illustrationsPdf, setIllustrationsPdf,
   clientMaterials, onAddClientMaterial, onRemoveClientMaterial,
   clientMaterialsText, setClientMaterialsText,
+  readyWorkFileName, onReadyWorkFile, onRemoveReadyWork,
   info, running, loadMsg,
   handleFile, doAnalyze, setStage,
 }) {
+  const readyWorkFileRef = useRef();
   return (
     <div className="fade">
       <Heading>01 / Введіть дані замовлення</Heading>
@@ -77,6 +81,45 @@ export function InputStage({
           />
         </FieldBox>
       </div>
+
+      {onReadyWorkFile && (
+        <div style={S(COLORS.readyWork)}>
+          <FieldBox label="Готова частина роботи від клієнта (.docx, необов'язково)" labelColor={COLORS.readyWork} tooltip={"Якщо клієнт вже написав частину роботи (наприклад, розділ 1) і має свої джерела — завантажте файл тут.\nПісля формування плану текст автоматично розподілиться по відповідних підрозділах — вони не будуть перезаписані генерацією.\nДжерела клієнта теж витягуються автоматично і пізніше об'єднуються з підібраними в один список із правильною наскрізною нумерацією."}>
+            <div
+              onClick={() => readyWorkFileRef.current.click()}
+              style={{
+                display: "flex", alignItems: "center", gap: 10, cursor: "pointer",
+                border: `1.5px dashed ${readyWorkFileName ? "#3a9a6a" : "#c4bfb4"}`,
+                borderRadius: 6, padding: "10px 14px",
+                background: readyWorkFileName ? "#eef8f2" : "#f0ece2",
+              }}
+            >
+              <span style={{ fontSize: 18 }}>{readyWorkFileName ? "✅" : "📎"}</span>
+              <span style={{ fontSize: 13, color: readyWorkFileName ? "#2a6a4a" : "#888", flex: 1 }}>
+                {readyWorkFileName || "Клікніть, щоб обрати .docx файл із готовою частиною роботи"}
+              </span>
+              {readyWorkFileName && (
+                <button
+                  onClick={e => { e.stopPropagation(); onRemoveReadyWork(); }}
+                  style={{ background: "none", border: "none", cursor: "pointer", color: "#8a1a1a", fontSize: 14, lineHeight: 1, padding: 0 }}
+                >✕</button>
+              )}
+            </div>
+            <input
+              ref={readyWorkFileRef}
+              type="file"
+              accept=".docx"
+              style={{ display: "none" }}
+              onChange={e => {
+                const f = e.target.files[0];
+                if (!f) return;
+                f.arrayBuffer().then(buf => onReadyWorkFile(buf, f.name));
+                e.target.value = "";
+              }}
+            />
+          </FieldBox>
+        </div>
+      )}
 
       <div style={S(COLORS.anketa)}>
         <FieldBox label="Готова анкета / додаток (необов'язково)" labelColor={COLORS.anketa} tooltip={"Якщо заповнено — вставляється як Додаток А.\nВесь практичний розділ (методологія, таблиці, аналіз) будується точно по цій анкеті.\nЯкщо порожньо — анкета генерується автоматично перед початком написання."}>

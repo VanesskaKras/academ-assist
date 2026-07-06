@@ -10,7 +10,7 @@ import { exportToDocx, exportPlanToDocx, exportAppendixToDocx, exportSpeechToDoc
 import { exportToPptxFile } from "./lib/exportPptx.js";
 import { callClaude, callGemini, MODEL, MODEL_FAST } from "./lib/api.js";
 import { playDoneSound } from "./lib/audio.js";
-import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildIllustrationsPdfPrompt, buildClientMaterialsAnalysisPrompt, buildCorrectionsAnalysisPrompt, buildCorrectionRewritePrompt, buildFileToSectionsPrompt, buildAnnotationPrompt, buildAnnotationRegenPrompt, buildAntiPlagiarismSYS } from "./lib/prompts.js";
+import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildIllustrationsPdfPrompt, buildClientMaterialsAnalysisPrompt, buildCorrectionsAnalysisPrompt, buildCorrectionRewritePrompt, buildFileToSectionsPrompt, buildFileToSectionsWithSourcesPrompt, buildAnnotationPrompt, buildAnnotationRegenPrompt, buildAntiPlagiarismSYS } from "./lib/prompts.js";
 import { FIELD_LABELS, isPsychoPed, isEcon, hasEmpiricalResearch, getEmpiricalSections, getEconSections, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, getLangLabels } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { getAcademicDefaults, classifyAppendixItem, normalizeWorkType } from "./lib/academicDefaults.js";
@@ -151,6 +151,9 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [clientMaterials, setClientMaterials] = useState([]); // [{name, text}] — файли клієнта
   const [clientMaterialsText, setClientMaterialsText] = useState(""); // ручний ввід
   const [clientMaterialsSummary, setClientMaterialsSummary] = useState(null); // {rawText, keyFacts, tablesMd, sectionHints}
+  const [readyWorkFileName, setReadyWorkFileName] = useState(""); // готова частина роботи від клієнта (.docx)
+  const [readyWorkText, setReadyWorkText] = useState(""); // сирий текст, розібраний по розділах після генерації плану
+  const [readyWorkImportedIds, setReadyWorkImportedIds] = useState([]); // id розділів, заповнених з файлу клієнта
   const [info, setInfo] = useState(null);
   const [sections, setSections] = useState([]);
   const [planDisplay, setPlanDisplay] = useState("");
@@ -321,6 +324,9 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
           if (d.illustrationDescs?.length) setIllustrationDescs(d.illustrationDescs);
           if (d.clientMaterialsSummary) setClientMaterialsSummary(d.clientMaterialsSummary);
           if (d.clientMaterialsText) setClientMaterialsText(d.clientMaterialsText);
+          if (d.readyWorkFileName) setReadyWorkFileName(d.readyWorkFileName);
+          if (d.readyWorkText) setReadyWorkText(d.readyWorkText);
+          if (d.readyWorkImportedIds) setReadyWorkImportedIds(d.readyWorkImportedIds);
           if (d.content) setContent(d.content);
           if (d.citInputs) setCitInputs(d.citInputs);
           if (d.citStructured) setCitStructured(d.citStructured);
@@ -408,13 +414,13 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const inputSaveTimer = useRef(null);
   useEffect(() => {
     if (stage !== "input") return;
-    if (!tplText.trim() && !comment.trim() && !clientPlan.trim() && !appendicesText.trim() && !clientMaterialsText.trim()) return;
+    if (!tplText.trim() && !comment.trim() && !clientPlan.trim() && !appendicesText.trim() && !clientMaterialsText.trim() && !readyWorkText.trim()) return;
     clearTimeout(inputSaveTimer.current);
     inputSaveTimer.current = setTimeout(() => {
-      saveToFirestore({ tplText, comment, clientPlan, appendicesText, clientMaterialsText, fileLabel, stage: "input", status: "new" });
+      saveToFirestore({ tplText, comment, clientPlan, appendicesText, clientMaterialsText, readyWorkFileName, readyWorkText, fileLabel, stage: "input", status: "new" });
     }, 1500);
     return () => clearTimeout(inputSaveTimer.current);
-  }, [tplText, comment, clientPlan, appendicesText, clientMaterialsText, stage]); // eslint-disable-line
+  }, [tplText, comment, clientPlan, appendicesText, clientMaterialsText, readyWorkFileName, readyWorkText, stage]); // eslint-disable-line
 
   // ── Авто-збереження sections при ручному редагуванні плану ──
   const planSaveTimer = useRef(null);
@@ -507,6 +513,20 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   };
 
   const handleFile = useCallback((name, b64, type) => { setFileLabel(name); setFileB64(b64); setFileType(type); }, []);
+
+  // ── Готова частина роботи від клієнта: витягуємо сирий текст (розбивка по розділах — після генерації плану) ──
+  const handleReadyWorkFile = useCallback((arrayBuffer, fileName) => {
+    mammoth.extractRawText({ arrayBuffer }).then(result => {
+      const text = result.value.trim();
+      if (!text) { alert("Не вдалося витягти текст з документа"); return; }
+      setReadyWorkFileName(fileName);
+      setReadyWorkText(text);
+      setReadyWorkImportedIds([]);
+    }).catch(e => alert("Помилка читання файлу: " + e.message));
+  }, []);
+  const handleRemoveReadyWork = useCallback(() => {
+    setReadyWorkFileName(""); setReadyWorkText(""); setReadyWorkImportedIds([]);
+  }, []);
 
   const handleNavigateMain = useCallback((s) => {
     if (running) return;
@@ -836,6 +856,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
           console.warn("illustrationDescs re-analysis in plan:", e.message);
         }
       }
+      if (readyWorkText?.trim()) await doImportReadyWork(withPrompts);
       setPlanLoading(false);
     };
 
@@ -2767,6 +2788,38 @@ ${slideSpecs.join("\n\n")}
     setFileParseLoading(false);
   };
 
+  // ── Готова частина роботи клієнта: розбивка по розділах + список джерел з нормалізацією [N] ──
+  // Викликається одразу після формування плану (secs = щойно згенеровані/затверджені sections).
+  const doImportReadyWork = async (secs) => {
+    if (!readyWorkText?.trim()) return;
+    try {
+      const prompt = buildFileToSectionsWithSourcesPrompt({ sections: secs, documentText: readyWorkText });
+      const raw = await callClaude([{ role: "user", content: prompt }], null, null, 16000, null, MODEL);
+      const jsonStr = raw.replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(jsonStr);
+      const newContent = { ...contentRef.current };
+      const newCitInputs = {};
+      const importedIds = [];
+      Object.entries(parsed).forEach(([id, obj]) => {
+        const text = obj?.text?.trim();
+        if (!text) return;
+        newContent[id] = text;
+        if (Array.isArray(obj.sources) && obj.sources.length) newCitInputs[id] = obj.sources.join("\n");
+        importedIds.push(id);
+      });
+      if (!importedIds.length) return;
+      setContent(newContent);
+      contentRef.current = newContent;
+      const mergedCitInputs = { ...citInputs, ...newCitInputs };
+      setCitInputs(mergedCitInputs);
+      setReadyWorkImportedIds(importedIds);
+      await saveToFirestore({ content: newContent, citInputs: mergedCitInputs, readyWorkImportedIds: importedIds });
+    } catch (e) {
+      console.error("Помилка імпорту готової частини роботи:", e);
+      alert("Не вдалося розібрати готову частину роботи клієнта: " + e.message);
+    }
+  };
+
   // ── Переписати всю роботу з нуля (з урахуванням вже згенерованого контексту) ──
   const doRegenAll = async () => {
     if (!window.confirm("Переписати всю роботу повністю з нуля? Поточний текст буде замінено новим.")) return;
@@ -4258,6 +4311,9 @@ ${refLines2.join("\n")}`;
               onAddClientMaterial={m => setClientMaterials(prev => [...prev, m])}
               onRemoveClientMaterial={i => setClientMaterials(prev => prev.filter((_, idx) => idx !== i))}
               clientMaterialsText={clientMaterialsText} setClientMaterialsText={setClientMaterialsText}
+              readyWorkFileName={readyWorkFileName}
+              onReadyWorkFile={handleReadyWorkFile}
+              onRemoveReadyWork={handleRemoveReadyWork}
               running={running} loadMsg={loadMsg}
               handleFile={handleFile} doAnalyze={doAnalyze} setStage={setStage}
             />
@@ -4281,6 +4337,7 @@ ${refLines2.join("\n")}`;
               planDocxLoading={planDocxLoading} setPlanDocxLoading={setPlanDocxLoading}
               namingLoading={namingLoading} totalPagesNum={totalPagesNum}
               info={info} methodInfo={methodInfo} content={content}
+              readyWorkFileName={readyWorkFileName} readyWorkImportedIds={readyWorkImportedIds}
               doGenPlan={doGenPlan} doNamePlaceholders={doNamePlaceholders}
               startGen={startGen} setStage={setStage}
               setSourceDist={setSourceDist} setSourceTotal={setSourceTotal}

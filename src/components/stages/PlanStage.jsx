@@ -9,7 +9,7 @@ export function PlanStage({
   sections, setSections, planDisplay, setPlanDisplay, planLoading, clientPlan,
   showManualPlanInput, setShowManualPlanInput, manualPlanText, setManualPlanText,
   planDocxLoading, setPlanDocxLoading, namingLoading, totalPagesNum,
-  info, methodInfo, content, doGenPlan, doNamePlaceholders, startGen, setStage,
+  info, methodInfo, content, readyWorkFileName, readyWorkImportedIds, doGenPlan, doNamePlaceholders, startGen, setStage,
   setSourceDist, setSourceTotal, addNewChapter, recalcPages,
   moveSectionUp, moveSectionDown,
   doNameSinglePlaceholder, singleNamingId,
@@ -28,6 +28,12 @@ export function PlanStage({
       ) : sections.length > 0 ? (
         <>
           <p style={{ fontSize: 13, color: "#888", marginBottom: 16 }}>Відредагуйте назви та к-сть сторінок. Після затвердження плану — починайте написання.</p>
+
+          {readyWorkImportedIds?.length > 0 && (
+            <div style={{ padding: "10px 16px", background: "#eef8f2", border: "1.5px solid #8cc8a8", borderRadius: 8, marginBottom: 16, fontSize: 12, color: "#2a6a4a" }}>
+              ✅ З файлу «{readyWorkFileName}» імпортовано {readyWorkImportedIds.length} підрозділ(и): {sections.filter(s => readyWorkImportedIds.includes(s.id)).map(s => s.label).join(", ")}. Ці підрозділи не будуть перезаписані генерацією — джерела клієнта вже підставлені на кроці «Джерела».
+            </div>
+          )}
 
           {/* Plan text block */}
           <div style={{ background: "#1a1a14", color: "#f5f2eb", borderRadius: 8, padding: 20, marginBottom: 18 }}>
