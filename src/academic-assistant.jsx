@@ -10,7 +10,8 @@ import { exportToDocx, exportPlanToDocx, exportAppendixToDocx, exportSpeechToDoc
 import { exportToPptxFile } from "./lib/exportPptx.js";
 import { callClaude, callGemini, MODEL, MODEL_FAST } from "./lib/api.js";
 import { playDoneSound } from "./lib/audio.js";
-import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildIllustrationsPdfPrompt, buildClientMaterialsAnalysisPrompt, buildCorrectionsAnalysisPrompt, buildCorrectionRewritePrompt, buildFileToSectionsPrompt, buildFileToSectionsWithSourcesPrompt, buildAnnotationPrompt, buildAnnotationRegenPrompt, buildAntiPlagiarismSYS } from "./lib/prompts.js";
+import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildIllustrationsPdfPrompt, buildClientMaterialsAnalysisPrompt, buildCorrectionsAnalysisPrompt, buildCorrectionRewritePrompt, buildFileToSectionsPrompt, buildExtractStructurePrompt, buildContinuationPlanPrompt, buildAnnotationPrompt, buildAnnotationRegenPrompt, buildAntiPlagiarismSYS } from "./lib/prompts.js";
+import { extractReadyWorkStructure, quickParsePlanIds } from "./lib/readyWorkExtract.js";
 import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, getEmpiricalSections, getEconSections, getTechnicalSections, CODE_FILE_EXTENSIONS, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, getLangLabels } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { getAcademicDefaults, classifyAppendixItem, normalizeWorkType } from "./lib/academicDefaults.js";
@@ -154,6 +155,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [readyWorkFileName, setReadyWorkFileName] = useState(""); // готова частина роботи від клієнта (.docx)
   const [readyWorkText, setReadyWorkText] = useState(""); // сирий текст, розібраний по розділах після генерації плану
   const [readyWorkImportedIds, setReadyWorkImportedIds] = useState([]); // id розділів, заповнених з файлу клієнта
+  const [readyWorkNeedsManualAI, setReadyWorkNeedsManualAI] = useState(false); // код не розпізнав заголовки — пропонуємо кнопку аналізу через ШІ
   const [info, setInfo] = useState(null);
   const [sections, setSections] = useState([]);
   const [planDisplay, setPlanDisplay] = useState("");
@@ -533,10 +535,11 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
       setReadyWorkFileName(fileName);
       setReadyWorkText(text);
       setReadyWorkImportedIds([]);
+      setReadyWorkNeedsManualAI(false);
     }).catch(e => alert("Помилка читання файлу: " + e.message));
   }, []);
   const handleRemoveReadyWork = useCallback(() => {
-    setReadyWorkFileName(""); setReadyWorkText(""); setReadyWorkImportedIds([]);
+    setReadyWorkFileName(""); setReadyWorkText(""); setReadyWorkImportedIds([]); setReadyWorkNeedsManualAI(false);
   }, []);
 
   const handleNavigateMain = useCallback((s) => {
@@ -802,7 +805,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
 
   // ── Генерація плану ──
   const doGenPlan = async () => {
-    setPlanLoading(true); setSections([]); setPlanDisplay(""); setStage("plan");
+    setPlanLoading(true); setSections([]); setPlanDisplay(""); setStage("plan"); setReadyWorkNeedsManualAI(false);
     const d = info; const totalPages = parsePagesAvg(d.pages);
     const wc = buildWorkConfig({ info: d, methodInfo, commentAnalysis });
     const introP = wc.introPages;
@@ -877,9 +880,127 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
           console.warn("illustrationDescs re-analysis in plan:", e.message);
         }
       }
-      if (readyWorkText?.trim()) await doImportReadyWork(withPrompts);
+      // Готову частину роботи клієнта більше НЕ підганяємо автоматично через ШІ тут — код-розпізнавання
+      // вже спробувало це вище; якщо не вийшло, клієнтка сама натискає кнопку "Аналізувати через ШІ".
       setPlanLoading(false);
     };
+
+    // Якщо клієнт надав готову частину роботи — беремо структуру З НЕЇ (реальні заголовки й реальний обсяг),
+    // а не вигадуємо нову структуру і не підганяємо готовий текст під неї. Спочатку пробуємо чистим кодом
+    // (безкоштовно, миттєво); лише якщо код не зміг розпізнати заголовки — падаємо на ШІ-резерв.
+    if (readyWorkText?.trim()) {
+      try {
+        setLoadMsg("Аналізую структуру готової частини роботи клієнта...");
+        const planSections = clientPlan?.trim() ? quickParsePlanIds(clientPlan) : null;
+        const extracted = extractReadyWorkStructure({ documentText: readyWorkText, lang: d?.language, planSections });
+
+        if (extracted) {
+          let finalSecs = extracted.sections;
+          let finalContent = extracted.content;
+
+          // Немає окремого плану клієнта — перевіряємо, чи не бракує розділів (продовження) і догенеровуємо їх
+          if (!clientPlan?.trim()) {
+            const chapNums = finalSecs.map(s => parseInt(String(s.id).split(".")[0], 10)).filter(n => !isNaN(n));
+            const lastChapNum = chapNums.length ? Math.max(...chapNums) : 0;
+            const existingPages = finalSecs.reduce((sum, s) => sum + (s.pages || 0), 0);
+            const continuationBudget = totalPages;
+            const desiredChapCount = Math.max(lastChapNum, (existingPages + continuationBudget) >= 40 ? 3 : 2);
+            const hasIntro = finalSecs.some(s => s.type === "intro");
+            const hasConclusions = finalSecs.some(s => s.type === "conclusions");
+            const hasSources = finalSecs.some(s => s.type === "sources");
+            const missingChapNums = [];
+            for (let n = lastChapNum + 1; n <= desiredChapCount; n++) missingChapNums.push(n);
+
+            if (missingChapNums.length || !hasIntro || !hasConclusions || !hasSources) {
+              setLoadMsg("Догенеровую відсутні розділи (продовження)...");
+              let newChapterData = [];
+              if (missingChapNums.length) {
+                try {
+                  const existingChapterTitles = [...new Set(finalSecs.filter(s => s.sectionTitle).map(s => s.sectionTitle))];
+                  const prompt = buildContinuationPlanPrompt({
+                    topic: d.topic, subject: d.subject, type: d.type, lang: d?.language,
+                    existingChapterTitles, newChapters: missingChapNums.map(num => ({ num, subsCount: 3 })),
+                  });
+                  const raw = await callClaude([{ role: "user", content: prompt }], null, SYS_JSON, 2000, null, MODEL_FAST);
+                  const jsonMatch = raw.match(/\{[\s\S]*\}/);
+                  const parsed = JSON.parse(jsonMatch?.[0] || raw.replace(/```json|```/g, "").trim());
+                  newChapterData = parsed.chapters || [];
+                } catch (e) { console.error("Продовження плану:", e); }
+              }
+
+              const newSubCount = newChapterData.reduce((sum, c) => sum + (c.subsections?.length || 0), 0);
+              const introPages = hasIntro ? 0 : 2;
+              const conclPages = hasConclusions ? 0 : 3;
+              const srcPages = hasSources ? 0 : 1;
+              const pagesForSubs = Math.max(newSubCount, continuationBudget - introPages - conclPages - srcPages);
+              const pagesPerSub = newSubCount ? Math.max(1, Math.round(pagesForSubs / newSubCount)) : 0;
+
+              const newChapterSecs = [];
+              newChapterData.forEach(c => {
+                (c.subsections || []).forEach((subLabel, i) => {
+                  const idMatch = subLabel.match(/^(\d+\.\d+)/);
+                  const id = idMatch ? idMatch[1] : `${c.num}.${i + 1}`;
+                  newChapterSecs.push({ id, label: subLabel, sectionTitle: c.title, pages: pagesPerSub, type: c.type || "theory" });
+                });
+              });
+
+              const mainExisting = finalSecs.filter(s => !["intro", "conclusions", "sources"].includes(s.type));
+              const introSec = finalSecs.find(s => s.type === "intro") || (hasIntro ? null : { id: "intro", label: "Вступ", pages: introPages, type: "intro" });
+              const conclSec = finalSecs.find(s => s.type === "conclusions") || (hasConclusions ? null : { id: "conclusions", label: "Висновки", pages: conclPages, type: "conclusions" });
+              const srcSec = finalSecs.find(s => s.type === "sources") || (hasSources ? null : { id: "sources", label: "Список використаних джерел", pages: srcPages, type: "sources" });
+
+              finalSecs = [introSec, ...mainExisting, ...newChapterSecs, conclSec, srcSec].filter(Boolean);
+            }
+          } else {
+            // Явний план клієнта є — додаємо пункти плану, яких НЕМА в самому документі, як порожні
+            // (звичайний крок "Написання" допише їх пізніше); обсяг для них ділимо порівну з рештою бюджету.
+            const foundIdsSet = new Set(finalSecs.map(s => s.id));
+            const missingPlanIds = (planSections || []).filter(p => !foundIdsSet.has(p.id));
+            if (missingPlanIds.length) {
+              const existingPages = finalSecs.reduce((sum, s) => sum + (s.pages || 0), 0);
+              const pagesLeft = Math.max(missingPlanIds.length, totalPages - existingPages);
+              const pagesPerMissing = Math.max(1, Math.round(pagesLeft / missingPlanIds.length));
+              missingPlanIds.forEach(p => {
+                finalSecs = [...finalSecs, { id: p.id, label: p.label, pages: pagesPerMissing, type: p.chapNum === 1 ? "theory" : p.chapNum === 2 ? "analysis" : "recommendations" }];
+              });
+              finalSecs.sort((a, b) => {
+                const na = String(a.id).split(".").map(Number), nb = String(b.id).split(".").map(Number);
+                if (a.id === "intro") return -1; if (b.id === "intro") return 1;
+                if (a.id === "conclusions" || a.id === "sources") return 1; if (b.id === "conclusions" || b.id === "sources") return -1;
+                return (na[0] - nb[0]) || ((na[1] || 0) - (nb[1] || 0));
+              });
+            }
+            if (!finalSecs.some(s => s.type === "intro")) finalSecs = [{ id: "intro", label: "Вступ", pages: 2, type: "intro" }, ...finalSecs];
+            if (!finalSecs.some(s => s.type === "conclusions")) finalSecs = [...finalSecs, { id: "conclusions", label: "Висновки", pages: 3, type: "conclusions" }];
+            if (!finalSecs.some(s => s.type === "sources")) finalSecs = [...finalSecs, { id: "sources", label: "Список використаних джерел", pages: 1, type: "sources" }];
+          }
+
+          const mergedContent = { ...contentRef.current, ...finalContent };
+          const mergedCitInputs = { ...citInputs, ...extracted.citInputs };
+          setSections(finalSecs);
+          setPlanDisplay(buildPlanText(finalSecs));
+          const { dist, total } = calcSourceDist(finalSecs, totalPages);
+          setSourceDist(dist); setSourceTotal(total);
+          setContent(mergedContent);
+          contentRef.current = mergedContent;
+          setCitInputs(mergedCitInputs);
+          setReadyWorkImportedIds(extracted.foundIds);
+          await saveToFirestore({
+            sections: finalSecs, planDisplay: buildPlanText(finalSecs),
+            content: mergedContent, citInputs: mergedCitInputs,
+            readyWorkImportedIds: extracted.foundIds, stage: "plan", status: "plan_ready",
+          });
+          setPlanLoading(false); setLoadMsg("");
+          return;
+        }
+
+        // Код не зміг розпізнати заголовки (нестандартне оформлення) — НЕ викликаємо ШІ автоматично.
+        // Звичайний план згенерується як завжди нижче; аналіз через ШІ клієнтка запускає вручну кнопкою на етапі плану.
+        console.warn("Структура з готової роботи: розпізнано замало розділів, повертаюсь до звичайної генерації плану");
+        setReadyWorkNeedsManualAI(true);
+      } catch (e) { console.error("Витяг структури з готової роботи:", e); }
+      setLoadMsg("");
+    }
 
     if (clientPlan?.trim()) {
       const parsed = parseClientPlan(clientPlan.trim(), totalPages, d?.language);
@@ -2940,40 +3061,60 @@ ${slideSpecs.join("\n\n")}
     setFileParseLoading(false);
   };
 
-  // ── Готова частина роботи клієнта: розбивка по розділах + список джерел з нормалізацією [N] ──
-  // Викликається одразу після формування плану (secs = щойно згенеровані/затверджені sections).
-  const doImportReadyWork = async (secs) => {
+  // ── Готова частина роботи клієнта: ручний аналіз через ШІ ──
+  // Викликається кнопкою на етапі плану, коли код-розпізнавання заголовків не впоралось
+  // (нестандартне оформлення документа клієнта) — не автоматично, щоб не витрачати токени наосліп.
+  const doAIAnalyzeReadyWork = async () => {
     if (!readyWorkText?.trim()) return;
+    setPlanLoading(true); setLoadMsg("Аналізую готову частину роботи через ШІ...");
     try {
-      const prompt = buildFileToSectionsWithSourcesPrompt({ sections: secs, documentText: readyWorkText });
+      const prompt = buildExtractStructurePrompt({ documentText: readyWorkText });
       const approxWords = readyWorkText.trim().split(/\s+/).length;
       const maxTokens = Math.min(60000, Math.max(16000, Math.round((approxWords / 225) * 3000)));
       const raw = await callClaude([{ role: "user", content: prompt }], null, null, maxTokens, null, MODEL);
-      const newContent = { ...contentRef.current };
-      const newCitInputs = {};
-      const importedIds = [];
-      const blockRe = /@@@SECTION id="([^"]+)"@@@([\s\S]*?)@@@SOURCES@@@([\s\S]*?)@@@END@@@/g;
+      const blockRe = /@@@SECTION id="([^"]+)" title="([^"]*)" chapterTitle="([^"]*)" type="([^"]+)"@@@([\s\S]*?)@@@SOURCES@@@([\s\S]*?)@@@END@@@/g;
+      const extractedSecs = [];
+      const extractedContent = {};
+      const extractedCitInputs = {};
+      const extractedIds = [];
       let m;
       while ((m = blockRe.exec(raw))) {
-        const [, id, textPart, sourcesPart] = m;
+        const [, id, title, chapterTitle, type, textPart, sourcesPart] = m;
         const text = textPart.trim();
         if (!text) continue;
-        newContent[id] = text;
+        const words = text.split(/\s+/).length;
+        const pages = Math.max(1, Math.round(words / 270));
+        extractedSecs.push({ id, label: title?.trim() || id, ...(chapterTitle?.trim() ? { sectionTitle: chapterTitle.trim() } : {}), pages, type: type || "theory" });
+        extractedContent[id] = text;
+        extractedIds.push(id);
         const sources = sourcesPart.split("\n").map(s => s.trim()).filter(Boolean);
-        if (sources.length) newCitInputs[id] = sources.join("\n");
-        importedIds.push(id);
+        if (sources.length) extractedCitInputs[id] = sources.join("\n");
       }
-      if (!importedIds.length) return;
-      setContent(newContent);
-      contentRef.current = newContent;
-      const mergedCitInputs = { ...citInputs, ...newCitInputs };
+      if (extractedSecs.length <= 3) {
+        alert("ШІ теж не зміг впевнено розпізнати структуру документа. Спробуйте вписати план вручну.");
+        return;
+      }
+      const mergedContent = { ...contentRef.current, ...extractedContent };
+      const mergedCitInputs = { ...citInputs, ...extractedCitInputs };
+      setSections(extractedSecs);
+      setPlanDisplay(buildPlanText(extractedSecs));
+      const { dist, total } = calcSourceDist(extractedSecs, parsePagesAvg(info?.pages));
+      setSourceDist(dist); setSourceTotal(total);
+      setContent(mergedContent);
+      contentRef.current = mergedContent;
       setCitInputs(mergedCitInputs);
-      setReadyWorkImportedIds(importedIds);
-      await saveToFirestore({ content: newContent, citInputs: mergedCitInputs, readyWorkImportedIds: importedIds });
+      setReadyWorkImportedIds(extractedIds);
+      setReadyWorkNeedsManualAI(false);
+      await saveToFirestore({
+        sections: extractedSecs, planDisplay: buildPlanText(extractedSecs),
+        content: mergedContent, citInputs: mergedCitInputs,
+        readyWorkImportedIds: extractedIds, stage: "plan", status: "plan_ready",
+      });
     } catch (e) {
-      console.error("Помилка імпорту готової частини роботи:", e);
+      console.error("ШІ-аналіз готової частини роботи:", e);
       alert("Не вдалося розібрати готову частину роботи клієнта: " + e.message);
     }
+    setPlanLoading(false); setLoadMsg("");
   };
 
   // ── Переписати всю роботу з нуля (з урахуванням вже згенерованого контексту) ──
@@ -4501,6 +4642,7 @@ ${refLines2.join("\n")}`;
               namingLoading={namingLoading} totalPagesNum={totalPagesNum}
               info={info} setInfo={setInfo} methodInfo={methodInfo} content={content}
               readyWorkFileName={readyWorkFileName} readyWorkImportedIds={readyWorkImportedIds}
+              readyWorkNeedsManualAI={readyWorkNeedsManualAI} doAIAnalyzeReadyWork={doAIAnalyzeReadyWork}
               doGenPlan={doGenPlan} doNamePlaceholders={doNamePlaceholders}
               startGen={startGen} setStage={setStage}
               setSourceDist={setSourceDist} setSourceTotal={setSourceTotal}

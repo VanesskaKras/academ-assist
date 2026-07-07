@@ -9,7 +9,7 @@ export function PlanStage({
   sections, setSections, planDisplay, setPlanDisplay, planLoading, clientPlan,
   showManualPlanInput, setShowManualPlanInput, manualPlanText, setManualPlanText,
   planDocxLoading, setPlanDocxLoading, namingLoading, totalPagesNum,
-  info, setInfo, methodInfo, content, readyWorkFileName, readyWorkImportedIds, doGenPlan, doNamePlaceholders, startGen, setStage,
+  info, setInfo, methodInfo, content, readyWorkFileName, readyWorkImportedIds, readyWorkNeedsManualAI, doAIAnalyzeReadyWork, doGenPlan, doNamePlaceholders, startGen, setStage,
   setSourceDist, setSourceTotal, addNewChapter, recalcPages, toggleStructureSection,
   moveSectionUp, moveSectionDown,
   doNameSinglePlaceholder, singleNamingId,
@@ -32,6 +32,15 @@ export function PlanStage({
           {readyWorkImportedIds?.length > 0 && (
             <div style={{ padding: "10px 16px", background: "#eef8f2", border: "1.5px solid #8cc8a8", borderRadius: 8, marginBottom: 16, fontSize: 12, color: "#2a6a4a" }}>
               ✅ З файлу «{readyWorkFileName}» імпортовано {readyWorkImportedIds.length} підрозділ(и): {sections.filter(s => readyWorkImportedIds.includes(s.id)).map(s => s.label).join(", ")}. Ці підрозділи не будуть перезаписані генерацією — джерела клієнта вже підставлені на кроці «Джерела».
+            </div>
+          )}
+
+          {readyWorkNeedsManualAI && !readyWorkImportedIds?.length && (
+            <div style={{ padding: "10px 16px", background: "#faf3e6", border: "1.5px solid #d8b878", borderRadius: 8, marginBottom: 16, fontSize: 12, color: "#7a5a20", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+              <span>⚠️ Не вдалося автоматично розпізнати заголовки в файлі «{readyWorkFileName}» (нестандартне оформлення). План згенеровано окремо, без даних з файлу.</span>
+              <button onClick={doAIAnalyzeReadyWork} style={{ background: "#1a1a14", color: "#e8ff47", border: "none", borderRadius: 6, padding: "8px 16px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer", whiteSpace: "nowrap" }}>
+                Аналізувати через ШІ
+              </button>
             </div>
           )}
 
@@ -171,7 +180,18 @@ export function PlanStage({
               return rows;
             })()}
             <div style={{ padding: "10px 14px", background: "#f5f2eb", borderTop: "1px solid #e4dfd4", display: "flex", gap: 8, alignItems: "center" }}>
-              {(() => { const total = sections.reduce((s, x) => s + (x.pages || 0), 0); const ok = total === totalPagesNum; return <span style={{ fontSize: 12, fontFamily: "'Spectral',serif", color: ok ? "#5a8a2a" : "#c03030", fontWeight: "bold", marginRight: 4 }}>{total} / {totalPagesNum} стор. {ok ? "✓" : "⚠"}</span>; })()}
+              {(() => {
+                const importedSet = new Set(readyWorkImportedIds || []);
+                const alreadyDone = sections.filter(x => importedSet.has(x.id)).reduce((s, x) => s + (x.pages || 0), 0);
+                const toWrite = sections.filter(x => !importedSet.has(x.id)).reduce((s, x) => s + (x.pages || 0), 0);
+                const ok = toWrite === totalPagesNum;
+                return (
+                  <span style={{ fontSize: 12, fontFamily: "'Spectral',serif", color: ok ? "#5a8a2a" : "#c03030", fontWeight: "bold", marginRight: 4 }}>
+                    {toWrite} / {totalPagesNum} стор. {ok ? "✓" : "⚠"}
+                    {alreadyDone > 0 ? <span style={{ color: "#888", fontWeight: "normal", marginLeft: 6 }}>(+{alreadyDone} стор. вже готово)</span> : null}
+                  </span>
+                );
+              })()}
               <button onClick={() => {
                 const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
                 const lastId = mainSecs.length ? mainSecs[mainSecs.length - 1].id : "1.0";
