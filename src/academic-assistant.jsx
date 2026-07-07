@@ -2919,13 +2919,17 @@ ${slideSpecs.join("\n\n")}
       const docText = result.value.trim();
       if (!docText) throw new Error("Не вдалося витягти текст з документа");
       const prompt = buildFileToSectionsPrompt({ sections, documentText: docText });
-      const raw = await callClaude([{ role: "user", content: prompt }], null, null, 16000, null, MODEL);
-      const jsonStr = raw.replace(/```json|```/g, "").trim();
-      const parsed = JSON.parse(jsonStr);
+      const approxWords = docText.split(/\s+/).length;
+      const maxTokens = Math.min(60000, Math.max(16000, Math.round((approxWords / 225) * 3000)));
+      const raw = await callClaude([{ role: "user", content: prompt }], null, null, maxTokens, null, MODEL);
       const newContent = { ...contentRef.current };
-      Object.entries(parsed).forEach(([id, text]) => {
+      const blockRe = /@@@SECTION id="([^"]+)"@@@([\s\S]*?)@@@END@@@/g;
+      let m;
+      while ((m = blockRe.exec(raw))) {
+        const [, id, textPart] = m;
+        const text = textPart.trim();
         if (text) newContent[id] = text;
-      });
+      }
       setContent(newContent);
       contentRef.current = newContent;
       await saveToFirestore({ content: newContent });
@@ -2942,19 +2946,23 @@ ${slideSpecs.join("\n\n")}
     if (!readyWorkText?.trim()) return;
     try {
       const prompt = buildFileToSectionsWithSourcesPrompt({ sections: secs, documentText: readyWorkText });
-      const raw = await callClaude([{ role: "user", content: prompt }], null, null, 16000, null, MODEL);
-      const jsonStr = raw.replace(/```json|```/g, "").trim();
-      const parsed = JSON.parse(jsonStr);
+      const approxWords = readyWorkText.trim().split(/\s+/).length;
+      const maxTokens = Math.min(60000, Math.max(16000, Math.round((approxWords / 225) * 3000)));
+      const raw = await callClaude([{ role: "user", content: prompt }], null, null, maxTokens, null, MODEL);
       const newContent = { ...contentRef.current };
       const newCitInputs = {};
       const importedIds = [];
-      Object.entries(parsed).forEach(([id, obj]) => {
-        const text = obj?.text?.trim();
-        if (!text) return;
+      const blockRe = /@@@SECTION id="([^"]+)"@@@([\s\S]*?)@@@SOURCES@@@([\s\S]*?)@@@END@@@/g;
+      let m;
+      while ((m = blockRe.exec(raw))) {
+        const [, id, textPart, sourcesPart] = m;
+        const text = textPart.trim();
+        if (!text) continue;
         newContent[id] = text;
-        if (Array.isArray(obj.sources) && obj.sources.length) newCitInputs[id] = obj.sources.join("\n");
+        const sources = sourcesPart.split("\n").map(s => s.trim()).filter(Boolean);
+        if (sources.length) newCitInputs[id] = sources.join("\n");
         importedIds.push(id);
-      });
+      }
       if (!importedIds.length) return;
       setContent(newContent);
       contentRef.current = newContent;
