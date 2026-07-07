@@ -73,7 +73,7 @@ function SourceCard({ paper, checked, onToggle }) {
 }
 
 export function SourcesStage({
-  mainSections, citInputs, setCitInputs, citStructured, setCitStructured, sourceDist, sourceTotal,
+  mainSections, readyWorkImportedIds, citInputs, setCitInputs, citStructured, setCitStructured, sourceDist, sourceTotal,
   keywords, kwLoading, kwError, setKwError, methodInfo, commentAnalysis, onStopSearch,
   allRefs, refList, showMissingSources, citInputsSnapshot, allCitLoading, info,
   suggestedSources, phraseGroups, sourcesSearchLoading, sourcesSearchError, doSearchSources, doRegenSectionSources,
@@ -380,6 +380,7 @@ export function SourcesStage({
         const secRefs = (citInputs[sec.id] || "").split("\n").map(l => l.trim()).filter(Boolean);
         const startIdx = runningIdx + 1; runningIdx += secRefs.length;
         const hasSources = secRefs.length > 0;
+        const isImported = readyWorkImportedIds?.includes(sec.id);
         const alreadyAdded = (citInputs[sec.id] || '').toLowerCase();
         const suggestions = (suggestedSources[sec.id] || []).filter(p =>
           !alreadyAdded.includes((p.title || '').toLowerCase().slice(0, 60))
@@ -408,7 +409,9 @@ export function SourcesStage({
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 {secRefs.length > 0 && <div style={{ fontSize: 11, color: "#888" }}>джерела [{startIdx}–{startIdx + secRefs.length - 1}]</div>}
-                <div style={{ fontSize: 12, color: "#e8ff47", background: "#2a2a1a", padding: "2px 10px", borderRadius: 10 }}>потрібно: {sourceDist[sec.id] || "?"} дж.</div>
+                {isImported
+                  ? <div style={{ fontSize: 12, color: "#3a6010", background: "#e4f5d0", padding: "2px 10px", borderRadius: 10 }}>✓ з документа клієнта</div>
+                  : <div style={{ fontSize: 12, color: "#e8ff47", background: "#2a2a1a", padding: "2px 10px", borderRadius: 10 }}>потрібно: {sourceDist[sec.id] || "?"} дж.</div>}
               </div>
             </div>
 

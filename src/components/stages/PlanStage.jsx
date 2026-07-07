@@ -232,8 +232,9 @@ export function PlanStage({
             <NavBtn onClick={() => setStage("parsed")}>← Назад</NavBtn>
           </div>
 
-          {/* Вибір режиму або продовження */}
-          {Object.keys(content).length > 0 ? (
+          {/* Вибір режиму або продовження — контент з готової частини роботи клієнта (readyWorkImportedIds)
+              не рахуємо "вже згенерованим", бо це перший прохід, а не повернення після написання */}
+          {Object.keys(content).some(id => !readyWorkImportedIds?.includes(id)) ? (
             <div style={{ marginTop: 16, padding: "16px 18px", background: "#f0f5e8", border: "1.5px solid #c8dfa0", borderRadius: 8 }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: "#2a4010", marginBottom: 12 }}>Текст вже згенеровано — продовжте роботу:</div>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>

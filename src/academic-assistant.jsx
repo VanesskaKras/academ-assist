@@ -1490,7 +1490,13 @@ Return ONLY JSON:
   const startGen = async () => {
     const ORDER = ["theory", "analysis", "recommendations", "chapter_conclusion", "intro", "conclusions", "sources"];
     setSections(prev => [...prev].sort((a, b) => ORDER.indexOf(a.type) - ORDER.indexOf(b.type)));
-    setContent({}); setGenIdx(0); setPaused(false); writingDoneRef.current = false;
+    // Не стираємо текст, імпортований з готової частини роботи клієнта — лише те, що ще належить дописати
+    setContent(prev => {
+      const preserved = {};
+      (readyWorkImportedIds || []).forEach(id => { if (prev[id]) preserved[id] = prev[id]; });
+      return preserved;
+    });
+    setGenIdx(0); setPaused(false); writingDoneRef.current = false;
     const practicalApproachForGen = commentAnalysis?.practicalApproach;
     const acadDefaultsForGen = getAcademicDefaults(info?.subject, info?.type, info?.course, info?.topic);
     const needsAppendixForGen = practicalApproachForGen || isPsychoPed(info) || (acadDefaultsForGen?.appendicesAiGen?.length > 0);
@@ -3390,7 +3396,8 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
   const doGenKeywords = async () => {
     setKwLoading(true);
     stopSearchRef.current = false;
-    const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
+    // Розділи, вже імпортовані з готової частини роботи клієнта, мають реальні джерела з документа — не шукаємо для них додатково
+    const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type) && !readyWorkImportedIds.includes(s.id));
     const labelToId = {};
     for (const s of mainSecs) {
       labelToId[s.id] = s.id;
@@ -4687,6 +4694,7 @@ ${refLines2.join("\n")}`;
           {stage === "sources" && (
             <SourcesStage
               mainSections={mainSections}
+              readyWorkImportedIds={readyWorkImportedIds}
               citInputs={citInputs} setCitInputs={setCitInputs}
               citStructured={citStructured} setCitStructured={setCitStructured}
               sourceDist={sourceDist} sourceTotal={sourceTotal}
