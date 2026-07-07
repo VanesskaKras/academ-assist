@@ -14,7 +14,7 @@ import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_P
 import { FIELD_LABELS, isPsychoPed, isEcon, hasEmpiricalResearch, getEmpiricalSections, getEconSections, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, getLangLabels } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { getAcademicDefaults, classifyAppendixItem, normalizeWorkType } from "./lib/academicDefaults.js";
-import { searchByPhrase, filterSourcesWithGemini } from "./lib/sourcesSearch.js";
+import { searchByPhrase, filterSourcesWithGemini, getEconInstitutionalSources } from "./lib/sourcesSearch.js";
 import { extractPageRange, pickPageInRange } from "./lib/citationFormatting.js";
 import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
 import { StagePills } from "./components/StagePills.jsx";
@@ -218,6 +218,8 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [appendicesText, setAppendicesText] = useState("");
   const [appendicesLoading, setAppendicesLoading] = useState(false);
   const [appendicesCustomPrompt, setAppendicesCustomPrompt] = useState("");
+  const [econProfile, setEconProfile] = useState("");
+  const [econProfileLoading, setEconProfileLoading] = useState(false);
   const [annotationUk, setAnnotationUk] = useState("");
   const [annotationEn, setAnnotationEn] = useState("");
   const [annotationLoading, setAnnotationLoading] = useState(false);
@@ -344,6 +346,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
           if (d.keywords) setKeywords(d.keywords);
           if (d.speechText) setSpeechText(d.speechText);
           if (d.appendicesText) setAppendicesText(d.appendicesText.replace(/\n{2,}/g, '\n'));
+          if (d.econProfile) setEconProfile(d.econProfile);
           if (d.annotationUk) setAnnotationUk(d.annotationUk);
           if (d.annotationEn) setAnnotationEn(d.annotationEn);
           if (d.titlePage) setTitlePage(d.titlePage);
@@ -795,7 +798,13 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     const L = getLangLabels(d?.language);
     const isEnglish = /англ|english/i.test(d?.language || "");
 
-    const finalizeSections = async (secs) => {
+    const finalizeSections = async (secsIn) => {
+      const secs = secsIn.filter(s => {
+        if (s.type === "intro" && d?.includeIntro === false) return false;
+        if (s.type === "conclusions" && d?.includeConclusions === false) return false;
+        if (s.type === "sources" && d?.includeSources === false) return false;
+        return true;
+      });
       const mapped = secs.map(s => {
         let label = s.label;
         if (s.id && /^\d+\.\d+$/.test(s.id) && !label.startsWith(s.id)) {
@@ -1068,24 +1077,76 @@ Order: subsections grouped by chapter, then intro, conclusions, sources.`;
     }
   };
 
-  // ── Перерахувати сторінки рівномірно ──
+  // ── Перерахувати сторінки рівномірно (чиста функція — придатна для повторного використання) ──
+  const recalcPagesFor = (secs, wc) => {
+    const mainIdxs = secs.reduce((acc, s, i) => {
+      if (!["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type)) acc.push(i);
+      return acc;
+    }, []);
+    // Фіксований обсяг — усе, що НЕ підрозділ: вступ/висновки (за wc), висновки до розділів (по 1 стор.), джерела (як є)
+    const fixedTotal = secs.reduce((sum, s) => {
+      if (s.type === "intro") return sum + wc.introPages;
+      if (s.type === "conclusions") return sum + wc.conclusionsPages;
+      if (s.type === "chapter_conclusion") return sum + 1;
+      if (s.type === "sources") return sum + (s.pages || 1);
+      return sum;
+    }, 0);
+    const pagesForMain = Math.max(mainIdxs.length * 3, wc.totalPages - fixedTotal);
+    const pagesPerSub = Math.max(1, Math.floor(pagesForMain / Math.max(mainIdxs.length, 1)));
+    const result = [...secs];
+    let assigned = 0;
+    mainIdxs.forEach((idx, j) => {
+      const isLast = j === mainIdxs.length - 1;
+      const p = isLast ? Math.max(1, pagesForMain - assigned) : pagesPerSub;
+      result[idx] = { ...result[idx], pages: p, prompts: Math.max(1, Math.ceil(p / 3)) };
+      if (!isLast) assigned += p;
+    });
+    return result.map(s => {
+      if (s.type === "intro") return { ...s, pages: wc.introPages };
+      if (s.type === "conclusions") return { ...s, pages: wc.conclusionsPages };
+      if (s.type === "chapter_conclusion") return { ...s, pages: 1 };
+      return s;
+    });
+  };
+
   const recalcPages = () => {
     const wc = buildWorkConfig({ info, methodInfo, commentAnalysis });
-    const mainSubs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
-    const chapConclCount = sections.filter(s => s.type === "chapter_conclusion").length;
-    const pagesForMain = Math.max(mainSubs.length * 3,
-      wc.totalPages - wc.introPages - wc.conclusionsPages - chapConclCount);
-    const pagesPerSub = Math.max(3, Math.round(pagesForMain / Math.max(mainSubs.length, 1)));
     setSections(prev => {
-      const next = prev.map(s => {
-        if (s.type === "intro") return { ...s, pages: wc.introPages };
-        if (s.type === "conclusions") return { ...s, pages: wc.conclusionsPages };
-        if (s.type === "chapter_conclusion") return { ...s, pages: 1 };
-        if (s.type === "sources") return s;
-        const p = pagesPerSub;
-        return { ...s, pages: p, prompts: Math.max(1, Math.ceil(p / 3)) };
-      });
+      const next = recalcPagesFor(prev, wc);
       setPlanDisplay(buildPlanText(next));
+      return next;
+    });
+  };
+
+  // ── Увімкнути/вимкнути вступ, висновки або список джерел прямо в уже сформованому плані ──
+  const toggleStructureSection = (key) => {
+    const type = key === "includeIntro" ? "intro" : key === "includeConclusions" ? "conclusions" : "sources";
+    const wc = buildWorkConfig({ info, methodInfo, commentAnalysis });
+    const lc = getLangLabels(info?.language);
+    const currentlyOn = info?.[key] !== false;
+    const nextOn = !currentlyOn;
+    setInfo(p => (p ? { ...p, [key]: nextOn } : p));
+    setSections(prev => {
+      let base;
+      if (!nextOn) {
+        base = prev.filter(s => s.type !== type);
+      } else if (prev.some(s => s.type === type)) {
+        base = prev;
+      } else {
+        const newSec = type === "intro" ? { id: "intro", label: lc.intro, pages: wc.introPages, type: "intro" }
+          : type === "conclusions" ? { id: "conclusions", label: lc.conclusions, pages: wc.conclusionsPages, type: "conclusions" }
+          : { id: "sources", label: lc.sources, pages: 1, type: "sources" };
+        if (type === "intro") base = [newSec, ...prev];
+        else if (type === "sources") base = [...prev, newSec];
+        else {
+          const srcIdx = prev.findIndex(s => s.type === "sources");
+          base = srcIdx >= 0 ? [...prev.slice(0, srcIdx), newSec, ...prev.slice(srcIdx)] : [...prev, newSec];
+        }
+      }
+      const next = recalcPagesFor(base, wc);
+      setPlanDisplay(buildPlanText(next));
+      const { dist, total } = calcSourceDist(next);
+      setSourceDist(dist); setSourceTotal(total);
       return next;
     });
   };
@@ -1286,6 +1347,7 @@ Return ONLY JSON:
     const acadDefaultsForGen = getAcademicDefaults(info?.subject, info?.type, info?.course, info?.topic);
     const needsAppendixForGen = practicalApproachForGen || isPsychoPed(info) || (acadDefaultsForGen?.appendicesAiGen?.length > 0);
     if (!appendicesText && needsAppendixForGen) doGenAppendices();
+    if (!econProfile && isEcon(info)) doGenEconProfile();
     setStage("sources");
     generationStartRef.current = Date.now();
     saveToFirestore({ workflowMode: "sources-first", stage: "sources", status: "writing", generationStartedAt: new Date().toISOString() });
@@ -1556,7 +1618,10 @@ ${methodInfo?.chapterConclusionRequirements ? `ВИМОГИ МЕТОДИЧКИ: 
 - Після таблиці — аналіз динаміки або відхилень, конкретні висновки з цифрами
 - Якщо підрозділ рекомендаційний: додай таблицю прогнозних або планових показників після впровадження рекомендацій`
           : "";
-        econBlock = `${formulasBlock}${tablesBlock}${genericEcon}`;
+        const profileBlock = econProfile
+          ? `\nФІКСОВАНІ БАЗОВІ ДАНІ ПІДПРИЄМСТВА (використовуй САМЕ ЦІ дані в усіх розрахунках і таблицях цього підрозділу, не вигадуй іншу назву/рік/цифри):\n${econProfile}\n`
+          : "";
+        econBlock = `${profileBlock}${formulasBlock}${tablesBlock}${genericEcon}`;
       }
 
       const appendixBlock = appendicesText
@@ -1900,7 +1965,10 @@ ${methodInfo?.conclusionsRequirements ? `ВИМОГИ МЕТОДИЧКИ: ${meth
         const genericEcon = !secFormulas.length && !secTables.length
           ? `\nОБОВ'ЯЗКОВО: мінімум одна таблиця markdown з числовими даними, аналіз динаміки з цифрами${sec.type === "recommendations" ? ", таблиця прогнозних показників після впровадження рекомендацій" : ""}`
           : "";
-        econBlockRegen = `${formulasBlock}${tablesBlock}${genericEcon}`;
+        const profileBlockRegen = econProfile
+          ? `\nФІКСОВАНІ БАЗОВІ ДАНІ ПІДПРИЄМСТВА (використовуй САМЕ ЦІ дані в усіх розрахунках і таблицях цього підрозділу, не вигадуй іншу назву/рік/цифри):\n${econProfile}\n`
+          : "";
+        econBlockRegen = `${profileBlockRegen}${formulasBlock}${tablesBlock}${genericEcon}`;
       }
 
       const rdRegen = commentAnalysis?.researchDesign ?? (commentAnalysis?.empiricalHints ? { instrumentType: "questionnaire", groups: [], comparisonRequired: false, biographicalFields: [], statisticalMinN: null } : null);
@@ -2202,6 +2270,51 @@ ${slidesOutline}
       .replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1");
   };
 
+  // ── Фіксований базовий профіль підприємства для економічних/фінансових робіт ──
+  // Генерується один раз перед написанням, щоб усі економічні підрозділи спирались
+  // на ту саму назву підприємства, галузь і базові показники, а не вигадували нові.
+  const doGenEconProfile = async () => {
+    setEconProfileLoading(true);
+    try {
+      const lang = info?.language || "Українська";
+      const realMaterials = clientMaterialsSummary?.rawText || clientMaterialsText?.trim() || "";
+      const prompt = realMaterials
+        ? `На основі наведених нижче матеріалів клієнта визнач базовий профіль підприємства для економічної/фінансової роботи на тему "${info?.topic}". Галузь: ${info?.subject}.
+
+МАТЕРІАЛИ КЛІЄНТА (реальні дані підприємства):
+${realMaterials.slice(0, 80000)}
+
+Виведи компактно, без markdown і зірочок, у форматі:
+Підприємство: [точна назва з матеріалів]
+Галузь: [галузь]
+Період аналізу: [роки, наявні в матеріалах]
+Базові показники: [ключові показники з матеріалів по роках — виручка, чистий прибуток, активи, власний капітал тощо, лише ті, що дійсно є в матеріалах]
+
+Використовуй ТІЛЬКИ дані з матеріалів клієнта, нічого не вигадуй.`
+        : `Створи умовний базовий профіль підприємства для економічної/фінансової роботи на тему "${info?.topic}". Галузь: ${info?.subject}.
+Клієнт не надав реальної фінансової звітності, тому потрібен правдоподібний умовний приклад.
+
+Виведи компактно, без markdown і зірочок, у форматі:
+Підприємство: [правдоподібна умовна назва відповідно до галузі]
+Галузь: [галузь]
+Період аналізу: [останні 3-4 завершені роки]
+Базові показники: [виручка, чистий прибуток, активи, власний капітал та інші релевантні показники за кожен рік періоду — конкретні числові значення в тис. грн]
+
+Ці дані будуть використані як незмінна основа для всіх розрахунків і таблиць у роботі, тому цифри мають бути внутрішньо узгодженими (динаміка логічна, показники не суперечать один одному).`;
+
+      const raw = await callClaude([{ role: "user", content: prompt }], null, buildSYS(lang, methodInfo), 1200, null, MODEL_FAST);
+      const result = raw
+        .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
+        .replace(/[ᄀ-ᇿ⺀-鿿ꀀ-꓿가-퟿豈-﫿]/g, "")
+        .trim();
+      setEconProfile(result);
+      await saveToFirestore({ econProfile: result });
+    } catch (e) {
+      console.warn("econ profile generation failed:", e.message);
+    }
+    setEconProfileLoading(false);
+  };
+
   const doGenAppendices = async () => {
     setAppendicesLoading(true);
     try {
@@ -2327,65 +2440,8 @@ ${parts.join("\n\n---\n\n")}
 Якщо для якогось додатку доречно посилатись на конкретну методику, теорію, модель або стандарт — СТРОГО ЗАБОРОНЕНО використовувати ті, чий автор є російським чи білоруським науковцем. Обирай лише західні, українські або інші міжнародні (не рос./білор.) джерела.`;
       };
 
-      const practicalApproach = commentAnalysis?.practicalApproach;
-
-      const buildTextbookAnalysisAppendix = () => `Згенеруй Додаток А для ${info?.type || "наукової роботи"} на тему "${info?.topic}". Галузь: ${info?.subject}.
-${planBlock}
-${methodBlock}
-${clientBlock}
-
-ДОДАТОК А містить порівняльну таблицю підручників.
-Перший рядок: ДОДАТОК А
-Другий рядок: Порівняльна таблиця підручників (назва відповідно до теми дослідження).
-Таблиця markdown з порівнянням 3-4 реалістичних підручників за критеріями:
-| Критерій | Підручник 1 | Підручник 2 | Підручник 3 |
-Рядки (критерії): автор(и) та рік видання; цільова аудиторія (клас або рівень); структура та кількість розділів; кількість і типи вправ; ілюстративний матеріал; методичний апарат; відповідність навчальній програмі; загальна оцінка.
-Підручники підбери реалістичні відповідно до теми "${info?.topic}". Клітинки заповни конкретними описовими даними.
-Мова: ${lang}. БЕЗ markdown-розмітки зірочками, БЕЗ жирного — крім самої таблиці яка в markdown.`;
-
-      const buildLessonObservationAppendix = () => `Згенеруй Додаток А для ${info?.type || "наукової роботи"} на тему "${info?.topic}". Галузь: ${info?.subject}.
-${planBlock}
-${methodBlock}
-${clientBlock}
-
-ДОДАТОК А містить протокол спостереження уроків.
-Перший рядок: ДОДАТОК А
-Другий рядок: Протокол спостереження уроку (назва відповідно до теми).
-Далі:
-Дата: _________  Школа: _________  Клас: _________
-Вчитель: _________  Тема уроку: _________
-Таблиця спостереження markdown:
-| Аспект | Оцінка (1-5) | Примітки |
-Аспекти (рядки): мета та завдання уроку; мотивація та введення теми; пояснення нового матеріалу; практична частина; зворотній зв'язок та корекція; організація навчального процесу; використання наочності та матеріалів; диференціація навчання.
-Після таблиці: Загальна оцінка уроку: ___ / 40
-Загальні спостереження та коментарі: _________________________
-Мова: ${lang}. БЕЗ markdown-розмітки зірочками, БЕЗ жирного — крім самої таблиці яка в markdown.`;
-
-      const buildMaterialsDevelopmentAppendix = () => {
-        const details = commentAnalysis?.practicalApproachDetails ? `\nДеталі: ${commentAnalysis.practicalApproachDetails}` : "";
-        return `Згенеруй Додаток А для ${info?.type || "наукової роботи"} на тему "${info?.topic}". Галузь: ${info?.subject}.
-${planBlock}
-${methodBlock}
-${clientBlock}${details}
-
-ДОДАТОК А містить розроблені дидактичні матеріали відповідно до теми.
-Перший рядок: ДОДАТОК А
-Визнач тип матеріалу з теми "${info?.topic}": план-конспект уроку, система вправ, дидактичні картки або тест.
-Якщо план-конспект: тема уроку, клас, мета (освітня, розвивальна, виховна), обладнання, хід уроку — вступна, основна та заключна частини з конкретними завданнями і часом кожного етапу.
-Якщо система вправ: 8-12 вправ різних типів (підготовчі, рецептивні, репродуктивні, продуктивні), кожна з назвою та інструкцією.
-Якщо дидактичні картки: 6-8 карток з конкретними завданнями відповідно до теми.
-Матеріал має бути повним і придатним до реального використання на практиці.
-Мова: ${lang}. БЕЗ markdown, зірочок, жирного. Звичайний текст.`;
-      };
-
       let prompt;
-      if (!appendicesCustomPrompt.trim() && practicalApproach === "textbook_analysis") {
-        prompt = buildTextbookAnalysisAppendix();
-      } else if (!appendicesCustomPrompt.trim() && practicalApproach === "lesson_observation") {
-        prompt = buildLessonObservationAppendix();
-      } else if (!appendicesCustomPrompt.trim() && practicalApproach === "materials_development") {
-        prompt = buildMaterialsDevelopmentAppendix();
-      } else if (hasEmpiricalApp && !appendicesCustomPrompt.trim()) {
+      if (hasEmpiricalApp && !appendicesCustomPrompt.trim()) {
         const header = `Згенеруй інструмент дослідження (Додаток А) для ${info?.type || "наукової роботи"} на тему "${info?.topic}". Галузь: ${info?.subject}.
 ${planBlock}
 ${methodBlock}
@@ -2996,9 +3052,15 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
   const doSearchSources = async (secId, thesesData, sectionLabel = '', resetPage = false) => {
     stopSearchRef.current = false;
     const isFirstSearch = resetPage || (searchPageCount[secId] || 0) === 0;
+    // Для econ-аналітичних підрозділів додаємо офіційну статистику (Держстат/НБУ/Мінфін/World Bank)
+    // як нагадування-посилання, поряд зі знайденими науковими статтями
+    const isEconSecForSources = isEcon(info) && getEconSections(sections, info).includes(secId);
+    const institutionalGroup = (isFirstSearch && isEconSecForSources)
+      ? [{ phrase: "Офіційна статистика", papers: getEconInstitutionalSources() }]
+      : [];
     if (isFirstSearch) {
-      setSuggestedSources(prev => ({ ...prev, [secId]: [] }));
-      setPhraseGroups(prev => ({ ...prev, [secId]: [] }));
+      setSuggestedSources(prev => ({ ...prev, [secId]: institutionalGroup.flatMap(g => g.papers) }));
+      setPhraseGroups(prev => ({ ...prev, [secId]: institutionalGroup }));
       setSeenSourceKeys(prev => ({ ...prev, [secId]: new Set() }));
     }
     setSourcesSearchLoading(prev => ({ ...prev, [secId]: true }));
@@ -3009,7 +3071,7 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
     try {
       const topicCtx = [info?.topic, info?.direction, info?.subject].filter(Boolean).join(' ');
       const globalSeen = new Set(isFirstSearch ? [] : (seenSourceKeys[secId] || []));
-      const updatedGroups = isFirstSearch ? [] : [...(phraseGroups[secId] || [])];
+      const updatedGroups = isFirstSearch ? [...institutionalGroup] : [...(phraseGroups[secId] || [])];
 
       // Для розділів без підрозділів label містить "РОЗДІЛ N. НАЗВА РОЗДІЛУ" —
       // обрізаємо структурний префікс щоб Gemini-фільтр орієнтувався на зміст, а не на "напрями удосконалення"
@@ -4108,7 +4170,7 @@ ${refLines2.join("\n")}`;
     setSections([]); setPlanDisplay(""); setContent({}); setGenIdx(0);
     setPaused(false); setPlanLoading(false); setMethodInfo(null); setCommentAnalysis(null); setSourceDist({}); setSourceTotal(0);
     setKeywords({}); setCitInputs({}); setAllCitLoading(false); setRefList([]); setCitInputsSnapshot(null); setFigureRefs({}); setFigureKeywords([]); setFigKwLoading(false);
-    setSpeechText(""); setAppendicesText("");
+    setSpeechText(""); setAppendicesText(""); setEconProfile("");
     setAnnotationUk(""); setAnnotationEn(""); setAnnotationLoading(false); setAnnotationConfirmed(false);
     setPresentationReady(false); setPresentationMsg(""); setSlideJson(null);
     runningRef.current = false; setRunning(false);
@@ -4336,12 +4398,13 @@ ${refLines2.join("\n")}`;
               manualPlanText={manualPlanText} setManualPlanText={setManualPlanText}
               planDocxLoading={planDocxLoading} setPlanDocxLoading={setPlanDocxLoading}
               namingLoading={namingLoading} totalPagesNum={totalPagesNum}
-              info={info} methodInfo={methodInfo} content={content}
+              info={info} setInfo={setInfo} methodInfo={methodInfo} content={content}
               readyWorkFileName={readyWorkFileName} readyWorkImportedIds={readyWorkImportedIds}
               doGenPlan={doGenPlan} doNamePlaceholders={doNamePlaceholders}
               startGen={startGen} setStage={setStage}
               setSourceDist={setSourceDist} setSourceTotal={setSourceTotal}
               addNewChapter={addNewChapter} recalcPages={recalcPages}
+              toggleStructureSection={toggleStructureSection}
               moveSectionUp={moveSectionUp} moveSectionDown={moveSectionDown}
               moveSectionToPosition={moveSectionToPosition}
               doNameSinglePlaceholder={doNameSinglePlaceholder} singleNamingId={singleNamingId}

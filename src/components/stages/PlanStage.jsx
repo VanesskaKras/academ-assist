@@ -9,8 +9,8 @@ export function PlanStage({
   sections, setSections, planDisplay, setPlanDisplay, planLoading, clientPlan,
   showManualPlanInput, setShowManualPlanInput, manualPlanText, setManualPlanText,
   planDocxLoading, setPlanDocxLoading, namingLoading, totalPagesNum,
-  info, methodInfo, content, readyWorkFileName, readyWorkImportedIds, doGenPlan, doNamePlaceholders, startGen, setStage,
-  setSourceDist, setSourceTotal, addNewChapter, recalcPages,
+  info, setInfo, methodInfo, content, readyWorkFileName, readyWorkImportedIds, doGenPlan, doNamePlaceholders, startGen, setStage,
+  setSourceDist, setSourceTotal, addNewChapter, recalcPages, toggleStructureSection,
   moveSectionUp, moveSectionDown,
   doNameSinglePlaceholder, singleNamingId,
 }) {
@@ -51,6 +51,27 @@ export function PlanStage({
               </div>
             </div>
             <pre style={{ fontFamily: "'Spectral',serif", fontSize: 13, lineHeight: "2.1", whiteSpace: "pre-wrap", color: "#e0ddd4", margin: 0 }}>{planDisplay}</pre>
+          </div>
+
+          {/* Що включати в план — вимкніть зайве, якщо клієнт просить виконати лише частину роботи. Сторінки одразу перерозподіляються між розділами. */}
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18, padding: "10px 16px", background: "#f0ece2", borderRadius: 8, border: "1.5px solid #d4cfc4", flexWrap: "wrap" }}>
+            <div style={{ fontSize: 11, color: "#888", letterSpacing: "1px", textTransform: "uppercase", whiteSpace: "nowrap" }}>Включити в план</div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {[["includeIntro", "Вступ"], ["includeConclusions", "Висновки"], ["includeSources", "Список джерел"]].map(([key, label]) => {
+                const on = info[key] !== false;
+                return (
+                  <span key={key}
+                    onClick={() => toggleStructureSection(key)}
+                    title="Клікніть щоб увімкнути/вимкнути — сторінки перерозподіляться автоматично"
+                    style={{ fontSize: 12, padding: "5px 16px", borderRadius: 20, cursor: "pointer", userSelect: "none", fontFamily: "inherit", border: "1.5px solid", transition: "all .15s",
+                      background: on ? "#1a1a14" : "transparent",
+                      color: on ? "#e8ff47" : "#888",
+                      borderColor: on ? "#1a1a14" : "#ccc" }}>
+                    {on ? "✓ " : "✗ "}{label}
+                  </span>
+                );
+              })}
+            </div>
           </div>
 
           {showManualPlanInput && (

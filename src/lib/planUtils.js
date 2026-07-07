@@ -166,7 +166,9 @@ export function parseClientPlan(text, totalPages, lang = "Українська")
     if (isSpecial) { expectingChapterTitle = false; continue; }
     if (isChapterConclusion && current) { current.hasConclusion = true; expectingChapterTitle = false; continue; }
     if (isChapter) {
-      current = { title: line.trim(), subsections: [], hasConclusion: false };
+      const numMatch = line.match(/^(?:розділ|chapter|rozdział|cap[ií]tulo|kapitol[ao]|kapitel)\s*(\d+)/i)
+        || line.match(/^(\d+)[\.\)]\s+/) || line.match(/^第(\d+)章/);
+      current = { title: line.trim(), subsections: [], hasConclusion: false, declaredNum: numMatch ? parseInt(numMatch[1], 10) : null };
       chapters.push(current);
       expectingChapterTitle = true;
     } else if (isSubsection) {
@@ -194,9 +196,10 @@ export function parseClientPlan(text, totalPages, lang = "Українська")
   const pagesPerChapter = Math.max(1, Math.round(mainPages / chapters.length));
   const introPages = 2;
   const concPages = totalPages > 40 ? 3 : 2;
-  const sections = []; let chapNum = 0;
+  const sections = []; let chapCounter = 0;
   for (const ch of chapters) {
-    chapNum++;
+    chapCounter++;
+    const chapNum = ch.declaredNum || chapCounter;
     const subs = ch.subsections;
     const pagesPerSub = Math.max(1, Math.round(pagesPerChapter / Math.max(subs.length, 1)));
     const chType = chapNum === 1 ? "theory" : chapNum === 2 ? "analysis" : "recommendations";

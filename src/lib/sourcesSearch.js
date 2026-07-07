@@ -607,6 +607,66 @@ export async function searchByPhrase(phrase, limit = 10, page = 1, useScholar = 
   return applyYearFilter(raw, keywords);
 }
 
+// ── Офіційні статистичні джерела для економічних/фінансових робіт ──
+// OpenAlex/CrossRef/BASE/CORE не індексують державні статистичні портали як
+// "статті", тому для econ-підрозділів додаємо їх окремим фіксованим списком —
+// це лише нагадування-посилання, конкретний звіт/сторінку клієнт/виконавець
+// уточнює сам перед фінальним оформленням цитати.
+export const ECON_INSTITUTIONAL_SOURCES = [
+  {
+    id: 'institutional-ukrstat',
+    title: 'Офіційна статистична інформація',
+    authors: [],
+    year: new Date().getFullYear(),
+    venue: 'Державна служба статистики України',
+    pages: '',
+    lang: 'uk',
+    source: 'institutional',
+    abstract: 'Загальнодержавна статистика: виробництво, ціни, зовнішня торгівля, зайнятість тощо — оберіть конкретний розділ відповідно до теми.',
+    url: 'https://www.ukrstat.gov.ua/',
+  },
+  {
+    id: 'institutional-nbu',
+    title: 'Статистика фінансового сектору',
+    authors: [],
+    year: new Date().getFullYear(),
+    venue: 'Національний банк України',
+    pages: '',
+    lang: 'uk',
+    source: 'institutional',
+    abstract: 'Грошово-кредитна, банківська та платіжна статистика, курси валют — оберіть конкретний розділ відповідно до теми.',
+    url: 'https://bank.gov.ua/ua/statistic',
+  },
+  {
+    id: 'institutional-mof',
+    title: 'Статистична та аналітична інформація',
+    authors: [],
+    year: new Date().getFullYear(),
+    venue: 'Міністерство фінансів України',
+    pages: '',
+    lang: 'uk',
+    source: 'institutional',
+    abstract: 'Показники державного бюджету, боргу, оподаткування — оберіть конкретний розділ відповідно до теми.',
+    url: 'https://mof.gov.ua/uk/statistichna-informacija',
+  },
+  {
+    id: 'institutional-worldbank',
+    title: 'World Development Indicators',
+    authors: [],
+    year: new Date().getFullYear(),
+    venue: 'World Bank Open Data',
+    pages: '',
+    lang: 'en',
+    source: 'institutional',
+    abstract: 'Міжнародні макроекономічні показники для порівняльного аналізу — оберіть конкретний набір даних відповідно до теми.',
+    url: 'https://data.worldbank.org/',
+  },
+];
+
+export function getEconInstitutionalSources() {
+  return ECON_INSTITUTIONAL_SOURCES.map(s => ({ ...s }));
+}
+
 // ── Головна функція пошуку ──
 // 9 запитів паралельно: різні фрази, режими (full-text / title.search), дві сторінки OpenAlex
 // r1,r3-r7,r9 — OpenAlex (сирий формат) → mapOpenAlex
