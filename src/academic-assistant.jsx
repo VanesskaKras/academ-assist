@@ -904,10 +904,12 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
             const lastChapNum = chapNums.length ? Math.max(...chapNums) : 0;
             const existingPages = finalSecs.reduce((sum, s) => sum + (s.pages || 0), 0);
             const continuationBudget = totalPages;
-            const desiredChapCount = Math.max(lastChapNum, (existingPages + continuationBudget) >= 40 ? 3 : 2);
+            // Методичка клієнта, якщо є, головна — інакше загальне правило за обсягом
+            const desiredChapCount = Math.max(lastChapNum, methodInfo?.chaptersCount || ((existingPages + continuationBudget) >= 40 ? 3 : 2));
             const hasIntro = finalSecs.some(s => s.type === "intro");
             const hasConclusions = finalSecs.some(s => s.type === "conclusions");
             const hasSources = finalSecs.some(s => s.type === "sources");
+            const needsChapterConcl = methodInfo?.hasChapterConclusions === true;
             const missingChapNums = [];
             for (let n = lastChapNum + 1; n <= desiredChapCount; n++) missingChapNums.push(n);
 
@@ -916,10 +918,18 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
               let newChapterData = [];
               if (missingChapNums.length) {
                 try {
+                  const subsOverrides = methodInfo?.subsectionsPerChapterOverrides || {};
+                  const defaultSubsPerChapter = methodInfo?.subsectionsPerChapter || 3;
                   const existingChapterTitles = [...new Set(finalSecs.filter(s => s.sectionTitle).map(s => s.sectionTitle))];
                   const prompt = buildContinuationPlanPrompt({
                     topic: d.topic, subject: d.subject, type: d.type, lang: d?.language,
-                    existingChapterTitles, newChapters: missingChapNums.map(num => ({ num, subsCount: 3 })),
+                    existingChapterTitles,
+                    newChapters: missingChapNums.map(num => ({
+                      num,
+                      subsCount: subsOverrides[String(num)] ?? defaultSubsPerChapter,
+                      forcedType: methodInfo?.chapterTypes?.[num - 1],
+                    })),
+                    otherRequirements: methodInfo?.otherRequirements,
                   });
                   const raw = await callClaude([{ role: "user", content: prompt }], null, SYS_JSON, 2000, null, MODEL_FAST);
                   const jsonMatch = raw.match(/\{[\s\S]*\}/);
@@ -932,16 +942,21 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
               const introPages = hasIntro ? 0 : 2;
               const conclPages = hasConclusions ? 0 : 3;
               const srcPages = hasSources ? 0 : 1;
-              const pagesForSubs = Math.max(newSubCount, continuationBudget - introPages - conclPages - srcPages);
+              const chapConclCount = needsChapterConcl ? newChapterData.length : 0;
+              const pagesForSubs = Math.max(newSubCount, continuationBudget - introPages - conclPages - srcPages - chapConclCount);
               const pagesPerSub = newSubCount ? Math.max(1, Math.round(pagesForSubs / newSubCount)) : 0;
 
               const newChapterSecs = [];
               newChapterData.forEach(c => {
+                const forcedType = methodInfo?.chapterTypes?.[c.num - 1];
                 (c.subsections || []).forEach((subLabel, i) => {
                   const idMatch = subLabel.match(/^(\d+\.\d+)/);
                   const id = idMatch ? idMatch[1] : `${c.num}.${i + 1}`;
-                  newChapterSecs.push({ id, label: subLabel, sectionTitle: c.title, pages: pagesPerSub, type: c.type || "theory" });
+                  newChapterSecs.push({ id, label: subLabel, sectionTitle: c.title, pages: pagesPerSub, type: forcedType || c.type || "theory" });
                 });
+                if (needsChapterConcl) {
+                  newChapterSecs.push({ id: `${c.num}.conclusions`, label: `Висновки до розділу ${c.num}`, sectionTitle: c.title, pages: 1, type: "chapter_conclusion" });
+                }
               });
 
               const mainExisting = finalSecs.filter(s => !["intro", "conclusions", "sources"].includes(s.type));

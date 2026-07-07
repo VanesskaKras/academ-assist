@@ -583,14 +583,14 @@ ${documentText}
 }
 
 // ── Вигадати назви розділів/підрозділів, яких БРАКУЄ в готовій частині роботи клієнта (продовження) ──
-export function buildContinuationPlanPrompt({ topic, subject, type, lang, existingChapterTitles, newChapters }) {
+export function buildContinuationPlanPrompt({ topic, subject, type, lang, existingChapterTitles, newChapters, otherRequirements }) {
   const chaptersBlock = newChapters
-    .map(c => `Розділ ${c.num}: рівно ${c.subsCount} підрозділ(и/ів)`)
+    .map(c => `Розділ ${c.num}: рівно ${c.subsCount} підрозділ(и/ів)${c.forcedType ? `, тип "${c.forcedType}" (обов'язково саме такий, не змінюй)` : ""}`)
     .join("\n");
   return `Для ${type} на тему "${topic}" (галузь: ${subject}) вже написано розділ(и): ${existingChapterTitles.join("; ") || "немає"}.
 Придумай назви для розділів-ПРОДОВЖЕННЯ, яких ще бракує, логічно продовжуючи тему й не повторюючи вже написане.
 Мова роботи: ${lang || "Українська"} — усі назви цією мовою.
-
+${otherRequirements ? `\nВИМОГИ МЕТОДИЧКИ (обов'язково врахувати): ${otherRequirements}\n` : ""}
 ПОТРІБНО СТВОРИТИ:
 ${chaptersBlock}
 
@@ -598,7 +598,7 @@ ${chaptersBlock}
 {"chapters":[{"num":2,"title":"РОЗДІЛ 2. НАЗВА","type":"analysis","subsections":["2.1 Назва підрозділу","2.2 Назва підрозділу"]}]}
 
 Правила:
-- type: "theory" (теоретичний), "analysis" (аналітичний/практичний) або "recommendations" (рекомендаційний)
+- type: "theory" (теоретичний), "analysis" (аналітичний/практичний) або "recommendations" (рекомендаційний) — якщо вище вказано обов'язковий тип для розділу, постав саме його
 - Кількість підрозділів у кожному розділі — точно як вказано вище
 - Назви підрозділів мають починатися з номера (наприклад "2.1 ...")`;
 }
