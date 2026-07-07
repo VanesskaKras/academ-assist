@@ -4722,12 +4722,16 @@ ${refLines2.join("\n")}`;
               setStage={setStage}
               onSave={() => saveToFirestore({ citInputs, citStructured, abstractsMap, suggestedSources, phraseGroups, keywords })}
               saving={saving}
-              hasGeneratedContent={Object.keys(content).length > 0}
+              hasGeneratedContent={Object.keys(content).some(id => !readyWorkImportedIds.includes(id))}
               onRegenWithNewSources={() => {
-                if (Object.keys(content).length > 0) {
+                // Контент, імпортований з готової частини роботи клієнта, не рахуємо "згенерованим" — його не чіпаємо
+                const hasWrittenContent = Object.keys(content).some(id => !readyWorkImportedIds.includes(id));
+                if (hasWrittenContent) {
                   if (!window.confirm("Переписати всю роботу з нуля з новими джерелами? Поточний текст буде замінено.")) return;
-                  contentRef.current = {};
-                  setContent({});
+                  const preserved = {};
+                  readyWorkImportedIds.forEach(id => { if (content[id]) preserved[id] = content[id]; });
+                  contentRef.current = preserved;
+                  setContent(preserved);
                   setGenIdx(0);
                   writingDoneRef.current = false;
                   setPaused(false);

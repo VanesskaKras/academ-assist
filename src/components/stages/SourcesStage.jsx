@@ -185,11 +185,14 @@ export function SourcesStage({
       if (Object.keys(entries).length) onAddAbstracts(entries);
     }
 
-    // Використовуємо prev щоб уникнути stale closure
+    // Використовуємо prev щоб уникнути stale closure; фільтруємо рядки, які вже є (захист від повторного натискання)
     setCitInputs(prev => {
       const cur = (prev[secId] || '').trimEnd();
+      const curLinesNorm = cur ? cur.split('\n').map(l => l.trim().toLowerCase()) : [];
+      const uniqueNewLines = newLines.filter(l => !curLinesNorm.includes(l.trim().toLowerCase()));
+      if (!uniqueNewLines.length) return prev;
       const sep = cur ? '\n' : '';
-      return { ...prev, [secId]: cur + sep + newLines.join('\n') };
+      return { ...prev, [secId]: cur + sep + uniqueNewLines.join('\n') };
     });
 
     // Зберігаємо структуровані об'єкти паперів для якісного форматування
