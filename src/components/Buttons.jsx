@@ -45,8 +45,9 @@ export function GreenBtn({ onClick, disabled, loading, msg, label }) {
   </button>;
 }
 
-export const SaveIndicator = memo(function SaveIndicator({ saving, saved }) {
+export const SaveIndicator = memo(function SaveIndicator({ saving, saved, error }) {
   if (saving) return <span style={{ fontSize: 11, color: "#aaa", display: "inline-flex", alignItems: "center", gap: 5 }}><SpinDot />Збереження...</span>;
+  if (error) return <span style={{ fontSize: 11, color: "#b03030" }} title={error}>⚠ Не збереглося — {error}</span>;
   if (saved) return <span style={{ fontSize: 11, color: "#6a9000" }}>✓ Збережено</span>;
   return null;
 });

@@ -203,6 +203,7 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
   const [loadMsg, setLoadMsg] = useState("");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState("");
   const savedTimerRef = useRef(null);
   const [error, setError] = useState("");
   const [dbLoading, setDbLoading] = useState(false);
@@ -277,9 +278,16 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
       const data = serializeForFirestore({ ...base, ...patch });
       await setDoc(ref, data, { merge: true });
       setSaved(true);
+      setSaveError("");
       clearTimeout(savedTimerRef.current);
       savedTimerRef.current = setTimeout(() => setSaved(false), 3000);
-    } catch (e) { console.error("Save error:", e); }
+    } catch (e) {
+      console.error("Save error:", e);
+      const isSizeError = /maximum size|exceeds|too large|1048576|longer than/i.test(e.message || "");
+      setSaveError(isSizeError
+        ? "запис завеликий — видаліть частину матеріалів клієнта"
+        : "помилка збереження");
+    }
     setSaving(false);
   }, [user, getPracticeInfo, onOrderCreated]);
 
@@ -905,7 +913,7 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <button onClick={onBack} style={{ background: "transparent", border: "none", color: "#888", fontSize: 20, cursor: "pointer", lineHeight: 1 }}>←</button>
         <div style={{ fontFamily: "'Spectral SC',serif", fontSize: 14, letterSpacing: 3, color: "#e8ff47" }}>ПРАКТИКА</div>
-        <SaveIndicator saving={saving} saved={saved} />
+        <SaveIndicator saving={saving} saved={saved} error={saveError} />
       </div>
       <StagePills stage={stage} maxStageIdx={maxStageIdx} onNavigate={running ? null : (s) => setStage(s)} />
       <button

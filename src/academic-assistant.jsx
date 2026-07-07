@@ -11,7 +11,7 @@ import { exportToPptxFile } from "./lib/exportPptx.js";
 import { callClaude, callGemini, MODEL, MODEL_FAST } from "./lib/api.js";
 import { playDoneSound } from "./lib/audio.js";
 import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildIllustrationsPdfPrompt, buildClientMaterialsAnalysisPrompt, buildCorrectionsAnalysisPrompt, buildCorrectionRewritePrompt, buildFileToSectionsPrompt, buildFileToSectionsWithSourcesPrompt, buildAnnotationPrompt, buildAnnotationRegenPrompt, buildAntiPlagiarismSYS } from "./lib/prompts.js";
-import { FIELD_LABELS, isPsychoPed, isEcon, hasEmpiricalResearch, getEmpiricalSections, getEconSections, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, getLangLabels } from "./lib/planUtils.js";
+import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, getEmpiricalSections, getEconSections, getTechnicalSections, CODE_FILE_EXTENSIONS, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, getLangLabels } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { getAcademicDefaults, classifyAppendixItem, normalizeWorkType } from "./lib/academicDefaults.js";
 import { searchByPhrase, filterSourcesWithGemini, getEconInstitutionalSources } from "./lib/sourcesSearch.js";
@@ -188,6 +188,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [figPanelOpen, setFigPanelOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState("");
   const [dbLoading, setDbLoading] = useState(false);
   const [remapLoading, setRemapLoading] = useState(false);
   const [citStyleOverride, setCitStyleOverride] = useState(null);       // "ДСТУ 8302:2015" | "APA" | "MLA" | null
@@ -499,9 +500,16 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
       await setDoc(ref, { ...data, ...(!createdConfirmedRef.current ? { createdAt: new Date().toISOString() } : {}) }, { merge: true });
       createdConfirmedRef.current = true;
       setSaved(true);
+      setSaveError("");
       clearTimeout(savedTimerRef.current);
       savedTimerRef.current = setTimeout(() => setSaved(false), 3000);
-    } catch (e) { console.error("Save error:", e); }
+    } catch (e) {
+      console.error("Save error:", e);
+      const isSizeError = /maximum size|exceeds|too large|1048576|longer than/i.test(e.message || "");
+      setSaveError(isSizeError
+        ? "запис завеликий — видаліть частину матеріалів клієнта"
+        : "помилка збереження");
+    }
     setSaving(false);
   };
 
@@ -567,6 +575,10 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
       else newInfo.workCategory = "Гуманітарне";
     }
     setInfo(newInfo);
+    // Переходимо на "Перевірку" одразу — далі йде методичка/коментар/ілюстрації, і це
+    // може тривати довго, тож не тримаємо користувача на екрані "Дані", а даємо
+    // аналізу дописатись у фоні (running лишається true, кнопки плану заблоковані).
+    setStage("parsed");
 
     // КРОК 2: Якщо є методичка — пауза між запитами щоб не перевищити rate limit
     if (fileB64) {
@@ -733,7 +745,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
       setClientMaterialsSummary(null);
     }
 
-    setRunning(false); runningRef.current = false; setLoadMsg(""); setStage("parsed");
+    setRunning(false); runningRef.current = false; setLoadMsg("");
   };
 
   // ── Підбір ілюстрацій для розділу ──
@@ -1624,6 +1636,35 @@ ${methodInfo?.chapterConclusionRequirements ? `ВИМОГИ МЕТОДИЧКИ: 
         econBlock = `${profileBlock}${formulasBlock}${tablesBlock}${genericEcon}`;
       }
 
+      // Технічний блок (інженерія/будівництво/IT/кібербезпека)
+      const technicalSecIds = getTechnicalSections(sections, d);
+      const isTechnicalSec = technicalSecIds.includes(sec.id);
+      let technicalBlock = "";
+      if (isTechnicalSec) {
+        const secFormulasT = (methodInfo?.requiredFormulas || []).filter(f => !f.section || f.section === sec.type);
+        const secTablesT = (methodInfo?.requiredTables || []).filter(t => !t.section || t.section === sec.type);
+        const formulasBlockT = secFormulasT.length
+          ? `\nОБОВ'ЯЗКОВІ ФОРМУЛИ З МЕТОДИЧКИ (підстав реалістичні числові значення та підрахуй результат):\n${secFormulasT.map(f =>
+            `- ${f.name}: ${f.formula}\n  Змінні: ${f.variables}${f.interpretation ? `\n  Інтерпретація: ${f.interpretation}` : ""}`
+          ).join("\n")}`
+          : "";
+        const tablesBlockT = secTablesT.length
+          ? `\nОБОВ'ЯЗКОВІ ТАБЛИЦІ З МЕТОДИЧКИ (відтвори структуру, заповни реалістичними даними під тему "${d.topic}"):\n${secTablesT.map(t =>
+            `- ${t.name}\n  Структура: ${t.structure}\n  Що заповнювати: ${t.instructions}`
+          ).join("\n")}`
+          : "";
+        const genericTechnical = !secFormulasT.length && !secTablesT.length
+          ? `\nОБОВ'ЯЗКОВО для цього підрозділу (технічна/інженерна робота):
+- Наведи конкретний інженерний/технічний розрахунок з формулою і підстановкою реалістичних числових значень
+- Результати розрахунків зведи в таблицю markdown (|---|---| формат)`
+          : "";
+        const hasClientMaterials = !!(clientMaterialsSummary?.rawText || clientMaterialsText?.trim());
+        const codeSnippetBlock = hasClientMaterials
+          ? `\nЯКЩО серед МАТЕРІАЛІВ КЛІЄНТА є реальний вихідний код — наведи в цьому підрозділі ОДИН короткий фрагмент (5-15 рядків) цього коду як приклад/ілюстрацію, оформлений у потрійних зворотних лапках (\`\`\`), точно як у наданому коді (не вигадуй новий код, не спотворюй). Якщо коду серед матеріалів немає — пропусти цю вимогу.`
+          : "";
+        technicalBlock = `${formulasBlockT}${tablesBlockT}${genericTechnical}${codeSnippetBlock}`;
+      }
+
       const appendixBlock = appendicesText
         ? `\nДОДАТОК А (вже згенерований — спирайся на нього точно):\n${appendicesText}\n`
         : "";
@@ -1751,7 +1792,7 @@ ${appendixBlock}${empHint ? `ВИМОГА: ${empHint}\n` : ""}Рекоменда
 
       instruction = `Напиши підрозділ "${sec.label}" для ${d.type} на тему "${d.topic}". Галузь: ${d.subject}.
 Тип підрозділу: ${typeHints[sec.type] || "основний"}.
-${methodReq ? `ВИМОГИ МЕТОДИЧКИ ДО ЦЬОГО РОЗДІЛУ: ${methodReq}` : ""}${empiricalBlock}${practicalBlock}${econBlock}${secMethodsHint}${sourcesBlock}
+${methodReq ? `ВИМОГИ МЕТОДИЧКИ ДО ЦЬОГО РОЗДІЛУ: ${methodReq}` : ""}${empiricalBlock}${practicalBlock}${econBlock}${technicalBlock}${secMethodsHint}${sourcesBlock}
 ПЛАН РОБОТИ (для розуміння структури та уникнення повторів):
 ${planSummary}
 
@@ -1767,10 +1808,11 @@ ${planSummary}
     if (clientWritingReqs) instruction += `\n\nВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО виконати при написанні):\n${clientWritingReqs}`;
     const secIllustrations = getIllustrationsForSection(sec);
     if (secIllustrations.length) {
+      const hasIndex = secIllustrations.every(ill => ill.index != null);
       const illLines = secIllustrations.map(ill =>
-        `Рис. ${ill.figureNum}${ill.caption ? ` – ${ill.caption}` : ""}: ${ill.description}`
+        `Рис. ${ill.figureNum}${ill.caption ? ` – ${ill.caption}` : ""}: ${ill.description}${hasIndex ? ` — маркер вставки: [КЛІЄНТ-ІЛЮСТРАЦІЯ:${ill.index}]` : ""}`
       ).join("\n");
-      instruction += `\n\nІЛЮСТРАЦІЇ КЛІЄНТА ДО ЦЬОГО ПІДРОЗДІЛУ (вже надані, треба вставити в текст):\n${illLines}\nОБОВ'ЯЗКОВО: додай посилання на кожен рисунок у тексті (напр. "як показано на Рис. X.Y..."). Використовуй нумерацію X.Y відповідно до номера підрозділу.`;
+      instruction += `\n\nІЛЮСТРАЦІЇ КЛІЄНТА ДО ЦЬОГО ПІДРОЗДІЛУ (вже надані, треба вставити в текст):\n${illLines}\nОБОВ'ЯЗКОВО для кожної ілюстрації: 1) додай посилання на неї в тексті (напр. "як показано на Рис. X.Y..."), використовуючи нумерацію X.Y відповідно до номера підрозділу;${hasIndex ? " 2) безпосередньо ПЕРЕД стандартним підписом рисунка (Рис. X.Y – Назва) додай окремим рядком точно вказаний вище маркер вставки у форматі [КЛІЄНТ-ІЛЮСТРАЦІЯ:N] — без жодних змін, більше нічого на цьому рядку." : ""}`;
     }
     if (clientMaterialsSummary?.rawText) {
       instruction += `\n\nМАТЕРІАЛИ КЛІЄНТА (використовуй ці дані — не вигадуй, не замінюй):\n${clientMaterialsSummary.rawText.slice(0, 80000)}`;
@@ -1971,6 +2013,32 @@ ${methodInfo?.conclusionsRequirements ? `ВИМОГИ МЕТОДИЧКИ: ${meth
         econBlockRegen = `${profileBlockRegen}${formulasBlock}${tablesBlock}${genericEcon}`;
       }
 
+      const technicalSecIdsRegen = getTechnicalSections(sections, d);
+      const isTechnicalSecRegen = technicalSecIdsRegen.includes(sec.id);
+      let technicalBlockRegen = "";
+      if (isTechnicalSecRegen) {
+        const secFormulasT = (methodInfo?.requiredFormulas || []).filter(f => !f.section || f.section === sec.type);
+        const secTablesT = (methodInfo?.requiredTables || []).filter(t => !t.section || t.section === sec.type);
+        const formulasBlockT = secFormulasT.length
+          ? `\nОБОВ'ЯЗКОВІ ФОРМУЛИ З МЕТОДИЧКИ (підстав реалістичні числові значення та підрахуй результат):\n${secFormulasT.map(f =>
+            `- ${f.name}: ${f.formula}\n  Змінні: ${f.variables}${f.interpretation ? `\n  Інтерпретація: ${f.interpretation}` : ""}`
+          ).join("\n")}`
+          : "";
+        const tablesBlockT = secTablesT.length
+          ? `\nОБОВ'ЯЗКОВІ ТАБЛИЦІ З МЕТОДИЧКИ (відтвори структуру, заповни реалістичними даними під тему "${d.topic}"):\n${secTablesT.map(t =>
+            `- ${t.name}\n  Структура: ${t.structure}\n  Що заповнювати: ${t.instructions}`
+          ).join("\n")}`
+          : "";
+        const genericTechnical = !secFormulasT.length && !secTablesT.length
+          ? `\nОБОВ'ЯЗКОВО для цього підрозділу (технічна/інженерна робота): конкретний інженерний/технічний розрахунок з формулою і підстановкою реалістичних числових значень, результати — у таблиці markdown (|---|---| формат)`
+          : "";
+        const hasClientMaterialsRegen = !!(clientMaterialsSummary?.rawText || clientMaterialsText?.trim());
+        const codeSnippetBlockRegen = hasClientMaterialsRegen
+          ? `\nЯКЩО серед МАТЕРІАЛІВ КЛІЄНТА є реальний вихідний код — наведи ОДИН короткий фрагмент (5-15 рядків) цього коду як приклад, у потрійних зворотних лапках (\`\`\`), точно як у наданому коді. Якщо коду немає — пропусти цю вимогу.`
+          : "";
+        technicalBlockRegen = `${formulasBlockT}${tablesBlockT}${genericTechnical}${codeSnippetBlockRegen}`;
+      }
+
       const rdRegen = commentAnalysis?.researchDesign ?? (commentAnalysis?.empiricalHints ? { instrumentType: "questionnaire", groups: [], comparisonRequired: false, biographicalFields: [], statisticalMinN: null } : null);
       const methodInfoHasEmpiricalRegen = !!(methodInfo && /анкет|опитуванн|емпіричн|респондент|вибірк|тест|експеримент|методик/i.test(
         [methodInfo.analysisRequirements, methodInfo.otherRequirements, methodInfo.theoryRequirements].filter(Boolean).join(" ")
@@ -2047,11 +2115,12 @@ ${empHintRegen ? `ВИМОГА: ${empHintRegen}\n` : ""}Рекомендації
         return "";
       })();
       const secIllRegen = getIllustrationsForSection(sec);
+      const hasIndexRegen = secIllRegen.every(ill => ill.index != null);
       const illBlockRegen = secIllRegen.length
-        ? `\n\nІЛЮСТРАЦІЇ КЛІЄНТА ДО ЦЬОГО ПІДРОЗДІЛУ:\n${secIllRegen.map(ill => `Рис. ${ill.figureNum}${ill.caption ? ` – ${ill.caption}` : ""}: ${ill.description}`).join("\n")}\nОБОВ'ЯЗКОВО: додай посилання на кожен рисунок у тексті. Використовуй нумерацію X.Y відповідно до номера підрозділу.`
+        ? `\n\nІЛЮСТРАЦІЇ КЛІЄНТА ДО ЦЬОГО ПІДРОЗДІЛУ:\n${secIllRegen.map(ill => `Рис. ${ill.figureNum}${ill.caption ? ` – ${ill.caption}` : ""}: ${ill.description}${hasIndexRegen ? ` — маркер вставки: [КЛІЄНТ-ІЛЮСТРАЦІЯ:${ill.index}]` : ""}`).join("\n")}\nОБОВ'ЯЗКОВО для кожної ілюстрації: 1) додай посилання на неї в тексті;${hasIndexRegen ? " 2) безпосередньо ПЕРЕД стандартним підписом рисунка (Рис. X.Y – Назва) додай окремим рядком точно вказаний вище маркер вставки у форматі [КЛІЄНТ-ІЛЮСТРАЦІЯ:N] — без жодних змін, більше нічого на цьому рядку." : ""} Використовуй нумерацію X.Y відповідно до номера підрозділу.`
         : "";
       instruction = `Перепиши підрозділ "${sec.label}" для ${d.type} на тему "${d.topic}". Галузь: ${d.subject}.
-${empiricalBlockRegen}${econBlockRegen}
+${empiricalBlockRegen}${econBlockRegen}${technicalBlockRegen}
 ${clientReqsRegen ? `ВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО виконати):\n${clientReqsRegen}\n` : ""}Обсяг: приблизно ${Math.round((sec.pages || 1) * 225)} слів, ±10% (~${sec.pages} стор.).
 Не обривай текст. Завершуй підсумковим абзацом. Без посилань. Без жирного.
 ЗАБОРОНЕНО вставляти будь-які внутрішні підназви, заголовки абзаців або окремі рядки-мітки. Кожен рядок тексту — повне речення, рядок таблиці або підпис до таблиці/рисунка.${customInstructions}${illBlockRegen}${clientMaterialsBlockRegen}`;
@@ -2315,6 +2384,28 @@ ${realMaterials.slice(0, 80000)}
     setEconProfileLoading(false);
   };
 
+  // Повний вихідний код клієнта у Додаток — програмно (без AI), щоб не обрізати й не перефразувати реальний код.
+  // existingText — вже згенерований текст Додатків (для визначення вільної літери додатку).
+  const buildCodeAppendixBlock = (existingText, lang) => {
+    if (!isTechnical(info)) return "";
+    const codeMaterials = clientMaterials.filter(m =>
+      CODE_FILE_EXTENSIONS.some(ext => m.name.toLowerCase().endsWith(ext))
+    );
+    if (!codeMaterials.length) return "";
+
+    const abc = getLangLabels(lang).appendixLetters;
+    const usedLetters = new Set();
+    const re = /ДОДАТОК\s+([А-ЯA-Z])/gi;
+    let m;
+    while ((m = re.exec(existingText || "")) !== null) usedLetters.add(m[1].toUpperCase());
+    const letter = abc.find(l => !usedLetters.has(l)) || abc[abc.length - 1];
+
+    const listings = codeMaterials.map((mat, idx) =>
+      `Лістинг ${letter}.${idx + 1} — ${mat.name}\n\`\`\`\n${mat.text}\n\`\`\``
+    ).join("\n\n");
+    return `\nДОДАТОК ${letter}\nВихідний код програми\n\n${listings}`;
+  };
+
   const doGenAppendices = async () => {
     setAppendicesLoading(true);
     try {
@@ -2525,8 +2616,9 @@ ${customBlock || `Включи один або два додатки що лог
         .replace(/[„""]([^"„""]*)["""]/g, "«$1»")
         .replace(/"([^"]*)"/g, "«$1»")
         .replace(/\n{2,}/g, '\n');
-      setAppendicesText(result);
-      await saveToFirestore({ appendicesText: result });
+      const finalResult = result + buildCodeAppendixBlock(result, lang);
+      setAppendicesText(finalResult);
+      await saveToFirestore({ appendicesText: finalResult });
     } catch (e) { alert("Помилка генерації додатків: " + e.message); }
     setAppendicesLoading(false);
   };
@@ -4219,7 +4311,7 @@ ${refLines2.join("\n")}`;
             {info?.orderNumber && <div style={{ fontSize: 11, color: "#888", whiteSpace: "nowrap", flexShrink: 0 }}>#{info.orderNumber}</div>}
             {info?.topic && <div style={{ fontSize: 12, color: "#666", flex: 1, minWidth: 0, lineHeight: 1.4 }}>{info.topic}</div>}
             <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0, marginLeft: "auto" }}>
-              <SaveIndicator saving={saving} saved={saved} />
+              <SaveIndicator saving={saving} saved={saved} error={saveError} />
               <StagePills stage={stage} maxStageIdx={maxStageIdx} onNavigate={running ? null : handleNavigateMain} stages={activeStages} stageKeys={activeStageKeys} />
               <button
                 onClick={() => setMaxStageIdx(activeStageKeys.length - 1)}
@@ -4387,6 +4479,7 @@ ${refLines2.join("\n")}`;
               fileB64={fileB64} apiError={apiError} sections={sections}
               commentAnalysis={commentAnalysis} setCommentAnalysis={setCommentAnalysis}
               doGenPlan={doGenPlan} setStage={setStage}
+              running={running} loadMsg={loadMsg}
             />
           )}
           {stage === "plan" && (
@@ -4492,6 +4585,7 @@ ${refLines2.join("\n")}`;
               figureRefs={figureRefs} figureKeywords={figureKeywords}
               figKwLoading={figKwLoading} figPanelOpen={figPanelOpen} setFigPanelOpen={setFigPanelOpen}
               sections={sections} info={info} methodInfo={methodInfo} commentAnalysis={commentAnalysis}
+              illustrations={illustrations}
               doRegenSection={doRegenSection} doRegenAll={doRegenAll}
               regenAllAbortRef={regenAllAbortRef}
               plagId={plagId} setPlagId={setPlagId} plagLoading={plagLoading}
@@ -4528,7 +4622,7 @@ ${refLines2.join("\n")}`;
               onExportDocx={async (setLoading) => {
                 setLoading(true);
                 try {
-                  await exportToDocx({ sections, content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo, commentAnalysis, orderId: currentIdRef.current });
+                  await exportToDocx({ sections, content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo, commentAnalysis, orderId: currentIdRef.current, illustrations });
                 } catch (e) { alert("Помилка: " + e.message); }
                 setLoading(false);
               }}

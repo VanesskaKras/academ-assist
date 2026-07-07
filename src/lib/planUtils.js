@@ -1,3 +1,11 @@
+// Розширення файлів коду — читаються як звичайний текст у ClientMaterialsZone
+// і розпізнаються як "вихідний код" для програмної збірки Додатку з лістингами
+export const CODE_FILE_EXTENSIONS = [
+  ".py", ".js", ".jsx", ".ts", ".tsx", ".java", ".c", ".cpp", ".cc", ".h", ".hpp",
+  ".cs", ".php", ".rb", ".go", ".rs", ".sql", ".json", ".yaml", ".yml",
+  ".html", ".htm", ".css", ".scss", ".sh", ".kt", ".swift", ".m", ".r", ".pl", ".lua",
+];
+
 const LATIN_APPENDIX_LETTERS = ["A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z"];
 // ДСТУ 3008: нумерація додатків українською абеткою без літер Ґ, Є, З, І, Ї, Й, О, Ч, Ь (схожі на цифри/інші літери)
 const UKRAINIAN_APPENDIX_LETTERS = ["А","Б","В","Г","Д","Е","Ж","И","К","Л","М","Н","П","Р","С","Т","У","Ф","Х","Ц","Ш","Щ","Ю","Я"];
@@ -39,6 +47,14 @@ export const isEcon = (info) => {
   if (info?.workCategory && info.workCategory !== "Економічне") return false;
   const dir = ((info?.direction || "") + " " + (info?.subject || "")).toLowerCase();
   return /економ|фінанс|менедж|облік|маркет|бізнес|бухгалт|аудит|логіст|підприємн|публічн.*управл|держ.*управл/.test(dir);
+};
+
+// Визначає чи є робота технічної спеціальності (інженерія/будівництво/IT/кібербезпека)
+export const isTechnical = (info) => {
+  if (info?.workCategory === "Технічне") return true;
+  if (info?.workCategory && info.workCategory !== "Технічне") return false;
+  const dir = ((info?.direction || "") + " " + (info?.subject || "")).toLowerCase();
+  return /техн|інформ|програм|комп|it\b|кібер|електр|машин|буд|архіт/.test(dir);
 };
 
 // Визначає чи є в роботі емпіричне дослідження (з коментаря або методички)
@@ -85,6 +101,14 @@ export const getEmpiricalSections = (sections, info, commentAnalysis, methodInfo
 // Повертає id підрозділів економічної роботи що мають містити таблиці/розрахунки
 export const getEconSections = (sections, info) => {
   if (!isEcon(info)) return [];
+  return sections
+    .filter(s => ["analysis", "recommendations"].includes(s.type))
+    .map(s => s.id);
+};
+
+// Повертає id підрозділів технічної роботи що мають містити розрахунки/формули/код
+export const getTechnicalSections = (sections, info) => {
+  if (!isTechnical(info)) return [];
   return sections
     .filter(s => ["analysis", "recommendations"].includes(s.type))
     .map(s => s.id);

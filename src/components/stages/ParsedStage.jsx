@@ -1,5 +1,6 @@
 import { FIELD_LABELS, parsePagesAvg } from "../../lib/planUtils.js";
 import { Heading, NavBtn, PrimaryBtn } from "../Buttons.jsx";
+import { SpinDot } from "../SpinDot.jsx";
 import { getAcademicDefaults } from "../../lib/academicDefaults.js";
 
 const SAMPLE_SIZE_KW = /осіб|респондент|пацієнт|клієнт|учнів|спортсмен|учасник/i;
@@ -8,6 +9,7 @@ export function ParsedStage({
   info, setInfo, methodInfo, setMethodInfo, fileB64, apiError, sections,
   commentAnalysis, setCommentAnalysis,
   doGenPlan, setStage,
+  running, loadMsg,
 }) {
   const courseMissing = !String(info.course || "").trim();
 
@@ -20,6 +22,13 @@ export function ParsedStage({
     <div className="fade">
       <Heading>02 / Перевірте дані</Heading>
       <p style={{ fontSize: 13, color: "#888", marginBottom: 20 }}>Клікніть на значення щоб змінити</p>
+
+      {running && (
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, color: "#7a5000", background: "#fff8e8", border: "1px solid #e8c84a", borderRadius: 20, padding: "6px 14px", marginBottom: 16 }}>
+          <SpinDot />
+          Аналіз триває у фоні: {loadMsg || "обробляю…"} — можна редагувати дані нижче, план стане доступний після завершення.
+        </div>
+      )}
 
       {/* Напрям роботи */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, padding: "10px 16px", background: "#f0ece2", borderRadius: 8, border: "1.5px solid #d4cfc4" }}>
@@ -131,8 +140,8 @@ export function ParsedStage({
 
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
         <NavBtn onClick={() => setStage("input")}>← Назад</NavBtn>
-        {sections.length > 0 && <NavBtn onClick={() => setStage("plan")} disabled={courseMissing}>Вперед (збережений план) →</NavBtn>}
-        <PrimaryBtn onClick={doGenPlan} disabled={courseMissing} label={sections.length > 0 ? "Перегенерувати план →" : "Генерувати план →"} />
+        {sections.length > 0 && <NavBtn onClick={() => setStage("plan")} disabled={courseMissing || running}>Вперед (збережений план) →</NavBtn>}
+        <PrimaryBtn onClick={doGenPlan} disabled={courseMissing} loading={running} msg={loadMsg || "Аналізую…"} label={sections.length > 0 ? "Перегенерувати план →" : "Генерувати план →"} />
       </div>
     </div>
   );

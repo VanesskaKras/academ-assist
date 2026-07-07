@@ -12,7 +12,33 @@ export function IllustrationsZone({ illustrations, onAdd, onUpdate, onRemove }) 
     Array.from(files).slice(0, remaining).forEach(f => {
       if (!f.type.startsWith("image/")) return;
       const r = new FileReader();
-      r.onload = ev => onAdd({ name: f.name, b64: ev.target.result.split(",")[1], type: f.type, caption: "", targetSection: "" });
+      r.onload = ev => {
+        const dataUrl = ev.target.result;
+        const img = new Image();
+        img.onload = () => {
+          // Стискаємо фото перед збереженням у Firestore (документ обмежений 1 МБ) — оригінал
+          // з телефону важить кілька МБ, а для аналізу й друку така роздільність не потрібна.
+          const MAX_DIM = 1000;
+          let w = img.naturalWidth, h = img.naturalHeight;
+          if (w > MAX_DIM || h > MAX_DIM) {
+            if (w >= h) { h = Math.round(h * MAX_DIM / w); w = MAX_DIM; }
+            else { w = Math.round(w * MAX_DIM / h); h = MAX_DIM; }
+          }
+          try {
+            const canvas = document.createElement("canvas");
+            canvas.width = w; canvas.height = h;
+            canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+            const jpegB64 = canvas.toDataURL("image/jpeg", 0.72).split(",")[1];
+            onAdd({ name: f.name, b64: jpegB64, type: "image/jpeg", caption: "", targetSection: "" });
+          } catch {
+            onAdd({ name: f.name, b64: dataUrl.split(",")[1], type: f.type, caption: "", targetSection: "" });
+          }
+        };
+        img.onerror = () => {
+          onAdd({ name: f.name, b64: dataUrl.split(",")[1], type: f.type, caption: "", targetSection: "" });
+        };
+        img.src = dataUrl;
+      };
       r.readAsDataURL(f);
     });
   }

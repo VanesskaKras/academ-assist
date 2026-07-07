@@ -2,8 +2,152 @@ import { getLangLabels } from "./planUtils.js";
 import {
   Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel,
   TableOfContents, Table, TableRow, TableCell, WidthType, BorderStyle,
-  ExternalHyperlink, InternalHyperlink, Bookmark, FootnoteReferenceRun,
+  ExternalHyperlink, InternalHyperlink, Bookmark, FootnoteReferenceRun, ImageRun,
 } from "docx";
+
+// ─────────────────────────────────────────────
+// Лістинги коду: розпізнавання ```-блоків і моношрифтовий рендер
+// ─────────────────────────────────────────────
+function isFenceLine(line) { return /^\s*```/.test(line || ""); }
+
+function codeListingParagraphs(lines, methodInfo) {
+  const fmt = methodInfo?.formatting || {};
+  const font = fmt.codeFont || "Courier New";
+  const fontSize = Math.round((fmt.codeFontSize || 10) * 2); // docx: half-points
+  const spacingLine = Math.round((fmt.codeLineSpacing || 1.0) * 240);
+  return lines.map(line => new Paragraph({
+    alignment: AlignmentType.LEFT,
+    indent: { firstLine: 0 },
+    spacing: { line: spacingLine, lineRule: "auto", before: 0, after: 0 },
+    children: [new TextRun({ text: line.replace(/\t/g, "    "), font, size: fontSize, color: "000000" })],
+  }));
+}
+
+// Читає рядки з fence-блоком, починаючи з indexу, що вказує на відкриваючу ```.
+// Повертає {codeLines, nextIndex} — nextIndex вказує на рядок ПІСЛЯ закриваючої ```.
+function readFencedBlock(lines, startIndex) {
+  let i = startIndex + 1;
+  const codeLines = [];
+  while (i < lines.length && !isFenceLine(lines[i])) { codeLines.push(lines[i]); i++; }
+  if (i < lines.length) i++; // пропускаємо закриваючу ```
+  return { codeLines, nextIndex: i };
+}
+
+const LISTING_CAPTION_RE = /^Лістинг\s+[А-ЯA-Z0-9]/i;
+
+// ─────────────────────────────────────────────
+// UML-діаграми: ```plantuml``` → PNG через api/render-diagram (Kroki)
+// ─────────────────────────────────────────────
+const PLANTUML_FENCE_RE = /^\s*```\s*plantuml\s*$/i;
+
+function pngDimensions(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return { width: view.getUint32(16), height: view.getUint32(20) };
+}
+
+function b64ToBytes(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+const CLIENT_IMAGE_MARKER_RE = /^\[КЛІЄНТ-ІЛЮСТРАЦІЯ:(\d+)\]$/;
+
+function scaleToFit(width, height, maxW, maxH) {
+  let w = width, h = height;
+  if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
+  if (h > maxH) { w = Math.round(w * maxH / h); h = maxH; }
+  return { width: w, height: h };
+}
+
+// docx завжди пакує вставлені зображення як .png (незалежно від реального формату), тож
+// перекодовуємо клієнтське фото (jpeg/webp/gif) через canvas у PNG прямо перед вставкою в
+// документ — і лише тоді, а не при завантаженні, щоб не зберігати подвійну копію у Firestore.
+function clientImageToPng(ill, maxDim = 1200) {
+  return new Promise(resolve => {
+    if (!ill?.b64) { resolve(null); return; }
+    const img = new Image();
+    img.onload = () => {
+      let w = img.naturalWidth, h = img.naturalHeight;
+      if (w > maxDim || h > maxDim) {
+        if (w >= h) { h = Math.round(h * maxDim / w); w = maxDim; }
+        else { w = Math.round(w * maxDim / h); h = maxDim; }
+      }
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = w; canvas.height = h;
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+        const pngB64 = canvas.toDataURL("image/png").split(",")[1];
+        resolve({ data: b64ToBytes(pngB64), width: w, height: h });
+      } catch {
+        resolve(null);
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = `data:${ill.type || "image/png"};base64,${ill.b64}`;
+  });
+}
+
+function resolveClientIllustrations(illustrations) {
+  return Promise.all((illustrations || []).map(ill => clientImageToPng(ill)));
+}
+
+async function renderPlantUmlToPng(source) {
+  try {
+    const res = await fetch("/api/render-diagram", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source }),
+    });
+    const data = await res.json();
+    if (!data?.image) return null;
+    const bin = atob(data.image);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const { width, height } = pngDimensions(bytes);
+    const MAX_W = 450, MAX_H = 550;
+    let w = width, h = height;
+    if (w > MAX_W) { h = Math.round(h * MAX_W / w); w = MAX_W; }
+    if (h > MAX_H) { w = Math.round(w * MAX_H / h); h = MAX_H; }
+    return { data: bytes, width: w, height: h };
+  } catch {
+    return null;
+  }
+}
+
+// Заміняє кожен ```plantuml``` fence-блок на маркер \x00DIAGRAM<i>\x00 і рендерить
+// відповідні PNG паралельно. Викликається один раз для всього numberedContent.
+async function resolvePlantUmlDiagrams(content) {
+  const diagramImages = [];
+  const jobs = [];
+  const updated = { ...content };
+  for (const key of Object.keys(updated)) {
+    const txt = updated[key];
+    if (!txt) continue;
+    const lines = txt.split("\n");
+    const outLines = [];
+    let changed = false;
+    let i = 0;
+    while (i < lines.length) {
+      if (PLANTUML_FENCE_RE.test(lines[i])) {
+        const { codeLines, nextIndex } = readFencedBlock(lines, i);
+        const idx = diagramImages.length;
+        diagramImages.push(null);
+        jobs.push(renderPlantUmlToPng(codeLines.join("\n")).then(img => { diagramImages[idx] = img; }));
+        outLines.push(`\x00DIAGRAM${idx}\x00`);
+        i = nextIndex;
+        changed = true;
+        continue;
+      }
+      outLines.push(lines[i]);
+      i++;
+    }
+    if (changed) updated[key] = outLines.join("\n");
+  }
+  await Promise.all(jobs);
+  return { content: updated, diagramImages };
+}
 
 // ─────────────────────────────────────────────
 // Перенумерація таблиць і рисунків
@@ -97,12 +241,15 @@ function getLangWordCode(lang) {
 // ─────────────────────────────────────────────
 // Word export (основний документ)
 // ─────────────────────────────────────────────
-export async function exportToDocx({ content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo, commentAnalysis, orderId, annotationUk, annotationEn }) {
+export async function exportToDocx({ content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo, commentAnalysis, orderId, annotationUk, annotationEn, illustrations = [] }) {
   const lc = getLangLabels(info?.language);
   const langCode = getLangWordCode(info?.language);
   const numberedContent = renumberTablesAndFigures(content, displayOrder, info?.language);
   Object.keys(numberedContent).forEach(k => { if (numberedContent[k]) numberedContent[k] = numberedContent[k].replace(/'/g, '\u2019'); });
   const normAppendices = appendicesText ? appendicesText.replace(/'/g, '\u2019') : appendicesText;
+  const { content: diagramResolvedContent, diagramImages } = await resolvePlantUmlDiagrams(numberedContent);
+  Object.assign(numberedContent, diagramResolvedContent);
+  const clientImages = await resolveClientIllustrations(illustrations);
 
   // \u2500\u2500 \u0412\u0438\u043d\u043e\u0441\u043a\u0438 (\u0414\u0421\u0422\u0423-\u0440\u0435\u0436\u0438\u043c): %%FN<n>%% \u0443 \u0442\u0435\u043a\u0441\u0442\u0456 \u2192 \u0440\u0435\u0430\u043b\u044c\u043d\u0430 Word-\u0432\u0438\u043d\u043e\u0441\u043a\u0430 \u2500\u2500
   // n \u2192 \u043f\u043e\u0432\u043d\u0438\u0439 \u0442\u0435\u043a\u0441\u0442 \u0434\u0436\u0435\u0440\u0435\u043b\u0430, \u0440\u043e\u0437\u043f\u0430\u0440\u0441\u0435\u043d\u0438\u0439 \u0437\u0456 \u0441\u043f\u0438\u0441\u043a\u0443 \u0434\u0436\u0435\u0440\u0435\u043b ("\u0421\u041f\u0418\u0421\u041e\u041a \u0412\u0418\u041a\u041e\u0420\u0418\u0421\u0422\u0410\u041d\u0418\u0425 \u0414\u0416\u0415\u0420\u0415\u041b").
@@ -122,6 +269,10 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
   function _escRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
   const twRe = new RegExp("^" + _escRe(lc.tableWord) + "\\s+\\d");
   const fwRe = new RegExp("^" + _escRe(lc.figWord) + "\\s+\\d");
+  const figNumRe = new RegExp("^" + _escRe(lc.figWord) + "\\s+([\\d.]+)");
+  // Номери рисунків, для яких у поточному підрозділі реально вставлено зображення (не текстова
+  // заглушка) — щоб посилання на них у тексті малювалось чорним, а не помаранчевим "TODO".
+  let resolvedFigNums = new Set();
   const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
   const marg = methodInfo?.formatting?.margins || commentAnalysis?.formattingHints?.margins || {};
   const toMm = v => (v != null && Number(v) > 0 ? Number(v) : null);
@@ -146,6 +297,17 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     return false;
   }
   const FIG_INLINE_RE = /(?:рис(?:унок)?\.?\s*\d+(?:\.\d+)*|fig(?:ure)?\.?\s*\d+(?:\.\d+)*)/i;
+  const FIG_INLINE_NUM_RE = /(?:рис(?:унок)?\.?|fig(?:ure)?\.?)\s*(\d+(?:\.\d+)*)/gi;
+  function hasUnresolvedFigRef(text) {
+    if (!FIG_INLINE_RE.test(text || "")) return false;
+    FIG_INLINE_NUM_RE.lastIndex = 0;
+    let m, any = false, allResolved = true;
+    while ((m = FIG_INLINE_NUM_RE.exec(text)) !== null) {
+      any = true;
+      if (!resolvedFigNums.has(m[1])) allResolved = false;
+    }
+    return !(any && allResolved);
+  }
   function parseTextWithCitations(text, color) {
     const CITE_RE = /\[(\d+)\]|%%FN(\d+)%%/g;
     const result = [];
@@ -174,8 +336,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     return result.length ? result : [new TextRun({ text, font: FONT, size: SIZE, color })];
   }
   function bodyPara(text) {
-    const hasFig = FIG_INLINE_RE.test(text || "");
-    const color = hasFig ? "B85C00" : "000000";
+    const color = hasUnresolvedFigRef(text) ? "B85C00" : "000000";
     return new Paragraph({
       indent: { firstLine: INDENT },
       spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
@@ -291,6 +452,19 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     if (!text) return [];
     const result = [];
     const lines = text.split("\n");
+    resolvedFigNums = new Set();
+    for (let k = 0; k < lines.length; k++) {
+      const t = lines[k].trim();
+      const dm = t.startsWith("\x00DIAGRAM") && t.endsWith("\x00") ? t.slice(8, -1) : null;
+      const cm = t.match(CLIENT_IMAGE_MARKER_RE);
+      const hasImg = dm !== null ? !!diagramImages[Number(dm)] : (cm ? !!clientImages[Number(cm[1])] : false);
+      if (!hasImg) continue;
+      let j = k + 1;
+      while (j < lines.length && !lines[j].trim()) j++;
+      const capLine = j < lines.length ? lines[j].trim() : "";
+      const numMatch = capLine.match(figNumRe);
+      if (numMatch) resolvedFigNums.add(numMatch[1]);
+    }
     let firstContentLine = true;
     let i = 0;
     let taskMode = false;
@@ -300,6 +474,49 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     const INTRO_KEYWORD_RE = /^(Актуальн|Мета[\s.–—]|Метою|Завдання|Для досягн|Для вирішен|Об.єкт|Предмет|Метод(?:и|ологічн)|Наукова|Практична|Апробац|Структур|Теоретико|Матеріал|Хронологічн)/i;
     while (i < lines.length) {
       const line = lines[i];
+      const trimmedLine = line.trim();
+      const diagMatch = trimmedLine.startsWith("\x00DIAGRAM") && trimmedLine.endsWith("\x00")
+        ? trimmedLine.slice(8, -1)
+        : null;
+      if (diagMatch !== null) {
+        const img = diagramImages[Number(diagMatch)];
+        if (img) {
+          result.push(new Paragraph({
+            alignment: AlignmentType.CENTER,
+            spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
+            children: [new ImageRun({ data: img.data, transformation: { width: img.width, height: img.height } })],
+          }));
+          lastWasDiagramTable = true;
+        } else {
+          lastWasDiagramTable = false;
+        }
+        i++;
+        continue;
+      }
+      const clientImgMatch = trimmedLine.match(CLIENT_IMAGE_MARKER_RE);
+      if (clientImgMatch) {
+        const img = clientImages[Number(clientImgMatch[1])];
+        if (img) {
+          const { width, height } = scaleToFit(img.width, img.height, 298, 306);
+          result.push(new Paragraph({
+            alignment: AlignmentType.CENTER,
+            spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
+            children: [new ImageRun({ data: img.data, transformation: { width, height } })],
+          }));
+          lastWasDiagramTable = true;
+        } else {
+          lastWasDiagramTable = false;
+        }
+        i++;
+        continue;
+      }
+      if (isFenceLine(line)) {
+        const { codeLines, nextIndex } = readFencedBlock(lines, i);
+        result.push(...codeListingParagraphs(codeLines, methodInfo));
+        result.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
+        i = nextIndex;
+        continue;
+      }
       if (/^\s*\|/.test(line)) {
         const tableLines = [];
         while (i < lines.length && /^\s*\|/.test(lines[i])) {
@@ -355,12 +572,13 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
       if (fwRe.test(line.trim())) {
         const ff = methodInfo?.formatting?.figureFormat || "";
         const fBold = /жирн|bold/i.test(ff);
-        const isDiagramCaption = lastWasDiagramTable;
+        const fItalic = /курсив|italic/i.test(ff);
+        const isResolved = lastWasDiagramTable;
         lastWasDiagramTable = false;
         result.push(new Paragraph({
           alignment: AlignmentType.CENTER,
-          spacing: { line: LINE, lineRule: "auto", before: 0, after: isDiagramCaption ? Math.round(LINE * 0.2) : Math.round(LINE * 0.5) },
-          children: [new TextRun({ text: line.trim(), font: FONT, size: SIZE, bold: methodInfo ? (isDiagramCaption || fBold) : fBold, italics: methodInfo ? isDiagramCaption : false, color: isDiagramCaption ? "1A5EAB" : "B85C00" })],
+          spacing: { line: LINE, lineRule: "auto", before: 0, after: LINE },
+          children: [new TextRun({ text: line.trim(), font: FONT, size: SIZE, bold: fBold, italics: fItalic, color: isResolved ? "000000" : "B85C00" })],
         }));
         i++;
         continue;
@@ -541,6 +759,9 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
         spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
         children: [new TextRun({ text: trimmed, font: FONT, size: SIZE, bold: isHeading, color: "000000" })],
       }));
+      if (isHeading) {
+        children.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
+      }
       isFirstLine = false;
     });
   });
@@ -636,6 +857,13 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     const tBold      = fmt.tableTitleBold   ?? /жирн|bold/i.test(tf);
     while (ai < appLines.length) {
       const line = appLines[ai];
+      if (isFenceLine(line)) {
+        const { codeLines, nextIndex } = readFencedBlock(appLines, ai);
+        children.push(...codeListingParagraphs(codeLines, methodInfo));
+        children.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
+        ai = nextIndex;
+        continue;
+      }
       if (/^\s*\|/.test(line)) {
         const tableLines = [];
         while (ai < appLines.length && /^\s*\|/.test(appLines[ai])) { tableLines.push(appLines[ai]); ai++; }
@@ -648,6 +876,14 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
       const raw = line.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1").trim();
       if (!raw) {
         children.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
+        ai++; continue;
+      }
+      if (LISTING_CAPTION_RE.test(raw)) {
+        children.push(new Paragraph({
+          alignment: AlignmentType.CENTER,
+          spacing: { line: LINE, lineRule: "auto", before: Math.round(LINE * 0.5), after: 0 },
+          children: [new TextRun({ text: raw, font: FONT, size: SIZE, bold: true, color: "000000" })],
+        }));
         ai++; continue;
       }
       if (/^ДОДАТОК\s+[А-ЯA-Z]/i.test(raw)) {
@@ -914,6 +1150,13 @@ export async function exportAppendixToDocx(text, info, methodInfo, orderId) {
   let isQuestionnaire = false;
   while (i < lines.length) {
     const line = lines[i];
+    if (isFenceLine(line)) {
+      const { codeLines, nextIndex } = readFencedBlock(lines, i);
+      children.push(...codeListingParagraphs(codeLines, methodInfo));
+      children.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
+      i = nextIndex;
+      continue;
+    }
     if (/^\s*\|/.test(line)) {
       const tableLines = [];
       while (i < lines.length && /^\s*\|/.test(lines[i])) { tableLines.push(lines[i]); i++; }
@@ -922,6 +1165,14 @@ export async function exportAppendixToDocx(text, info, methodInfo, orderId) {
         children.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
       }
       continue;
+    }
+    if (LISTING_CAPTION_RE.test(line.trim())) {
+      children.push(new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { line: LINE, lineRule: "auto", before: Math.round(LINE * 0.5), after: 0 },
+        children: [new TextRun({ text: line.trim(), font: FONT, size: SIZE, bold: true, color: "000000" })],
+      }));
+      i++; continue;
     }
     if (/^Таблиця\s+\d/.test(line.trim())) {
       const fmt = methodInfo?.formatting || {};

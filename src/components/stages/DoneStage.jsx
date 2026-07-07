@@ -15,6 +15,7 @@ export function DoneStage({
   speechLoading, setSpeechLoading, presentationLoading, presentationMsg, presentationReady,
   docxLoading, setDocxLoading, figureRefs, figureKeywords, figKwLoading,
   figPanelOpen, setFigPanelOpen, sections, info, methodInfo, commentAnalysis,
+  illustrations,
   doRegenSection, doRegenAll, regenAllAbortRef, doGenAppendices, saveToFirestore,
   copyAll, resetAll, generatePresentation, generateSpeech, doScanAndGenFigures, setStage,
   orderId,
@@ -228,7 +229,7 @@ export function DoneStage({
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 24 }}>
         <NavBtn onClick={() => setStage("sources")}>← Джерела</NavBtn>
         <button onClick={copyAll} style={{ background: "#1a1a14", color: "#e8ff47", border: "none", borderRadius: 7, padding: "11px 30px", fontFamily: "'Spectral',serif", fontSize: 13, letterSpacing: "1.5px", cursor: "pointer" }}>Скопіювати текст</button>
-        <button disabled={docxLoading} onClick={async () => { setDocxLoading(true); try { await exportToDocx({ sections, content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo, commentAnalysis, orderId, annotationUk, annotationEn }); } catch (e) { alert("Помилка: " + e.message); } setDocxLoading(false); }}
+        <button disabled={docxLoading} onClick={async () => { setDocxLoading(true); try { await exportToDocx({ sections, content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo, commentAnalysis, orderId, annotationUk, annotationEn, illustrations }); } catch (e) { alert("Помилка: " + e.message); } setDocxLoading(false); }}
           style={{ background: docxLoading ? "#aaa" : "#1a4a1a", color: docxLoading ? "#eee" : "#a8e060", border: "none", borderRadius: 7, padding: "11px 30px", fontFamily: "'Spectral',serif", fontSize: 13, letterSpacing: "1.5px", cursor: docxLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
           {docxLoading ? <><SpinDot light />Генерую Word...</> : "⬇ Завантажити .docx"}
         </button>

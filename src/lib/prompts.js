@@ -31,21 +31,25 @@ STRICTLY FORBIDDEN: table without caption. Every table MUST have a "${tableWord}
 2. The text before the table MUST contain a sentence referencing it, e.g.: "${tableRef} X.Y". Without this reference the table must not appear.
 STRICTLY FORBIDDEN: table without caption. Every table MUST have a "${tableCapExample}" line immediately before it.`;
 
+  const plantUmlRule = `When a structural/UML diagram is needed (class diagram, sequence diagram, use case diagram, or a simple process/activity flowchart — anything describing structure, relationships, or flow rather than numeric data): output a fenced code block labeled "plantuml" containing valid PlantUML syntax (starting with @startuml, ending with @enduml), then place the figure caption immediately below the closing fence (no hint line — this diagram is rendered automatically).`;
+
   const figureRules = mFigureFormat
     ? `FIGURES — mandatory rules (per methodology):
 1. Number figures within each section: ${figWord} X.Y (X = section number, Y = figure number within section).
-2. When a diagram, chart, or graph is needed: create a markdown data table with the values to be plotted (do NOT add a "${tableWord}" caption above it), then place the figure caption BELOW the table (format per methodology: ${mFigureFormat}), then add exactly this line right after the caption: ⚠ ДІАГРАМА: виділіть таблицю вище → Вставка → Діаграма у Word.
-3. For non-data figures (conceptual diagrams, models, schemes with no numeric data) — insert a standalone placeholder: ${figWord} X.Y – Figure name (caption below, no data table, no hint line).
-4. The text before the figure MUST contain a sentence referencing it, e.g.: "${figRef} X.Y".
+2. When a diagram, chart, or graph with underlying numeric data is needed: create a markdown data table with the values to be plotted (do NOT add a "${tableWord}" caption above it), then place the figure caption BELOW the table (format per methodology: ${mFigureFormat}), then add exactly this line right after the caption: ⚠ ДІАГРАМА: виділіть таблицю вище → Вставка → Діаграма у Word.
+3. ${plantUmlRule}
+4. For conceptual figures that fit neither case above — insert a standalone placeholder: ${figWord} X.Y – Figure name (caption below, no data table, no hint line, no code block).
+5. The text before the figure MUST contain a sentence referencing it, e.g.: "${figRef} X.Y".
 STRICTLY FORBIDDEN: show the same data as both a "${tableWord}" and a diagram. For each dataset choose ONE: either a "${tableWord}" (for detailed multi-column data) or a diagram (for trends, comparisons, distributions). Tables and diagrams in the same section MUST show different data.`
     : `FIGURES — mandatory rules:
-1. When a diagram, chart, or graph is needed in a section: do NOT insert a standalone placeholder. Instead:
+1. When a diagram, chart, or graph with underlying numeric data is needed in a section: do NOT insert a standalone placeholder. Instead:
    a. Write a sentence in the text referencing the figure, e.g.: "${figRef} X.Y demonstrates..."
    b. Create a markdown data table with the values to be plotted (do NOT add a "${tableWord}" caption above it).
    c. On a new line immediately after the table, place the figure caption: ${figWord} X.Y – Figure name
    d. On the very next line after the caption, add exactly this hint: ⚠ ДІАГРАМА: виділіть таблицю вище → Вставка → Діаграма у Word.
-2. For non-data figures (conceptual diagrams, models, schemes with no numeric data) — insert a standalone placeholder: ${figWord} X.Y – Figure name (no data table, no hint line).
-3. The text before any figure MUST contain a sentence referencing it, e.g.: "${figRef} X.Y". Without this reference no figure may appear.
+2. ${plantUmlRule}
+3. For conceptual figures that fit neither case above — insert a standalone placeholder: ${figWord} X.Y – Figure name (no data table, no hint line, no code block).
+4. The text before any figure MUST contain a sentence referencing it, e.g.: "${figRef} X.Y". Without this reference no figure may appear.
 STRICTLY FORBIDDEN: show the same data as both a "${tableWord}" and a diagram. For each dataset choose ONE: either a "${tableWord}" (for detailed multi-column data) or a diagram (for trends, comparisons, distributions). Tables and diagrams in the same section MUST show different data.`;
 
   return `You are an expert academic writer.
@@ -139,9 +143,9 @@ Researchers and scholars: do NOT cite or mention Russian or Belarusian scholars.
 
 ## FORMATTING (strict)
 Do NOT use markdown markup: no #, ##, **, *, - at line start. Write plain text.
-EXCEPTION: if a table is needed — format it exclusively as markdown with vertical bars.
+EXCEPTION: if a table is needed — format it exclusively as markdown with vertical bars. EXCEPTION: a UML diagram may use a fenced "plantuml" code block (see FIGURES below).
 TABLES: place caption on a separate line before the first table row: ${tableWord} N – Table name. Text before the table MUST contain a sentence referencing it, e.g.: "${tableRef} N".
-FIGURES: when a diagram or chart is needed — create a data table (no "${tableWord}" caption above), place "${figWord} N – Figure name" BELOW the table, then add "⚠ ДІАГРАМА: виділіть таблицю вище → Вставка → Діаграма у Word." on the next line. For non-data figures — standalone placeholder: ${figWord} N – Figure name. Text before any figure MUST contain a referencing sentence, e.g.: "${figRef} N".
+FIGURES: when a diagram or chart with underlying numeric data is needed — create a data table (no "${tableWord}" caption above), place "${figWord} N – Figure name" BELOW the table, then add "⚠ ДІАГРАМА: виділіть таблицю вище → Вставка → Діаграма у Word." on the next line. When a structural/UML diagram is needed (class, sequence, use case, simple flowchart) — output a fenced "plantuml" code block (@startuml ... @enduml), then place "${figWord} N – Figure name" immediately below it (no hint line). For figures that fit neither case — standalone placeholder: ${figWord} N – Figure name. Text before any figure MUST contain a referencing sentence, e.g.: "${figRef} N".
 STRICTLY FORBIDDEN: show the same data as both a "${tableWord}" and a diagram. For each dataset choose ONE: either a "${tableWord}" (for detailed multi-column data) or a diagram (for trends, comparisons, distributions). Tables and diagrams in the same section MUST show different data.
 Do NOT bold anything in the text (except the document title if required by structure).
 STRICTLY FORBIDDEN to insert any internal sub-headings, paragraph titles, or standalone label lines within the body text. Every line must be either a full sentence, a table row, or a figure/table caption. No standalone short title-like lines allowed.
@@ -313,7 +317,10 @@ conclusionsPages: ${s.conclusionsPages ?? 'null'}
     "tableTitleBold": true,
     "tableTitleCenter": true,
     "figureFormat": "Рис. 1.2 під ілюстрацією, нумерація в межах розділу",
-    "noLongDash": true
+    "noLongDash": true,
+    "codeFont": "Courier New",
+    "codeFontSize": 10,
+    "codeLineSpacing": 1.0
   },
   "requiredSections": ["титульний аркуш", "зміст", "вступ", "основна частина", "висновки", "список використаних джерел"],
   "optionalSections": ["перелік умовних позначень", "анотація іноземною мовою", "додатки"],
@@ -351,6 +358,7 @@ conclusionsPages: ${s.conclusionsPages ?? 'null'}
 - recommendedSources: якщо в методичці є список рекомендованої літератури або конкретні автори/видання для використання — перелічи їх одним рядком через крапку з комою. null якщо таких рекомендацій немає
 - titlePageTemplate: якщо в методичці є зразок титульної сторінки — відтвори її структуру як масив JSON-об’єктів з полями: "text" (рядок тексту), "align" ("center"|"left"|"right"), "bold" (true/false — визнач за зразком: назви міністерства/університету/тип роботи/назва теми зазвичай жирні), "fontSize" (розмір у pt — вкажи лише якщо рядок явно більший/менший за основний текст 14pt; найчастіше null), "spaceBefore" (відступ перед рядком у twips: 0 для щільних блоків, 200-240 для відступу між блоками, 400+ для великого відступу). Порожній рядок між блоками — {"text":"","align":"center","bold":false,"spaceBefore":0}. Де має бути тема роботи (будь-який плейсхолдер: "(найменування теми)", "(назва теми)", "______" тощо) — ОБОВ’ЯЗКОВО заміни на [ТЕМА]. Де має бути рік — ОБОВ’ЯЗКОВО заміни на [РІК] (НЕ пиши конкретний рік і НЕ розбивай рік на кілька рядків). Рядок "Місто – рік" або "Місто, рік" ЗАВЖДИ має бути ОДНИМ рядком: {"text":"Київ – [РІК]","align":"center","bold":false,"spaceBefore":400}. Вирівнювання визнач за зразком: типово центр, але блоки "Виконав", "Науковий керівник", "Допущено" тощо — right або left залежно від зразка. Якщо зразка немає — поверни null (НЕ вигадуй)
 - formatting: всі деталі оформлення — шрифт, розміри, поля, відступи, нумерація. Поля tableNumberRight/tableTitleBold/tableTitleCenter: true якщо методичка вимагає номер таблиці справа, назву жирним, назву по центру відповідно — інакше false
+- formatting.codeFont/codeFontSize/codeLineSpacing: вимоги до оформлення лістингів програмного коду (шрифт, розмір, інтервал). Якщо методичка явно вказує інші значення — використай їх; якщо не вказано — залиш дефолт "Courier New" / 10 / 1.0
 - exampleTOC: ДРУГОРЯДНЕ поле. Шукай ТІЛЬКИ в Додатках розділ зі словами "зразок змісту", "зразок оформлення змісту", "приклад змісту" — це лише приклад оформлення. КАТЕГОРИЧНО ІГНОРУЙ: (1) "ЗМІСТ" на початку методички; (2) пункти виду "1. Загальні вимоги...", "2. Оформлення..." — це розділи методички. Якщо знайшов справжній зразок (містить ВСТУП, РОЗДІЛ 1, 1.1, ВИСНОВКИ) — скопіюй рядки. Якщо не знайшов — поверни null
 - annotationExample: шукай в методичці (в т.ч. в Додатках) зразок або вимоги до розділу-анотації — В ДЕЯКИХ МЕТОДИЧКАХ ЦЕЙ РОЗДІЛ НАЗИВАЄТЬСЯ "РЕФЕРАТ" замість "АНОТАЦІЯ" (це та сама сторінка перед змістом з коротким викладом суті роботи, обсягом, ключовими словами — НЕ окремий вид роботи). Шукай ОБИДВА варіанти: слова "зразок анотації"/"зразок реферату", "приклад анотації"/"приклад реферату", "анотація повинна містити"/"реферат повинен містити", "структура анотації"/"структура реферату", а також будь-який розділ методички що починається зі слова "РЕФЕРАТ" і описує/ілюструє обсяг роботи, кількість джерел/додатків, ключові слова. Якщо знайшов — скопіюй текст зразка або опис вимог до його структури одним блоком, ОБОВ'ЯЗКОВО зберігаючи оригінальний заголовок розділу як він є в методичці ("АНОТАЦІЯ" або "РЕФЕРАТ") та переноси рядків через \\n. Якщо методичка взагалі не згадує ні анотацію, ні реферат у цьому значенні — поверни null
 - requiredTables: шукай таблиці які СТУДЕНТ МАЄ ЗАПОВНИТИ у своїй роботі (не таблиці всередині самої методички з критеріями/шкалами). Якщо знайшов — поверни масив об’єктів: [{"name":"назва таблиці","structure":"markdown рядок заголовків таблиці з плейсхолдерами наприклад |Показник|Рік 1|Рік 2|","section":"analysis або recommendations — в якому типі розділу має з’явитись","instructions":"що саме заповнювати в цю таблицю"}]. null якщо таких таблиць немає.

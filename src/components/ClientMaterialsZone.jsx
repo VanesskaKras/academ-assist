@@ -1,7 +1,9 @@
 import { useState, useRef } from "react";
+import { CODE_FILE_EXTENSIONS } from "../lib/planUtils.js";
 
-const MAX_FILES = 10;
+const MAX_FILES = 20;
 const MAX_TEXT_CHARS = 50000;
+const CODE_ACCEPT = CODE_FILE_EXTENSIONS.join(",");
 
 const XLSX_CDN = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
 
@@ -75,7 +77,8 @@ export function ClientMaterialsZone({ materials, onAdd, onRemove, manualText, on
     setExtracting(true);
     for (const f of toProcess) {
       try {
-        const isText = f.type === "text/plain" || f.name.endsWith(".txt") || f.name.endsWith(".csv");
+        const isCode = CODE_FILE_EXTENSIONS.some(ext => f.name.toLowerCase().endsWith(ext));
+        const isText = f.type === "text/plain" || f.name.endsWith(".txt") || f.name.endsWith(".csv") || isCode;
         const isPdf = f.type === "application/pdf" || f.name.endsWith(".pdf");
         const isXlsx = f.name.endsWith(".xlsx") || f.name.endsWith(".xls") ||
           f.type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
@@ -152,14 +155,14 @@ export function ClientMaterialsZone({ materials, onAdd, onRemove, manualText, on
             {extracting
               ? "Витягую текст..."
               : canAdd
-                ? `Перетягніть або клікніть — PDF, TXT, CSV, XLSX, XML (${materials.length}/${MAX_FILES})`
+                ? `Перетягніть або клікніть — PDF, TXT, CSV, XLSX, XML, файли коду (${materials.length}/${MAX_FILES})`
                 : `Максимум ${MAX_FILES} файлів завантажено`}
           </div>
         </div>
         <input
           ref={fileRef}
           type="file"
-          accept=".pdf,.txt,.csv,.xlsx,.xls,.xml,text/plain,application/pdf,text/csv,text/xml,application/xml"
+          accept={`.pdf,.txt,.csv,.xlsx,.xls,.xml,text/plain,application/pdf,text/csv,text/xml,application/xml,${CODE_ACCEPT}`}
           multiple
           style={{ display: "none" }}
           onChange={e => { processFiles(e.target.files); e.target.value = ""; }}
