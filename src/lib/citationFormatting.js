@@ -333,11 +333,7 @@ export async function formatSourcesViaLLM({
 
   const methodSourcesRulesText = sourcesFormatRules ? `\nВИМОГИ МЕТОДИЧКИ ДО СПИСКУ ДЖЕРЕЛ: ${sourcesFormatRules}` : "";
 
-  // Статична частина (правила стилю + інструкції) — однакова для всіх викликів у
-  // межах однієї роботи, тому позначена як кешована (prompt caching): повторні
-  // виклики (наприклад, під час ділення навпіл при відновленні після провалу
-  // валідації) коштують значно менше.
-  const staticPrompt = `${styleRules}
+  const fmtPrompt = `${styleRules}
 ${orderInstruction}${methodSourcesRulesText}
 Збережи номери. Поверни ТІЛЬКИ список без заголовка. Для онлайн-джерел додай URL (дата звернення: ${accessDate}). НЕ використовуй "[Електронний ресурс]".
 
@@ -348,19 +344,15 @@ ${orderInstruction}${methodSourcesRulesText}
 - journal + volume + issue → для ДСТУ: "Назва журналу. рік. Вип. N, № M. С. xx–xx."
 - _docType:"book" → це монографія/книга (Місто : Видавець, рік. Nс., де N — totalPages якщо є)
 Для сирого тексту: нормалізуй порядок слів і розділові знаки за вимогами стилю.
-КРИТИЧНО: НЕ перекладай і НЕ транслітеруй прізвища авторів та назви джерел. Переведення ВЕЛИКИХ ЛІТЕР у sentence case — дозволено і обов'язково.`;
+КРИТИЧНО: НЕ перекладай і НЕ транслітеруй прізвища авторів та назви джерел. Переведення ВЕЛИКИХ ЛІТЕР у sentence case — дозволено і обов'язково.
+
+${refLines.join("\n")}`;
 
   const systemPrompt = `Ти — асистент з бібліографічного форматування. Форматуй джерела строго за стилем ${sourcesStyle}. Не змішуй стилі цитування. Не перекладай і не транслітеруй прізвища авторів та назви джерел — зберігай мову оригіналу (українські джерела — українською, англійські — англійською). Перестав компоненти імені відповідно до вимог стилю (для APA: "Ім'я Прізвище" → "Прізвище, І."). Назви повністю ВЕЛИКИМИ ЛІТЕРАМИ переводь у sentence case. Повертай тільки відформатований список, без зайвого тексту.`;
 
   let fmtResult;
   try {
-    fmtResult = await callClaude([{
-      role: "user",
-      content: [
-        { type: "text", text: staticPrompt, cache_control: { type: "ephemeral" } },
-        { type: "text", text: refLines.join("\n") },
-      ],
-    }], null, systemPrompt, 16000);
+    fmtResult = await callClaude([{ role: "user", content: fmtPrompt }], null, systemPrompt, 16000);
   } catch (e) { console.error("sources format error:", e); }
 
   return sanitizeFormattedSourceLines(fmtResult, refLines);
