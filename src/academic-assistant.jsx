@@ -16,7 +16,7 @@ import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, g
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { getAcademicDefaults, classifyAppendixItem, normalizeWorkType } from "./lib/academicDefaults.js";
 import { searchByPhrase, filterSourcesWithGemini, getEconInstitutionalSources } from "./lib/sourcesSearch.js";
-import { extractPageRange, pickPageInRange, formatSourcesViaLLM } from "./lib/citationFormatting.js";
+import { extractPageRange, formatSourcesViaLLM, applyCitationRemap } from "./lib/citationFormatting.js";
 import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
 import { StagePills } from "./components/StagePills.jsx";
 import { FieldBox, Heading, NavBtn, PrimaryBtn, GreenBtn, SaveIndicator } from "./components/Buttons.jsx";
@@ -4180,44 +4180,31 @@ ${secsSummary}
       }
     });
 
-    // ── 7. Заміна в тексті: [localN] / [localN, с. X] → %%CITglobalN%% → фінал ──
+    // ── 7. Заміна в тексті: [localN] / [localN, с. X] / [localN, localM] → фінал ──
     // Сторінку, яку модель сама вписала при написанні, лишаємо (якщо вона в межах
     // діапазону джерела); інакше підставляємо сторінку з діапазону. Кожна згадка
     // джерела лишається окремою — повторне цитування одного джерела не видаляємо.
+    // Логіка спільна з applyCitationRemap (citationFormatting.js) — вона ж підтримує
+    // групові цитати [N, M], які може породжувати localizeCitations для готової
+    // частини клієнта.
     const newContent = { ...content };
     mainSecs.forEach(sec => {
       if (!newContent[sec.id]) return;
       const mapping = secLocalToGlobal[sec.id];
       if (!mapping || !Object.keys(mapping).length) return;
-      // Крок A: локальні номери → placeholders (захоплюємо сторінку, яку вписала модель)
-      const citCount = {};
-      let text = newContent[sec.id].replace(/\[(\d+)(?:,\s*с\.\s*(\d+))?\]/g, (match, localN, localPage) => {
-        const globalN = mapping[Number(localN)];
-        if (!globalN) return ""; // хибний (галюцинований) локальний номер — прибираємо
-        citCount[globalN] = (citCount[globalN] || 0) + 1;
-        return `%%CIT${globalN}_${localPage || ""}_${citCount[globalN]}%%`;
-      });
-      // Крок B: placeholders → фінальний формат (для APA: (Прізвище, рік), для ДСТУ: [N, с. X])
-      text = text.replace(/%%CIT(\d+)_(\d*)_(\d+)%%/g, (_, nStr, oldPageStr, occStr) => {
-        const n = Number(nStr);
-        const base = refCiteText[n] || `[${n}]`;
-        const range = pageRanges2[n];
-        if (!range) return base;
-        let page = oldPageStr ? Number(oldPageStr) : null;
-        if (page != null && (page < range.min || page > range.max)) page = null;
-        if (page == null) page = pickPageInRange(range, Number(occStr));
-        return `[${n}, с. ${page}]`;
-      });
-      newContent[sec.id] = text;
+      newContent[sec.id] = applyCitationRemap(newContent[sec.id], mapping, refCiteText, { pageRanges: pageRanges2 });
     });
 
     // ── 8а. Очищення: прибираємо номери поза діапазоном реального списку (будь-який стиль) ──
     if (!isAPA && !isMLA) {
       mainSecs.forEach(sec => {
         if (!newContent[sec.id]) return;
-        newContent[sec.id] = newContent[sec.id].replace(/\[(\d+)(?:,\s*с\.\s*\d+)?\]/g, (match, n) => {
-          const num = Number(n);
-          return (num >= 1 && num <= fmtLines.length) ? match : "";
+        newContent[sec.id] = newContent[sec.id].replace(/\[\s*(\d+(?:\s*[,;]\s*\d+)*)\s*(?:,\s*с\.\s*\d+)?\s*\]/g, (match, nums) => {
+          const valid = nums.split(/[,;]/).every(n => {
+            const num = Number(n.trim());
+            return num >= 1 && num <= fmtLines.length;
+          });
+          return valid ? match : "";
         });
       });
     }

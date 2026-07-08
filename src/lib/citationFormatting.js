@@ -70,7 +70,10 @@ export function pickPageInRange(range, occurrenceIndex) {
   return range.min + Math.round(span * frac);
 }
 
-// Замінює [oldN] / [oldN, с. X] у тексті на нові номери у фінальному форматі стилю.
+// Замінює [oldN] / [oldN, с. X] / групові [oldN, oldM] у тексті на нові номери у
+// фінальному форматі стилю. Групові цитати виникають при локалізації посилань готової
+// частини клієнта (localizeCitations у readyWorkExtract.js) — там кілька старих
+// глобальних номерів джерела можуть звестись в один локальний запис виду "[2, 3]".
 // Сторінку, яку вписала сама модель під час написання, зберігаємо як є (якщо вона
 // в межах відомого діапазону джерела); інакше підставляємо сторінку з діапазону.
 // Кожна згадка джерела лишається окремою (виноски й так завжди були окремі,
@@ -78,11 +81,17 @@ export function pickPageInRange(range, occurrenceIndex) {
 export function applyCitationRemap(text, oldToNew, refCiteText, { pageRanges = {} } = {}) {
   if (!text) return text;
   const citCount = {};
-  let out = text.replace(/\[(\d+)(?:,\s*с\.\s*(\d+))?\]/g, (match, oldN, oldPage) => {
-    const newN = oldToNew[Number(oldN)];
-    if (!newN) return ""; // хибний (галюцинований) номер — прибираємо
-    citCount[newN] = (citCount[newN] || 0) + 1;
-    return `%%CIT${newN}_${oldPage || ""}_${citCount[newN]}%%`;
+  let out = text.replace(/\[\s*(\d+(?:\s*[,;]\s*\d+)*)\s*(?:,\s*с\.\s*(\d+))?\s*\]/g, (match, oldNums, oldPage) => {
+    const newNums = oldNums.split(/[,;]/).map(s => oldToNew[Number(s.trim())]).filter(Boolean);
+    if (!newNums.length) return ""; // усі номери хибні (галюциновані) — прибираємо
+    if (newNums.length === 1) {
+      const newN = newNums[0];
+      citCount[newN] = (citCount[newN] || 0) + 1;
+      return `%%CIT${newN}_${oldPage || ""}_${citCount[newN]}%%`;
+    }
+    // групове цитування [N, M, ...] — сторінка в такому форматі не використовується
+    const uniqueNewNums = [...new Set(newNums)];
+    return `%%CITGRP${uniqueNewNums.join("-")}%%`;
   });
   out = out.replace(/%%CIT(\d+)_(\d*)_(\d+)%%/g, (_, nStr, oldPageStr, occStr) => {
     const n = Number(nStr);
@@ -93,6 +102,17 @@ export function applyCitationRemap(text, oldToNew, refCiteText, { pageRanges = {
     if (page != null && (page < range.min || page > range.max)) page = null; // хибна сторінка поза діапазоном
     if (page == null) page = pickPageInRange(range, Number(occStr));
     return `[${n}, с. ${page}]`;
+  });
+  out = out.replace(/%%CITGRP([\d-]+)%%/g, (_, numsStr) => {
+    const nums = numsStr.split("-").map(Number);
+    const bases = nums.map(n => refCiteText[n] || `[${n}]`);
+    if (bases.every(b => b.startsWith("[") && b.endsWith("]"))) {
+      return `[${bases.map(b => b.slice(1, -1)).join(", ")}]`;
+    }
+    if (bases.every(b => b.startsWith("(") && b.endsWith(")"))) {
+      return `(${bases.map(b => b.slice(1, -1)).join("; ")})`;
+    }
+    return bases.join(" ");
   });
   return out;
 }
