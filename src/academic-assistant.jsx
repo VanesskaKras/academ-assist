@@ -16,7 +16,7 @@ import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, g
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { getAcademicDefaults, classifyAppendixItem, normalizeWorkType } from "./lib/academicDefaults.js";
 import { searchByPhrase, filterSourcesWithGemini, getEconInstitutionalSources } from "./lib/sourcesSearch.js";
-import { formatSourcesViaLLM, applyCitationRemap, buildFinalReferenceList, buildCiteFormats } from "./lib/citationFormatting.js";
+import { formatSourcesViaLLM, applyCitationRemap, buildFinalReferenceList, buildCiteFormats, createReferenceDeduper } from "./lib/citationFormatting.js";
 import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
 import { StagePills } from "./components/StagePills.jsx";
 import { FieldBox, Heading, NavBtn, PrimaryBtn, GreenBtn, SaveIndicator } from "./components/Buttons.jsx";
@@ -3583,23 +3583,17 @@ ${secBlock}
     const _effectiveOrder = sourcesOrderOverride || methodInfo?.sourcesOrder;
     const isAlphabetical = !_effectiveOrder || _effectiveOrder === "alphabetical";
 
-    // Збираємо всі унікальні джерела з прив'язкою до секцій (за порядком появи)
-    const rawRefs = [], secRefMapRaw = {}, seenRefs = new Map();
+    // Збираємо всі унікальні джерела з прив'язкою до секцій (за порядком появи).
+    // Нечітка дедуплікація (createReferenceDeduper) — та сама логіка, що й у
+    // doRemapCitations, щоб прев'ю тут збігалося з фінальним результатом.
+    const deduper = createReferenceDeduper();
+    const secRefMapRaw = {};
     mainSecs.forEach(sec => {
       const raw = citInputs[sec.id] || "";
       const lines = raw.split("\n").map(l => l.trim()).filter(Boolean);
-      secRefMapRaw[sec.id] = [];
-      lines.forEach(line => {
-        const normalized = line.toLowerCase().replace(/\s*(url\s*:|https?:\/\/\S+|\(дата звернення[^)]*\))/gi, "").replace(/[.,;:&–—\-«»"'()[\]]/g, "").replace(/\s+/g, " ").trim();
-        const hasUrl = /https?:\/\/\S+/i.test(line);
-        if (!seenRefs.has(normalized)) {
-          rawRefs.push(line); seenRefs.set(normalized, rawRefs.length - 1);
-        } else if (hasUrl && !/https?:\/\/\S+/i.test(rawRefs[seenRefs.get(normalized)])) {
-          rawRefs[seenRefs.get(normalized)] = line; // заміна на варіант з URL
-        }
-        secRefMapRaw[sec.id].push(seenRefs.get(normalized));
-      });
+      secRefMapRaw[sec.id] = lines.map(line => deduper.add(line));
     });
+    const rawRefs = deduper.canonicalRefs;
 
     // Якщо алфавітний порядок — сортуємо і перебудовуємо індекси (законодавчі акти першими)
     let allRefs, indexMap;
@@ -4034,23 +4028,15 @@ ${secsSummary}
       lines.forEach((line, i) => { secLocalSources[sec.id][i + 1] = line; });
     });
 
-    // ── 2. Глобальна дедуплікація (та сама логіка що в buildGlobalRefList) ──
-    const normalize = str => str.toLowerCase()
-      .replace(/\s*(url\s*:|https?:\/\/\S+|\(дата звернення[^)]*\))/gi, "")
-      .replace(/[.,;:&–—\-«»"'()[\]]/g, "").replace(/\s+/g, " ").trim();
-
-    const rawRefs = [], seenRefs = new Map();
+    // ── 2. Глобальна дедуплікація — нечітка (createReferenceDeduper): об'єднує не
+    // лише побайтово однакові тексти, а й "майже дублікати" того самого джерела
+    // (той самий запис з кодом УДК чи без нього, куций стаб-запис клієнта і повна
+    // версія, знайдена пошуком) за перетином ідентифікаційних токенів.
+    const deduper = createReferenceDeduper();
     mainSecs.forEach(sec => {
-      Object.values(secLocalSources[sec.id]).forEach(text => {
-        const key = normalize(text);
-        const hasUrl = /https?:\/\/\S+/i.test(text);
-        if (!seenRefs.has(key)) {
-          rawRefs.push(text); seenRefs.set(key, rawRefs.length - 1);
-        } else if (hasUrl && !/https?:\/\/\S+/i.test(rawRefs[seenRefs.get(key)])) {
-          rawRefs[seenRefs.get(key)] = text;
-        }
-      });
+      Object.values(secLocalSources[sec.id]).forEach(text => { deduper.add(text); });
     });
+    const rawRefs = deduper.canonicalRefs;
 
     // ── 3-6. Форматування джерел через LLM (без права переставляти) → сортування
     // кодом на вже правильно оформленому тексті → мапа localN→globalN → формат
@@ -4088,8 +4074,8 @@ ${secsSummary}
     mainSecs.forEach(sec => {
       secLocalToGlobal[sec.id] = {};
       Object.entries(secLocalSources[sec.id]).forEach(([localN, text]) => {
-        const rawIdx = seenRefs.get(normalize(text));
-        if (rawIdx !== undefined) secLocalToGlobal[sec.id][Number(localN)] = indexMap[rawIdx];
+        const rawIdx = deduper.add(text); // ідемпотентно — знаходить уже канонічний індекс
+        secLocalToGlobal[sec.id][Number(localN)] = indexMap[rawIdx];
       });
     });
 
