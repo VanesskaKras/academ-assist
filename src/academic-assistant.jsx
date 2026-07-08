@@ -3701,10 +3701,9 @@ ${secBlock}
     // вигадала зайве джерело — відкидаємо відповідь і йдемо на сирий список,
     // щоб сміття не потрапило у фінальний документ.
     const sanitizedFmt = await formatSourcesViaLLM({
-      refLines, sourcesStyle,
-      sourcesGroupingRaw: methodInfo?.sourcesGrouping, sourcesFormatRules: methodInfo?.sourcesFormatRules, callClaude,
+      refLines, sourcesStyle, sourcesFormatRules: methodInfo?.sourcesFormatRules, callClaude,
     });
-    let fmtResult = sanitizedFmt ? sanitizedFmt.byInputOrder.map((r, i) => `${i + 1}. ${r}`).join("\n") : allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n");
+    let fmtResult = sanitizedFmt ? sanitizedFmt.map((r, i) => `${i + 1}. ${r}`).join("\n") : allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n");
     setRefList(fmtResult.split("\n").filter(Boolean));
     const srcSec = sections.find(s => s.type === "sources");
     if (srcSec) newContent[srcSec.id] = fmtResult;
@@ -4053,9 +4052,9 @@ ${secsSummary}
       });
     });
 
-    // ── 3-6. Форматування джерел через LLM (без права переставляти — крім кастомного
-    // групування з методички) → сортування кодом на вже правильно оформленому тексті
-    // → мапа localN→globalN → формат inline-посилань. Спільна логіка з
+    // ── 3-6. Форматування джерел через LLM (без права переставляти) → сортування
+    // кодом на вже правильно оформленому тексті → мапа localN→globalN → формат
+    // inline-посилань. Спільна логіка з
     // remapAndFormatCitations (citationFormatting.js): buildFinalReferenceList сама
     // звіряє відповідь LLM за змістом і, за потреби, ділить список навпіл, щоб
     // відновитись після провалу валідації, замість відкидання всього списку.
@@ -4078,7 +4077,7 @@ ${secsSummary}
 
     const { finalTexts: allRefs, indexMap } = await buildFinalReferenceList({
       rawRefs, findStructured: findStructured2, sourcesStyle, isLatinWork: _remapLatinFirst,
-      sourcesGroupingRaw: methodInfo?.sourcesGrouping, sourcesFormatRules: methodInfo?.sourcesFormatRules, callClaude,
+      sourcesFormatRules: methodInfo?.sourcesFormatRules, callClaude,
       skipSort: !isAlphabeticalOrder && !isDstu,
     });
     const fmtLines = allRefs;

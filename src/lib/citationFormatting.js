@@ -6,11 +6,13 @@
 // Ключовий принцип конвеєра (дедуплікація → форматування → сортування):
 // 1. Дедуплікація — на сирому тексті (робить викликач, до цього файлу).
 // 2. Форматування стилю через ЛЛМ — ЛЛМ виправляє пунктуацію/порядок компонентів
-//    імені в КОЖНОМУ джерелі окремо, але НЕ переставляє, не додає й не вилучає
-//    джерела (крім кастомного групування з методички — тоді переставляння дозволене
-//    й очікуване). Відповідь звіряється за змістом (buildFinalReferenceList/
-//    formatSourcesWithRetry), а не лише за кількістю рядків — інакше галюцинація чи
-//    збита нумерація тихо ламають усі номери цитат у тексті.
+//    імені в КОЖНОМУ джерелі окремо, але НІКОЛИ не переставляє, не додає й не вилучає
+//    джерела. Відповідь звіряється за змістом (formatSourcesWithRetry), а не лише за
+//    кількістю рядків — інакше галюцинація чи збита нумерація тихо ламають усі номери
+//    цитат у тексті. (Раніше була ще гілка "довіряй порядку ЛЛМ" для кастомного
+//    групування з методички — прибрана: майже кожна методичка згадує стандартну
+//    вимогу "за алфавітом", тож ця гілка вмикалась майже завжди, а ЛЛМ ненадійна саме
+//    в питаннях порядку — з цього й починалась уся ця історія багів.)
 // 3. Сортування — код, ПІСЛЯ форматування, на вже правильно оформленому (прізвище
 //    спереду) тексті. Раніше сортування йшло ДО форматування, на сирому тексті —
 //    тому джерело на кшталт "В. О. Іванов" (ініціали спереду) сортувалось під "В",
@@ -134,12 +136,12 @@ function matchScore(tokenSet, text) {
   return hits / tokenSet.size;
 }
 
-// Зіставляє відформатовані рядки з вхідними ЗА ЗМІСТОМ (не за позицією) — щоб коректно
-// працювати незалежно від того, чи ЛЛМ мала право переставляти джерела (кастомне
-// групування з методички) чи ні. Жадібний найкращий-збіг-спершу підбір пар (i, j) за
-// оцінкою перетину токенів. Повертає matchedIndex, де matchedIndex[i] — позиція в
-// styledLines, що відповідає refLines[i], або null, якщо для когось не знайшлось
-// впевненого унікального відповідника (галюцинація/пропуск/дублікат від ЛЛМ).
+// Зіставляє відформатовані рядки з вхідними ЗА ЗМІСТОМ (не за позицією) — формат і
+// пунктуація змінюються, а автори/назва/рік мають лишитись впізнаваними. Жадібний
+// найкращий-збіг-спершу підбір пар (i, j) за оцінкою перетину токенів. Повертає
+// matchedIndex, де matchedIndex[i] — позиція в styledLines, що відповідає refLines[i],
+// або null, якщо для когось не знайшлось впевненого унікального відповідника
+// (галюцинація/пропуск/дублікат/переставляння від ЛЛМ — усе це заборонено).
 function matchFormattedLines(refLines, styledLines) {
   const n = refLines.length;
   if (styledLines.length !== n) return null;
@@ -163,11 +165,12 @@ function matchFormattedLines(refLines, styledLines) {
 
 // Фільтрує сиру відповідь ЛЛМ-форматування списку джерел до валідних пронумерованих
 // рядків ("N. текст"), перевіряє їх кількість і зіставляє кожен з вхідним джерелом за
-// ЗМІСТОМ (matchFormattedLines) — а не за позицією, бо ЛЛМ могла законно переставити
-// джерела (кастомне групування). Якщо для когось не знайшлось впевненого унікального
-// відповідника — це або преамбула/примітка, або вигадане/загублене джерело, або
-// зіпсована нумерація; довіряти відповіді не можна.
-// Повертає { byInputOrder, byLlmOrder, matchedIndex } або null.
+// ЗМІСТОМ (matchFormattedLines) — не за позицією, бо самої лише позиції недостатньо,
+// щоб надійно відрізнити "ЛЛМ просто трохи перефразувала" від "ЛЛМ підмінила джерело".
+// Якщо для когось не знайшлось впевненого унікального відповідника — це або
+// преамбула/примітка, або вигадане/загублене джерело, або зіпсована/переставлена
+// нумерація (усе це заборонено промптом); довіряти відповіді не можна.
+// Повертає масив у порядку refLines (без права переставляти) або null.
 export function sanitizeFormattedSourceLines(fmtResult, refLines) {
   if (!fmtResult) return null;
   const lines = fmtResult.split("\n").map(l => l.trim()).filter(l => /^\d+[.)]\s/.test(l));
@@ -175,11 +178,7 @@ export function sanitizeFormattedSourceLines(fmtResult, refLines) {
   const stripped = lines.map(l => l.replace(/^\d+[.)]\s*/, ""));
   const matchedIndex = matchFormattedLines(refLines, stripped);
   if (!matchedIndex) return null;
-  return {
-    byInputOrder: matchedIndex.map(j => stripped[j]),
-    byLlmOrder: stripped,
-    matchedIndex,
-  };
+  return matchedIndex.map(j => stripped[j]);
 }
 
 // ── Детерміноване (кодове) визначення групи/мови джерела для сортування ──
@@ -233,14 +232,15 @@ export function sortReferencesForDisplay(items, { latinFirst = false } = {}) {
 // Будує правила стилю (ДСТУ/APA/MLA) + промпт форматування списку джерел, викликає
 // ЛЛМ і валідує відповідь (sanitizeFormattedSourceLines). ЛЛМ переформатовує КОЖНЕ
 // джерело окремо (пунктуація, порядок ініціалів, курсив тощо) — сортування й
-// групування більше не її задача (робить код у sortReferencesForDisplay ПІСЛЯ
-// форматування), окрім явної кастомної вимоги групування з методички
-// (sourcesGroupingRaw) — тоді переставляння дозволене, і викликач бере порядок ЛЛМ
-// як фінальний (buildFinalReferenceList).
+// групування завжди робить код (sortReferencesForDisplay) ПІСЛЯ форматування, ЛЛМ
+// ніколи не переставляє рядки. (Раніше довіра до "кастомного групування з
+// методички" вмикалась майже завжди — типова методичка просто згадує стандартну
+// вимогу "за алфавітом", і ЛЛМ, отримавши нечітку вказівку, часто взагалі нічого
+// не переставляла, лишаючи список невідсортованим. Вимкнено, поки не буде
+// надійнішого способу відрізнити справді нестандартну вимогу від типової.)
 export async function formatSourcesViaLLM({
   refLines,             // string[] — вже побудовані рядки "N. ..." (raw text або JSON structured)
   sourcesStyle,         // "APA" | "MLA" | "ДСТУ 8302:2015"
-  sourcesGroupingRaw,   // methodInfo?.sourcesGrouping — кастомна вимога клієнта, або falsy
   sourcesFormatRules,   // methodInfo?.sourcesFormatRules
   callClaude,
 }) {
@@ -251,12 +251,7 @@ export async function formatSourcesViaLLM({
   const today = new Date();
   const accessDate = `${String(today.getDate()).padStart(2, "0")}.${String(today.getMonth() + 1).padStart(2, "0")}.${today.getFullYear()}`;
 
-  // Порядок рядків міняти можна ЛИШЕ якщо методичка явно вимагає своє групування —
-  // інакше код сам відсортує список ПІСЛЯ форматування (на правильно оформленому
-  // тексті), тож ЛЛМ не повинна нічого переставляти.
-  const orderInstruction = sourcesGroupingRaw
-    ? `Групування: ${sourcesGroupingRaw}. Перестав джерела ЗГІДНО з цією вимогою.`
-    : "НЕ переставляй рядки місцями, НЕ додавай і НЕ вилучай джерела — кожен вхідний рядок N має стати рівно одним вихідним рядком на позиції N (сортування й групування виконає код окремо, після твого форматування).";
+  const orderInstruction = "НЕ переставляй рядки місцями, НЕ додавай і НЕ вилучай джерела — кожен вхідний рядок N має стати рівно одним вихідним рядком на позиції N (сортування й групування виконає код окремо, після твого форматування).";
 
   const styleRules = isAPA
     ? `СТИЛЬ: APA 7th edition. СУВОРО дотримуйся APA — НЕ змішуй з ДСТУ чи іншими стилями.
@@ -324,69 +319,52 @@ ${orderInstruction}${methodSourcesRulesText}
 // не ізолюємо конкретний проблемний фрагмент (у гіршому випадку — одне джерело, яке
 // тоді лишається без стильового форматування, а решта — акуратно оформлена).
 // У звичайному (успішному) випадку це один виклик на весь список — без подорожчання.
+// Повертає масив рядків у ТОМУ Ж порядку, що й rawRefs (ЛЛМ ніколи не переставляє).
 export async function formatSourcesWithRetry({
-  rawRefs, findStructured, sourcesStyle, isLatinWork, sourcesGroupingRaw, sourcesFormatRules, callClaude,
-}, offset = 0) {
-  if (!rawRefs.length) return { byInputOrder: [], byLlmOrder: [], rawIdxByLlmPos: [] };
+  rawRefs, findStructured, sourcesStyle, sourcesFormatRules, callClaude,
+}) {
+  if (!rawRefs.length) return [];
 
   const refLines = rawRefs.map((r, i) => {
     const sp = findStructured(r);
     return sp ? `${i + 1}. ${JSON.stringify(buildStructuredEntry(sp))}` : `${i + 1}. ${r}`;
   });
 
-  const sanitized = await formatSourcesViaLLM({
-    refLines, sourcesStyle, isLatinWork, sourcesGroupingRaw, sourcesFormatRules, callClaude,
-  });
-
-  if (sanitized) {
-    const rawIdxByLlmPos = new Array(rawRefs.length);
-    sanitized.matchedIndex.forEach((j, i) => { rawIdxByLlmPos[j] = offset + i; });
-    return { byInputOrder: sanitized.byInputOrder, byLlmOrder: sanitized.byLlmOrder, rawIdxByLlmPos };
-  }
+  const sanitized = await formatSourcesViaLLM({ refLines, sourcesStyle, sourcesFormatRules, callClaude });
+  if (sanitized) return sanitized;
 
   if (rawRefs.length === 1) {
     // Нема куди ділити далі — лишаємо сирий текст як є, без стильового форматування.
-    return { byInputOrder: [rawRefs[0]], byLlmOrder: [rawRefs[0]], rawIdxByLlmPos: [offset] };
+    return [rawRefs[0]];
   }
 
   const mid = Math.ceil(rawRefs.length / 2);
   const [left, right] = await Promise.all([
-    formatSourcesWithRetry({ rawRefs: rawRefs.slice(0, mid), findStructured, sourcesStyle, isLatinWork, sourcesGroupingRaw, sourcesFormatRules, callClaude }, offset),
-    formatSourcesWithRetry({ rawRefs: rawRefs.slice(mid), findStructured, sourcesStyle, isLatinWork, sourcesGroupingRaw, sourcesFormatRules, callClaude }, offset + mid),
+    formatSourcesWithRetry({ rawRefs: rawRefs.slice(0, mid), findStructured, sourcesStyle, sourcesFormatRules, callClaude }),
+    formatSourcesWithRetry({ rawRefs: rawRefs.slice(mid), findStructured, sourcesStyle, sourcesFormatRules, callClaude }),
   ]);
-  return {
-    byInputOrder: [...left.byInputOrder, ...right.byInputOrder],
-    byLlmOrder: [...left.byLlmOrder, ...right.byLlmOrder],
-    rawIdxByLlmPos: [...left.rawIdxByLlmPos, ...right.rawIdxByLlmPos],
-  };
+  return [...left, ...right];
 }
 
 // Будує фінальний (відформатований і відсортований) список джерел та мапу
 // "індекс у rawRefs (дедуплікований сирий список, у порядку першої появи) →
 // фінальний номер у списку". Порядок: форматування (formatSourcesWithRetry, без
-// права переставляти, окрім кастомного групування) → сортування кодом на вже
-// правильно оформленому тексті (sortReferencesForDisplay); або, якщо методичка явно
-// вимагає своє групування — довіряємо порядку, який повернула ЛЛМ (код не може
-// інтерпретувати довільну кастомну вимогу).
+// права переставляти) → сортування кодом на вже правильно оформленому тексті
+// (sortReferencesForDisplay).
 export async function buildFinalReferenceList({
-  rawRefs, findStructured, sourcesStyle, isLatinWork, sourcesGroupingRaw, sourcesFormatRules, callClaude,
+  rawRefs, findStructured, sourcesStyle, isLatinWork, sourcesFormatRules, callClaude,
   skipSort = false, // true → зберегти порядок першої появи (обрано "порядок появи", не алфавітний; актуально лише для APA/MLA — ДСТУ завжди алфавітний)
 }) {
   if (!rawRefs.length) return { finalTexts: [], indexMap: [] };
 
-  const formatted = await formatSourcesWithRetry({
-    rawRefs, findStructured, sourcesStyle, isLatinWork, sourcesGroupingRaw, sourcesFormatRules, callClaude,
-  });
+  const byInputOrder = await formatSourcesWithRetry({ rawRefs, findStructured, sourcesStyle, sourcesFormatRules, callClaude });
 
   let finalTexts, rawIdxOfFinal;
   if (skipSort) {
-    finalTexts = formatted.byInputOrder;
-    rawIdxOfFinal = formatted.byInputOrder.map((_, i) => i);
-  } else if (sourcesGroupingRaw) {
-    finalTexts = formatted.byLlmOrder;
-    rawIdxOfFinal = formatted.rawIdxByLlmPos;
+    finalTexts = byInputOrder;
+    rawIdxOfFinal = byInputOrder.map((_, i) => i);
   } else {
-    const items = formatted.byInputOrder.map((text, i) => ({ text, structured: findStructured(rawRefs[i]), rawIdx: i }));
+    const items = byInputOrder.map((text, i) => ({ text, structured: findStructured(rawRefs[i]), rawIdx: i }));
     const sortedItems = sortReferencesForDisplay(items, { latinFirst: isLatinWork });
     finalTexts = sortedItems.map(it => it.text);
     rawIdxOfFinal = sortedItems.map(it => it.rawIdx);
@@ -455,7 +433,6 @@ export async function remapAndFormatCitations({
   citStyle,            // info?.citStyle
   language,            // info?.language
   sourcesOrder,        // methodInfo?.sourcesOrder (опційно)
-  sourcesGrouping,     // methodInfo?.sourcesGrouping (опційно)
   sourcesFormatRules,  // methodInfo?.sourcesFormatRules (опційно)
   citFootnotes,        // true → ДСТУ-посилання у вигляді посторінкових виносок замість [N]
   callClaude,
@@ -484,7 +461,7 @@ export async function remapAndFormatCitations({
 
   const { finalTexts, indexMap } = await buildFinalReferenceList({
     rawRefs: citations, findStructured, sourcesStyle, isLatinWork: latinFirst,
-    sourcesGroupingRaw: sourcesGrouping, sourcesFormatRules, callClaude,
+    sourcesFormatRules, callClaude,
     skipSort: !isAlphabeticalOrder && !isDstu,
   });
 
