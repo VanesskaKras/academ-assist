@@ -2,6 +2,19 @@
 // Портовано з doRemapCitations (academic-assistant.jsx) для малих робіт,
 // де [N] у тексті ЗАВЖДИ відповідає citations[N-1] (єдиний глобальний список,
 // без посекційної локальної нумерації).
+//
+// Ключовий принцип конвеєра (дедуплікація → форматування → сортування):
+// 1. Дедуплікація — на сирому тексті (робить викликач, до цього файлу).
+// 2. Форматування стилю через ЛЛМ — ЛЛМ виправляє пунктуацію/порядок компонентів
+//    імені в КОЖНОМУ джерелі окремо, але НЕ переставляє, не додає й не вилучає
+//    джерела (крім кастомного групування з методички — тоді переставляння дозволене
+//    й очікуване). Відповідь звіряється за змістом (buildFinalReferenceList/
+//    formatSourcesWithRetry), а не лише за кількістю рядків — інакше галюцинація чи
+//    збита нумерація тихо ламають усі номери цитат у тексті.
+// 3. Сортування — код, ПІСЛЯ форматування, на вже правильно оформленому (прізвище
+//    спереду) тексті. Раніше сортування йшло ДО форматування, на сирому тексті —
+//    тому джерело на кшталт "В. О. Іванов" (ініціали спереду) сортувалось під "В",
+//    а не під "І", як має бути за ДСТУ.
 
 function buildStructuredEntry(p) {
   const e = { _type: "structured" };
@@ -49,17 +62,6 @@ export function extractPageRange(rawRef, structuredPaper) {
   return null;
 }
 
-// Фільтрує сиру відповідь LLM-форматування списку джерел до валідних пронумерованих
-// рядків ("N. текст") і звіряє їх кількість з очікуваною. LLM іноді додає преамбулу/
-// примітку ("Нижче подано...", "---") або вигадує зайве джерело попри пряму заборону
-// в промпті — тому будь-яка розбіжність кількості означає, що відповіді довіряти не
-// можна, і викликач має fallback на сирий список джерел.
-export function sanitizeFormattedSourceLines(fmtResult, expectedCount) {
-  if (!fmtResult) return null;
-  const lines = fmtResult.split("\n").map(l => l.trim()).filter(l => /^\d+[.)]\s/.test(l));
-  return lines.length === expectedCount ? lines : null;
-}
-
 // Обирає конкретну сторінку з діапазону для N-го за рахунком вживання джерела —
 // щоб повторні цитування того самого джерела не показували щоразу однакову сторінку.
 export function pickPageInRange(range, occurrenceIndex) {
@@ -81,7 +83,7 @@ export function pickPageInRange(range, occurrenceIndex) {
 export function applyCitationRemap(text, oldToNew, refCiteText, { pageRanges = {} } = {}) {
   if (!text) return text;
   const citCount = {};
-  let out = text.replace(/\[\s*(\d+(?:\s*[,;]\s*\d+)*)\s*(?:,\s*с\.\s*(\d+))?\s*\]/g, (match, oldNums, oldPage) => {
+  let out = text.replace(/\[\s*(\d+(?:\s*[,;]\s*\d+)*)\s*(?:,\s*[сc]\.?\s*(\d+)?[^\]]*)?\s*\]/g, (match, oldNums, oldPage) => {
     const newNums = oldNums.split(/[,;]/).map(s => oldToNew[Number(s.trim())]).filter(Boolean);
     if (!newNums.length) return ""; // усі номери хибні (галюциновані) — прибираємо
     if (newNums.length === 1) {
@@ -117,19 +119,128 @@ export function applyCitationRemap(text, oldToNew, refCiteText, { pageRanges = {
   return out;
 }
 
+// ── Звірка змісту відформатованої відповіді ЛЛМ із вхідним списком ──
+
+// Витягує "ідентифікаційні" токени (4+ символів) з рядка джерела для звірки змісту.
+function sourceTokens(s) {
+  return new Set((String(s).toLowerCase().match(/[a-zа-яґєіїʼ'0-9-]{4,}/g) || []));
+}
+
+function matchScore(tokenSet, text) {
+  if (!tokenSet.size) return 1; // нема за чим звіряти — вважаємо збіг
+  const lower = text.toLowerCase();
+  let hits = 0;
+  tokenSet.forEach(t => { if (lower.includes(t)) hits++; });
+  return hits / tokenSet.size;
+}
+
+// Зіставляє відформатовані рядки з вхідними ЗА ЗМІСТОМ (не за позицією) — щоб коректно
+// працювати незалежно від того, чи ЛЛМ мала право переставляти джерела (кастомне
+// групування з методички) чи ні. Жадібний найкращий-збіг-спершу підбір пар (i, j) за
+// оцінкою перетину токенів. Повертає matchedIndex, де matchedIndex[i] — позиція в
+// styledLines, що відповідає refLines[i], або null, якщо для когось не знайшлось
+// впевненого унікального відповідника (галюцинація/пропуск/дублікат від ЛЛМ).
+function matchFormattedLines(refLines, styledLines) {
+  const n = refLines.length;
+  if (styledLines.length !== n) return null;
+  const tokenSets = refLines.map(sourceTokens);
+  const pairs = [];
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) pairs.push({ i, j, score: matchScore(tokenSets[i], styledLines[j]) });
+  }
+  pairs.sort((a, b) => b.score - a.score);
+  const matchedIndex = new Array(n).fill(-1);
+  const usedJ = new Set();
+  let assigned = 0;
+  for (const { i, j, score } of pairs) {
+    if (matchedIndex[i] !== -1 || usedJ.has(j)) continue;
+    if (tokenSets[i].size > 0 && score < 0.3) continue; // недостатньо впевнено
+    matchedIndex[i] = j; usedJ.add(j); assigned++;
+    if (assigned === n) break;
+  }
+  return assigned === n ? matchedIndex : null;
+}
+
+// Фільтрує сиру відповідь ЛЛМ-форматування списку джерел до валідних пронумерованих
+// рядків ("N. текст"), перевіряє їх кількість і зіставляє кожен з вхідним джерелом за
+// ЗМІСТОМ (matchFormattedLines) — а не за позицією, бо ЛЛМ могла законно переставити
+// джерела (кастомне групування). Якщо для когось не знайшлось впевненого унікального
+// відповідника — це або преамбула/примітка, або вигадане/загублене джерело, або
+// зіпсована нумерація; довіряти відповіді не можна.
+// Повертає { byInputOrder, byLlmOrder, matchedIndex } або null.
+export function sanitizeFormattedSourceLines(fmtResult, refLines) {
+  if (!fmtResult) return null;
+  const lines = fmtResult.split("\n").map(l => l.trim()).filter(l => /^\d+[.)]\s/.test(l));
+  if (lines.length !== refLines.length) return null;
+  const stripped = lines.map(l => l.replace(/^\d+[.)]\s*/, ""));
+  const matchedIndex = matchFormattedLines(refLines, stripped);
+  if (!matchedIndex) return null;
+  return {
+    byInputOrder: matchedIndex.map(j => stripped[j]),
+    byLlmOrder: stripped,
+    matchedIndex,
+  };
+}
+
+// ── Детерміноване (кодове) визначення групи/мови джерела для сортування ──
+
+const LAW_RE = /^(закон|кодекс|конституція|постанова|указ\s|декрет\s|наказ\s|розпорядження\s)/i;
+export const isLawSource = s => LAW_RE.test(s.trim());
+
+// Переважання кириличних чи латинських літер У ВСЬОМУ рядку — а не лише перший
+// символ. Короткий латинський префікс на кшталт "ISSN 2409-1154" не повинен
+// перетягувати переважно українське джерело в іноземну групу.
+export function isMostlyCyrillic(text) {
+  const cyr = (text.match(/[А-ЯҐЄІЇа-яґєії]/g) || []).length;
+  const lat = (text.match(/[A-Za-z]/g) || []).length;
+  return cyr >= lat;
+}
+
+// Чи це "електронний ресурс" (сайт/сторінка без чіткої журнальної/книжкової
+// структури) на противагу книзі/статті. Найнадійніше — за структурованими даними
+// (є journal/volume/сторінки чи _docType:"book" → це НЕ електронний ресурс); для
+// сирого тексту без структури — евристика за наявністю номера випуску/сторінок.
+export function isElectronicResource(text, structuredPaper) {
+  if (structuredPaper) {
+    if (structuredPaper._docType === "book" || structuredPaper.journal || structuredPaper.pages || structuredPaper.volume || structuredPaper.issue) return false;
+    return true;
+  }
+  const hasIssueOrPages = /№\s*\d+|Вип\.\s*\d+|Т\.\s*\d+|[Сс]\.\s*\d+/i.test(text);
+  const hasUrl = /https?:\/\/\S+/i.test(text);
+  return hasUrl && !hasIssueOrPages;
+}
+
+// Сортує вже ВІДФОРМАТОВАНИЙ (прізвище спереду) список джерел за групами ДСТУ
+// 8302:2015: закони → кирилиця книги/статті → кирилиця електронні ресурси →
+// іноземні (латиниця) для роботи українською мовою; або закони → іноземні →
+// кирилиця книги/статті → кирилиця електронні ресурси для іноземної роботи.
+// items: [{ text, structured }]
+export function sortReferencesForDisplay(items, { latinFirst = false } = {}) {
+  const groupOf = (item) => {
+    if (isLawSource(item.text)) return 0;
+    const cyr = isMostlyCyrillic(item.text);
+    if (!cyr) return latinFirst ? 1 : 3;
+    const electronic = isElectronicResource(item.text, item.structured);
+    return latinFirst ? (electronic ? 3 : 2) : (electronic ? 2 : 1);
+  };
+  const locale = (item) => isMostlyCyrillic(item.text) ? "uk" : "en";
+  return items
+    .map((item, idx) => ({ item, idx, group: groupOf(item) }))
+    .sort((a, b) => a.group !== b.group ? a.group - b.group : a.item.text.localeCompare(b.item.text, locale(a.item)))
+    .map(x => x.item);
+}
+
 // Будує правила стилю (ДСТУ/APA/MLA) + промпт форматування списку джерел, викликає
-// LLM і валідує відповідь (sanitizeFormattedSourceLines). Спільна для трьох місць, де
-// раніше цей блок був продубльований майже дослівно: remapAndFormatCitations (тут),
-// doAddAllCitations і doRemapCitations (academic-assistant.jsx).
-// Викликач сам резолвить сирі значення стилю/порядку/групування (у них різні джерела —
-// methodInfo, override, евристики) і будує refLines (бо форма citStructured різна);
-// сюди приходять вже готові прості параметри.
+// ЛЛМ і валідує відповідь (sanitizeFormattedSourceLines). ЛЛМ переформатовує КОЖНЕ
+// джерело окремо (пунктуація, порядок ініціалів, курсив тощо) — сортування й
+// групування більше не її задача (робить код у sortReferencesForDisplay ПІСЛЯ
+// форматування), окрім явної кастомної вимоги групування з методички
+// (sourcesGroupingRaw) — тоді переставляння дозволене, і викликач бере порядок ЛЛМ
+// як фінальний (buildFinalReferenceList).
 export async function formatSourcesViaLLM({
   refLines,             // string[] — вже побудовані рядки "N. ..." (raw text або JSON structured)
   sourcesStyle,         // "APA" | "MLA" | "ДСТУ 8302:2015"
-  isLatinWork,          // bool — робота іноземною мовою (англ./польськ./нім. тощо)
-  isAlphabeticalOrder,  // bool
-  sourcesGroupingRaw,   // methodInfo?.sourcesGrouping — сира вимога клієнта, або falsy
+  sourcesGroupingRaw,   // methodInfo?.sourcesGrouping — кастомна вимога клієнта, або falsy
   sourcesFormatRules,   // methodInfo?.sourcesFormatRules
   callClaude,
 }) {
@@ -140,16 +251,12 @@ export async function formatSourcesViaLLM({
   const today = new Date();
   const accessDate = `${String(today.getDate()).padStart(2, "0")}.${String(today.getMonth() + 1).padStart(2, "0")}.${today.getFullYear()}`;
 
-  const sourcesOrderText = (isAlphabeticalOrder || isDstu) ? "Список відсортований за алфавітом." : "Список у порядку першої появи у тексті.";
-  const defaultGrouping = isLatinWork
-    ? "спочатку законодавчі акти (закони, кодекси, постанови, накази тощо) за хронологією або номером; потім іноземні джерела (латиниця) за алфавітом; наприкінці кириличні джерела (українські та інші) за алфавітом"
-    : "спочатку законодавчі акти (закони, кодекси, постанови, накази тощо) за хронологією або номером; потім книги та журнальні статті кирилицею (українські та інші кириличні) за алфавітом; потім українські електронні джерела (сайти, онлайн-матеріали кирилицею) за алфавітом; наприкінці іноземні джерела (латиниця) за алфавітом";
-  const sourcesGroupingText = sourcesGroupingRaw
-    ? `Групування: ${sourcesGroupingRaw}.`
-    : (isDstu || isAlphabeticalOrder) ? `Групування за ДСТУ 8302:2015: ${defaultGrouping}.` : "";
-  const dstuGroupOrder = isLatinWork
-    ? "1) законодавчі акти (за хронологією/номером); 2) іноземні джерела латиницею за алфавітом; 3) книги та статті кирилицею за алфавітом; 4) кириличні електронні джерела за алфавітом."
-    : "1) законодавчі акти (за хронологією/номером); 2) книги та статті кирилицею за алфавітом; 3) українські електронні джерела за алфавітом; 4) іноземні джерела латиницею за алфавітом.";
+  // Порядок рядків міняти можна ЛИШЕ якщо методичка явно вимагає своє групування —
+  // інакше код сам відсортує список ПІСЛЯ форматування (на правильно оформленому
+  // тексті), тож ЛЛМ не повинна нічого переставляти.
+  const orderInstruction = sourcesGroupingRaw
+    ? `Групування: ${sourcesGroupingRaw}. Перестав джерела ЗГІДНО з цією вимогою.`
+    : "НЕ переставляй рядки місцями, НЕ додавай і НЕ вилучай джерела — кожен вхідний рядок N має стати рівно одним вихідним рядком на позиції N (сортування й групування виконає код окремо, після твого форматування).";
 
   const styleRules = isAPA
     ? `СТИЛЬ: APA 7th edition. СУВОРО дотримуйся APA — НЕ змішуй з ДСТУ чи іншими стилями.
@@ -173,14 +280,17 @@ export async function formatSourcesViaLLM({
 - КАТЕГОРИЧНО ЗАБОРОНЕНО ставити ініціали ПЕРЕД прізвищем. НЕ "В. Андріяш" — лише "Андріяш В.". Ініціали ЗАВЖДИ після прізвища.
 - Між ініціалами — пробіл: "М. В." а не "М.В.".
 - Між містом і видавцем — пробіл двокрапка пробіл ( : ).
-- КУРСИВ: назву журналу, збірника, серії або сайту ОБОВ'ЯЗКОВО обгортай в *зірочки* (*Назва журналу*). Назву статті та прізвища авторів — звичайний шрифт.
-- ПОРЯДОК ГРУП: ${dstuGroupOrder}`
+- КУРСИВ: назву журналу, збірника, серії або сайту ОБОВ'ЯЗКОВО обгортай в *зірочки* (*Назва журналу*). Назву статті та прізвища авторів — звичайний шрифт.`
       : `СТИЛЬ: ${sourcesStyle}. Точно дотримуйся цього стилю.`;
 
   const methodSourcesRulesText = sourcesFormatRules ? `\nВИМОГИ МЕТОДИЧКИ ДО СПИСКУ ДЖЕРЕЛ: ${sourcesFormatRules}` : "";
 
-  const fmtPrompt = `${styleRules}
-${sourcesOrderText} ${sourcesGroupingText}${methodSourcesRulesText}
+  // Статична частина (правила стилю + інструкції) — однакова для всіх викликів у
+  // межах однієї роботи, тому позначена як кешована (prompt caching): повторні
+  // виклики (наприклад, під час ділення навпіл при відновленні після провалу
+  // валідації) коштують значно менше.
+  const staticPrompt = `${styleRules}
+${orderInstruction}${methodSourcesRulesText}
 Збережи номери. Поверни ТІЛЬКИ список без заголовка. Для онлайн-джерел додай URL (дата звернення: ${accessDate}). НЕ використовуй "[Електронний ресурс]".
 
 ФОРМАТ ВХІДНИХ ДАНИХ: кожен рядок — або JSON-об'єкт (_type:"structured") або сирий текст.
@@ -190,96 +300,113 @@ ${sourcesOrderText} ${sourcesGroupingText}${methodSourcesRulesText}
 - journal + volume + issue → для ДСТУ: "Назва журналу. рік. Вип. N, № M. С. xx–xx."
 - _docType:"book" → це монографія/книга (Місто : Видавець, рік. Nс., де N — totalPages якщо є)
 Для сирого тексту: нормалізуй порядок слів і розділові знаки за вимогами стилю.
-КРИТИЧНО: НЕ перекладай і НЕ транслітеруй прізвища авторів та назви джерел. Переведення ВЕЛИКИХ ЛІТЕР у sentence case — дозволено і обов'язково.
+КРИТИЧНО: НЕ перекладай і НЕ транслітеруй прізвища авторів та назви джерел. Переведення ВЕЛИКИХ ЛІТЕР у sentence case — дозволено і обов'язково.`;
 
-${refLines.join("\n")}`;
+  const systemPrompt = `Ти — асистент з бібліографічного форматування. Форматуй джерела строго за стилем ${sourcesStyle}. Не змішуй стилі цитування. Не перекладай і не транслітеруй прізвища авторів та назви джерел — зберігай мову оригіналу (українські джерела — українською, англійські — англійською). Перестав компоненти імені відповідно до вимог стилю (для APA: "Ім'я Прізвище" → "Прізвище, І."). Назви повністю ВЕЛИКИМИ ЛІТЕРАМИ переводь у sentence case. Повертай тільки відформатований список, без зайвого тексту.`;
 
   let fmtResult;
   try {
-    fmtResult = await callClaude([{ role: "user", content: fmtPrompt }], null,
-      `Ти — асистент з бібліографічного форматування. Форматуй джерела строго за стилем ${sourcesStyle}. Не змішуй стилі цитування. Не перекладай і не транслітеруй прізвища авторів та назви джерел — зберігай мову оригіналу (українські джерела — українською, англійські — англійською). Перестав компоненти імені відповідно до вимог стилю (для APA: "Ім'я Прізвище" → "Прізвище, І."). Назви повністю ВЕЛИКИМИ ЛІТЕРАМИ переводь у sentence case. Повертай тільки відформатований список, без зайвого тексту.`, 16000);
+    fmtResult = await callClaude([{
+      role: "user",
+      content: [
+        { type: "text", text: staticPrompt, cache_control: { type: "ephemeral" } },
+        { type: "text", text: refLines.join("\n") },
+      ],
+    }], null, systemPrompt, 16000);
   } catch (e) { console.error("sources format error:", e); }
 
-  return sanitizeFormattedSourceLines(fmtResult, refLines.length);
+  return sanitizeFormattedSourceLines(fmtResult, refLines);
 }
 
-// Форматує список джерел за стилем (ДСТУ/APA/MLA), сортує за алфавітом
-// (з групуванням кирилиця/латиниця) і повертає мапу старий→новий номер
-// та формат inline-посилання для кожного нового номера.
-export async function remapAndFormatCitations({
-  citations,           // string[] — tezyCitations
-  citStructured,       // paper[] — плоский масив структурованих даних
-  citStyle,            // info?.citStyle
-  language,            // info?.language
-  sourcesOrder,        // methodInfo?.sourcesOrder (опційно)
-  sourcesGrouping,     // methodInfo?.sourcesGrouping (опційно)
-  sourcesFormatRules,  // methodInfo?.sourcesFormatRules (опційно)
-  citFootnotes,        // true → ДСТУ-посилання у вигляді посторінкових виносок замість [N]
-  callClaude,
-}) {
-  if (!citations?.length) return { refList: [], oldToNew: {}, refCiteText: {}, pageRanges: {} };
+// Форматує список джерел через ЛЛМ з автоматичним відновленням: якщо відповідь не
+// пройшла валідацію (ЛЛМ зсунула/вигадала/загубила джерело), замість відкидання
+// ВСЬОГО списку ділимо його навпіл і пробуємо кожну половину окремо, рекурсивно, поки
+// не ізолюємо конкретний проблемний фрагмент (у гіршому випадку — одне джерело, яке
+// тоді лишається без стильового форматування, а решта — акуратно оформлена).
+// У звичайному (успішному) випадку це один виклик на весь список — без подорожчання.
+export async function formatSourcesWithRetry({
+  rawRefs, findStructured, sourcesStyle, isLatinWork, sourcesGroupingRaw, sourcesFormatRules, callClaude,
+}, offset = 0) {
+  if (!rawRefs.length) return { byInputOrder: [], byLlmOrder: [], rawIdxByLlmPos: [] };
 
-  const sourcesStyleRaw = citStyle || "ДСТУ 8302:2015";
-  const isAPA = /APA/i.test(sourcesStyleRaw);
-  const isMLA = /MLA/i.test(sourcesStyleRaw);
-  const isDstu = !isAPA && !isMLA;
-  const sourcesStyle = isAPA ? "APA" : isMLA ? "MLA" : "ДСТУ 8302:2015";
-  const isAlphabeticalOrder = !sourcesOrder || sourcesOrder === "alphabetical";
-
-  const latinFirst = /англ|english|польськ|polish|нім|german|франц|french|іспан|spanish|італ|italian/i.test(language || "");
-
-  // ── 1. Сортування (алфавіт + групування кирилиця/латиниця + закони першими) ──
-  let sorted;
-  if (isAlphabeticalOrder || isDstu) {
-    const isLaw = s => /^(закон|кодекс|конституція|постанова|указ\s|декрет\s|наказ\s|розпорядження\s)/i.test(s.trim());
-    const langGroup = s => {
-      const isCyrillic = /^[А-ЯҐЄІЇа-яґєії]/i.test(s);
-      return latinFirst ? (isCyrillic ? 1 : 0) : (isCyrillic ? 0 : 1);
-    };
-    const groupLocales = latinFirst ? ["en", "uk"] : ["uk", "en"];
-    sorted = [...citations].sort((a, b) => {
-      const lawA = isLaw(a), lawB = isLaw(b);
-      if (lawA !== lawB) return lawA ? -1 : 1;
-      const ga = langGroup(a), gb = langGroup(b);
-      if (ga !== gb) return ga - gb;
-      return a.localeCompare(b, groupLocales[ga]);
-    });
-  } else {
-    sorted = [...citations];
-  }
-  const oldToNew = {};
-  citations.forEach((c, i) => { oldToNew[i + 1] = sorted.indexOf(c) + 1; });
-
-  // ── 2. Lookup структурованих даних за назвою ──
-  const structuredByTitle = {};
-  (citStructured || []).forEach(p => {
-    if (p?.title) structuredByTitle[p.title.toLowerCase().slice(0, 60)] = p;
-  });
-  const findStructured = (refText) => {
-    const lower = refText.toLowerCase();
-    for (const [key, paper] of Object.entries(structuredByTitle)) {
-      if (lower.includes(key)) return paper;
-    }
-    return null;
-  };
-  const refLines = sorted.map((r, i) => {
+  const refLines = rawRefs.map((r, i) => {
     const sp = findStructured(r);
     return sp ? `${i + 1}. ${JSON.stringify(buildStructuredEntry(sp))}` : `${i + 1}. ${r}`;
   });
 
-  // ── 3. Промпт форматування + виклик LLM (спільна логіка — formatSourcesViaLLM) ──
-  const sanitizedFmt = await formatSourcesViaLLM({
-    refLines, sourcesStyle, isLatinWork: latinFirst, isAlphabeticalOrder,
-    sourcesGroupingRaw: sourcesGrouping, sourcesFormatRules, callClaude,
+  const sanitized = await formatSourcesViaLLM({
+    refLines, sourcesStyle, isLatinWork, sourcesGroupingRaw, sourcesFormatRules, callClaude,
   });
-  const fmtLines = sanitizedFmt
-    ? sanitizedFmt.map(l => l.replace(/^\d+[.)]\s*/, ""))
-    : sorted;
 
-  // ── 4. Формат inline-посилань по стилю ──
+  if (sanitized) {
+    const rawIdxByLlmPos = new Array(rawRefs.length);
+    sanitized.matchedIndex.forEach((j, i) => { rawIdxByLlmPos[j] = offset + i; });
+    return { byInputOrder: sanitized.byInputOrder, byLlmOrder: sanitized.byLlmOrder, rawIdxByLlmPos };
+  }
+
+  if (rawRefs.length === 1) {
+    // Нема куди ділити далі — лишаємо сирий текст як є, без стильового форматування.
+    return { byInputOrder: [rawRefs[0]], byLlmOrder: [rawRefs[0]], rawIdxByLlmPos: [offset] };
+  }
+
+  const mid = Math.ceil(rawRefs.length / 2);
+  const [left, right] = await Promise.all([
+    formatSourcesWithRetry({ rawRefs: rawRefs.slice(0, mid), findStructured, sourcesStyle, isLatinWork, sourcesGroupingRaw, sourcesFormatRules, callClaude }, offset),
+    formatSourcesWithRetry({ rawRefs: rawRefs.slice(mid), findStructured, sourcesStyle, isLatinWork, sourcesGroupingRaw, sourcesFormatRules, callClaude }, offset + mid),
+  ]);
+  return {
+    byInputOrder: [...left.byInputOrder, ...right.byInputOrder],
+    byLlmOrder: [...left.byLlmOrder, ...right.byLlmOrder],
+    rawIdxByLlmPos: [...left.rawIdxByLlmPos, ...right.rawIdxByLlmPos],
+  };
+}
+
+// Будує фінальний (відформатований і відсортований) список джерел та мапу
+// "індекс у rawRefs (дедуплікований сирий список, у порядку першої появи) →
+// фінальний номер у списку". Порядок: форматування (formatSourcesWithRetry, без
+// права переставляти, окрім кастомного групування) → сортування кодом на вже
+// правильно оформленому тексті (sortReferencesForDisplay); або, якщо методичка явно
+// вимагає своє групування — довіряємо порядку, який повернула ЛЛМ (код не може
+// інтерпретувати довільну кастомну вимогу).
+export async function buildFinalReferenceList({
+  rawRefs, findStructured, sourcesStyle, isLatinWork, sourcesGroupingRaw, sourcesFormatRules, callClaude,
+  skipSort = false, // true → зберегти порядок першої появи (обрано "порядок появи", не алфавітний; актуально лише для APA/MLA — ДСТУ завжди алфавітний)
+}) {
+  if (!rawRefs.length) return { finalTexts: [], indexMap: [] };
+
+  const formatted = await formatSourcesWithRetry({
+    rawRefs, findStructured, sourcesStyle, isLatinWork, sourcesGroupingRaw, sourcesFormatRules, callClaude,
+  });
+
+  let finalTexts, rawIdxOfFinal;
+  if (skipSort) {
+    finalTexts = formatted.byInputOrder;
+    rawIdxOfFinal = formatted.byInputOrder.map((_, i) => i);
+  } else if (sourcesGroupingRaw) {
+    finalTexts = formatted.byLlmOrder;
+    rawIdxOfFinal = formatted.rawIdxByLlmPos;
+  } else {
+    const items = formatted.byInputOrder.map((text, i) => ({ text, structured: findStructured(rawRefs[i]), rawIdx: i }));
+    const sortedItems = sortReferencesForDisplay(items, { latinFirst: isLatinWork });
+    finalTexts = sortedItems.map(it => it.text);
+    rawIdxOfFinal = sortedItems.map(it => it.rawIdx);
+  }
+
+  const indexMap = new Array(rawRefs.length);
+  rawIdxOfFinal.forEach((rawIdx, finalPos) => { indexMap[rawIdx] = finalPos + 1; });
+  return { finalTexts, indexMap };
+}
+
+// Будує формат внутрітекстового посилання ("[N]" / "(Автор, рік)" / "%%FNn%%") і, для
+// ДСТУ, діапазон сторінок джерела — для кожного фінального номера. Спільна для
+// remapAndFormatCitations і doRemapCitations (academic-assistant.jsx).
+export function buildCiteFormats({ finalTexts, rawRefs, indexMap, findStructured, isAPA, isMLA, isFootnoteMode }) {
+  const rawIdxOfFinal = new Array(finalTexts.length);
+  indexMap.forEach((finalPos, rawIdx) => { rawIdxOfFinal[finalPos - 1] = rawIdx; });
+
   const refCiteText = {};
   const pageRanges = {};
-  fmtLines.forEach((ref, i) => {
+  finalTexts.forEach((ref, i) => {
     const n = i + 1;
     if (isAPA) {
       const commaIdx = ref.indexOf(",");
@@ -301,18 +428,73 @@ export async function remapAndFormatCitations({
         ? beforeComma
         : ref.match(/(?:^|[\s,])([А-ЯҐЄІЇа-яґєіїA-Za-z]{3,})/)?.[1];
       refCiteText[n] = `(${rawSurname || `Автор${n}`})`;
-    } else if (citFootnotes) {
-      // Маркер для exportDocx — буде замінений на справжню Word-виноску
-      // з повним описом джерела (ref), узятим зі сформатованого списку.
+    } else if (isFootnoteMode) {
+      // Маркер для exportDocx — буде замінений на справжню Word-виноску з повним
+      // описом джерела (ref), узятим зі сформатованого списку.
       refCiteText[n] = `%%FN${n}%%`;
     } else {
-      const rawRef = sorted[i] ?? ref;
+      const rawIdx = rawIdxOfFinal[i];
+      const rawRef = rawRefs[rawIdx] ?? ref;
       const sp = findStructured(rawRef);
       const range = extractPageRange(rawRef, sp);
       if (range) pageRanges[n] = range;
       refCiteText[n] = `[${n}]`;
     }
   });
+  return { refCiteText, pageRanges };
+}
 
-  return { refList: fmtLines, oldToNew, refCiteText, pageRanges };
+// Форматує список джерел за стилем (ДСТУ/APA/MLA), сортує (закони/мова/тип ресурсу)
+// і повертає мапу старий→новий номер та формат inline-посилання для кожного нового
+// номера. Для малих робіт (small-works.jsx, PracticePage.jsx), де [N] у тексті
+// ЗАВЖДИ відповідає citations[N-1] (єдиний глобальний список без посекційної
+// локальної нумерації, на відміну від doRemapCitations в academic-assistant.jsx).
+export async function remapAndFormatCitations({
+  citations,           // string[] — tezyCitations
+  citStructured,       // paper[] — плоский масив структурованих даних
+  citStyle,            // info?.citStyle
+  language,            // info?.language
+  sourcesOrder,        // methodInfo?.sourcesOrder (опційно)
+  sourcesGrouping,     // methodInfo?.sourcesGrouping (опційно)
+  sourcesFormatRules,  // methodInfo?.sourcesFormatRules (опційно)
+  citFootnotes,        // true → ДСТУ-посилання у вигляді посторінкових виносок замість [N]
+  callClaude,
+}) {
+  if (!citations?.length) return { refList: [], oldToNew: {}, refCiteText: {}, pageRanges: {} };
+
+  const sourcesStyleRaw = citStyle || "ДСТУ 8302:2015";
+  const isAPA = /APA/i.test(sourcesStyleRaw);
+  const isMLA = /MLA/i.test(sourcesStyleRaw);
+  const isDstu = !isAPA && !isMLA;
+  const sourcesStyle = isAPA ? "APA" : isMLA ? "MLA" : "ДСТУ 8302:2015";
+  const isAlphabeticalOrder = !sourcesOrder || sourcesOrder === "alphabetical";
+  const latinFirst = /англ|english|польськ|polish|нім|german|франц|french|іспан|spanish|італ|italian/i.test(language || "");
+
+  const structuredByTitle = {};
+  (citStructured || []).forEach(p => {
+    if (p?.title) structuredByTitle[p.title.toLowerCase().slice(0, 60)] = p;
+  });
+  const findStructured = (refText) => {
+    const lower = refText.toLowerCase();
+    for (const [key, paper] of Object.entries(structuredByTitle)) {
+      if (lower.includes(key)) return paper;
+    }
+    return null;
+  };
+
+  const { finalTexts, indexMap } = await buildFinalReferenceList({
+    rawRefs: citations, findStructured, sourcesStyle, isLatinWork: latinFirst,
+    sourcesGroupingRaw: sourcesGrouping, sourcesFormatRules, callClaude,
+    skipSort: !isAlphabeticalOrder && !isDstu,
+  });
+
+  const oldToNew = {};
+  citations.forEach((_, i) => { oldToNew[i + 1] = indexMap[i]; });
+
+  const { refCiteText, pageRanges } = buildCiteFormats({
+    finalTexts, rawRefs: citations, indexMap, findStructured,
+    isAPA, isMLA, isFootnoteMode: citFootnotes,
+  });
+
+  return { refList: finalTexts, oldToNew, refCiteText, pageRanges };
 }

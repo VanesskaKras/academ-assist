@@ -16,7 +16,7 @@ import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, g
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { getAcademicDefaults, classifyAppendixItem, normalizeWorkType } from "./lib/academicDefaults.js";
 import { searchByPhrase, filterSourcesWithGemini, getEconInstitutionalSources } from "./lib/sourcesSearch.js";
-import { extractPageRange, formatSourcesViaLLM, applyCitationRemap } from "./lib/citationFormatting.js";
+import { formatSourcesViaLLM, applyCitationRemap, buildFinalReferenceList, buildCiteFormats } from "./lib/citationFormatting.js";
 import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
 import { StagePills } from "./components/StagePills.jsx";
 import { FieldBox, Heading, NavBtn, PrimaryBtn, GreenBtn, SaveIndicator } from "./components/Buttons.jsx";
@@ -3641,7 +3641,6 @@ ${secBlock}
     const { allRefs, secRefMap } = globalRefData;
     if (!allRefs.length) return;
     setAllCitLoading(true);
-    const lang = info?.language || "Українська";
     const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
     const newContent = { ...content };
 
@@ -3658,7 +3657,6 @@ ${secBlock}
     const isAlphabeticalOrder = !_effectiveOrderAdd || _effectiveOrderAdd === "alphabetical";
     const isDstu = /ДСТУ/i.test(sourcesStyle);
     const isFootnoteMode = citFootnotes && isDstu;
-    const isLatinWork = /англ|english|польськ|polish|нім|german|франц|french|іспан|spanish|італ|italian/i.test(lang);
 
     // ── Lookup: title → structured paper object (з citStructured) ──
     const structuredByTitle = {};
@@ -3703,10 +3701,10 @@ ${secBlock}
     // вигадала зайве джерело — відкидаємо відповідь і йдемо на сирий список,
     // щоб сміття не потрапило у фінальний документ.
     const sanitizedFmt = await formatSourcesViaLLM({
-      refLines, sourcesStyle, isLatinWork, isAlphabeticalOrder,
+      refLines, sourcesStyle,
       sourcesGroupingRaw: methodInfo?.sourcesGrouping, sourcesFormatRules: methodInfo?.sourcesFormatRules, callClaude,
     });
-    let fmtResult = sanitizedFmt ? sanitizedFmt.join("\n") : allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n");
+    let fmtResult = sanitizedFmt ? sanitizedFmt.byInputOrder.map((r, i) => `${i + 1}. ${r}`).join("\n") : allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n");
     setRefList(fmtResult.split("\n").filter(Boolean));
     const srcSec = sections.find(s => s.type === "sources");
     if (srcSec) newContent[srcSec.id] = fmtResult;
@@ -4014,7 +4012,10 @@ ${secsSummary}
   // ── sources-first: ремаппінг локальних [N] → глобальні номери + форматування списку ──
   const doRemapCitations = async () => {
     setRemapLoading(true);
-    const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
+    // Усі секції, що можуть містити цитати клієнта чи ШІ, окрім самого списку джерел
+    // (вступ і висновки теж можуть цитувати джерела — раніше вони виключались і їхні
+    // цитати так і лишались зі старими, не перенумерованими локальними номерами).
+    const mainSecs = sections.filter(s => s.type !== "sources");
     const _extraText2 = (methodInfo?.otherRequirements || "") + " " + (methodInfo?.citationStyle || "") + " " + (commentAnalysis?.sourcesHints || "");
     const sourcesStyle = citStyleOverride
       || methodInfo?.sourcesStyle
@@ -4052,43 +4053,15 @@ ${secsSummary}
       });
     });
 
-    // ── 3. Алфавітне сортування (законодавчі акти першими, потім за алфавітом) ──
+    // ── 3-6. Форматування джерел через LLM (без права переставляти — крім кастомного
+    // групування з методички) → сортування кодом на вже правильно оформленому тексті
+    // → мапа localN→globalN → формат inline-посилань. Спільна логіка з
+    // remapAndFormatCitations (citationFormatting.js): buildFinalReferenceList сама
+    // звіряє відповідь LLM за змістом і, за потреби, ділить список навпіл, щоб
+    // відновитись після провалу валідації, замість відкидання всього списку.
     const _remapWorkLang = info?.language || "Українська";
     const _remapLatinFirst = /англ|english|польськ|polish|нім|german|франц|french|іспан|spanish|італ|italian/i.test(_remapWorkLang);
-    const _remapIsLaw = s => /^(закон|кодекс|конституція|постанова|указ\s|декрет\s|наказ\s|розпорядження\s)/i.test(s.trim());
-    let allRefs, indexMap;
-    if (isAlphabeticalOrder || isDstu) {
-      const langGroup = s => {
-        const isCyrillic = /^[А-ЯҐЄІЇа-яґєії]/i.test(s);
-        return _remapLatinFirst ? (isCyrillic ? 1 : 0) : (isCyrillic ? 0 : 1);
-      };
-      const _remapGroupLocales = _remapLatinFirst ? ["en", "uk"] : ["uk", "en"];
-      const sorted = [...rawRefs].sort((a, b) => {
-        const lawA = _remapIsLaw(a), lawB = _remapIsLaw(b);
-        if (lawA !== lawB) return lawA ? -1 : 1;
-        const ga = langGroup(a), gb = langGroup(b);
-        if (ga !== gb) return ga - gb;
-        return a.localeCompare(b, _remapGroupLocales[ga]);
-      });
-      indexMap = rawRefs.map(r => sorted.indexOf(r) + 1);
-      allRefs = sorted;
-    } else {
-      allRefs = rawRefs;
-      indexMap = rawRefs.map((_, i) => i + 1);
-    }
 
-    // ── 4. Маппінг localN → globalN для кожного підрозділу ──
-    const secLocalToGlobal = {};
-    mainSecs.forEach(sec => {
-      secLocalToGlobal[sec.id] = {};
-      Object.entries(secLocalSources[sec.id]).forEach(([localN, text]) => {
-        const rawIdx = seenRefs.get(normalize(text));
-        if (rawIdx !== undefined) secLocalToGlobal[sec.id][Number(localN)] = indexMap[rawIdx];
-      });
-    });
-
-    // ── 5. Форматування списку через LLM (той самий підхід що в doAddAllCitations) ──
-    // ── Lookup структурованих даних (той самий підхід що в doAddAllCitations) ──
     const structuredByTitle2 = {};
     Object.values(citStructured).forEach(papers => {
       (papers || []).forEach(p => {
@@ -4102,82 +4075,29 @@ ${secsSummary}
       }
       return null;
     };
-    const buildEntry2 = (p) => {
-      const e = { _type: 'structured' };
-      if (p.authorsStructured?.length) e.authors = p.authorsStructured;
-      else if (p.authors?.length) e.authorsRaw = p.authors;
-      if (p.title) e.title = p.title;
-      if (p.year) e.year = p.year;
-      const v2 = p.venue && !/^[\w.-]+\.[a-zA-Z]{2,}$/.test(p.venue.trim()) ? p.venue : '';
-      if (v2) e.journal = v2;
-      if (p.volume) e.volume = p.volume;
-      if (p.issue) e.issue = p.issue;
-      if (p.pages) e.pages = p.pages;
-      if (p.totalPages) e.totalPages = p.totalPages;
-      if (p.publisher) e.publisher = p.publisher;
-      if (p.publisherLocation) e.city = p.publisherLocation;
-      const url2 = p.url || (p.doi ? `https://doi.org/${p.doi}` : '');
-      if (url2) e.url = url2;
-      if (p.type === 'book') e._docType = 'book';
-      return e;
-    };
-    const refLines2 = allRefs.map((r, i) => {
-      const sp = findStructured2(r);
-      if (sp) return `${i + 1}. ${JSON.stringify(buildEntry2(sp))}`;
-      return `${i + 1}. ${r}`;
-    });
 
-    // Валідація відповіді LLM (у formatSourcesViaLLM): залишаємо лише пронумеровані
-    // рядки і звіряємо їх кількість з allRefs — інакше преамбула/вигадане джерело
-    // потраплять у документ.
-    const sanitizedFmt2 = await formatSourcesViaLLM({
-      refLines: refLines2, sourcesStyle, isLatinWork: _remapLatinFirst, isAlphabeticalOrder,
+    const { finalTexts: allRefs, indexMap } = await buildFinalReferenceList({
+      rawRefs, findStructured: findStructured2, sourcesStyle, isLatinWork: _remapLatinFirst,
       sourcesGroupingRaw: methodInfo?.sourcesGrouping, sourcesFormatRules: methodInfo?.sourcesFormatRules, callClaude,
+      skipSort: !isAlphabeticalOrder && !isDstu,
     });
-    let fmtResult = sanitizedFmt2 ? sanitizedFmt2.join("\n") : null;
-    const fmtLines = sanitizedFmt2
-      ? sanitizedFmt2.map(l => l.replace(/^\d+[.)]\s*/, ""))
-      : allRefs;
+    const fmtLines = allRefs;
+    let fmtResult = allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n");
 
-    // ── 6. Формат inline-посилань по стилю ──
-    const refCiteText = {};
-    const pageRanges2 = {};
-    fmtLines.forEach((ref, i) => {
-      const n = i + 1;
-      if (isAPA) {
-        // Знаходимо перше "реальне" слово (3+ літер) — пропускаємо ініціали типу "О."
-        // Якщо перед першою комою одне слово без пробілу — це прізвище в APA форматі
-        const commaIdx = ref.indexOf(',');
-        const beforeComma = commaIdx > 0 ? ref.substring(0, commaIdx).trim() : "";
-        let rawAuthor;
-        if (beforeComma && !beforeComma.includes(" ") && beforeComma.length >= 3) {
-          rawAuthor = beforeComma;
-        } else {
-          const surnameMatch = ref.match(/(?:^|[\s,&])([А-ЯҐЄІЇа-яґєіїA-Za-z]{3,})/);
-          rawAuthor = surnameMatch?.[1] || `Автор${n}`;
-        }
-        const yearMatch = ref.match(/[\(\.\s](\d{4})[\)\.\,\s]/);
-        const author = rawAuthor.charAt(0).toUpperCase() + rawAuthor.slice(1).toLowerCase();
-        refCiteText[n] = `(${author}, ${yearMatch?.[1] || "б.р."})`;
-      } else if (isMLA) {
-        const commaIdx = ref.indexOf(',');
-        const beforeComma = commaIdx > 0 ? ref.substring(0, commaIdx).trim() : "";
-        const rawSurname = (beforeComma && !beforeComma.includes(" "))
-          ? beforeComma
-          : ref.match(/(?:^|[\s,])([А-ЯҐЄІЇа-яґєіїA-Za-z]{3,})/)?.[1];
-        refCiteText[n] = `(${rawSurname || `Автор${n}`})`;
-      } else if (isFootnoteMode) {
-        refCiteText[n] = `%%FN${n}%%`;
-      } else {
-        // ДСТУ: витягуємо діапазон сторінок з raw-запису (allRefs), не з fmtLines,
-        // щоб не залежати від переупорядкування Gemini за ДСТУ-групами.
-        // Конкретну сторінку для кожного вживання підставляємо нижче, у кроці 7.
-        const rawRef = allRefs[i] ?? ref;
-        const sp = findStructured2(rawRef);
-        const range = extractPageRange(rawRef, sp);
-        if (range) pageRanges2[n] = range;
-        refCiteText[n] = `[${n}]`;
-      }
+    // ── Маппінг localN → globalN для кожного підрозділу ──
+    const secLocalToGlobal = {};
+    mainSecs.forEach(sec => {
+      secLocalToGlobal[sec.id] = {};
+      Object.entries(secLocalSources[sec.id]).forEach(([localN, text]) => {
+        const rawIdx = seenRefs.get(normalize(text));
+        if (rawIdx !== undefined) secLocalToGlobal[sec.id][Number(localN)] = indexMap[rawIdx];
+      });
+    });
+
+    // ── Формат inline-посилань по стилю ──
+    const { refCiteText, pageRanges: pageRanges2 } = buildCiteFormats({
+      finalTexts: allRefs, rawRefs, indexMap, findStructured: findStructured2,
+      isAPA, isMLA, isFootnoteMode,
     });
 
     // ── 7. Заміна в тексті: [localN] / [localN, с. X] / [localN, localM] → фінал ──
@@ -4199,7 +4119,7 @@ ${secsSummary}
     if (!isAPA && !isMLA) {
       mainSecs.forEach(sec => {
         if (!newContent[sec.id]) return;
-        newContent[sec.id] = newContent[sec.id].replace(/\[\s*(\d+(?:\s*[,;]\s*\d+)*)\s*(?:,\s*с\.\s*\d+)?\s*\]/g, (match, nums) => {
+        newContent[sec.id] = newContent[sec.id].replace(/\[\s*(\d+(?:\s*[,;]\s*\d+)*)\s*(?:,\s*[сc]\.?\s*\d*[^\]]*)?\s*\]/g, (match, nums) => {
           const valid = nums.split(/[,;]/).every(n => {
             const num = Number(n.trim());
             return num >= 1 && num <= fmtLines.length;
@@ -4214,9 +4134,11 @@ ${secsSummary}
       const firstSeen = [], seen = new Set();
       mainSecs.forEach(sec => {
         const text = newContent[sec.id] || "";
-        [...text.matchAll(/\[(\d+)[\],]/g)].forEach(m => {
-          const n = Number(m[1]);
-          if (!seen.has(n)) { seen.add(n); firstSeen.push(n); }
+        [...text.matchAll(/\[\s*(\d+(?:\s*[,;]\s*\d+)*)/g)].forEach(m => {
+          m[1].split(/[,;]/).forEach(s => {
+            const n = Number(s.trim());
+            if (!seen.has(n)) { seen.add(n); firstSeen.push(n); }
+          });
         });
       });
       const oldToNew = {};
@@ -4227,11 +4149,12 @@ ${secsSummary}
       if (Object.entries(oldToNew).some(([old, nw]) => Number(old) !== nw)) {
         mainSecs.forEach(sec => {
           if (!newContent[sec.id]) return;
-          let text = newContent[sec.id].replace(/\[(\d+)(,\s*с\.\s*\d+)?\]/g, (match, n, page) => {
-            const newN = oldToNew[Number(n)];
-            return newN ? `%%CIT${newN}${page || ""}%%` : match;
+          let text = newContent[sec.id].replace(/\[\s*(\d+(?:\s*[,;]\s*\d+)*)\s*(?:,\s*[сc]\.?\s*(\d+)?[^\]]*)?\s*\]/g, (match, nums, page) => {
+            const newNums = nums.split(/[,;]/).map(s => oldToNew[Number(s.trim())]).filter(Boolean);
+            if (!newNums.length) return match;
+            if (newNums.length === 1) return `[${newNums[0]}${page ? `, с. ${page}` : ""}]`;
+            return `[${[...new Set(newNums)].join(", ")}]`;
           });
-          text = text.replace(/%%CIT(\d+)(,\s*с\.\s*\d+)?%%/g, (_, n, page) => `[${n}${page || ""}]`);
           newContent[sec.id] = text;
         });
 
