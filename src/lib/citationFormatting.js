@@ -248,6 +248,22 @@ export function isMostlyCyrillic(text) {
   return cyr >= lat;
 }
 
+// Мова джерела для угруповання ДСТУ визначається за ПІБ автора — першим словом
+// запису (прізвище, бо на цьому етапі текст уже відформатовано "Прізвище І. І."),
+// а НЕ за всім рядком: інакше джерело з українським автором, але з англомовною
+// цитованою назвою чи установою в описі (наприклад, переклад іноземного документа),
+// хибно потрапляє в іноземну групу через саму лише кількість латинських літер у
+// назві. Джерела без автора (починаються з назви) класифікуються за мовою самої
+// назви — тим самим першим словом.
+function isForeignAuthorScript(text) {
+  const m = text.trim().match(/^[«"']?([A-Za-zА-ЯҐЄІЇа-яґєії]+)/);
+  if (!m) return false;
+  const word = m[1];
+  const lat = (word.match(/[A-Za-z]/g) || []).length;
+  const cyr = (word.match(/[А-ЯҐЄІЇа-яґєії]/g) || []).length;
+  return lat > cyr;
+}
+
 // Чи це "електронний ресурс" (сайт/сторінка без чіткої журнальної/книжкової
 // структури) на противагу книзі/статті. Найнадійніше — за структурованими даними
 // (є journal/volume/сторінки чи _docType:"book" → це НЕ електронний ресурс); для
@@ -270,12 +286,12 @@ export function isElectronicResource(text, structuredPaper) {
 export function sortReferencesForDisplay(items, { latinFirst = false } = {}) {
   const groupOf = (item) => {
     if (isLawSource(item.text)) return 0;
-    const cyr = isMostlyCyrillic(item.text);
-    if (!cyr) return latinFirst ? 1 : 3;
+    const foreign = isForeignAuthorScript(item.text);
+    if (foreign) return latinFirst ? 1 : 3;
     const electronic = isElectronicResource(item.text, item.structured);
     return latinFirst ? (electronic ? 3 : 2) : (electronic ? 2 : 1);
   };
-  const locale = (item) => isMostlyCyrillic(item.text) ? "uk" : "en";
+  const locale = (item) => isForeignAuthorScript(item.text) ? "en" : "uk";
   return items
     .map((item, idx) => ({ item, idx, group: groupOf(item) }))
     .sort((a, b) => a.group !== b.group ? a.group - b.group : a.item.text.localeCompare(b.item.text, locale(a.item)))
