@@ -12,6 +12,7 @@ const ORDINAL_CHAPTER_STEMS_CS = { "prvn": 1, "druh": 2, "třet": 3, "čtvrt": 4
 const ORDINAL_CHAPTER_STEMS_SK = { "prv": 1, "druh": 2, "tret": 3, "štvrt": 4 };
 const CARDINAL_WORDS_EN = { "one": 1, "two": 2, "three": 3, "four": 4 };
 const ORDINAL_WORDS_EN = { "first": 1, "second": 2, "third": 3, "fourth": 4 };
+const CHAPTER_NUMERALS_ZH = { "一": 1, "二": 2, "三": 3, "四": 4 };
 
 // Заголовок списку джерел клієнт/методичка можуть називати по-різному —
 // розпізнаємо поширені варіанти, а не лише фразу, яку сам застосунок
@@ -47,6 +48,10 @@ const SOURCES_HEADING_SYNONYMS = [
   // Словацька
   "ZOZNAM POUŽITÝCH ZDROJOV",
   "BIBLIOGRAFIA",
+  // Китайська
+  "参考书目",
+  "文献目录",
+  "引用文献",
 ];
 
 function buildPatterns(lang) {
@@ -57,7 +62,8 @@ function buildPatterns(lang) {
   const sourcesWord = escapeRe(L.sources);
   const sourcesAlt = SOURCES_HEADING_SYNONYMS.map(escapeRe).join("|");
   return {
-    chapter: new RegExp(`^\\s*${chapterWord}\\s+(\\d+)\\.?\\s*(.*)$`, "i"),
+    // \s* (не \s+) між словом розділу і номером — у китайській немає пробілів між ієрогліфами й цифрою ("第1章")
+    chapter: new RegExp(`^\\s*${chapterWord}\\s*(\\d+)\\.?\\s*(.*)$`, "i"),
     sub: /^\s*(\d+)\.(\d+)\.?\s+(.{1,150})$/,
     // "Висновки до розділу 1" / "Висновок до 1 розділу" / "Висновки до першого розділу" / "Conclusions to Chapter 1" /
     // Wnioski do rozdziału 1 (pl) / Conclusiones del capítulo 1 (es) / Závěry ke kapitole 1 (cs) / Závery ku kapitole 1 (sk) —
@@ -101,6 +107,10 @@ function buildPatterns(lang) {
           "|kapitol[a-záäčďéíĺľňóôŕšťúýž]*\\s+(?<numSk2>\\d+)" +
           "|(?<ordSk>prv|druh|tret|štvrt)[a-záäčďéíĺľňóôŕšťúýž]*\\s+kapitol[a-záäčďéíĺľňóôŕšťúýž]*" +
         ")" +
+        // Китайська: "第1章结论" / "第一章总结" / "本章小结" (без пробілів — ієрогліфи не розділяються пробілом;
+        // "本章..." — без явного номера, береться номер поточного розділу за контекстом)
+        "|第(?:(?<numZh1>\\d+)|(?<ordZh>[一二三四]))章(?:的)?(?:结论|总结|小结)" +
+        "|(?<zhCurrent>本章)(?:的)?(?:结论|总结|小结)" +
       ")\\s*\\.?\\s*.*$",
       "i"
     ),
@@ -131,13 +141,14 @@ function detectHeadings(text, lang) {
       headings.push({ lineIdx: i, kind: "sub", id, title: `${id} ${m[3].trim()}`, chapNum: parseInt(m[1], 10) });
     } else if ((m = t.match(P.chapConcl))) {
       const g = m.groups || {};
-      const numGroups = ["num1", "num2", "num3", "numPl1", "numPl2", "numEs1", "numCs1", "numCs2", "numSk1", "numSk2"];
-      const ordGroups = { ord: ORDINAL_CHAPTER_STEMS, ordPl1: ORDINAL_CHAPTER_STEMS_PL, ordPl2: ORDINAL_CHAPTER_STEMS_PL, ordEs1: ORDINAL_CHAPTER_STEMS_ES, ordEs2: ORDINAL_CHAPTER_STEMS_ES, ordCs: ORDINAL_CHAPTER_STEMS_CS, ordSk: ORDINAL_CHAPTER_STEMS_SK, enCard1: CARDINAL_WORDS_EN, enOrd1: ORDINAL_WORDS_EN };
+      const numGroups = ["num1", "num2", "num3", "numPl1", "numPl2", "numEs1", "numCs1", "numCs2", "numSk1", "numSk2", "numZh1"];
+      const ordGroups = { ord: ORDINAL_CHAPTER_STEMS, ordPl1: ORDINAL_CHAPTER_STEMS_PL, ordPl2: ORDINAL_CHAPTER_STEMS_PL, ordEs1: ORDINAL_CHAPTER_STEMS_ES, ordEs2: ORDINAL_CHAPTER_STEMS_ES, ordCs: ORDINAL_CHAPTER_STEMS_CS, ordSk: ORDINAL_CHAPTER_STEMS_SK, enCard1: CARDINAL_WORDS_EN, enOrd1: ORDINAL_WORDS_EN, ordZh: CHAPTER_NUMERALS_ZH };
       let n = null;
       for (const key of numGroups) { if (g[key]) { n = parseInt(g[key], 10); break; } }
       if (n === null) {
         for (const key of Object.keys(ordGroups)) { if (g[key]) { n = ordGroups[key][g[key].toLowerCase()]; break; } }
       }
+      if (n === null && g.zhCurrent) n = curChapNum || null; // "本章小结" — номер розділу береться з контексту
       if (n) headings.push({ lineIdx: i, kind: "chapter_conclusion", id: `${n}.conclusions`, chapNum: n });
     } else if (P.intro.test(t)) {
       headings.push({ lineIdx: i, kind: "intro", id: "intro" });
@@ -173,7 +184,7 @@ function parseBibliography(sourcesText) {
 // Знаходить позначки цитувань [N] у тексті підрозділу, перенумеровує їх локально (1,2,3...)
 // і повертає { text, sources[] } — sources у форматі "рядок на джерело", як citInputs
 function localizeCitations(text, bibliography) {
-  const numRe = /\[\s*(\d+(?:\s*[,;]\s*\d+)*)\s*(?:,\s*с\.?\s*\d+[-–]?\d*)?\s*\]/g;
+  const numRe = /\[\s*(\d+(?:\s*[,;]\s*\d+)*)\s*(?:,\s*[сc]\.?\s*\d*[^\]]*)?\s*\]/g;
   const localMap = new Map(); // globalNum → localIdx (1-based)
   const localSources = [];
 
