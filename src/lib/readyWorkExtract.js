@@ -5,20 +5,108 @@ import { getLangLabels } from "./planUtils.js";
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+const ORDINAL_CHAPTER_STEMS = { "перш": 1, "друг": 2, "трет": 3, "четверт": 4 };
+const ORDINAL_CHAPTER_STEMS_PL = { "pierwsz": 1, "drug": 2, "trzeci": 3, "czwart": 4 };
+const ORDINAL_CHAPTER_STEMS_ES = { "prim": 1, "segund": 2, "tercer": 3, "cuart": 4 };
+const ORDINAL_CHAPTER_STEMS_CS = { "prvn": 1, "druh": 2, "třet": 3, "čtvrt": 4 };
+const ORDINAL_CHAPTER_STEMS_SK = { "prv": 1, "druh": 2, "tret": 3, "štvrt": 4 };
+const CARDINAL_WORDS_EN = { "one": 1, "two": 2, "three": 3, "four": 4 };
+const ORDINAL_WORDS_EN = { "first": 1, "second": 2, "third": 3, "fourth": 4 };
+
+// Заголовок списку джерел клієнт/методичка можуть називати по-різному —
+// розпізнаємо поширені варіанти, а не лише фразу, яку сам застосунок
+// використовує для власного фінального списку.
+const SOURCES_HEADING_SYNONYMS = [
+  "СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ",
+  "СПИСОК ВИКОРИСТАНОЇ ЛІТЕРАТУРИ",
+  "СПИСОК ЛІТЕРАТУРИ",
+  "БІБЛІОГРАФІЧНИЙ СПИСОК",
+  "ПЕРЕЛІК ВИКОРИСТАНИХ ДЖЕРЕЛ",
+  "ПЕРЕЛІК ДЖЕРЕЛ",
+  "REFERENCES",
+  "BIBLIOGRAPHY",
+  "WORKS CITED",
+  "LIST OF REFERENCES",
+  "REFERENCE LIST",
+  "LIST OF WORKS CITED",
+  // Польська
+  "SPIS BIBLIOGRAFICZNY",
+  "SPIS LITERATURY",
+  "WYKAZ LITERATURY",
+  "WYKAZ ŹRÓDEŁ",
+  "SPIS WYKORZYSTANEJ LITERATURY",
+  // Іспанська
+  "REFERENCIAS BIBLIOGRÁFICAS",
+  "LISTA DE REFERENCIAS",
+  "FUENTES BIBLIOGRÁFICAS",
+  "REFERENCIAS",
+  // Чеська
+  "SEZNAM POUŽITÝCH ZDROJŮ",
+  "BIBLIOGRAFIE",
+  "SEZNAM LITERATURY",
+  // Словацька
+  "ZOZNAM POUŽITÝCH ZDROJOV",
+  "BIBLIOGRAFIA",
+];
+
 function buildPatterns(lang) {
   const L = getLangLabels(lang);
   const chapterWord = escapeRe(L.chapterWord);
   const introWord = escapeRe(L.intro);
   const conclWord = escapeRe(L.conclusions);
   const sourcesWord = escapeRe(L.sources);
+  const sourcesAlt = SOURCES_HEADING_SYNONYMS.map(escapeRe).join("|");
   return {
     chapter: new RegExp(`^\\s*${chapterWord}\\s+(\\d+)\\.?\\s*(.*)$`, "i"),
     sub: /^\s*(\d+)\.(\d+)\.?\s+(.{1,150})$/,
-    // "Висновки до розділу 1" / "Conclusions to Chapter 1" / інші мови — \w у JS не читає кирилицю, тому явний клас літер
-    chapConcl: /^\s*(?:висновк[а-яґєії]*\s+до\s+розділ[а-яґєії]*|conclusions?\s+to\s+chapter|wnioski\s+do\s+rozdzia[łl]u|z[áa]v[eě]ry?\s+k[ue]\s+kapitole)\s*(\d+)\s*\.?\s*$/i,
+    // "Висновки до розділу 1" / "Висновок до 1 розділу" / "Висновки до першого розділу" / "Conclusions to Chapter 1" /
+    // Wnioski do rozdziału 1 (pl) / Conclusiones del capítulo 1 (es) / Závěry ke kapitole 1 (cs) / Závery ku kapitole 1 (sk) —
+    // \w у JS не читає кирилицю/діакритику, тому явний клас літер; номер розділу може стояти до або після слова
+    // "розділу"/"rozdziału"/"capítulo"/"kapitole", або бути порядковим числівником рідною мовою
+    chapConcl: new RegExp(
+      "^\\s*(?:" +
+        "виснов(?:ок|ки|ків)\\s+до\\s+(?:" +
+          "(?<num1>\\d+)\\s*розділ[а-яґєії]*" +
+          "|розділ[а-яґєії]*\\s+(?<num2>\\d+)" +
+          "|(?<ord>перш|друг|трет|четверт)[а-яґєії]*\\s+розділ[а-яґєії]*" +
+        ")" +
+        // Англійська: "Conclusions to Chapter 1" / "Conclusions to Chapter One" / "Conclusions to the First Chapter"
+        // (зворотний порядок "Chapter 1 Conclusions" не підтримуємо — такий рядок завжди перехоплює звичайний
+        // патерн заголовка розділу `chapter`, який перевіряється раніше)
+        "|conclusions?\\s+(?:to|of)\\s+(?:the\\s+)?(?:" +
+          "chapter\\s*(?<num3>\\d+)" +
+          "|chapter\\s+(?<enCard1>one|two|three|four)\\b" +
+          "|(?<enOrd1>first|second|third|fourth)\\s+chapter" +
+        ")" +
+        // Польська
+        "|(?:wniosk(?:i|ów)?|wniosek)\\s+do\\s+(?:" +
+          "(?<numPl1>\\d+)\\.?\\s*rozdzia[łl][a-ząćęłńóśźż]*" +
+          "|rozdzia[łl][a-ząćęłńóśźż]*\\s+(?:(?<numPl2>\\d+)|(?<ordPl2>pierwsz|drug|trzeci|czwart)[a-ząćęłńóśźż]*)" +
+          "|(?<ordPl1>pierwsz|drug|trzeci|czwart)[a-ząćęłńóśźż]*\\s+rozdzia[łl][a-ząćęłńóśźż]*" +
+        ")" +
+        // Іспанська
+        "|conclusi(?:ones|ón)\\s+del\\s+(?:" +
+          "cap[íi]tulo\\s+(?:(?<numEs1>\\d+)|(?<ordEs1>prim|segund|tercer|cuart)[a-záéíóúñ]*)" +
+          "|(?<ordEs2>prim|segund|tercer|cuart)[a-záéíóúñ]*\\s+cap[íi]tulo" +
+        ")" +
+        // Чеська
+        "|z[áa]v[eě]r(?:y)?\\s+ke?\\s+(?:" +
+          "(?<numCs1>\\d+)\\.?\\s*kapitol[a-záčďéěíňóřšťúůýž]*" +
+          "|kapitol[a-záčďéěíňóřšťúůýž]*\\s+(?<numCs2>\\d+)" +
+          "|(?<ordCs>prvn|druh|třet|čtvrt)[a-záčďéěíňóřšťúůýž]*\\s+kapitol[a-záčďéěíňóřšťúůýž]*" +
+        ")" +
+        // Словацька
+        "|z[áa]v[eě]r(?:y)?\\s+ku?\\s+(?:" +
+          "(?<numSk1>\\d+)\\.?\\s*kapitol[a-záäčďéíĺľňóôŕšťúýž]*" +
+          "|kapitol[a-záäčďéíĺľňóôŕšťúýž]*\\s+(?<numSk2>\\d+)" +
+          "|(?<ordSk>prv|druh|tret|štvrt)[a-záäčďéíĺľňóôŕšťúýž]*\\s+kapitol[a-záäčďéíĺľňóôŕšťúýž]*" +
+        ")" +
+      ")\\s*\\.?\\s*.*$",
+      "i"
+    ),
     intro: new RegExp(`^\\s*${introWord}\\s*$`, "i"),
     concl: new RegExp(`^\\s*${conclWord}\\s*$`, "i"),
-    sources: new RegExp(`^\\s*${sourcesWord}`, "i"),
+    sources: new RegExp(`^\\s*(?:${sourcesWord}|${sourcesAlt})`, "i"),
   };
 }
 
@@ -42,8 +130,15 @@ function detectHeadings(text, lang) {
       const id = `${m[1]}.${m[2]}`;
       headings.push({ lineIdx: i, kind: "sub", id, title: `${id} ${m[3].trim()}`, chapNum: parseInt(m[1], 10) });
     } else if ((m = t.match(P.chapConcl))) {
-      const n = parseInt(m[1], 10);
-      headings.push({ lineIdx: i, kind: "chapter_conclusion", id: `${n}.conclusions`, chapNum: n });
+      const g = m.groups || {};
+      const numGroups = ["num1", "num2", "num3", "numPl1", "numPl2", "numEs1", "numCs1", "numCs2", "numSk1", "numSk2"];
+      const ordGroups = { ord: ORDINAL_CHAPTER_STEMS, ordPl1: ORDINAL_CHAPTER_STEMS_PL, ordPl2: ORDINAL_CHAPTER_STEMS_PL, ordEs1: ORDINAL_CHAPTER_STEMS_ES, ordEs2: ORDINAL_CHAPTER_STEMS_ES, ordCs: ORDINAL_CHAPTER_STEMS_CS, ordSk: ORDINAL_CHAPTER_STEMS_SK, enCard1: CARDINAL_WORDS_EN, enOrd1: ORDINAL_WORDS_EN };
+      let n = null;
+      for (const key of numGroups) { if (g[key]) { n = parseInt(g[key], 10); break; } }
+      if (n === null) {
+        for (const key of Object.keys(ordGroups)) { if (g[key]) { n = ordGroups[key][g[key].toLowerCase()]; break; } }
+      }
+      if (n) headings.push({ lineIdx: i, kind: "chapter_conclusion", id: `${n}.conclusions`, chapNum: n });
     } else if (P.intro.test(t)) {
       headings.push({ lineIdx: i, kind: "intro", id: "intro" });
     } else if (P.concl.test(t)) {
