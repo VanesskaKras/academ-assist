@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { lookupDoiMetadata, fetchPagesFromUrl, paperToCitation, lookupDOIByBiblio, enrichManualLine, fetchGoogleBooksPageCount } from "../../lib/sourcesSearch.js";
+import { lookupDoiMetadata, fetchPagesFromUrl, paperToCitation, lookupDOIByBiblio, enrichManualLine, enrichFullSourceInfo, fetchGoogleBooksPageCount } from "../../lib/sourcesSearch.js";
 import { TA_WHITE } from "../../shared.jsx";
 import { Heading, NavBtn, PrimaryBtn, GreenBtn } from "../Buttons.jsx";
 import { SpinDot } from "../SpinDot.jsx";
@@ -88,6 +88,8 @@ export function SourcesStage({
   const [phrasePages, setPhrasePages] = useState({});
   const [enrichLoading, setEnrichLoading] = useState({});
   const [enrichResult, setEnrichResult] = useState({});
+  const [fullInfoLoading, setFullInfoLoading] = useState({});
+  const [fullInfoResult, setFullInfoResult] = useState({});
 
   let runningIdx = 0;
   const missingSections = mainSections.filter(s => !(citInputs[s.id] || "").trim());
@@ -235,6 +237,29 @@ export function SourcesStage({
       });
     } finally {
       setEnrichLoading(prev => ({ ...prev, [secId]: false }));
+    }
+  };
+
+  const handleEnrichFullInfo = async (secId) => {
+    const lines = (citInputs[secId] || '').split('\n');
+    setFullInfoLoading(prev => ({ ...prev, [secId]: true }));
+    setFullInfoResult(prev => ({ ...prev, [secId]: null }));
+    try {
+      // Послідовно, з паузою 400 мс між рядками — щоб уникнути 429 від CrossRef/Google Books
+      const enriched = [];
+      for (let i = 0; i < lines.length; i++) {
+        enriched.push(await enrichFullSourceInfo(lines[i]));
+        if (i < lines.length - 1) await new Promise(r => setTimeout(r, 400));
+      }
+      const changed = enriched.filter((l, i) => l !== lines[i]).length;
+      setCitInputs(prev => ({ ...prev, [secId]: enriched.join('\n') }));
+      setFullInfoResult(prev => ({ ...prev, [secId]: changed }));
+      requestAnimationFrame(() => {
+        const ta = document.querySelector(`textarea[data-secid="${secId}"]`);
+        if (ta) { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; }
+      });
+    } finally {
+      setFullInfoLoading(prev => ({ ...prev, [secId]: false }));
     }
   };
 
@@ -577,6 +602,26 @@ export function SourcesStage({
                       {enrichResult[sec.id] != null && !enrichLoading[sec.id] && (
                         <span style={{ fontSize: 11, color: enrichResult[sec.id] > 0 ? "#3a6010" : "#888" }}>
                           {enrichResult[sec.id] > 0 ? `✓ ${enrichResult[sec.id]} оновлено` : '— не знайдено'}
+                        </span>
+                      )}
+                      {(citInputs[sec.id] || "").trim() && (
+                        <button
+                          onClick={() => handleEnrichFullInfo(sec.id)}
+                          disabled={fullInfoLoading[sec.id]}
+                          title="Знайти повнішу бібліографічну інформацію (рік, том/випуск, видавництво, сторінки) для джерел цього підрозділу"
+                          style={{
+                            fontSize: 11, background: fullInfoLoading[sec.id] ? "#f0f5fa" : "#eaf1fb",
+                            border: "1px solid #6fa8dc", color: "#1a4a7a",
+                            borderRadius: 5, padding: "2px 9px", cursor: fullInfoLoading[sec.id] ? "default" : "pointer",
+                            flexShrink: 0,
+                          }}
+                        >
+                          {fullInfoLoading[sec.id] ? '⏳ Шукаю…' : '🔎 Знайти повну інформацію'}
+                        </button>
+                      )}
+                      {fullInfoResult[sec.id] != null && !fullInfoLoading[sec.id] && (
+                        <span style={{ fontSize: 11, color: fullInfoResult[sec.id] > 0 ? "#1a4a7a" : "#888" }}>
+                          {fullInfoResult[sec.id] > 0 ? `✓ ${fullInfoResult[sec.id]} оновлено` : '— не знайдено'}
                         </span>
                       )}
                       {(citInputs[sec.id] || "").trim() && (

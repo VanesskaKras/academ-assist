@@ -3,6 +3,8 @@
 // CrossRef  — CORS підтримується, викликаємо з браузера напряму (добре індексує укр. журнали)
 // Semantic Scholar — НЕ підтримує CORS, проксимо через /api/search-sources (Vercel)
 
+import { normalizeAuthorsScript } from "./transliteration.js";
+
 // ── Стоп-слова: структурні/загальні слова що не несуть теми ──
 const STOP_WORDS = new Set([
   'аналіз', 'дослідження', 'особливості', 'формування', 'удосконалення',
@@ -171,6 +173,7 @@ export async function lookupDoiMetadata(doi) {
           journal: p['container-title']?.[0] || '',
           publisher: p.publisher || '',
           publisherLocation: p['publisher-location'] || '',
+          year: p.published?.['date-parts']?.[0]?.[0] || '',
         };
       }
     }
@@ -179,7 +182,7 @@ export async function lookupDoiMetadata(doi) {
   // Якщо CrossRef не повернув авторів або не повернув сторінки — пробуємо OpenAlex
   if (!result?.authors?.length || !result?.pages) {
     try {
-      const oaUrl = `https://api.openalex.org/works/https://doi.org/${doi}?select=authorships,biblio`;
+      const oaUrl = `https://api.openalex.org/works/https://doi.org/${doi}?select=authorships,biblio,publication_year`;
       const r2 = await fetch(oaUrl);
       if (r2.ok) {
         const w = await r2.json();
@@ -188,7 +191,7 @@ export async function lookupDoiMetadata(doi) {
         const oaPages = w.biblio?.first_page && w.biblio?.last_page
           ? `${w.biblio.first_page}–${w.biblio.last_page}`
           : w.biblio?.first_page || null;
-        if (oaAuthors.length || oaPages) {
+        if (oaAuthors.length || oaPages || w.publication_year) {
           result = {
             ...(result || {}),
             // Автори — лише якщо CrossRef їх не дав
@@ -201,6 +204,7 @@ export async function lookupDoiMetadata(doi) {
             } : {}),
             // Сторінки — беремо перше непорожнє значення
             pages: result?.pages || oaPages || extractPagesFromDoi(doi),
+            year: result?.year || w.publication_year || '',
           };
         }
       }
@@ -333,11 +337,12 @@ function mapOpenAlex(p, forceLang) {
   const url = p.primary_location?.landing_page_url
     || (doi ? `https://doi.org/${doi}` : '')
     || (p.id?.startsWith('https://') ? p.id : '');
+  const authors = (p.authorships || []).slice(0, 3)
+    .map(a => a.author?.display_name || '').filter(Boolean);
   return {
     id: p.id || p.doi || String(Math.random()),
     title: p.title || '',
-    authors: (p.authorships || []).slice(0, 3)
-      .map(a => a.author?.display_name || '').filter(Boolean),
+    authors: normalizeAuthorsScript(authors, lang === 'uk'),
     year: p.publication_year || '',
     venue: p.primary_location?.source?.display_name || '',
     doi,
@@ -391,17 +396,18 @@ function mapBASE(doc) {
   const rawSource = Array.isArray(doc.dcsource) ? doc.dcsource[0] : (doc.dcsource || '');
   const volumeMatch = rawSource.match(/[Вв]ип\.?\s*(\d+)|[Vv]ol\.?\s*(\d+)/);
   const issueMatch = rawSource.match(/[№#]\s*(\d+)|[Nn]o\.?\s*(\d+)/);
+  const lang = hasCyrillic(title) ? 'uk' : 'pl';
   return {
     id: rawId || url || String(Math.random()),
     title,
-    authors: (doc.dcauthor || []).slice(0, 3).map(String),
+    authors: normalizeAuthorsScript((doc.dcauthor || []).slice(0, 3).map(String), lang === 'uk'),
     year: doc.dcyear || '',
     venue: Array.isArray(doc.dcpublisher) ? doc.dcpublisher[0] : (doc.dcpublisher || ''),
     doi,
     volume: volumeMatch ? (volumeMatch[1] || volumeMatch[2] || '') : '',
     issue: issueMatch ? (issueMatch[1] || issueMatch[2] || '') : '',
     pages: extractPagesFromDoi(doi),
-    lang: hasCyrillic(title) ? 'uk' : 'pl',
+    lang,
     source: 'base',
     abstract: snippetAbstract(abstract),
     url,
@@ -451,17 +457,19 @@ function mapCORE(result) {
     || (doi ? `https://doi.org/${doi}` : '')
     || (coreId ? `https://core.ac.uk/works/${coreId}` : '');
   const journal = (result.journals || [])[0];
+  const lang = hasCyrillic(title) ? 'uk' : 'en';
+  const authors = (result.authors || []).slice(0, 3).map(a => (typeof a === 'string' ? a : a.name || '')).filter(Boolean);
   return {
     id: coreId ? `core-${coreId}` : String(Math.random()),
     title,
-    authors: (result.authors || []).slice(0, 3).map(a => (typeof a === 'string' ? a : a.name || '')).filter(Boolean),
+    authors: normalizeAuthorsScript(authors, lang === 'uk'),
     year: result.yearPublished || '',
     venue: journal?.title || result.publisher || '',
     doi,
     volume: journal?.volume || '',
     issue: journal?.issue || '',
     pages: extractPagesFromDoi(doi),
-    lang: hasCyrillic(title) ? 'uk' : 'en',
+    lang,
     source: 'core',
     abstract: snippetAbstract(result.abstract || ''),
     url,
@@ -497,8 +505,8 @@ async function fetchCrossRefBooks(query, limit) {
       .map(p => ({
         id: p.DOI || String(Math.random()),
         title: p.title[0],
-        authors: (p.author || []).slice(0, 3)
-          .map(a => [a.family, a.given?.[0]].filter(Boolean).join(' ')).filter(Boolean),
+        authors: normalizeAuthorsScript((p.author || []).slice(0, 3)
+          .map(a => [a.family, a.given?.[0]].filter(Boolean).join(' ')).filter(Boolean), true),
         year: p.published?.['date-parts']?.[0]?.[0]
           || p['published-print']?.['date-parts']?.[0]?.[0] || '',
         venue: p['container-title']?.[0] || p.publisher || '',
@@ -546,8 +554,8 @@ async function fetchCrossRefUkrainian(query, limit) {
     .map(p => ({
       id: p.DOI || String(Math.random()),
       title: p.title?.[0] || '',
-      authors: (p.author || []).slice(0, 3)
-        .map(a => [a.family, a.given?.[0]].filter(Boolean).join(' ')).filter(Boolean),
+      authors: normalizeAuthorsScript((p.author || []).slice(0, 3)
+        .map(a => [a.family, a.given?.[0]].filter(Boolean).join(' ')).filter(Boolean), true),
       year: (p.published?.['date-parts']?.[0]?.[0]
         || p['published-print']?.['date-parts']?.[0]?.[0]
         || ''),
@@ -962,6 +970,38 @@ export async function fetchGoogleBooksPageCount(title, authorSurname = '') {
   } catch { return null; }
 }
 
+/**
+ * Шукає видавця, рік і обсяг книги через Google Books API (ширший набір полів,
+ * ніж fetchGoogleBooksPageCount — для повного збагачення джерела, не лише сторінок).
+ */
+async function fetchGoogleBooksInfo(title, authorSurname = '') {
+  const cleanTitle = (title || '').slice(0, 120).trim();
+  if (!cleanTitle || cleanTitle.length < 8) return null;
+  try {
+    const qParts = [`intitle:${cleanTitle}`];
+    if (authorSurname) qParts.push(`inauthor:${authorSurname}`);
+    const q = qParts.join('+');
+    const r = await fetch(
+      `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=1`,
+      { cache: 'no-store' },
+    );
+    if (!r.ok) return null;
+    const d = await r.json();
+    const item = d.items?.[0];
+    const info = item?.volumeInfo;
+    if (!info) return null;
+    const foundTitle = (info.title || '').toLowerCase();
+    const ourWords = cleanTitle.toLowerCase().split(/\s+/).filter(w => w.length > 4);
+    const overlap = ourWords.filter(w => foundTitle.includes(w)).length;
+    if (ourWords.length > 2 && overlap < 2) return null; // не та книга
+    return {
+      pageCount: info.pageCount && info.pageCount >= 4 ? info.pageCount : null,
+      publisher: info.publisher || '',
+      year: info.publishedDate ? info.publishedDate.slice(0, 4) : '',
+    };
+  } catch { return null; }
+}
+
 function normTitle(str) {
   if (!str) return str;
   const letters = str.match(/[а-яґєіїА-ЯҐЄІЇa-zA-Z]/g) || [];
@@ -1055,6 +1095,79 @@ export async function enrichManualLine(line) {
   }
 
   return line;
+}
+
+/**
+ * Збагачує один рядок джерела (типово — з клієнтської готової частини роботи,
+ * де джерела часто оформлені без частини даних) повнішою бібліографічною
+ * інформацією: рік, том/випуск, видавництво, журнал, сторінки.
+ * На відміну від enrichManualLine (лише сторінки), тут додаються всі поля,
+ * яких у рядку явно бракує; сам стиль оформлення виправляє подальший LLM-крок
+ * конвеєра (formatSourcesWithRetry), тому дані просто дописуються в кінець.
+ *
+ * Стратегія пошуку та сама, що й у enrichManualLine:
+ *  1. DOI в тексті → CrossRef/OpenAlex напряму
+ *  2. CrossRef бібліографічний пошук за назвою+автором+роком → DOI → повні метадані
+ *  3. Немає URL і не схоже на статтю → ймовірно книга → Google Books
+ */
+export async function enrichFullSourceInfo(line) {
+  const trimmed = line.trim();
+  if (!trimmed) return line;
+
+  const isUk = /[а-яА-ЯҐЄІЇґєії]/.test(trimmed);
+  const hasYear = /\b(19|20)\d{2}\b/.test(trimmed);
+  const hasPages = /[СP]\.\s*\d/.test(trimmed);
+  const hasVolIssue = /(Vol\.|Т\.\s*\d|№\s*\d|No\.\s*\d)/i.test(trimmed);
+  const textOnly = trimmed.replace(/https?:\/\/\S+/g, '').replace(/\s{2,}/g, ' ').trim();
+  const looksSparse = textOnly.split(/\s+/).filter(Boolean).length < 12;
+
+  let meta = null;
+
+  // ── Крок 1: DOI в тексті ──
+  const doiRaw = trimmed.match(/doi\.org\/(10\.\d{4,}\/[^\s"'<>]+)/i)
+    || trimmed.match(/(?:^|\s)(10\.\d{4,}\/[^\s"'<>]+)/);
+  if (doiRaw) {
+    const doi = doiRaw[1].replace(/[.,;)]+$/, '');
+    meta = await lookupDoiMetadata(doi);
+  }
+
+  // ── Крок 2: без DOI — шукаємо його за бібліографічними даними, тоді тягнемо повні метадані ──
+  if (!meta && textOnly.length > 20) {
+    const yearM = textOnly.match(/\b(20\d{2}|19\d{2})\b/);
+    const withDoi = await lookupDOIByBiblio({ title: textOnly, authors: [], year: yearM?.[1] || '' });
+    if (withDoi.doi) meta = await lookupDoiMetadata(withDoi.doi);
+  }
+
+  const extras = [];
+  if (meta) {
+    if (meta.year && !hasYear) extras.push(String(meta.year));
+    if (!hasVolIssue) {
+      const vi = [];
+      if (meta.volume) vi.push(isUk ? `Т. ${meta.volume}` : `Vol. ${meta.volume}`);
+      if (meta.issue) vi.push(isUk ? `№ ${meta.issue}` : `No. ${meta.issue}`);
+      if (vi.length) extras.push(vi.join(', '));
+    }
+    if (meta.journal && looksSparse) extras.push(meta.journal);
+    if (meta.publisher && looksSparse) extras.push([meta.publisher, meta.publisherLocation].filter(Boolean).join(', '));
+    if (meta.pages && !hasPages) extras.push((isUk ? 'С. ' : 'P. ') + meta.pages.replace(/-/g, '–'));
+  }
+
+  // ── Крок 3: без DOI-збігу, без URL, не схоже на статтю — ймовірно книга ──
+  const urlMatch = trimmed.match(/https?:\/\/\S+/);
+  const looksLikeArticle = /№|Вип\.|Vol\.|No\.|pp?\.\s*\d/i.test(textOnly);
+  if (!meta && !urlMatch && !looksLikeArticle && textOnly.length > 8) {
+    const books = await fetchGoogleBooksInfo(textOnly);
+    if (books) {
+      if (books.year && !hasYear) extras.push(String(books.year));
+      if (books.publisher && looksSparse) extras.push(books.publisher);
+      if (books.pageCount && !hasPages) extras.push(isUk ? `${books.pageCount} с.` : `${books.pageCount} p.`);
+    }
+  }
+
+  if (!extras.length) return line;
+  const extraStr = extras.join('. ') + '.';
+  if (urlMatch) return line.replace(urlMatch[0], `${extraStr} ${urlMatch[0]}`);
+  return line.trimEnd().replace(/[.\s]+$/, '') + `. ${extraStr}`;
 }
 
 export function paperToCitation(paper) {

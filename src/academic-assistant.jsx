@@ -16,7 +16,7 @@ import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, g
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { getAcademicDefaults, classifyAppendixItem, normalizeWorkType } from "./lib/academicDefaults.js";
 import { searchByPhrase, filterSourcesWithGemini, getEconInstitutionalSources } from "./lib/sourcesSearch.js";
-import { formatSourcesViaLLM, applyCitationRemap, buildFinalReferenceList, buildCiteFormats, createReferenceDeduper } from "./lib/citationFormatting.js";
+import { formatSourcesViaLLM, applyCitationRemap, buildFinalReferenceList, buildCiteFormats, createReferenceDeduper, buildStructuredEntry } from "./lib/citationFormatting.js";
 import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
 import { StagePills } from "./components/StagePills.jsx";
 import { FieldBox, Heading, NavBtn, PrimaryBtn, GreenBtn, SaveIndicator } from "./components/Buttons.jsx";
@@ -3665,24 +3665,6 @@ ${secBlock}
         if (lower.includes(key)) return paper;
       }
       return null;
-    };
-    const buildStructuredEntry = (p) => {
-      const e = { _type: 'structured' };
-      if (p.authorsStructured?.length) e.authors = p.authorsStructured;
-      else if (p.authors?.length) e.authorsRaw = p.authors;
-      if (p.title) e.title = p.title;
-      if (p.year) e.year = p.year;
-      const venue = p.venue && !/^[\w.-]+\.[a-zA-Z]{2,}$/.test(p.venue.trim()) ? p.venue : '';
-      if (venue) e.journal = venue;
-      if (p.volume) e.volume = p.volume;
-      if (p.issue) e.issue = p.issue;
-      if (p.pages) e.pages = p.pages;
-      if (p.publisher) e.publisher = p.publisher;
-      if (p.publisherLocation) e.city = p.publisherLocation;
-      const url = p.url || (p.doi ? `https://doi.org/${p.doi}` : '');
-      if (url) e.url = url;
-      if (p.type === 'book') e._docType = 'book';
-      return e;
     };
     const refLines = allRefs.map((r, i) => {
       const sp = findStructuredForRef(r);
