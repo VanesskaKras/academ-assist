@@ -209,6 +209,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [plagAllMsg, setPlagAllMsg] = useState("");
   const plagAllAbortRef = useRef(null);
   const writingDoneRef = useRef(false);
+  const autoRemapDoneRef = useRef(false);
   const maxStageIdxRef = useRef(0);
   const generationStartRef = useRef(null);
   const [apiError, setApiError] = useState("");
@@ -1496,7 +1497,7 @@ Return ONLY JSON:
       (readyWorkImportedIds || []).forEach(id => { if (prev[id]) preserved[id] = prev[id]; });
       return preserved;
     });
-    setGenIdx(0); setPaused(false); writingDoneRef.current = false;
+    setGenIdx(0); setPaused(false); writingDoneRef.current = false; autoRemapDoneRef.current = false;
     const practicalApproachForGen = commentAnalysis?.practicalApproach;
     const acadDefaultsForGen = getAcademicDefaults(info?.subject, info?.type, info?.course, info?.topic);
     const needsAppendixForGen = practicalApproachForGen || isPsychoPed(info) || (acadDefaultsForGen?.appendicesAiGen?.length > 0);
@@ -1570,6 +1571,10 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
         playDoneSound();
         const allUnlocked = activeStageKeys.length - 1;
         saveToFirestore({ stage: "writing", status: "writing", content, citInputs, maxStageIdx: allUnlocked });
+      }
+      if (!autoRemapDoneRef.current) {
+        autoRemapDoneRef.current = true;
+        doRemapCitations();
       }
       return;
     }
@@ -4497,6 +4502,7 @@ ${secsSummary}
                   setContent(preserved);
                   setGenIdx(0);
                   writingDoneRef.current = false;
+                  autoRemapDoneRef.current = false;
                   setPaused(false);
                 }
                 setStage("writing");
