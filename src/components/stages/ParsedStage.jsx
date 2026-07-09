@@ -1,4 +1,4 @@
-import { FIELD_LABELS, parsePagesAvg } from "../../lib/planUtils.js";
+import { FIELD_LABELS, parsePagesAvg, isEcon } from "../../lib/planUtils.js";
 import { Heading, NavBtn, PrimaryBtn } from "../Buttons.jsx";
 import { SpinDot } from "../SpinDot.jsx";
 import { getAcademicDefaults } from "../../lib/academicDefaults.js";
@@ -78,6 +78,18 @@ export function ParsedStage({
         )}
       </div>
       {info.pages?.includes("-") && <div style={{ fontSize: 12, color: "#888", marginBottom: 16, fontStyle: "italic" }}>Діапазон "{info.pages}" → середнє: {parsePagesAvg(info.pages)} стор.</div>}
+
+      {/* Оберіть підприємство (для економічних/фінансових робіт) */}
+      {isEcon(info) && (
+        <div style={{ border: "1.5px solid #f0d080", borderRadius: 8, overflow: "hidden", marginBottom: 16 }}>
+          <div style={{ background: "#7a5a00", color: "#ffe89a", padding: "9px 16px", fontFamily: "'Spectral SC',serif", fontSize: 11, letterSpacing: 2 }}>
+            ℹ ОБЕРІТЬ ПІДПРИЄМСТВО
+          </div>
+          <div style={{ padding: "12px 16px", background: "#fffbee", fontSize: 13, color: "#4a3800" }}>
+            Це економічна/фінансова робота — оберіть реальне підприємство і додайте його дані (назву, галузь, фінансові показники) через розділ "Матеріали клієнта" на кроці 1. Інакше ШІ згенерує умовний вигаданий приклад підприємства.
+          </div>
+        </div>
+      )}
 
       {/* Підготуйте заздалегідь */}
       {userMaterials.length > 0 && (

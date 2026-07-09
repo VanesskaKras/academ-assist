@@ -3488,11 +3488,16 @@ ${secBlocks}
       );
       setKeywords(kwNorm);
 
+      const econSecIdsForSources = getEconSections(sections, info);
       for (const s of mainSecs) {
         if (stopSearchRef.current) break;
         const normalKey = normalizeKey(s.id);
         const thesesData = allThesesNorm[normalKey] || allThesesNorm[s.id] || [];
-        if (thesesData.length) await doSearchSources(s.id, thesesData, s.label || '');
+        // Навіть якщо Gemini не повернув тез для econ-підрозділу (обрізаний батч, збій парсингу),
+        // офіційна статистика (Держстат/НБУ/Мінфін/World Bank) все одно має з'явитись
+        if (thesesData.length || econSecIdsForSources.includes(s.id)) {
+          await doSearchSources(s.id, thesesData, s.label || '');
+        }
       }
     } catch (e) { console.error(e); setKwError(e.message); }
     setKwLoading(false);
