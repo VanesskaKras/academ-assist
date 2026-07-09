@@ -2577,11 +2577,17 @@ ${realMaterials.slice(0, 80000)}
         ? `\nДОДАТКОВІ ІНСТРУКЦІЇ: ${appendicesCustomPrompt.trim()}`
         : "";
 
-      const empSecs = getEmpiricalSections(sections, info);
+      const empSecs = getEmpiricalSections(sections, info, commentAnalysis, methodInfo);
       const hasEmpChapter = empSecs.chapterSectionIds.length > 0 || empSecs.anchorId;
 
+      // Текст секцій уже може сам "обіцяти" анкету в додатку (ШІ вирішив це під час написання аналізу),
+      // навіть якщо методичка/коментар клієнта про це не згадували
+      const promisesAppendixAnketa = Object.values(content || {}).some(text =>
+        typeof text === "string" && text.split(/[.!?\n]/).some(s => /анкет/i.test(s) && /додат/i.test(s))
+      );
+
       const rdApp = commentAnalysis?.researchDesign ?? (commentAnalysis?.empiricalHints ? { instrumentType: "questionnaire", groups: [], comparisonRequired: false, biographicalFields: [], statisticalMinN: null } : null);
-      const hasEmpiricalApp = hasEmpiricalResearch(commentAnalysis, methodInfo) || isPsychoPed(info) || hasEmpChapter;
+      const hasEmpiricalApp = hasEmpiricalResearch(commentAnalysis, methodInfo) || isPsychoPed(info) || hasEmpChapter || promisesAppendixAnketa;
       // Дефолти за типом роботи — скільки окремих інструментів (методик) очікується, якщо клієнт нічого не вказав
       const acadDefaultsApp = !rdApp ? getAcademicDefaults(info?.subject, info?.type, info?.course, info?.topic) : null;
 
