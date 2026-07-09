@@ -912,7 +912,7 @@ ${items}
 export async function lookupDOIByBiblio(paper) {
   if (paper.doi || paper.url) return paper;
   const title = (paper.title || '').slice(0, 120);
-  const firstAuthorFamily = (Array.isArray(paper.authors) ? paper.authors[0] : '')
+  const firstAuthorFamily = (Array.isArray(paper.authors) ? (paper.authors[0] || '') : '')
     .split(/[\s,]+/)[0] || '';
   const year = String(paper.year || '');
   if (!title || title.length < 8) return paper;

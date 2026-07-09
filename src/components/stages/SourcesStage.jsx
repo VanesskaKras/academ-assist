@@ -163,7 +163,7 @@ export function SourcesStage({
     // (конкретна сторінка цитати з книги невідома, але діапазон 1–N дає з чого обрати)
     const enriched = await Promise.all(afterMeta.map(async p => {
       if (p.type !== 'book' || p.pages || p.totalPages) return p;
-      const firstAuthorSurname = (Array.isArray(p.authors) ? p.authors[0] : '').split(/[\s,]+/)[0] || '';
+      const firstAuthorSurname = (Array.isArray(p.authors) ? (p.authors[0] || '') : '').split(/[\s,]+/)[0] || '';
       const totalPages = await fetchGoogleBooksPageCount(p.title, firstAuthorSurname);
       return totalPages ? { ...p, totalPages } : p;
     }));
