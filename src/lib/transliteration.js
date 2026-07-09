@@ -31,6 +31,14 @@ function applyCase(original, translit) {
   return /^[A-Z]/.test(original) ? translit.charAt(0).toUpperCase() + translit.slice(1) : translit;
 }
 
+// Латинська "i" всередині/наприкінці слова відповідає ОДНІЙ з двох різних
+// кириличних літер залежно від позиції за офіційною таблицею (постанова КМУ
+// №55): "і" сама по собі, АБО "й" — якщо стоїть одразу після голосної (в
+// оригіналі "й" передається як "i" в будь-якій позиції, крім початку слова).
+// Без цієї перевірки "Boiko" зворотно транслітерувався б у неіснуюче
+// "Боіко" замість правильного "Бойко".
+const CYR_VOWELS = "аеєиіоуюя";
+
 function translitWord(word) {
   const lower = word.toLowerCase();
   if (lower.length === 1) return applyCase(word, SINGLE_MAP[lower] || lower);
@@ -40,6 +48,11 @@ function translitWord(word) {
     const hit = MULTI_ORDERED.find(([lat]) => lower.startsWith(lat, i));
     if (hit) { out += hit[1]; i += hit[0].length; continue; }
     if (lower[i] === "y") { out += i === 0 ? "й" : "и"; i += 1; continue; }
+    if (lower[i] === "i") {
+      out += (i > 0 && CYR_VOWELS.includes(out.slice(-1))) ? "й" : "і";
+      i += 1;
+      continue;
+    }
     out += SINGLE_MAP[lower[i]] || lower[i];
     i += 1;
   }
@@ -76,8 +89,13 @@ export function normalizeAuthorsScript(names, recordIsCyrillic) {
 // тощо) кирилична — транслітеруємо ЛИШЕ цей провідний список, не чіпаючи
 // назву/журнал (там латиниця може бути законною — переклад іноземного
 // документа, іноземна назва журналу тощо).
+// Ініціал — це не завжди ОДНА латинська літера: кириличні Ю/Я/Є/Ї/Ж/Х/Ц/Ч/Ш/Щ
+// за офіційною транслітерацією дають дво-, три- чи чотирилітерний ініціал
+// ("Yu.", "Ya.", "Ye.", "Shch." тощо). Без цього "Rabokon Yu., Tomchuk E."
+// взагалі не розпізнавався як список авторів (перший же ініціал не збігався
+// з очікуваною "одна літера + крапка"), і рядок лишався нечіпаним латиницею.
 const NAME_WORD = "[A-Za-zА-ЯҐЄІЇа-яґєії][A-Za-zА-ЯҐЄІЇа-яґєії'’ʼ-]*";
-const NAME_UNIT = `${NAME_WORD}(?:\\s+[A-ZА-ЯҐЄІЇ]\\.){1,3}`;
+const NAME_UNIT = `${NAME_WORD}(?:\\s+[A-ZА-ЯҐЄІЇ][a-zа-яґєії]{0,3}\\.){1,3}`;
 const AUTHOR_PREFIX_RE = new RegExp(`^((?:${NAME_UNIT})(?:,\\s*(?:${NAME_UNIT}))*\\.?\\s+)`);
 
 export function normalizeAuthorScriptInRawLine(line) {
