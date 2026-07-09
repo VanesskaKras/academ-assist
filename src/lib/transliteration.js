@@ -64,3 +64,29 @@ export function normalizeAuthorsScript(names, recordIsCyrillic) {
   if (!anyCyrillic) return names;
   return names.map(n => (n && !isCyrillicText(n) && hasLatinLetters(n)) ? transliterateLatinToCyrillic(n) : n);
 }
+
+// ── Той самий фікс, але для СИРОГО тексту джерела (клієнт вписав/вставив
+// готове посилання вручну — минає buildStructuredEntry, бо там немає JSON
+// _type:"structured", тільки рядок). Раніше цей шлях покладався лише на
+// інструкцію в промпті ЛЛМ — а вона ненадійна (див. приклад "Leleka T. O.",
+// що лишився латиницею навіть з винятком у промпті). Тут — детермінований
+// код-фікс: розпізнаємо провідний список авторів у форматі "Прізвище І. І.[,
+// Прізвище І. І. ...]" на початку рядка (саме так виглядають уже майже готові
+// цитати, які клієнти копіюють з інших джерел) і, якщо решта запису (назва
+// тощо) кирилична — транслітеруємо ЛИШЕ цей провідний список, не чіпаючи
+// назву/журнал (там латиниця може бути законною — переклад іноземного
+// документа, іноземна назва журналу тощо).
+const NAME_WORD = "[A-Za-zА-ЯҐЄІЇа-яґєії][A-Za-zА-ЯҐЄІЇа-яґєії'’ʼ-]*";
+const NAME_UNIT = `${NAME_WORD}(?:\\s+[A-ZА-ЯҐЄІЇ]\\.){1,3}`;
+const AUTHOR_PREFIX_RE = new RegExp(`^((?:${NAME_UNIT})(?:,\\s*(?:${NAME_UNIT}))*\\.?\\s+)`);
+
+export function normalizeAuthorScriptInRawLine(line) {
+  if (!line) return line;
+  const m = line.match(AUTHOR_PREFIX_RE);
+  if (!m) return line;
+  const prefix = m[1];
+  const rest = line.slice(prefix.length);
+  if (!isCyrillicText(rest)) return line; // решта запису не кирилична — можливо, дійсно іноземне джерело, не чіпаємо
+  if (!hasLatinLetters(prefix)) return line; // автори вже кирилицею
+  return transliterateLatinToCyrillic(prefix) + rest;
+}

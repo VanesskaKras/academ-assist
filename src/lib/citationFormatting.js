@@ -18,7 +18,7 @@
 //    тому джерело на кшталт "В. О. Іванов" (ініціали спереду) сортувалось під "В",
 //    а не під "І", як має бути за ДСТУ.
 
-import { normalizeAuthorsScript, isCyrillicText } from "./transliteration.js";
+import { normalizeAuthorsScript, isCyrillicText, normalizeAuthorScriptInRawLine } from "./transliteration.js";
 
 // Абетка авторів має бути єдиною в межах ОДНОГО запису (і, за замовчуванням,
 // відповідати абетці назви джерела) — інакше виходить "Savchuk I., Лисецька
@@ -404,7 +404,7 @@ export async function formatSourcesWithRetry({
 
   const refLines = rawRefs.map((r, i) => {
     const sp = findStructured(r);
-    return sp ? `${i + 1}. ${JSON.stringify(buildStructuredEntry(sp))}` : `${i + 1}. ${r}`;
+    return sp ? `${i + 1}. ${JSON.stringify(buildStructuredEntry(sp))}` : `${i + 1}. ${normalizeAuthorScriptInRawLine(r)}`;
   });
 
   const sanitized = await formatSourcesViaLLM({ refLines, sourcesStyle, sourcesFormatRules, callClaude });

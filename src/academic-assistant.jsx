@@ -17,6 +17,7 @@ import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { getAcademicDefaults, classifyAppendixItem, normalizeWorkType } from "./lib/academicDefaults.js";
 import { searchByPhrase, filterSourcesWithGemini, getEconInstitutionalSources } from "./lib/sourcesSearch.js";
 import { formatSourcesViaLLM, applyCitationRemap, buildFinalReferenceList, buildCiteFormats, createReferenceDeduper, buildStructuredEntry } from "./lib/citationFormatting.js";
+import { normalizeAuthorScriptInRawLine } from "./lib/transliteration.js";
 import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
 import { StagePills } from "./components/StagePills.jsx";
 import { FieldBox, Heading, NavBtn, PrimaryBtn, GreenBtn, SaveIndicator } from "./components/Buttons.jsx";
@@ -3674,7 +3675,7 @@ ${secBlock}
     const refLines = allRefs.map((r, i) => {
       const sp = findStructuredForRef(r);
       if (sp) return `${i + 1}. ${JSON.stringify(buildStructuredEntry(sp))}`;
-      return `${i + 1}. ${r}`;
+      return `${i + 1}. ${normalizeAuthorScriptInRawLine(r)}`;
     });
 
     // Валідація відповіді LLM (у formatSourcesViaLLM): залишаємо лише пронумеровані
