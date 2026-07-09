@@ -151,32 +151,14 @@ function matchScore(tokenSet, text) {
   return hits / tokenSet.size;
 }
 
-// Схожість двох СИРИХ текстів джерел за перетином ідентифікаційних токенів —
-// відносно МЕНШОГО з двох наборів, щоб куций запис (мало токенів: лише автор+назва,
-// без року/URL) коректно розпізнавався як підмножина повнішої версії того самого
-// джерела, а не як зовсім інше джерело з нижчим відсотком збігу.
-function rawTextSimilarity(a, b) {
-  const ta = sourceTokens(a), tb = sourceTokens(b);
-  if (!ta.size || !tb.size) return 0;
-  const [smaller, larger] = ta.size <= tb.size ? [ta, tb] : [tb, ta];
-  let overlap = 0;
-  smaller.forEach(t => { if (larger.has(t)) overlap++; });
-  return overlap / smaller.size;
-}
-
-const DUPLICATE_SIMILARITY_THRESHOLD = 0.75;
-
 const dedupeNormalize = str => str.toLowerCase()
   .replace(/\s*(url\s*:|https?:\/\/\S+|\(дата звернення[^)]*\))/gi, "")
   .replace(/[.,;:&–—\-«»"'()[\]]/g, "").replace(/\s+/g, " ").trim();
 
-// Дедуплікатор сирих текстів джерел: спершу точний збіг (швидко, за нормалізованим
-// текстом — як і раніше), а якщо точного нема — нечіткий збіг за rawTextSimilarity,
-// щоб об'єднувати "майже дублікати" того самого джерела: той самий запис з кодом УДК
-// чи без нього, куций стаб-запис із клієнтського списку і повна версія, знайдена
-// пошуком, тощо. add(text) — ідемпотентний: повторний виклик із уже відомим (або
-// схожим) текстом повертає ІНДЕКС того самого канонічного запису, не додає новий.
-// canonicalRefs — унікальні тексти (довший/з URL варіант лишається як канонічний).
+// Дедуплікатор сирих текстів джерел: точний збіг за нормалізованим текстом.
+// add(text) — ідемпотентний: повторний виклик із уже відомим текстом повертає
+// ІНДЕКС того самого канонічного запису, не додає новий. canonicalRefs — унікальні
+// тексти (довший/з URL варіант лишається як канонічний).
 export function createReferenceDeduper() {
   const canonicalRefs = [];
   const seenKeys = new Map(); // нормалізований ключ → індекс у canonicalRefs
@@ -188,13 +170,6 @@ export function createReferenceDeduper() {
       const idx = seenKeys.get(key);
       if (hasUrl && !/https?:\/\/\S+/i.test(canonicalRefs[idx])) canonicalRefs[idx] = text;
       return idx;
-    }
-    for (let i = 0; i < canonicalRefs.length; i++) {
-      if (rawTextSimilarity(text, canonicalRefs[i]) >= DUPLICATE_SIMILARITY_THRESHOLD) {
-        seenKeys.set(key, i);
-        if (text.length > canonicalRefs[i].length) canonicalRefs[i] = text;
-        return i;
-      }
     }
     canonicalRefs.push(text);
     seenKeys.set(key, canonicalRefs.length - 1);
