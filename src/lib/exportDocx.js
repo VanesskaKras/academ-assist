@@ -61,6 +61,18 @@ function scaleToFit(width, height, maxW, maxH) {
   return { width: w, height: h };
 }
 
+// 7 см і 14 см у px при 96 dpi; альбомні (ширші за висоту) картинки обмежуємо 14×7 см,
+// портретні — 7×14 см, щоб зображення не займали пів сторінки в "короткому" вимірі.
+const CLIENT_IMG_SHORT_SIDE_PX = Math.round(7 * 96 / 2.54);
+const CLIENT_IMG_LONG_SIDE_PX = Math.round(14 * 96 / 2.54);
+
+function scaleClientImage(width, height) {
+  const [maxW, maxH] = width >= height
+    ? [CLIENT_IMG_LONG_SIDE_PX, CLIENT_IMG_SHORT_SIDE_PX]
+    : [CLIENT_IMG_SHORT_SIDE_PX, CLIENT_IMG_LONG_SIDE_PX];
+  return scaleToFit(width, height, maxW, maxH);
+}
+
 // docx завжди пакує вставлені зображення як .png (незалежно від реального формату), тож
 // перекодовуємо клієнтське фото (jpeg/webp/gif) через canvas у PNG прямо перед вставкою в
 // документ — і лише тоді, а не при завантаженні, щоб не зберігати подвійну копію у Firestore.
@@ -497,7 +509,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
       if (clientImgMatch) {
         const img = clientImages[Number(clientImgMatch[1])];
         if (img) {
-          const { width, height } = scaleToFit(img.width, img.height, 298, 306);
+          const { width, height } = scaleClientImage(img.width, img.height);
           result.push(new Paragraph({
             alignment: AlignmentType.CENTER,
             spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
