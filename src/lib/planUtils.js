@@ -310,7 +310,7 @@ export function buildWorkConfig({ info, methodInfo, commentAnalysis }) {
     introPages = methodInfo.introPages;
   } else if (commentAnalysis?.textStructureHints) {
     const m = commentAnalysis.textStructureHints.match(/вступ[^.\d]{0,20}(\d+)\s*стор/i);
-    if (m) introPages = parseInt(m[1]);
+    if (m && !/більше|максимум|перевищ/i.test(m[0])) introPages = parseInt(m[1]);
   }
 
   let conclusionsPages = totalPages > 40 ? 3 : 2;
@@ -318,7 +318,7 @@ export function buildWorkConfig({ info, methodInfo, commentAnalysis }) {
     conclusionsPages = methodInfo.conclusionsPages;
   } else if (commentAnalysis?.textStructureHints) {
     const m = commentAnalysis.textStructureHints.match(/висновк[^.\d]{0,20}(\d+)\s*стор/i);
-    if (m) conclusionsPages = parseInt(m[1]);
+    if (m && !/більше|максимум|перевищ/i.test(m[0])) conclusionsPages = parseInt(m[1]);
   }
 
   const sourcesMinCount = methodInfo?.sourcesMinCount || (totalPages >= 40 ? 40 : 20);
