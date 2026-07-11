@@ -229,9 +229,9 @@ export function DoneStage({
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 24 }}>
         <NavBtn onClick={() => setStage("sources")}>← Джерела</NavBtn>
         <button onClick={copyAll} style={{ background: "#1a1a14", color: "#e8ff47", border: "none", borderRadius: 7, padding: "11px 30px", fontFamily: "'Spectral',serif", fontSize: 13, letterSpacing: "1.5px", cursor: "pointer" }}>Скопіювати текст</button>
-        <button disabled={docxLoading} onClick={async () => { setDocxLoading(true); try { await exportToDocx({ sections, content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo, commentAnalysis, orderId, annotationUk, annotationEn, illustrations }); } catch (e) { alert("Помилка: " + e.message); } setDocxLoading(false); }}
-          style={{ background: docxLoading ? "#aaa" : "#1a4a1a", color: docxLoading ? "#eee" : "#a8e060", border: "none", borderRadius: 7, padding: "11px 30px", fontFamily: "'Spectral',serif", fontSize: 13, letterSpacing: "1.5px", cursor: docxLoading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
-          {docxLoading ? <><SpinDot light />Генерую Word...</> : "⬇ Завантажити .docx"}
+        <button disabled={docxLoading || appendicesLoading} title={appendicesLoading ? "Зачекайте, поки згенеруються додатки" : undefined} onClick={async () => { setDocxLoading(true); try { await exportToDocx({ sections, content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo, commentAnalysis, orderId, annotationUk, annotationEn, illustrations }); } catch (e) { alert("Помилка: " + e.message); } setDocxLoading(false); }}
+          style={{ background: (docxLoading || appendicesLoading) ? "#aaa" : "#1a4a1a", color: (docxLoading || appendicesLoading) ? "#eee" : "#a8e060", border: "none", borderRadius: 7, padding: "11px 30px", fontFamily: "'Spectral',serif", fontSize: 13, letterSpacing: "1.5px", cursor: (docxLoading || appendicesLoading) ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
+          {docxLoading ? <><SpinDot light />Генерую Word...</> : appendicesLoading ? "Очікую додатки..." : "⬇ Завантажити .docx"}
         </button>
 
         <button onClick={resetAll} style={{ background: "transparent", border: "1.5px solid #c4bfb4", color: "#777", borderRadius: 7, padding: "11px 22px", fontFamily: "'Spectral',serif", fontSize: 13, cursor: "pointer" }}>Нове замовлення</button>
