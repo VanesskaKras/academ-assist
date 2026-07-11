@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { lookupDoiMetadata, fetchPagesFromUrl, paperToCitation, lookupDOIByBiblio, enrichManualLine, enrichFullSourceInfo, fetchGoogleBooksPageCount } from "../../lib/sourcesSearch.js";
+import { isTechnical } from "../../lib/planUtils.js";
 import { TA_WHITE } from "../../shared.jsx";
 import { Heading, NavBtn, PrimaryBtn, GreenBtn } from "../Buttons.jsx";
 import { SpinDot } from "../SpinDot.jsx";
@@ -168,9 +169,10 @@ export function SourcesStage({
       return totalPages ? { ...p, totalPages } : p;
     }));
 
-    // Обмежуємо зарубіжні до 30%
+    // Обмежуємо зарубіжні до 30% (для технічних робіт — до 50%, бо якісних укр. джерел по вузьких IT-темах об'єктивно мало)
     const needed = sourceDist[secId] || 4;
-    const maxForeign = Math.max(1, Math.round(needed * 0.3));
+    const foreignFraction = isTechnical(info) ? 0.5 : 0.3;
+    const maxForeign = Math.max(1, Math.round(needed * foreignFraction));
     const ukPapers = enriched.filter(p => p.lang === 'uk');
     const enPapers = enriched.filter(p => p.lang !== 'uk').slice(0, maxForeign);
     const papers = [...ukPapers, ...enPapers];
@@ -361,7 +363,7 @@ export function SourcesStage({
       <div style={{ padding: "12px 16px", background: "#f0f5e8", border: "1px solid #c8dfa0", borderRadius: 8, marginBottom: 20, fontSize: 13, color: "#3a6010", lineHeight: "1.7" }}>
         <strong>Як це працює:</strong> Натисніть <em>"Знайти джерела автоматично"</em> — програма згенерує ключові слова і знайде відповідні джерела для кожного підрозділу. Виберіть потрібні галочкою та натисніть <em>"Додати вибрані"</em>. Після заповнення натисніть <em>"Розставити всі посилання"</em>.
         <div style={{ marginTop: 6, fontSize: 12, color: "#5a6a3a" }}>
-          Обмеження: іноземних джерел (польськ. + зарубіж.) <strong>не більше 30%</strong> від загальної кількості. Російські та білоруські джерела <strong>заборонені</strong>.
+          Обмеження: іноземних джерел (польськ. + зарубіж.) <strong>не більше {isTechnical(info) ? 50 : 30}%</strong> від загальної кількості{isTechnical(info) ? " (підвищено для технічної роботи)" : ""}. Російські та білоруські джерела <strong>заборонені</strong>.
         </div>
         <div style={{ marginTop: 8 }}>
           <a
@@ -422,7 +424,7 @@ export function SourcesStage({
         const plCount = suggestions.filter(p => p.lang === 'pl').length;
         const enCount = suggestions.filter(p => p.lang !== 'uk' && p.lang !== 'pl').length;
         const needed = sourceDist[sec.id] || 4;
-        const maxForeign = Math.max(1, Math.round(needed * 0.3));
+        const maxForeign = Math.max(1, Math.round(needed * (isTechnical(info) ? 0.5 : 0.3)));
         const selectedForeign = selectedList.filter(p => p.lang !== 'uk').length;
         const foreignOverLimit = selectedForeign > maxForeign;
 

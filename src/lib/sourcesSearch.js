@@ -53,6 +53,22 @@ function isStudentWork(obj) {
   return false;
 }
 
+// ── Методичні матеріали (вказівки, рекомендації, посібники) — не містять
+// достатньо фактажу/дослідження щоб бути джерелом цитування ──
+const METHODICAL_PATTERNS = [
+  'методичні вказівки', 'методичних вказівок', 'методичні рекомендації',
+  'методичних рекомендацій', 'методичний посібник', 'методичного посібника',
+  'методична розробка', 'методичної розробки', 'методичне видання',
+  'навчально-методичний посібник', 'навчально-методичні рекомендації',
+  'навчально-методична розробка', 'методичні матеріали',
+];
+
+function isMethodicalGuide(obj) {
+  const title = (Array.isArray(obj?.dctitle) ? obj.dctitle[0] : obj?.dctitle) || obj?.title || '';
+  const titleLower = title.toLowerCase();
+  return METHODICAL_PATTERNS.some(p => titleLower.includes(p));
+}
+
 function isRussianUrl(url = '') {
   return /\.ru(\/|$)/i.test(url.toLowerCase());
 }
@@ -75,6 +91,8 @@ function isBlocked(obj) {
   if (isRussianText(title)) return true;
   // Блокуємо чужі студентські роботи (магістерські, дипломні, курсові тощо)
   if (isStudentWork(obj)) return true;
+  // Блокуємо методичні вказівки/рекомендації/посібники — не містять потрібної інформації
+  if (isMethodicalGuide(obj)) return true;
   return false;
 }
 
@@ -584,16 +602,19 @@ async function fetchEnglishViaBackend(enKeywords, limit) {
   }
 }
 
-// ── Пошук за однією фразою: BASE, Scholar (опційно), CORE, OpenAlex uk, CrossRef, OpenAlex pl ──
-export async function searchByPhrase(phrase, limit = 10, page = 1, useScholar = false) {
+// ── Пошук за однією фразою: BASE, Scholar (опційно), CORE, OpenAlex uk, CrossRef, OpenAlex pl (+ en для технічних робіт) ──
+// allowEnglish: для технічних/IT робіт англомовних наукових джерел об'єктивно більше,
+// ніж українських — вмикаємо повноцінний англомовний запит (не лише Scholar на першій фразі)
+export async function searchByPhrase(phrase, limit = 10, page = 1, useScholar = false, allowEnglish = false) {
   const yr = `publication_year:>${YEAR_LOOSE - 1}`;
-  const [r1, r2, r3, r4, r5, r6] = await Promise.allSettled([
+  const [r1, r2, r3, r4, r5, r6, r7] = await Promise.allSettled([
     fetchBASE(phrase, limit),
     useScholar ? fetchScholar(phrase, limit) : Promise.resolve([]),
     fetchCORE(phrase, limit),
     openAlexSearch(phrase, `language:uk,${yr}`, limit, page),
     fetchCrossRefUkrainian(phrase, limit),
     openAlexSearch(phrase, `language:pl,${yr}`, limit, page),
+    allowEnglish ? openAlexSearch(phrase, `language:en,${yr}`, limit, page) : Promise.resolve([]),
   ]);
 
   const baseRaw    = r1.status === 'fulfilled' ? r1.value.map(mapBASE) : [];
@@ -602,10 +623,11 @@ export async function searchByPhrase(phrase, limit = 10, page = 1, useScholar = 
   const ukRaw      = r4.status === 'fulfilled' ? r4.value.map(p => mapOpenAlex(p, 'uk')) : [];
   const crRaw      = r5.status === 'fulfilled' ? r5.value.filter(p => hasCyrillic(p.title || '')) : [];
   const plRaw      = r6.status === 'fulfilled' ? r6.value.map(p => mapOpenAlex(p, 'pl')) : [];
+  const enRaw      = r7.status === 'fulfilled' ? r7.value.map(p => mapOpenAlex(p, 'en')) : [];
 
   const seen = new Set();
   const raw = [];
-  for (const p of [...baseRaw, ...scholarRaw, ...coreRaw, ...ukRaw, ...crRaw, ...plRaw]) {
+  for (const p of [...baseRaw, ...scholarRaw, ...coreRaw, ...ukRaw, ...crRaw, ...plRaw, ...enRaw]) {
     const key = (p.title || '').toLowerCase().slice(0, 60);
     if (!key || seen.has(key)) continue;
     seen.add(key);
