@@ -78,7 +78,7 @@ export function SourcesStage({
   keywords, kwLoading, kwError, setKwError, methodInfo, commentAnalysis, onStopSearch,
   allRefs, refList, showMissingSources, citInputsSnapshot, allCitLoading, info,
   suggestedSources, phraseGroups, sourcesSearchLoading, sourcesSearchError, doSearchSources, doRegenSectionSources,
-  doGenKeywords, doAddAllCitations, onAddAbstracts, onFinish, remapLoading, onProceedToWriting, setStage,
+  doGenKeywords, onAddAbstracts, onFinish, remapLoading, onProceedToWriting, setStage,
   onRegenWithNewSources, hasGeneratedContent, onSave, saving,
   citStyleOverride, sourcesOrderOverride, onCitStyleChange, onSourcesOrderChange,
   citFootnotes, onCitFootnotesChange,

@@ -16,8 +16,7 @@ import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, g
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { getAcademicDefaults, classifyAppendixItem, detectSpecialty, normalizeWorkType } from "./lib/academicDefaults.js";
 import { searchByPhrase, filterSourcesWithGemini, getEconInstitutionalSources } from "./lib/sourcesSearch.js";
-import { formatSourcesViaLLM, applyCitationRemap, buildFinalReferenceList, buildCiteFormats, createReferenceDeduper, buildStructuredEntry, detectSourceGrouping } from "./lib/citationFormatting.js";
-import { normalizeAuthorScriptInRawLine } from "./lib/transliteration.js";
+import { applyCitationRemap, buildFinalReferenceList, buildCiteFormats, createReferenceDeduper, detectSourceGrouping } from "./lib/citationFormatting.js";
 import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
 import { StagePills } from "./components/StagePills.jsx";
 import { FieldBox, Heading, NavBtn, PrimaryBtn, GreenBtn, SaveIndicator } from "./components/Buttons.jsx";
@@ -48,6 +47,15 @@ function fixMixedScript(text, lang) {
       ? w.replace(/[a-zA-Z]/g, ch => map[ch] ?? ch)
       : w
   );
+}
+
+function typographQuotes(text) {
+  return text
+    .split(/(```[\s\S]*?```)/)
+    .map((part, i) => (i % 2 === 1 ? part : part
+      .replace(/[„""]([^"„""]*)["""]/g, "«$1»")
+      .replace(/"([^"]*)"/g, "«$1»")))
+    .join("");
 }
 
 function countWords(text) {
@@ -1951,7 +1959,7 @@ ${appendixBlock}${empHint ? `ВИМОГА: ${empHint}\n` : ""}Рекоменда
         }).join("\n")}\n`
         : "";
       const citNote = secSourceLines.length > 0
-        ? "Вставляй [N] у текст одразу після тверджень що спираються на джерело (де N — номер зі списку вище). ЗАБОРОНЕНО вигадувати імена авторів перед цитатою — не пиши 'Іванов А. стверджує...'. Використовуй безособові конструкції: 'у дослідженні зазначається [N]', 'науковці вказують [N]', 'встановлено [N]' тощо."
+        ? "Вставляй [N] у текст одразу після тверджень що спираються на джерело (де N — номер зі списку вище). ЗАБОРОНЕНО вигадувати імена авторів перед цитатою — не пиши 'Іванов А. стверджує...'. Використовуй безособові конструкції: 'у дослідженні зазначається [N]', 'науковці вказують [N]', 'встановлено [N]' тощо. Розподіляй посилання рівномірно між усіма наданими джерелами — спочатку використай кожне хоч раз, і лише потім за потреби повторюй. Одне й те саме джерело [N] НЕ цитувати більше 2 разів у межах цього підрозділу."
         : "Без посилань [1],[2].";
 
       instruction = `Напиши підрозділ "${sec.label}" для ${d.type} на тему "${d.topic}". Галузь: ${d.subject}.
@@ -1984,11 +1992,10 @@ ${planSummary}
       instruction += `\n\nМАТЕРІАЛИ КЛІЄНТА (використовуй ці дані — не вигадуй, не замінюй):\n${clientMaterialsText.slice(0, 80000)}`;
     }
     const sectionMaxTokens = Math.min(60000, Math.max(8000, Math.round((sec.pages || 1) * 3000)));
-    const cleanResult = (raw) => fixMixedScript(raw, lang)
+    const cleanResult = (raw) => typographQuotes(fixMixedScript(raw, lang)
       .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
       .replace(/[ᄀ-ᇿ⺀-鿿ꀀ-꓿가-퟿豈-﫿]/g, "")
-      .replace(/[„""]([^"„""]*)["""]/g, "«$1»")
-      .replace(/"([^"]*)"/g, "«$1»")
+)
       .replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2")
       .replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2");
     // Ціль в словах для перевірки фактичного обсягу після генерації (окремо від тексту промпту)
@@ -2292,11 +2299,10 @@ ${clientReqsRegen ? `ВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО вико
     const regenMaxTokens = Math.min(60000, Math.max(8000, Math.round((sec.pages || 1) * 3000)));
     try {
       const raw = await callClaude(buildRegenMessages(instruction), null, buildSYS(lang, methodInfo), regenMaxTokens);
-      const result = fixMixedScript(raw, lang)
+      const result = typographQuotes(fixMixedScript(raw, lang)
         .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
         .replace(/[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF]/g, "")
-        .replace(/[„""]([^"„""]*)["""]/g, "«$1»")
-        .replace(/"([^"]*)"/g, "«$1»")
+)
         .replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2")
         .replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2");
       const newContent = { ...contentRef.current, [sec.id]: result };
@@ -2317,10 +2323,9 @@ ${clientReqsRegen ? `ВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО вико
       buildAntiPlagiarismSYS(lang),
       maxTokens
     );
-    return fixMixedScript(raw, lang)
+    return typographQuotes(fixMixedScript(raw, lang)
       .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
-      .replace(/[„""]([^"„""]*)["""]/g, "«$1»")
-      .replace(/"([^"]*)"/g, "«$1»")
+)
       .replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2")
       .replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2");
   };
@@ -2410,7 +2415,7 @@ ${sectionSummaries}
       null, "gemini-2.5-flash"
     );
 
-    return raw
+    return typographQuotes(raw
       .split("\n")
       .filter(line => {
         const t = line.trim();
@@ -2422,8 +2427,7 @@ ${sectionSummaries}
       })
       .join("\n")
       .replace(/[ᄀ-ᇿ⺀-鿿ꀀ-꓿가-퟿豈-﫿]/g, "")
-      .replace(/[„""]([^"„""]*)["""]/g, "«$1»")
-      .replace(/"([^"]*)"/g, "«$1»")
+)
       .replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1");
   };
 
@@ -2689,7 +2693,7 @@ ${bioFieldsLine}
 Створи бланк/протокол/гайд відповідно до теми "${topic}": структура, поля для заповнення, інструкція, 8-15 пунктів де доречно.`;
 
       const buildSoftwareTestProtocolAppendixPart = (slot, itemName, topic) => `${slot} — ${itemName}.
-Створи протокол тестування функціональності програми відповідно до теми "${topic}": короткий вступний блок (назва програмного продукту, версія, шкала оцінювання результату: ПРОЙДЕНО / ПРОВАЛЕНО / ЧАСТКОВО), далі markdown-таблиця (|---|---| формат) з колонками: Тест | Умова | Очікуваний результат | Фактичний результат | Статус | Примітки. 6-10 рядків, що покривають ключові функції програми відповідно до теми (якщо в матеріалах клієнта є реальний код — тести мають відповідати саме тим функціям, що є в цьому коді).
+Створи протокол тестування функціональності програми відповідно до теми "${topic}": короткий вступний блок (назва програмного продукту, версія, мова реалізації, середовище виконання, шкала оцінювання результату: ПРОЙДЕНО / ПРОВАЛЕНО / ЧАСТКОВО), далі markdown-таблиця (|---|---| формат) з колонками: Тест | Умова | Очікуваний результат | Фактичний результат | Статус | Примітки. 6-10 рядків, що покривають ключові функції програми відповідно до теми (якщо в матеріалах клієнта є реальний код — тести мають відповідати саме тим функціям, що є в цьому коді). В кінці окремим рядком додай "Дата тестування: ${APPENDIX_FILL_MARKER}" — для цього протоколу дата теж позначається маркером (виняток із загального правила про порожній бланк для дати), бо вона підставляється автоматично.
 У колонках "Фактичний результат" і "Статус" НЕ вигадуй конкретне значення — постав туди рівно текст ${APPENDIX_FILL_MARKER}, ці дані стають відомі лише після завершення написання роботи.`;
 
       const APPENDIX_BUILDERS = {
@@ -2801,11 +2805,10 @@ ${customBlock || `Включи один або два додатки що лог
       const raw = await callClaude(
         [{ role: "user", content: prompt }], null, buildSYS(lang, methodInfo), 6000, null, MODEL
       );
-      const result = raw
+      const result = typographQuotes(raw
         .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
         .replace(/[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF]/g, "")
-        .replace(/[„""]([^"„""]*)["""]/g, "«$1»")
-        .replace(/"([^"]*)"/g, "«$1»")
+)
         .replace(/\n{2,}/g, '\n');
       const finalResult = result + buildCodeAppendixBlock(result, lang);
       setAppendicesText(finalResult);
@@ -2822,6 +2825,17 @@ ${customBlock || `Включи один або два додатки що лог
     setAppendicesLoading(true);
     try {
       const lang = info?.language || "Українська";
+      const todayStr = new Date().toLocaleDateString("uk-UA");
+      const dateFilledText = appendicesText.replace(
+        new RegExp(`(Дата тестування:\\s*)${APPENDIX_FILL_MARKER}`, "g"),
+        `$1${todayStr}`
+      );
+      if (!dateFilledText.includes(APPENDIX_FILL_MARKER)) {
+        setAppendicesText(dateFilledText);
+        await saveToFirestore({ appendicesText: dateFilledText });
+        setAppendicesLoading(false);
+        return;
+      }
       const finishedText = sections
         .filter(s => s.type !== "sources")
         .map(s => content[s.id])
@@ -2833,7 +2847,7 @@ ${customBlock || `Включи один або два додатки що лог
 ${finishedText.slice(0, 60000)}
 
 ДОДАТКИ З МАРКЕРАМИ:
-${appendicesText}
+${dateFilledText}
 
 Заміни КОЖЕН маркер ${APPENDIX_FILL_MARKER} на конкретне значення, узгоджене з тим, що вже стверджується в основному тексті роботи (наприклад, якщо текст стверджує, що функціонал працює коректно — постав відповідний фактичний результат і статус "ПРОЙДЕНО"; якщо десь згадано проблему чи обмеження — врахуй це). Решту тексту додатків НЕ змінюй і поверни дослівно, окрім заміни маркерів. Мова: ${lang}. БЕЗ markdown, зірочок, жирного (markdown-таблиці, що вже є в тексті, лишаються у форматі |---|---|).`;
       const raw = await callClaude([{ role: "user", content: prompt }], null, buildSYS(lang, methodInfo), 6000, null, MODEL);
@@ -3368,11 +3382,10 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
       const sectionMaxTokens = Math.min(60000, Math.max(8000, Math.round((sec.pages || 1) * 3000)));
       try {
         const raw = await callClaude(buildRegenAllMessages(sec.id, instruction), ctrl.signal, buildSYS(lang, methodInfo), sectionMaxTokens, null, MODEL);
-        const result = fixMixedScript(raw, lang)
+        const result = typographQuotes(fixMixedScript(raw, lang)
           .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
           .replace(/[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF]/g, "")
-          .replace(/[„""]([^"„""]*)["""]/g, "«$1»")
-          .replace(/"([^"]*)"/g, "«$1»");
+);
         const newContent = { ...contentRef.current, [sec.id]: result };
         setContent(newContent);
         await saveToFirestore({ content: newContent });
@@ -3724,288 +3737,6 @@ ${secBlock}
   };
 
   const globalRefData = useMemo(() => buildGlobalRefList(), [citInputs, sections, sourcesOrderOverride, methodInfo]); // eslint-disable-line
-
-  const doAddAllCitations = async () => {
-    const { allRefs, secRefMap } = globalRefData;
-    if (!allRefs.length) return;
-    setAllCitLoading(true);
-    const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
-    const newContent = { ...content };
-
-    // ── Визначаємо формат посилань за стилем ──
-    const _extraText = (methodInfo?.otherRequirements || "") + " " + (methodInfo?.citationStyle || "") + " " + (commentAnalysis?.sourcesHints || "");
-    const sourcesStyle = citStyleOverride
-      || methodInfo?.sourcesStyle
-      || (/APA/i.test(_extraText) ? "APA" : /MLA/i.test(_extraText) ? "MLA" : "ДСТУ 8302:2015");
-    const isAPA = /APA/i.test(sourcesStyle);
-    const isMLA = /MLA/i.test(sourcesStyle);
-
-    // ── СПОЧАТКУ: Форматування списку джерел (LLM) ──
-    const _effectiveOrderAdd = sourcesOrderOverride || methodInfo?.sourcesOrder;
-    const isAlphabeticalOrder = !_effectiveOrderAdd || _effectiveOrderAdd === "alphabetical";
-    const isDstu = /ДСТУ/i.test(sourcesStyle);
-    const isFootnoteMode = citFootnotes && isDstu;
-
-    // ── Lookup: title → structured paper object (з citStructured) ──
-    const structuredByTitle = {};
-    Object.values(citStructured).forEach(papers => {
-      (papers || []).forEach(p => {
-        if (p.title) structuredByTitle[p.title.toLowerCase().slice(0, 60)] = p;
-      });
-    });
-    const findStructuredForRef = (refText) => {
-      const lower = refText.toLowerCase();
-      for (const [key, paper] of Object.entries(structuredByTitle)) {
-        if (lower.includes(key)) return paper;
-      }
-      return null;
-    };
-    const refLines = allRefs.map((r, i) => {
-      const sp = findStructuredForRef(r);
-      if (sp) return `${i + 1}. ${JSON.stringify(buildStructuredEntry(sp))}`;
-      return `${i + 1}. ${normalizeAuthorScriptInRawLine(r)}`;
-    });
-
-    // Валідація відповіді LLM (у formatSourcesViaLLM): залишаємо лише пронумеровані
-    // рядки і звіряємо їх кількість з allRefs. Якщо LLM додала преамбулу/примітку чи
-    // вигадала зайве джерело — відкидаємо відповідь і йдемо на сирий список,
-    // щоб сміття не потрапило у фінальний документ.
-    const sanitizedFmt = await formatSourcesViaLLM({
-      refLines, sourcesStyle, sourcesFormatRules: methodInfo?.sourcesFormatRules, callClaude,
-    });
-    let fmtResult = sanitizedFmt ? sanitizedFmt.map((r, i) => `${i + 1}. ${r}`).join("\n") : allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n");
-    setRefList(fmtResult.split("\n").filter(Boolean));
-    const srcSec = sections.find(s => s.type === "sources");
-    if (srcSec) newContent[srcSec.id] = fmtResult;
-
-    // Будуємо карту "номер → текст посилання" з ВІДФОРМАТОВАНОГО списку (щоб мати точні номери сторінок)
-    const fmtLines = fmtResult.split("\n").filter(Boolean).map(l => l.replace(/^\d+[.)]\s*/, ""));
-    const refCiteText = {};
-    fmtLines.forEach((ref, i) => {
-      const n = i + 1;
-      if (isAPA) {
-        // Шукаємо перше "реальне" прізвище (3+ літер) — пропускаємо ініціали типу "Л."
-        const surnameMatch = ref.match(/(?:^|[\s,&])([А-ЯҐЄІЇа-яґєіїA-Za-z]{3,})/);
-        const yearMatch = ref.match(/[\(\.\s](\d{4})[\)\.\,\s]/);
-        const rawAuthor = surnameMatch?.[1] || `Автор${n}`;
-        const author = rawAuthor.charAt(0).toUpperCase() + rawAuthor.slice(1).toLowerCase();
-        const year = yearMatch?.[1] || "б.р.";
-        refCiteText[n] = `(${author}, ${year})`;
-      } else if (isMLA) {
-        const surnameMatch = ref.match(/(?:^|[\s,&])([А-ЯҐЄІЇа-яґєіїA-Za-z]{3,})/);
-        refCiteText[n] = `(${surnameMatch?.[1] || `Автор${n}`})`;
-      } else if (isFootnoteMode) {
-        // Маркер для exportToDocx — буде замінений на справжню Word-виноску
-        // з повним описом джерела, узятим зі сформатованого списку.
-        refCiteText[n] = `%%FN${n}%%`;
-      } else {
-        // ДСТУ та інші нумеровані стилі — витягуємо сторінку з raw-запису (allRefs),
-        // щоб не залежати від можливого переупорядкування Gemini (ДСТУ-групи)
-        const rawRef = allRefs[i] ?? ref;
-        const articlePageMatch = rawRef.match(/[Сс]\.\s*(\d+)\s*[–\-—]/); // діапазон С. 56–74
-        const singlePageMatch = !articlePageMatch && rawRef.match(/[Сс]\.\s*(\d+)(?!\d*\s*с\.)/); // одна сторінка С. 56, але не "210 с."
-        const engPageMatch = rawRef.match(/pp?\.\s*(\d+)/i); // англійські pp. 56
-        const startPage = articlePageMatch?.[1] || singlePageMatch?.[1] || engPageMatch?.[1];
-        refCiteText[n] = startPage ? `[${n}, с. ${startPage}]` : `[${n}]`;
-      }
-    });
-
-    // ── Допоміжні функції ──
-    const isTableRow = p => p.includes("|") || (p.match(/\t/g) || []).length >= 2 || /^Таблиця\s+\d/.test(p.trim()) || /^Рис\.\s+\d/.test(p.trim());
-    const stripCitations = text => text
-      .replace(/\s*\[\d+(?:[,;]\s*(?:с\.\s*)?\d+)+\]/g, "")   // [1,2], [1;2], [1, с.5; 2, с.10]
-      .replace(/\s*\[\d+(?:,\s*с\.\s*\d+)?(?:\s*;\s*\d+(?:,\s*с\.\s*\d+)?)*\]/g, "") // [N, с.X; M, с.Y]
-      .replace(/\s*\[\d+,\s*с\.\s*\d+\]/g, "")
-      .replace(/\s*\[\d+\]/g, "")
-      .replace(/\s*\([А-ЯҐЄІЇA-Z][а-яґєіїa-z\-A-Za-z]+(?:\s+et\s+al\.?)?(?:,\s*\d{4})?\)/g, "");
-
-    // Очищуємо старі посилання з усіх підрозділів перед новим розставленням
-    mainSecs.forEach(sec => { if (newContent[sec.id]) newContent[sec.id] = stripCitations(newContent[sec.id]); });
-
-    // ── ОДИН ЗАПИТ на всі підрозділи ──
-    const secsWithRefs = mainSecs.filter(sec => secRefMap[sec.id]?.length && newContent[sec.id]);
-
-    if (secsWithRefs.length > 0) {
-      const exampleCite = isAPA ? "(Автор, рік)" : isMLA ? "(Автор)" : "[N]";
-      const secsSummary = secsWithRefs.map(sec => {
-        const uniqueNums = [...new Set(secRefMap[sec.id])];
-        // Не показуємо Claude рядки таблиць як кандидати
-        const paragraphs = newContent[sec.id].split("\n").filter(p => p.trim() && !isTableRow(p)).map((p, idx) => `${idx}: ${p.substring(0, 180)}`);
-        // Показуємо які саме рядки посилань доступні для цього підрозділу
-        const refsDetail = uniqueNums.map(n => `джерело ${n}`).join(", ");
-        return `ПІДРОЗДІЛ "${sec.id}" (доступні: ${refsDetail}):
-${paragraphs.join("\n")}`;
-      }).join("\n\n---\n\n");
-
-      const batchPrompt = `Визнач в яких абзацах яке джерело доречне. Стиль: ${sourcesStyle}.
-
-ПРАВИЛА:
-1. Кожне джерело ставити МАКСИМУМ 1 раз на весь текст роботи — враховуй ВСІ підрозділи разом.
-2. Не ставити одне джерело підряд у кількох абзацах поспіль.
-3. Посилання ставити лише там де абзац ПРЯМО спирається на це джерело (визначення, факт, цитата).
-4. Розподіляй джерела рівномірно між підрозділами — не концентруй всі в одному.
-5. ОБОВ'ЯЗКОВО: кожне джерело зі списку "доступні" має бути використане ХОЧА Б ОДИН РАЗ. Якщо після суворого розміщення за правилом 3 якесь джерело залишилось невикористаним — знайди підрозділ і абзац найближчий за тематикою і постав це джерело там.
-6. Формат відповіді — JSON де значення це НОМЕР джерела (ціле число), а не текст посилання.
-
-${secsSummary}
-
-Поверни ТІЛЬКИ JSON (без markdown):
-{"citations":{"1.1":{"0":1,"3":2},"1.2":{"1":3,"5":4}}}
-де ключ підрозділу — id, ключ абзацу — індекс (0-based), значення — номер джерела (ціле число).`;
-
-      try {
-        const raw = await callClaude([{ role: "user", content: batchPrompt }], null,
-          SYS_JSON_SHORT, 2000, null, MODEL_FAST);
-        const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || raw);
-        const citMap = parsed.citations || {};
-
-        // Вставляємо посилання локально — конвертуємо номер у правильний формат
-        secsWithRefs.forEach(sec => {
-          const secCits = citMap[sec.id];
-          if (!secCits) return;
-          const paragraphs = newContent[sec.id].split("\n");
-          let nonEmptyIdx = 0;
-          const result = paragraphs.map((p) => {
-            if (!p.trim()) return p;
-            if (isTableRow(p)) { nonEmptyIdx++; return p; } // пропускаємо рядки таблиць
-            const citNum = secCits[String(nonEmptyIdx)];
-            nonEmptyIdx++;
-            if (citNum && refCiteText[citNum]) {
-              const cite = refCiteText[citNum];
-              if (p.includes(cite)) return p;
-              const trimmed = p.trimEnd();
-              // Якщо абзац закінчується крапкою/знаком оклику/питання — ставимо посилання ДО знака
-              const lastChar = trimmed.slice(-1);
-              if ([".", "!", "?", "…"].includes(lastChar)) {
-                return trimmed.slice(0, -1) + " " + cite + lastChar;
-              }
-              return trimmed + " " + cite + ".";
-            }
-            return p;
-          }).join("\n");
-          newContent[sec.id] = result;
-        });
-
-      } catch (e) { console.error("Citation batch error:", e); }
-    }
-
-    // ── Очищення: прибираємо номери поза діапазоном реального списку (будь-який стиль) ──
-    // Захищає від "осиротілих" [N] що виникають при розбіжності кількості рядків у Claude-відповіді
-    if (!isAPA && !isMLA) {
-      mainSecs.forEach(sec => {
-        if (!newContent[sec.id]) return;
-        newContent[sec.id] = newContent[sec.id].replace(/\[(\d+)(?:,\s*с\.\s*\d+)?\]/g, (match, n) => {
-          const num = Number(n);
-          return (num >= 1 && num <= fmtLines.length) ? match : "";
-        });
-      });
-    }
-
-    // ── Примусово вставляємо невикористані джерела — завжди, незалежно від результату LLM-виклику ──
-    if (secsWithRefs.length > 0) {
-      const placedNums = new Set();
-      secsWithRefs.forEach(sec => {
-        const text = newContent[sec.id] || "";
-        [...text.matchAll(/\[(\d+)[,\]]/g)].forEach(m => placedNums.add(Number(m[1])));
-        Object.entries(refCiteText).forEach(([n, cite]) => {
-          if (text.includes(cite)) placedNums.add(Number(n));
-        });
-      });
-      const unplaced = allRefs.map((_, i) => i + 1).filter(n => !placedNums.has(n));
-      if (unplaced.length > 0) {
-        const insertCite = (text, cite) => {
-          const lines = text.split("\n");
-          const hasCite = l => /\[\d+/.test(l) || Object.values(refCiteText).some(c => l.includes(c));
-          for (let i = 0; i < lines.length; i++) {
-            const l = lines[i];
-            if (!l.trim() || isTableRow(l) || hasCite(l)) continue;
-            const trimmed = l.trimEnd();
-            const last = trimmed.slice(-1);
-            lines[i] = [".", "!", "?", "…"].includes(last)
-              ? trimmed.slice(0, -1) + " " + cite + last
-              : trimmed + " " + cite + ".";
-            return lines.join("\n");
-          }
-          return text;
-        };
-        unplaced.forEach(n => {
-          if (!refCiteText[n]) return;
-          const targetSecs = secsWithRefs.filter(sec => secRefMap[sec.id]?.includes(n));
-          const candidates = targetSecs.length ? targetSecs : secsWithRefs;
-          for (const sec of candidates) {
-            const before = newContent[sec.id];
-            const after = insertCite(before, refCiteText[n]);
-            if (after !== before) { newContent[sec.id] = after; break; }
-          }
-        });
-      }
-    }
-
-    // ── Ренумерація для citation_order: привести номери до реального порядку появи в тексті ──
-    if (!isAPA && !isMLA && !isAlphabeticalOrder) {
-      // 1. Знаходимо реальний порядок першої появи кожного номера в тексті
-      const firstSeen = []; // масив номерів у порядку першого входження
-      const seen = new Set();
-      mainSecs.forEach(sec => {
-        const text = newContent[sec.id] || "";
-        const matches = [...text.matchAll(/\[(\d+)[\],]/g)];
-        matches.forEach(m => {
-          const n = Number(m[1]);
-          if (!seen.has(n)) { seen.add(n); firstSeen.push(n); }
-        });
-      });
-
-      // 2. Будуємо oldToNew { старий_номер: новий_номер }
-      const oldToNew = {};
-      firstSeen.forEach((oldN, idx) => { oldToNew[oldN] = idx + 1; });
-
-      // Додаємо джерела що взагалі не потрапили в текст (в кінець, зберігаючи їх відносний порядок)
-      let nextNew = firstSeen.length + 1;
-      fmtLines.forEach((_, i) => {
-        const n = i + 1;
-        if (!oldToNew[n]) { oldToNew[n] = nextNew++; }
-      });
-
-      // 3. Перевіряємо чи є взагалі зміни
-      const needsRenumber = Object.entries(oldToNew).some(([old, nw]) => Number(old) !== nw);
-      if (needsRenumber) {
-        // 4. Замінюємо в тексті (одночасно через placeholder щоб уникнути колізій)
-        mainSecs.forEach(sec => {
-          if (!newContent[sec.id]) return;
-          // Спочатку замінюємо на placeholders
-          let text = newContent[sec.id].replace(/\[(\d+)(,\s*с\.\s*\d+)?\]/g, (match, n, page) => {
-            const newN = oldToNew[Number(n)];
-            return newN ? `%%CIT${newN}${page || ""}%%` : match;
-          });
-          // Потім placeholders → фінальні посилання
-          text = text.replace(/%%CIT(\d+)(,\s*с\.\s*\d+)?%%/g, (_, n, page) => `[${n}${page || ""}]`);
-          newContent[sec.id] = text;
-        });
-
-        // 5. Переупорядковуємо список джерел
-        const newFmtLines = new Array(fmtLines.length);
-        fmtLines.forEach((line, i) => {
-          const newIdx = oldToNew[i + 1] - 1;
-          if (newIdx >= 0 && newIdx < newFmtLines.length) newFmtLines[newIdx] = line;
-        });
-        const reorderedList = newFmtLines
-          .map((line, i) => line ? `${i + 1}. ${line.replace(/^\d+\.\s*/, "")}` : null)
-          .filter(Boolean)
-          .join("\n");
-
-        // Оновлюємо секцію джерел та стан
-        const srcSec = sections.find(s => s.type === "sources");
-        if (srcSec) newContent[srcSec.id] = reorderedList;
-        setRefList(reorderedList.split("\n").filter(Boolean));
-        fmtResult = reorderedList;
-      }
-    }
-
-    setContent(newContent);
-    setCitInputsSnapshot(JSON.stringify(citInputs));
-    await saveToFirestore({ content: newContent, citInputs, citStructured, refList: fmtResult?.split("\n").filter(Boolean) || [], ...(!writingDoneRef.current ? { stage: "sources", status: "writing" } : {}) });
-    setAllCitLoading(false);
-  };
 
   const handleCitStyleChange = (style) => {
     setCitStyleOverride(style);
@@ -4572,7 +4303,6 @@ ${secsSummary}
               sourcesSearchError={sourcesSearchError}
               doSearchSources={doSearchSources}
               doRegenSectionSources={doRegenSectionSources}
-              doAddAllCitations={doAddAllCitations}
               onAddAbstracts={(entries) => setAbstractsMap(prev => ({ ...prev, ...entries }))}
               onFinish={doRemapCitations} remapLoading={remapLoading}
               onProceedToWriting={() => setStage("writing")}

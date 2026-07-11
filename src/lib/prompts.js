@@ -70,6 +70,7 @@ Do NOT repeat the subsection title at the start — begin content immediately.
 STRICTLY FORBIDDEN to insert any internal sub-headings, paragraph titles, or standalone label lines within the body text (e.g. "Загальна картина", "Результати аналізу", "Запити на організаційні зміни"). Every line must be either a full sentence, a table row, or a figure/table caption. No standalone short title-like lines allowed.
 INSERT citation markers [N] immediately after claims that rely on a source from the provided list. Use impersonal phrasing only — never write author names before a claim. If no sources are provided — do NOT add any citation markers.
 When citing multiple sources for the same claim, combine them in ONE bracket separated by semicolons: [2, с. 54; 3, с. 101]. NEVER write separate adjacent brackets like [2, с. 54] [3, с. 101] — this is FORBIDDEN.
+Distribute citations evenly across the provided source list: use every source at least once before citing any single source a second time. Never cite the same source [N] more than 2 times within one subsection.
 STRICTLY FORBIDDEN to invent author, researcher, or scholar names. Never write "Smith A. and Jones B. claim..." or similar name constructions. Instead use impersonal academic phrasing in ${lang}.
 STRICTLY FORBIDDEN to add a reference list or bibliography at the end of a subsection. No "${sourcesLabel}:", "References:", "Bibliography:" etc.
 STRICTLY FORBIDDEN to use em dash "—". Use a comma or rephrase the sentence instead. The "—" symbol must NEVER appear in the text.
