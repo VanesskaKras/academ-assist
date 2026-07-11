@@ -834,7 +834,11 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     }
     let processedTxt = txt;
     if (isChapterConc) {
-      processedTxt = txt.replace(/^\s*#{1,6}\s+[^\n]*\n?/, "").trimStart();
+      // Стрипаємо перший рядок якщо AI дублює назву "Висновки до розділу N" (з markdown-заголовком або без)
+      processedTxt = txt
+        .replace(/^\s*#{1,6}\s+[^\n]*\n?/, "")
+        .replace(/^\s*(?:висновк[^\s]*\s+до\s+|wnioski\s+do\s+|conclusiones\s+(?:del|al)\s+|závěry\s+ke\s+|závery\s+ku\s+|schlussfolgerungen\s+zu\s+)[^\n]*\n?/i, "")
+        .trimStart();
     } else if (isMain && !isSubsection) {
       // Стрипаємо перший рядок якщо AI дублює заголовок розділу (РОЗДІЛ N. або # Назва)
       processedTxt = txt

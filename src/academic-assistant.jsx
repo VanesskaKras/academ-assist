@@ -3999,7 +3999,17 @@ ${secBlock}
     const intro = sections.find(s => s.type === "intro");
     const concs = sections.find(s => s.type === "conclusions");
     const srcs = sections.find(s => s.type === "sources");
-    const main = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
+    // Сортуємо за номером розділу/підрозділу — незалежно від фізичного порядку в масиві sections,
+    // щоб розділи в експортованому документі завжди йшли за зростанням (1, 2, 3...).
+    const main = sections
+      .filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type))
+      .slice()
+      .sort((a, b) => {
+        const [aChap, aSub] = a.id.split(".").map(Number);
+        const [bChap, bSub] = b.id.split(".").map(Number);
+        if (aChap !== bChap) return aChap - bChap;
+        return (aSub || 0) - (bSub || 0);
+      });
     const ordered = [];
     for (let i = 0; i < main.length; i++) {
       ordered.push(main[i]);
