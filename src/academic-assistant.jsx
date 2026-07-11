@@ -14,9 +14,9 @@ import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_P
 import { extractReadyWorkStructure, quickParsePlanIds } from "./lib/readyWorkExtract.js";
 import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, getEmpiricalSections, getEconSections, getTechnicalSections, CODE_FILE_EXTENSIONS, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, getLangLabels } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
-import { getAcademicDefaults, classifyAppendixItem, normalizeWorkType } from "./lib/academicDefaults.js";
+import { getAcademicDefaults, classifyAppendixItem, detectSpecialty, normalizeWorkType } from "./lib/academicDefaults.js";
 import { searchByPhrase, filterSourcesWithGemini, getEconInstitutionalSources } from "./lib/sourcesSearch.js";
-import { formatSourcesViaLLM, applyCitationRemap, buildFinalReferenceList, buildCiteFormats, createReferenceDeduper, buildStructuredEntry } from "./lib/citationFormatting.js";
+import { formatSourcesViaLLM, applyCitationRemap, buildFinalReferenceList, buildCiteFormats, createReferenceDeduper, buildStructuredEntry, detectSourceGrouping } from "./lib/citationFormatting.js";
 import { normalizeAuthorScriptInRawLine } from "./lib/transliteration.js";
 import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
 import { StagePills } from "./components/StagePills.jsx";
@@ -70,6 +70,10 @@ function getIntroTasksProfile(type, course, mainSecsLength, isLarge) {
 }
 
 const INTRO_TASKS_MERGE_SPLIT_RULE = `Розділи плану — це змістова основа, а не буквальні назви завдань: сформулюй кожне завдання як дієслівну наукову конструкцію ("проаналізувати...", "систематизувати...", "розробити...", "обґрунтувати..." тощо). Якщо розділів більше, ніж потрібно завдань — об'єднай суміжні за змістом розділи в одне завдання; якщо розділів менше — розбий один розділ на 2 завдання за логічними частинами його підрозділів.`;
+
+// ── Додатки з полями, що заповнюються автоматично після готовності основного тексту ──
+const APPENDIX_FILL_MARKER = "ЗАПОВНЮЄТЬСЯ_АВТОМАТИЧНО";
+const APPENDIX_FILL_MARKER_RULE = `Якщо для якогось конкретного поля додатку (очікуваний/фактичний результат, статус "пройдено/не пройдено", висновок, показник) значення логічно випливає із самої роботи, але наразі невідоме, бо основний текст роботи ще не написаний, — постав замість цього поля рівно текст ${APPENDIX_FILL_MARKER} (без лапок і додаткових символів), не вигадуй конкретне значення заздалегідь. Якщо ж поле вимагає реальних особистих чи фізичних даних, яких ти не можеш знати (ім'я виконавця, дата, підпис, характеристики обладнання, номер академічної групи) — залиш порожній підкреслений бланк "________" для ручного заповнення, це поле НЕ позначай маркером.`;
 
 // ── Helpers for section reordering ──
 
@@ -211,6 +215,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const plagAllAbortRef = useRef(null);
   const writingDoneRef = useRef(false);
   const autoRemapDoneRef = useRef(false);
+  const appendixFillDoneRef = useRef(false);
   const maxStageIdxRef = useRef(0);
   const generationStartRef = useRef(null);
   const [apiError, setApiError] = useState("");
@@ -1498,12 +1503,17 @@ Return ONLY JSON:
       (readyWorkImportedIds || []).forEach(id => { if (prev[id]) preserved[id] = prev[id]; });
       return preserved;
     });
-    setGenIdx(0); setPaused(false); writingDoneRef.current = false; autoRemapDoneRef.current = false;
+    setGenIdx(0); setPaused(false); writingDoneRef.current = false; autoRemapDoneRef.current = false; appendixFillDoneRef.current = false;
     const practicalApproachForGen = commentAnalysis?.practicalApproach;
     const acadDefaultsForGen = getAcademicDefaults(info?.subject, info?.type, info?.course, info?.topic);
     const needsAppendixForGen = practicalApproachForGen || isPsychoPed(info) || (acadDefaultsForGen?.appendicesAiGen?.length > 0);
-    if (!appendicesText && needsAppendixForGen) doGenAppendices();
-    if (!econProfile && isEcon(info)) doGenEconProfile();
+    const needsEconProfileForGen = !econProfile && isEcon(info);
+    (async () => {
+      // Для економічних робіт додатки мають спиратись на той самий профіль підприємства,
+      // що й основний текст — тому чекаємо його готовності перед генерацією додатків.
+      const profileForAppendices = needsEconProfileForGen ? await doGenEconProfile() : econProfile;
+      if (!appendicesText && needsAppendixForGen) doGenAppendices(profileForAppendices);
+    })();
     setStage("sources");
     generationStartRef.current = Date.now();
     saveToFirestore({ workflowMode: "sources-first", stage: "sources", status: "writing", generationStartedAt: new Date().toISOString() });
@@ -1561,6 +1571,12 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
     sections.forEach(sec => { if (content[sec.id]) newRefs[sec.id] = scanFigures(content[sec.id]); });
     setFigureRefs(newRefs);
   }, [stage, content]);
+
+  // ── Авто-заповнення полів додатків, позначених маркером, при переході на done ──
+  useEffect(() => {
+    if (stage !== "done") return;
+    doFillAppendixData();
+  }, [stage]); // eslint-disable-line
 
   // ── Генерація тексту ──
   useEffect(() => {
@@ -2492,6 +2508,7 @@ ${slidesOutline}
   // на ту саму назву підприємства, галузь і базові показники, а не вигадували нові.
   const doGenEconProfile = async () => {
     setEconProfileLoading(true);
+    let result = "";
     try {
       const lang = info?.language || "Українська";
       const realMaterials = clientMaterialsSummary?.rawText || clientMaterialsText?.trim() || "";
@@ -2520,7 +2537,7 @@ ${realMaterials.slice(0, 80000)}
 Ці дані будуть використані як незмінна основа для всіх розрахунків і таблиць у роботі, тому цифри мають бути внутрішньо узгодженими (динаміка логічна, показники не суперечать один одному).`;
 
       const raw = await callClaude([{ role: "user", content: prompt }], null, buildSYS(lang, methodInfo), 1200, null, MODEL_FAST);
-      const result = raw
+      result = raw
         .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
         .replace(/[ᄀ-ᇿ⺀-鿿ꀀ-꓿가-퟿豈-﫿]/g, "")
         .trim();
@@ -2530,6 +2547,7 @@ ${realMaterials.slice(0, 80000)}
       console.warn("econ profile generation failed:", e.message);
     }
     setEconProfileLoading(false);
+    return result;
   };
 
   // Повний вихідний код клієнта у Додаток — програмно (без AI), щоб не обрізати й не перефразувати реальний код.
@@ -2554,7 +2572,7 @@ ${realMaterials.slice(0, 80000)}
     return `\nДОДАТОК ${letter}\nВихідний код програми\n\n${listings}`;
   };
 
-  const doGenAppendices = async () => {
+  const doGenAppendices = async (econProfileOverride) => {
     setAppendicesLoading(true);
     try {
       const lang = info?.language || "Українська";
@@ -2564,6 +2582,16 @@ ${realMaterials.slice(0, 80000)}
       const planBlock = mainSecs.length
         ? `СТРУКТУРА РОБОТИ:\n${mainSecs.map(s => `- ${s.label} (${s.type})`).join("\n")}`
         : "";
+
+      // Реальні дані клієнта — щоб додатки узгоджувались з тим самим джерелом істини,
+      // що й основний текст (реальний код для технічних робіт, профіль підприємства для економічних).
+      const realMaterialsForApp = clientMaterialsSummary?.rawText || clientMaterialsText?.trim() || "";
+      const econProfileForApp = econProfileOverride !== undefined ? econProfileOverride : econProfile;
+      const groundingBlock = isTechnical(info) && realMaterialsForApp
+        ? `\nМАТЕРІАЛИ КЛІЄНТА (реальний код — використовуй ці дані: посилайся на фактичні назви класів/функцій, мову програмування та тип інтерфейсу з цього коду, не вигадуй іншу архітектуру):\n${realMaterialsForApp.slice(0, 80000)}\n`
+        : (isEcon(info) && econProfileForApp)
+          ? `\nФІКСОВАНІ БАЗОВІ ДАНІ ПІДПРИЄМСТВА (використовуй САМЕ ЦІ дані, не вигадуй іншу назву/рік/цифри):\n${econProfileForApp}\n`
+          : "";
 
       const methodBlock = methodInfo?.theoryRequirements || methodInfo?.analysisRequirements || methodInfo?.otherRequirements
         ? `ВИМОГИ МЕТОДИЧКИ: ${[methodInfo.theoryRequirements, methodInfo.analysisRequirements, methodInfo.otherRequirements].filter(Boolean).join(". ")}`
@@ -2660,6 +2688,10 @@ ${bioFieldsLine}
       const buildFormAppendixPart = (slot, itemName, topic) => `${slot} — ${itemName}.
 Створи бланк/протокол/гайд відповідно до теми "${topic}": структура, поля для заповнення, інструкція, 8-15 пунктів де доречно.`;
 
+      const buildSoftwareTestProtocolAppendixPart = (slot, itemName, topic) => `${slot} — ${itemName}.
+Створи протокол тестування функціональності програми відповідно до теми "${topic}": короткий вступний блок (назва програмного продукту, версія, шкала оцінювання результату: ПРОЙДЕНО / ПРОВАЛЕНО / ЧАСТКОВО), далі markdown-таблиця (|---|---| формат) з колонками: Тест | Умова | Очікуваний результат | Фактичний результат | Статус | Примітки. 6-10 рядків, що покривають ключові функції програми відповідно до теми (якщо в матеріалах клієнта є реальний код — тести мають відповідати саме тим функціям, що є в цьому коді).
+У колонках "Фактичний результат" і "Статус" НЕ вигадуй конкретне значення — постав туди рівно текст ${APPENDIX_FILL_MARKER}, ці дані стають відомі лише після завершення написання роботи.`;
+
       const APPENDIX_BUILDERS = {
         data_table: buildDataTableAppendixPart,
         scheme: buildSchemeAppendixPart,
@@ -2668,11 +2700,14 @@ ${bioFieldsLine}
         form: buildFormAppendixPart,
       };
 
+      const isItSpecialty = detectSpecialty(info?.subject) === "it";
+
       // Будує блок промпту: список кандидатів-додатків з таблиці, AI сам обирає що згенерувати
       const buildAcadDefaultsAppendixBlock = (candidates, topic) => {
         const parts = candidates.map(item => {
-          const type = classifyAppendixItem(item);
-          const builder = APPENDIX_BUILDERS[type] || buildFormAppendixPart;
+          const builder = (isItSpecialty && /тест/i.test(item))
+            ? buildSoftwareTestProtocolAppendixPart
+            : (APPENDIX_BUILDERS[classifyAppendixItem(item)] || buildFormAppendixPart);
           return builder("[ДОДАТОК]", item, topic);
         });
         const abc = getLangLabels(lang).appendixLetters;
@@ -2690,7 +2725,7 @@ ${parts.join("\n\n---\n\n")}
         const header = `Згенеруй інструмент дослідження (Додаток А) для ${info?.type || "наукової роботи"} на тему "${info?.topic}". Галузь: ${info?.subject}.
 ${planBlock}
 ${methodBlock}
-${empClientBlock}${clientBlock}
+${empClientBlock}${clientBlock}${groundingBlock}
 Мова: ${lang}. БЕЗ markdown, зірочок, жирного. Звичайний текст.`;
 
         if (instrumentType === "psycho_scale") {
@@ -2747,7 +2782,7 @@ ${buildQuestionnairePrompt("ДОДАТОК А", rdApp?.groups?.[0]?.name || "")}
         const header = `Згенеруй Додатки для ${info?.type || "наукової роботи"} на тему "${info?.topic}". Галузь: ${info?.subject}.
 ${planBlock}
 ${methodBlock}
-${clientBlock}
+${clientBlock}${groundingBlock}
 Мова: ${lang}. БЕЗ markdown, зірочок, жирного. Звичайний текст.`;
         prompt = `${header}
 
@@ -2756,10 +2791,12 @@ ${buildAcadDefaultsAppendixBlock(acadDefaultsApp.appendicesAiGen, info?.topic)}`
         prompt = `Згенеруй розділ "Додатки" для ${info?.type || "наукової роботи"} на тему "${info?.topic}". Галузь: ${info?.subject || ""}.
 ${planBlock}
 ${methodBlock}
-${clientBlock}
+${clientBlock}${groundingBlock}
 ${customBlock || `Включи один або два додатки що логічно доповнюють роботу відповідно до теми та структури (таблиці, схеми, зразки документів тощо).`}
 Мова: ${lang}. БЕЗ markdown, зірочок, жирного. Кожен додаток починається з нового рядка: ДОДАТОК А, ДОДАТОК Б тощо.`;
       }
+
+      prompt += `\n\n${APPENDIX_FILL_MARKER_RULE}`;
 
       const raw = await callClaude(
         [{ role: "user", content: prompt }], null, buildSYS(lang, methodInfo), 6000, null, MODEL
@@ -2774,6 +2811,38 @@ ${customBlock || `Включи один або два додатки що лог
       setAppendicesText(finalResult);
       await saveToFirestore({ appendicesText: finalResult });
     } catch (e) { alert("Помилка генерації додатків: " + e.message); }
+    setAppendicesLoading(false);
+  };
+
+  // ── Автозаповнення полів додатків, позначених маркером, коли основний текст роботи вже готовий ──
+  const doFillAppendixData = async () => {
+    if (appendixFillDoneRef.current) return;
+    if (!appendicesText || !appendicesText.includes(APPENDIX_FILL_MARKER)) return;
+    appendixFillDoneRef.current = true;
+    setAppendicesLoading(true);
+    try {
+      const lang = info?.language || "Українська";
+      const finishedText = sections
+        .filter(s => s.type !== "sources")
+        .map(s => content[s.id])
+        .filter(Boolean)
+        .join("\n\n");
+      const prompt = `Нижче наведено розділ "Додатки" ${info?.type || "наукової роботи"} на тему "${info?.topic}", у якому частину полів позначено маркером ${APPENDIX_FILL_MARKER} — їх потрібно заповнити значеннями, узгодженими з основним текстом роботи, який тепер повністю готовий.
+
+ОСНОВНИЙ ТЕКСТ РОБОТИ (спирайся на нього, не вигадуй даних, що суперечать йому):
+${finishedText.slice(0, 60000)}
+
+ДОДАТКИ З МАРКЕРАМИ:
+${appendicesText}
+
+Заміни КОЖЕН маркер ${APPENDIX_FILL_MARKER} на конкретне значення, узгоджене з тим, що вже стверджується в основному тексті роботи (наприклад, якщо текст стверджує, що функціонал працює коректно — постав відповідний фактичний результат і статус "ПРОЙДЕНО"; якщо десь згадано проблему чи обмеження — врахуй це). Решту тексту додатків НЕ змінюй і поверни дослівно, окрім заміни маркерів. Мова: ${lang}. БЕЗ markdown, зірочок, жирного (markdown-таблиці, що вже є в тексті, лишаються у форматі |---|---|).`;
+      const raw = await callClaude([{ role: "user", content: prompt }], null, buildSYS(lang, methodInfo), 6000, null, MODEL);
+      if (raw && raw.trim()) {
+        const filled = raw.trim();
+        setAppendicesText(filled);
+        await saveToFirestore({ appendicesText: filled });
+      }
+    } catch (e) { console.warn("Автозаповнення додатків не вдалося:", e.message); }
     setAppendicesLoading(false);
   };
 
@@ -3329,6 +3398,7 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
     // Для econ-аналітичних підрозділів додаємо офіційну статистику (Держстат/НБУ/Мінфін/World Bank)
     // як нагадування-посилання, поряд зі знайденими науковими статтями
     const isEconSecForSources = isEcon(info) && getEconSections(sections, info).includes(secId);
+    const isTechnicalWork = isTechnical(info);
     const institutionalGroup = (isFirstSearch && isEconSecForSources)
       ? [{ phrase: "Офіційна статистика", papers: getEconInstitutionalSources() }]
       : [];
@@ -3363,8 +3433,8 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
         for (let pi = 0; pi < (phrases || []).length; pi++) {
           if (stopSearchRef.current) break outer;
           const phrase = phrases[pi];
-          const useScholar = pi === 0; // Scholar тільки для першої фрази тези
-          const candidates = await searchByPhrase(phrase, 10, page, useScholar);
+          const useScholar = pi === 0 || isTechnicalWork; // Scholar тільки для першої фрази тези; для технічних робіт — на кожній
+          const candidates = await searchByPhrase(phrase, 10, page, useScholar, isTechnicalWork);
           const fresh = candidates.filter(p => {
             const key = (p.title || '').toLowerCase().slice(0, 60);
             return key && !globalSeen.has(key);
@@ -3612,13 +3682,20 @@ ${secBlock}
     });
     const rawRefs = deduper.canonicalRefs;
 
-    // Якщо алфавітний порядок — сортуємо і перебудовуємо індекси (законодавчі акти першими)
+    // Якщо алфавітний порядок — сортуємо і перебудовуємо індекси. Групування
+    // (закони окремо / мовні блоки) вмикається лише за явним сигналом методички
+    // (detectSourceGrouping) — інакше плаский алфавітний список, щоб прев'ю тут
+    // збігалося з фінальним результатом doRemapCitations.
     let allRefs, indexMap;
     if (isAlphabetical) {
       const _workLang = info?.language || "Українська";
       const _latinFirst = /англ|english|польськ|polish|нім|german|франц|french|іспан|spanish|італ|italian/i.test(_workLang);
-      const _isLaw = s => /^(закон|кодекс|конституція|постанова|указ\s|декрет\s|наказ\s|розпорядження\s)/i.test(s.trim());
+      const { lawFirst: _lawFirst, foreignGroup: _foreignGroup } = detectSourceGrouping({
+        sourcesFormatRules: methodInfo?.sourcesFormatRules, sourcesGrouping: methodInfo?.sourcesGrouping,
+      });
+      const _isLaw = s => _lawFirst && /^(закон|кодекс|конституція|постанова|указ\s|декрет\s|наказ\s|розпорядження\s)/i.test(s.trim());
       const langGroup = (s) => {
+        if (!_foreignGroup) return 0;
         const isCyrillic = /^[А-ЯҐЄІЇа-яґєії]/i.test(s);
         return _latinFirst ? (isCyrillic ? 1 : 0) : (isCyrillic ? 0 : 1);
       };
@@ -4062,7 +4139,7 @@ ${secsSummary}
 
     const { finalTexts: allRefs, indexMap } = await buildFinalReferenceList({
       rawRefs, findStructured: findStructured2, sourcesStyle, isLatinWork: _remapLatinFirst,
-      sourcesFormatRules: methodInfo?.sourcesFormatRules, callClaude,
+      sourcesFormatRules: methodInfo?.sourcesFormatRules, sourcesGrouping: methodInfo?.sourcesGrouping, callClaude,
       skipSort: !isAlphabeticalOrder && !isDstu,
     });
     const fmtLines = allRefs;
