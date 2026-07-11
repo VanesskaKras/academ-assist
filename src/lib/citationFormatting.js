@@ -268,17 +268,39 @@ export function isElectronicResource(text, structuredPaper) {
   return hasUrl && !hasIssueOrPages;
 }
 
-// Сортує вже ВІДФОРМАТОВАНИЙ (прізвище спереду) список джерел за групами ДСТУ
-// 8302:2015: закони → кирилиця книги/статті → кирилиця електронні ресурси →
-// іноземні (латиниця) для роботи українською мовою; або закони → іноземні →
-// кирилиця книги/статті → кирилиця електронні ресурси для іноземної роботи.
+// Вирішує, яке СТРУКТУРНЕ групування (крім самого алфавіту) застосувати до списку
+// джерел — і робить це ЛИШЕ за явним сигналом з методички, а не за замовчуванням.
+// "Алфавітний порядок" у методичці означає плаский єдиний список; групування
+// (закони окремо / друковані-електронні окремо / мовні блоки) вмикається, тільки
+// якщо методичка прямо про нього каже — інакше "алфавіт" в UI обіцяє одне, а
+// фактичний список (розбитий на групи) виглядає невпорядкованим для студента.
+// sourcesGrouping — окреме структуроване поле з методички саме про мовне
+// групування ("спочатку українські, потім англійські…") — його наявність і є
+// сигналом для foreignGroup.
+export function detectSourceGrouping({ sourcesFormatRules, sourcesGrouping } = {}) {
+  const rules = sourcesFormatRules || "";
+  const lawFirst = /(закон\w*|кодекс\w*|нормативн\w*|законодавч\w*)[^.]{0,50}(спочатку|першими|на\s+початку|окрем\w*|перед)/i.test(rules)
+    || /(спочатку|першими|на\s+початку)[^.]{0,50}(закон\w*|кодекс\w*|нормативн\w*|законодавч\w*)/i.test(rules);
+  const typeGroup = /(друкован\w*|книг\w*|статт\w*)[^.]{0,80}(електрон\w*\s*ресурс\w*)/i.test(rules)
+    || /(електрон\w*\s*ресурс\w*)[^.]{0,80}(друкован\w*|книг\w*|статт\w*)/i.test(rules);
+  const foreignGroup = !!(sourcesGrouping && sourcesGrouping.trim());
+  return { lawFirst, typeGroup, foreignGroup };
+}
+
+// Сортує вже ВІДФОРМАТОВАНИЙ (прізвище спереду) список джерел. За замовчуванням —
+// плаский алфавітний список (усі grouping-прапорці вимкнені). Якщо методичка явно
+// вимагає групування (detectSourceGrouping) — застосовує групи ДСТУ 8302:2015:
+// закони → кирилиця книги/статті → кирилиця електронні ресурси → іноземні
+// (латиниця) для роботи українською мовою; або закони → іноземні → кирилиця
+// книги/статті → кирилиця електронні ресурси для іноземної роботи.
 // items: [{ text, structured }]
-export function sortReferencesForDisplay(items, { latinFirst = false } = {}) {
+export function sortReferencesForDisplay(items, { latinFirst = false, grouping = {} } = {}) {
+  const { lawFirst = false, typeGroup = false, foreignGroup = false } = grouping;
   const groupOf = (item) => {
-    if (isLawSource(item.text)) return 0;
-    const foreign = isForeignAuthorScript(item.text);
+    if (lawFirst && isLawSource(item.text)) return 0;
+    const foreign = foreignGroup && isForeignAuthorScript(item.text);
     if (foreign) return latinFirst ? 1 : 3;
-    const electronic = isElectronicResource(item.text, item.structured);
+    const electronic = typeGroup && isElectronicResource(item.text, item.structured);
     return latinFirst ? (electronic ? 3 : 2) : (electronic ? 2 : 1);
   };
   const locale = (item) => isForeignAuthorScript(item.text) ? "en" : "uk";
@@ -404,7 +426,7 @@ export async function formatSourcesWithRetry({
 // права переставляти) → сортування кодом на вже правильно оформленому тексті
 // (sortReferencesForDisplay).
 export async function buildFinalReferenceList({
-  rawRefs, findStructured, sourcesStyle, isLatinWork, sourcesFormatRules, callClaude,
+  rawRefs, findStructured, sourcesStyle, isLatinWork, sourcesFormatRules, sourcesGrouping, callClaude,
   skipSort = false, // true → зберегти порядок першої появи (обрано "порядок появи", не алфавітний; актуально лише для APA/MLA — ДСТУ завжди алфавітний)
 }) {
   if (!rawRefs.length) return { finalTexts: [], indexMap: [] };
@@ -417,7 +439,8 @@ export async function buildFinalReferenceList({
     rawIdxOfFinal = byInputOrder.map((_, i) => i);
   } else {
     const items = byInputOrder.map((text, i) => ({ text, structured: findStructured(rawRefs[i]), rawIdx: i }));
-    const sortedItems = sortReferencesForDisplay(items, { latinFirst: isLatinWork });
+    const grouping = detectSourceGrouping({ sourcesFormatRules, sourcesGrouping });
+    const sortedItems = sortReferencesForDisplay(items, { latinFirst: isLatinWork, grouping });
     finalTexts = sortedItems.map(it => it.text);
     rawIdxOfFinal = sortedItems.map(it => it.rawIdx);
   }
@@ -486,6 +509,7 @@ export async function remapAndFormatCitations({
   language,            // info?.language
   sourcesOrder,        // methodInfo?.sourcesOrder (опційно)
   sourcesFormatRules,  // methodInfo?.sourcesFormatRules (опційно)
+  sourcesGrouping,     // methodInfo?.sourcesGrouping (опційно) — сигнал для мовного групування
   citFootnotes,        // true → ДСТУ-посилання у вигляді посторінкових виносок замість [N]
   callClaude,
 }) {
@@ -513,7 +537,7 @@ export async function remapAndFormatCitations({
 
   const { finalTexts, indexMap } = await buildFinalReferenceList({
     rawRefs: citations, findStructured, sourcesStyle, isLatinWork: latinFirst,
-    sourcesFormatRules, callClaude,
+    sourcesFormatRules, sourcesGrouping, callClaude,
     skipSort: !isAlphabeticalOrder && !isDstu,
   });
 
