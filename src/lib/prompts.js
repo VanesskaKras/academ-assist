@@ -67,6 +67,7 @@ ${tableRules}
 ${figureRules}
 Do NOT bold anything in the subsection text.
 Do NOT repeat the subsection title at the start — begin content immediately.
+STRICTLY FORBIDDEN to write a chapter heading line ("CHAPTER N", "РОЗДІЛ N", etc.) or any chapter title at the start of the subsection text, even if you are writing the first subsection of a chapter. You are given only the subsection title, never the chapter title — do NOT invent or guess one and do NOT write it.
 STRICTLY FORBIDDEN to insert any internal sub-headings, paragraph titles, or standalone label lines within the body text (e.g. "Загальна картина", "Результати аналізу", "Запити на організаційні зміни"). Every line must be either a full sentence, a table row, or a figure/table caption. No standalone short title-like lines allowed.
 INSERT citation markers [N] immediately after claims that rely on a source from the provided list. Use impersonal phrasing only — never write author names before a claim. If no sources are provided — do NOT add any citation markers.
 When citing multiple sources for the same claim, combine them in ONE bracket separated by semicolons: [2, с. 54; 3, с. 101]. NEVER write separate adjacent brackets like [2, с. 54] [3, с. 101] — this is FORBIDDEN.
