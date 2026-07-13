@@ -30,6 +30,7 @@ import { remapAndFormatCitations, applyCitationRemap } from "./lib/citationForma
 import { SpinDot } from "./components/SpinDot.jsx";
 import { DropZone } from "./components/DropZone.jsx";
 import { ClientMaterialsZone } from "./components/ClientMaterialsZone.jsx";
+import { ExampleFileZone } from "./components/ExampleFileZone.jsx";
 import { FieldBox, Heading, NavBtn, PrimaryBtn, GreenBtn, SaveIndicator } from "./components/Buttons.jsx";
 import { TA, TA_WHITE, SHARED_STYLES } from "./shared.jsx";
 
@@ -168,6 +169,12 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
   const [fileB64, setFileB64] = useState(null);
   const [fileType, setFileType] = useState(null);
   const [methodInfo, setMethodInfo] = useState(null);
+
+  // Зразки-приклади (docx/pdf → текст витягується одразу при завантаженні)
+  const [structureExampleName, setStructureExampleName] = useState("");
+  const [structureExampleText, setStructureExampleText] = useState("");
+  const [diaryExampleName, setDiaryExampleName] = useState("");
+  const [diaryExampleText, setDiaryExampleText] = useState("");
 
   // Матеріали клієнта
   const [clientMaterials, setClientMaterials] = useState([]);
@@ -335,6 +342,10 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
           if (i.city) setCity(i.city);
           if (d.fileLabel) setFileLabel(d.fileLabel);
           if (d.methodInfo) setMethodInfo(d.methodInfo);
+          if (d.structureExampleName) setStructureExampleName(d.structureExampleName);
+          if (d.structureExampleText) setStructureExampleText(d.structureExampleText);
+          if (d.diaryExampleName) setDiaryExampleName(d.diaryExampleName);
+          if (d.diaryExampleText) setDiaryExampleText(d.diaryExampleText);
           if (d.clientMaterialsSummary) setClientMaterialsSummary(d.clientMaterialsSummary);
           if (d.clientMaterialsText) setClientMaterialsText(d.clientMaterialsText);
           if (d.sections?.length) setSections(d.sections);
@@ -391,7 +402,7 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
 
         await new Promise(r => setTimeout(r, 1500));
         setLoadMsg("Читаю методичку... крок 2/2");
-        const methodMsgs = [docPart, { type: "text", text: buildMethodologyReadingPrompt(structureInfo) }];
+        const methodMsgs = [docPart, { type: "text", text: buildMethodologyReadingPrompt(structureInfo, true) }];
         const raw = await callGemini([{ role: "user", content: methodMsgs }], null, SYS_JSON_SHORT, 8000, (s) => setLoadMsg(`Читаю методичку... зачекайте ${s}с`), "gemini-2.5-flash", true);
         const jsonMatch = raw.match(/\{[\s\S]*\}/);
         parsedMethodInfo = JSON.parse(jsonMatch?.[0] || raw.replace(/```json|```/g, "").trim());
@@ -462,6 +473,22 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
     } catch (e) {
       console.warn("practice details fallback to regex:", e.message);
     }
+    // Методичка часто містить розклад/базу практики, спільну для всієї групи (не вигадка,
+    // а реальні дані курсу) — використовуємо як фолбек лише для полів, які з тексту/матеріалів
+    // клієнта витягнути не вдалось.
+    if (parsedMethodInfo) {
+      const methodFallback = {
+        companyName: parsedMethodInfo.practiceCompanyName,
+        supervisorCompany: parsedMethodInfo.practiceSupervisorCompany,
+        supervisorUniversity: parsedMethodInfo.practiceSupervisorUniversity,
+        dateStart: parsedMethodInfo.practiceDateStart,
+        dateEnd: parsedMethodInfo.practiceDateEnd,
+        university: parsedMethodInfo.practiceUniversity,
+        faculty: parsedMethodInfo.practiceFaculty,
+        city: parsedMethodInfo.practiceCity,
+      };
+      Object.entries(methodFallback).forEach(([k, v]) => { if (!details[k] && v) details[k] = v; });
+    }
     if (!companyName && details.companyName) { setCompanyName(details.companyName); info.companyName = details.companyName; }
     if (!supervisorCompany && details.supervisorCompany) { setSupervisorCompany(details.supervisorCompany); info.supervisorCompany = details.supervisorCompany; }
     if (!supervisorUniversity && details.supervisorUniversity) { setSupervisorUniversity(details.supervisorUniversity); info.supervisorUniversity = details.supervisorUniversity; }
@@ -500,7 +527,7 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
     setRunning(true); runningRef.current = true; setLoadMsg("Генерую структуру звіту...");
     const info = getPracticeInfo();
     try {
-      const prompt = buildPracticePlanPrompt(info, methodInfo);
+      const prompt = buildPracticePlanPrompt(info, methodInfo, structureExampleText);
       const raw = await callClaude([{ role: "user", content: prompt }], null, "Respond only with valid JSON. No markdown.", 1500, null, MODEL_FAST);
       const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || raw);
       if (parsed.sections?.length) setSections(parsed.sections);
@@ -752,7 +779,7 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
     setRunning(true); runningRef.current = true; setLoadMsg("Генерую щоденник практики...");
     const info = getPracticeInfo();
     try {
-      const prompt = buildPracticeDiaryPrompt(info);
+      const prompt = buildPracticeDiaryPrompt(info, diaryExampleText);
       const text = await callClaude([{ role: "user", content: prompt }], null, buildSYS(language, methodInfo), 8000);
       setDiaryContent(text);
       await saveToFirestore({ diaryContent: text, stage: "diary", status: "writing" });
@@ -1000,6 +1027,28 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
 
       <FieldBox label="Методичка (PDF)" tooltip="Завантажте методичні вказівки — програма врахує всі вимоги до оформлення та структури">
         <DropZone fileLabel={fileLabel} onFile={(name, b64, type) => { setFileLabel(name); setFileB64(b64); setFileType(type); }} />
+      </FieldBox>
+
+      <FieldBox label="Зразок структури звіту (необов'язково)" tooltip="Приклад готового звіту — план розділів згенерується за його реальною структурою. Приймається .docx та .pdf; якщо файл .doc — спершу збережіть його як .pdf.">
+        <ExampleFileZone
+          fileName={structureExampleName}
+          hint="Перетягніть або клікніть — .docx, .pdf (.doc спершу збережіть як .pdf)"
+          onExtracted={(name, text) => {
+            setStructureExampleName(name); setStructureExampleText(text);
+            saveToFirestore({ structureExampleName: name, structureExampleText: text });
+          }}
+        />
+      </FieldBox>
+
+      <FieldBox label="Приклад щоденника практики (необов'язково)" tooltip="Зразок заповненого щоденника — згенерований щоденник повторить його формат і рівень деталізації. Приймається .docx та .pdf; якщо файл .doc — спершу збережіть його як .pdf.">
+        <ExampleFileZone
+          fileName={diaryExampleName}
+          hint="Перетягніть або клікніть — .docx, .pdf (.doc спершу збережіть як .pdf)"
+          onExtracted={(name, text) => {
+            setDiaryExampleName(name); setDiaryExampleText(text);
+            saveToFirestore({ diaryExampleName: name, diaryExampleText: text });
+          }}
+        />
       </FieldBox>
 
       <FieldBox label="Матеріали клієнта" tooltip="Завантажте звіти, таблиці, описи — вони будуть використані при написанні">
