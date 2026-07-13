@@ -54,7 +54,18 @@
       "Bash(ls -la)",
       "Bash(wc -c *)",
       "Bash(awk 'NR==1811,NR==1995{print NR\": \"$0}' src/academic-assistant.jsx)",
-      "Bash(grep -n \"^\\\\|{$\\\\|}\")"
+      "Bash(grep -n \"^\\\\|{$\\\\|}\")",
+      "Bash(npm run *)",
+      "Bash(pandoc --version)",
+      "Bash(python -c \"import docx; print\\('ok'\\)\")",
+      "Bash(python3)",
+      "Bash(python -c \"import pypdf\")",
+      "Bash(python -c \"import fitz\")",
+      "Bash(python -c \"import pdfminer\")",
+      "Bash(python -c ' *)",
+      "Bash(node test_gemini_tmp.mjs)",
+      "Bash(curl -s -w \"\\\\nHTTP_STATUS:%{http_code}\\\\n\" -X POST http://localhost:3000/api/gemini -H \"Content-Type: application/json\" --data-binary @gemini_test_body.json)",
+      "Bash(git reset *)"
     ]
   }
 }
