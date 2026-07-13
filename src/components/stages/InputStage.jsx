@@ -4,6 +4,7 @@ import { FieldBox, Heading, PrimaryBtn } from "../Buttons.jsx";
 import { DropZone } from "../DropZone.jsx";
 import { PhotoDropZone } from "../PhotoDropZone.jsx";
 import { IllustrationsZone } from "../IllustrationsZone.jsx";
+import { DrawingsZone } from "../DrawingsZone.jsx";
 import { ClientPlanInput } from "../ClientPlanInput.jsx";
 import { ClientMaterialsZone } from "../ClientMaterialsZone.jsx";
 
@@ -14,6 +15,7 @@ const COLORS = {
   anketa: "#e06868",
   photos: "#c050a0",
   illustrations: "#e08030",
+  drawings: "#8060c0",
   materials: "#4090c0",
   readyWork: "#3a9a6a",
 };
@@ -24,6 +26,7 @@ export function InputStage({
   fileLabel, fileB64, methodInfo, photos, setPhotos,
   illustrations, setIllustrations,
   illustrationsPdf, setIllustrationsPdf,
+  clientDrawings, setClientDrawings,
   clientMaterials, onAddClientMaterial, onRemoveClientMaterial,
   clientMaterialsText, setClientMaterialsText,
   readyWorkFileName, onReadyWorkFile, onRemoveReadyWork,
@@ -126,6 +129,16 @@ export function InputStage({
           <textarea value={appendicesText} onChange={e => setAppendicesText(e.target.value)}
             placeholder="Вставте готову анкету або інший додаток якщо є. Порожньо = анкета згенерується автоматично перед написанням тексту."
             style={{ ...TA, minHeight: 90 }} />
+        </FieldBox>
+      </div>
+
+      <div style={S(COLORS.drawings)}>
+        <FieldBox label="Креслення клієнта (необов'язково)" labelColor={COLORS.drawings} tooltip={"Реальні креслення клієнта — підуть у Додатки в кінці роботи як є, в текст НЕ вставляються.\nШІ використає їх лише для того, щоб писати текст із реальними розмірами/вузлами/специфікацією, а не вигаданими."}>
+          <DrawingsZone
+            drawings={clientDrawings}
+            onAdd={d => setClientDrawings(prev => [...prev, d])}
+            onRemove={i => setClientDrawings(prev => prev.filter((_, idx) => idx !== i))}
+          />
         </FieldBox>
       </div>
 

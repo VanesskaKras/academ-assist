@@ -101,8 +101,17 @@ function clientImageToPng(ill, maxDim = 1200) {
   });
 }
 
-function resolveClientIllustrations(illustrations) {
-  return Promise.all((illustrations || []).map(ill => clientImageToPng(ill)));
+function resolveClientIllustrations(illustrations, maxDim) {
+  return Promise.all((illustrations || []).map(ill => clientImageToPng(ill, maxDim)));
+}
+
+// Повносторінкові зображення (креслення в Додатках) масштабуємо під майже всю ширину сторінки,
+// на відміну від невеликих inline-ілюстрацій (scaleClientImage) — 16×22 см максимум.
+const DRAWING_MAX_W_PX = Math.round(16 * 96 / 2.54);
+const DRAWING_MAX_H_PX = Math.round(22 * 96 / 2.54);
+
+function scaleDrawingImage(width, height) {
+  return scaleToFit(width, height, DRAWING_MAX_W_PX, DRAWING_MAX_H_PX);
 }
 
 async function renderPlantUmlToPng(source) {
@@ -253,7 +262,7 @@ function getLangWordCode(lang) {
 // ─────────────────────────────────────────────
 // Word export (основний документ)
 // ─────────────────────────────────────────────
-export async function exportToDocx({ content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo, commentAnalysis, orderId, annotationUk, annotationEn, illustrations = [] }) {
+export async function exportToDocx({ content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo, commentAnalysis, orderId, annotationUk, annotationEn, illustrations = [], clientDrawings = [] }) {
   const lc = getLangLabels(info?.language);
   const langCode = getLangWordCode(info?.language);
   const numberedContent = renumberTablesAndFigures(content, displayOrder, info?.language);
@@ -262,6 +271,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
   const { content: diagramResolvedContent, diagramImages } = await resolvePlantUmlDiagrams(numberedContent);
   Object.assign(numberedContent, diagramResolvedContent);
   const clientImages = await resolveClientIllustrations(illustrations);
+  const drawingImages = await resolveClientIllustrations(clientDrawings, 1600);
 
   // \u2500\u2500 \u0412\u0438\u043d\u043e\u0441\u043a\u0438 (\u0414\u0421\u0422\u0423-\u0440\u0435\u0436\u0438\u043c): %%FN<n>%% \u0443 \u0442\u0435\u043a\u0441\u0442\u0456 \u2192 \u0440\u0435\u0430\u043b\u044c\u043d\u0430 Word-\u0432\u0438\u043d\u043e\u0441\u043a\u0430 \u2500\u2500
   // n \u2192 \u043f\u043e\u0432\u043d\u0438\u0439 \u0442\u0435\u043a\u0441\u0442 \u0434\u0436\u0435\u0440\u0435\u043b\u0430, \u0440\u043e\u0437\u043f\u0430\u0440\u0441\u0435\u043d\u0438\u0439 \u0437\u0456 \u0441\u043f\u0438\u0441\u043a\u0443 \u0434\u0436\u0435\u0440\u0435\u043b ("\u0421\u041f\u0418\u0421\u041e\u041a \u0412\u0418\u041a\u041e\u0420\u0418\u0421\u0422\u0410\u041d\u0418\u0425 \u0414\u0416\u0415\u0420\u0415\u041b").
@@ -947,6 +957,44 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
       }));
       ai++;
     }
+  }
+
+  // Реальні креслення клієнта — вставляються програмно як окремі додатки в кінці, без згадки в тілі тексту.
+  if (drawingImages.some(Boolean)) {
+    if (!(normAppendices && normAppendices.trim())) {
+      children.push(new Paragraph({ pageBreakBefore: true, spacing: { before: 0, after: 0, line: LINE, lineRule: "auto" }, children: [] }));
+      children.push(heading1(lc.appendixWord));
+    }
+    const abc = lc.appendixLetters || [];
+    const usedLetters = new Set();
+    const letterRe = /ДОДАТОК\s+([А-ЯA-Z])/gi;
+    let lm;
+    while ((lm = letterRe.exec(normAppendices || "")) !== null) usedLetters.add(lm[1].toUpperCase());
+    let letterIdx = abc.findIndex(l => !usedLetters.has(l));
+    if (letterIdx === -1) letterIdx = Math.max(abc.length - 1, 0);
+    clientDrawings.forEach((drawing, idx) => {
+      const img = drawingImages[idx];
+      if (!img) return;
+      const letter = abc[letterIdx] || String(letterIdx + 1);
+      letterIdx++;
+      const { width, height } = scaleDrawingImage(img.width, img.height);
+      children.push(new Paragraph({ pageBreakBefore: true, spacing: { before: 0, after: 0, line: LINE, lineRule: "auto" }, children: [] }));
+      children.push(new Paragraph({
+        alignment: AlignmentType.RIGHT,
+        spacing: { line: LINE, lineRule: "auto", before: 0, after: Math.round(LINE / 2) },
+        children: [new TextRun({ text: `ДОДАТОК ${letter}`, font: FONT, size: SIZE, color: "000000" })],
+      }));
+      children.push(new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { line: LINE, lineRule: "auto", before: 0, after: Math.round(LINE / 2) },
+        children: [new TextRun({ text: `Креслення — ${drawing.name}`, font: FONT, size: SIZE, bold: true, color: "000000" })],
+      }));
+      children.push(new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
+        children: [new ImageRun({ data: img.data, transformation: { width, height } })],
+      }));
+    });
   }
 
   const doc = new Document({

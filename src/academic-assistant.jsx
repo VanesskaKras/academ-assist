@@ -10,7 +10,7 @@ import { exportToDocx, exportPlanToDocx, exportAppendixToDocx, exportSpeechToDoc
 import { exportToPptxFile } from "./lib/exportPptx.js";
 import { callClaude, callGemini, MODEL, MODEL_FAST } from "./lib/api.js";
 import { playDoneSound } from "./lib/audio.js";
-import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildIllustrationsPdfPrompt, buildClientMaterialsAnalysisPrompt, buildCorrectionsAnalysisPrompt, buildCorrectionRewritePrompt, buildFileToSectionsPrompt, buildExtractStructurePrompt, buildContinuationPlanPrompt, buildAnnotationPrompt, buildAnnotationRegenPrompt, buildAntiPlagiarismSYS } from "./lib/prompts.js";
+import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildIllustrationsPdfPrompt, buildDrawingsDescriptionPrompt, buildClientMaterialsAnalysisPrompt, buildCorrectionsAnalysisPrompt, buildCorrectionRewritePrompt, buildFileToSectionsPrompt, buildExtractStructurePrompt, buildContinuationPlanPrompt, buildAnnotationPrompt, buildAnnotationRegenPrompt, buildAntiPlagiarismSYS } from "./lib/prompts.js";
 import { extractReadyWorkStructure, quickParsePlanIds } from "./lib/readyWorkExtract.js";
 import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, getEmpiricalSections, getEconSections, getTechnicalSections, CODE_FILE_EXTENSIONS, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, getLangLabels } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
@@ -165,6 +165,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [illustrations, setIllustrations] = useState([]); // [{name, b64, type, caption, targetSection}]
   const [illustrationsPdf, setIllustrationsPdf] = useState(null); // {name, b64} — PDF із ілюстраціями
   const [illustrationDescs, setIllustrationDescs] = useState([]); // [{figureNum, description, caption, suggestedSection}]
+  const [clientDrawings, setClientDrawings] = useState([]); // [{name, b64, type}] — реальні креслення клієнта (лише в Додатки, не в текст)
   const [clientMaterials, setClientMaterials] = useState([]); // [{name, text}] — файли клієнта
   const [clientMaterialsText, setClientMaterialsText] = useState(""); // ручний ввід
   const [clientMaterialsSummary, setClientMaterialsSummary] = useState(null); // {rawText, keyFacts, tablesMd, sectionHints}
@@ -345,6 +346,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
           }
           if (d.illustrations?.length) setIllustrations(d.illustrations);
           if (d.illustrationDescs?.length) setIllustrationDescs(d.illustrationDescs);
+          if (d.clientDrawings?.length) setClientDrawings(d.clientDrawings);
           if (d.clientMaterialsSummary) setClientMaterialsSummary(d.clientMaterialsSummary);
           if (d.clientMaterialsText) setClientMaterialsText(d.clientMaterialsText);
           if (d.readyWorkFileName) setReadyWorkFileName(d.readyWorkFileName);
@@ -752,9 +754,27 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
       setIllustrationDescs([]);
     }
 
+    // КРОК 3.6: Опис креслень клієнта (лише для заземлення тексту — самі зображення в текст не вставляються)
+    let drawingDescsResult = [];
+    if (clientDrawings.length > 0) {
+      setLoadMsg("Описую креслення...");
+      await new Promise(r => setTimeout(r, 500));
+      try {
+        const drContent = clientDrawings.map(d => ({ type: "image", source: { type: "base64", media_type: d.type, data: d.b64 } }));
+        drContent.push({ type: "text", text: buildDrawingsDescriptionPrompt({ topic: newInfo?.topic, drawings: clientDrawings, lang: newInfo?.language }) });
+        const drRaw = await callClaude([{ role: "user", content: drContent }], null, SYS_JSON_ARRAY, 1200, null, MODEL_FAST);
+        const drMatch = drRaw.match(/\[[\s\S]*\]/);
+        drawingDescsResult = JSON.parse(drMatch?.[0] || drRaw);
+        await saveToFirestore({ clientDrawings });
+      } catch (e) {
+        console.warn("clientDrawingDescs failed:", e.message);
+      }
+    }
+
     // КРОК 4: Матеріали клієнта — зберігаємо повний текст без стиснення
     const combinedMaterialsText = [
       ...clientMaterials.map(m => `=== ${m.name} ===\n${m.text}`),
+      ...drawingDescsResult.map(d => `=== Технічний опис креслення: ${d.name} ===\n${d.description}`),
       clientMaterialsText?.trim() || "",
     ].filter(Boolean).join("\n\n");
 
@@ -4235,6 +4255,7 @@ ${secBlock}
               photos={photos} setPhotos={setPhotos}
               illustrations={illustrations} setIllustrations={setIllustrations}
               illustrationsPdf={illustrationsPdf} setIllustrationsPdf={setIllustrationsPdf}
+              clientDrawings={clientDrawings} setClientDrawings={setClientDrawings}
               info={info}
               clientMaterials={clientMaterials}
               onAddClientMaterial={m => setClientMaterials(prev => [...prev, m])}
@@ -4403,7 +4424,7 @@ ${secBlock}
               onExportDocx={async (setLoading) => {
                 setLoading(true);
                 try {
-                  await exportToDocx({ sections, content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo, commentAnalysis, orderId: currentIdRef.current, illustrations });
+                  await exportToDocx({ sections, content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo, commentAnalysis, orderId: currentIdRef.current, illustrations, clientDrawings });
                 } catch (e) { alert("Помилка: " + e.message); }
                 setLoading(false);
               }}
