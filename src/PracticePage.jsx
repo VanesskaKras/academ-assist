@@ -80,6 +80,21 @@ function renderWithTables(text) {
   });
 }
 
+// ─── Список джерел з активними посиланнями (URL — синім, клікабельні) ─────────
+function renderRefListWithLinks(text) {
+  if (!text) return null;
+  const urlRe = /(https?:\/\/[^\s)]+)/g;
+  return text.split("\n").map((line, li) => (
+    <div key={li} style={{ marginBottom: 4 }}>
+      {line.split(urlRe).map((part, pi) =>
+        pi % 2 === 1
+          ? <a key={pi} href={part} target="_blank" rel="noopener noreferrer" style={{ color: "#1a5a8a", textDecoration: "underline" }}>{part}</a>
+          : part
+      )}
+    </div>
+  ));
+}
+
 // ─── Текстове представлення структури (для копіювання) ───────────────────────
 const PLAN_FIXED_IDS = ["intro", "conclusions", "sources"];
 function buildPracticePlanText(sections) {
@@ -1004,7 +1019,7 @@ ${secBlock}
         : buildPracticeTitlePageLines(info);
       await exportToDocx({
         content: exportContent,
-        info: { topic: info.topic, type: info.type, language: info.language, pages: info.pages },
+        info: { topic: info.topic, type: info.type, language: info.language, pages: info.pages, orderNumber: info.orderNumber },
         displayOrder,
         titlePage: null,
         titlePageLines,
@@ -1023,10 +1038,11 @@ ${secBlock}
       const info = getPracticeInfo();
       await exportToDocx({
         content: { diary: diaryContent },
-        info: { topic: "Щоденник практики", type: "Щоденник", language: info.language, pages: "5" },
+        info: { topic: `Щоденник практики ${info.topic || ""}`.trim(), type: "Щоденник", language: info.language, pages: "5", orderNumber: info.orderNumber },
         displayOrder: [{ id: "diary", label: "ЩОДЕННИК ПРАКТИКИ", pages: 0 }],
         methodInfo,
         orderId: currentIdRef.current ? `${currentIdRef.current}_diary` : null,
+        skipToc: true,
       });
     } catch (e) { setError(e.message); }
     setDiaryDocxLoading(false);
@@ -1746,7 +1762,7 @@ ${secBlock}
         {refList && (
           <div style={{ background: "#fff", borderRadius: 10, padding: "16px 18px", boxShadow: "0 2px 8px rgba(0,0,0,0.05)", marginBottom: 20 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: "#1a1a14", marginBottom: 8 }}>Список використаних джерел:</div>
-            <div style={{ fontSize: 12, whiteSpace: "pre-wrap", color: "#333", lineHeight: 1.7 }}>{refList}</div>
+            <div style={{ fontSize: 12, whiteSpace: "pre-wrap", color: "#333", lineHeight: 1.7 }}>{renderRefListWithLinks(refList)}</div>
           </div>
         )}
 
@@ -1864,7 +1880,7 @@ ${secBlock}
         {refList && (
           <div style={{ marginBottom: 16, background: "#fff", borderRadius: 10, padding: "16px 18px", boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: "#888", letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 }}>Список використаних джерел</div>
-            <div style={{ fontSize: 12, whiteSpace: "pre-wrap", lineHeight: 1.7 }}>{refList}</div>
+            <div style={{ fontSize: 12, whiteSpace: "pre-wrap", lineHeight: 1.7 }}>{renderRefListWithLinks(refList)}</div>
           </div>
         )}
       </div>
@@ -1900,6 +1916,26 @@ ${secBlock}
         {stage === "writing" && renderWriting()}
         {stage === "diary"   && renderDiary()}
         {stage === "done"    && renderDone()}
+      </div>
+
+      {/* Scroll arrows */}
+      <div style={{ position: "fixed", right: 18, bottom: 24, zIndex: 999, display: "flex", flexDirection: "column", gap: 6 }}>
+        {[{ dir: "↑", title: "Нагору", action: () => window.scrollTo({ top: 0, behavior: "smooth" }) },
+        { dir: "↓", title: "Вниз", action: () => window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" }) }
+        ].map(({ dir, title, action }) => (
+          <button key={dir} onClick={action} title={title}
+            style={{
+              width: 38, height: 38, borderRadius: "50%",
+              background: "#1a1a14", border: "1.5px solid #444",
+              color: "#e8ff47", fontSize: 18, lineHeight: 1,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              cursor: "pointer", boxShadow: "0 2px 10px rgba(0,0,0,.25)",
+              opacity: 0.85,
+            }}
+            onMouseEnter={e => e.currentTarget.style.opacity = "1"}
+            onMouseLeave={e => e.currentTarget.style.opacity = "0.85"}
+          >{dir}</button>
+        ))}
       </div>
     </div>
   );

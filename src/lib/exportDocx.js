@@ -262,7 +262,7 @@ function getLangWordCode(lang) {
 // ─────────────────────────────────────────────
 // Word export (основний документ)
 // ─────────────────────────────────────────────
-export async function exportToDocx({ content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo, commentAnalysis, orderId, annotationUk, annotationEn, illustrations = [], clientDrawings = [] }) {
+export async function exportToDocx({ content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo, commentAnalysis, orderId, annotationUk, annotationEn, illustrations = [], clientDrawings = [], skipToc = false }) {
   const lc = getLangLabels(info?.language);
   const langCode = getLangWordCode(info?.language);
   const numberedContent = renumberTablesAndFigures(content, displayOrder, info?.language);
@@ -788,16 +788,18 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     });
   });
 
-  children.push(new Paragraph({
-    pageBreakBefore: true,
-    alignment: AlignmentType.CENTER,
-    spacing: { line: LINE_SINGLE, lineRule: "auto", before: 0, after: LINE_SINGLE * 2 },
-    children: [new TextRun({ text: lc.toc, font: FONT, size: SIZE, bold: true, color: "000000" })],
-  }));
-  children.push(new Paragraph({
-    spacing: { line: LINE_SINGLE, lineRule: "auto", before: 0, after: 0 },
-    children: [],
-  }));
+  if (!skipToc) {
+    children.push(new Paragraph({
+      pageBreakBefore: true,
+      alignment: AlignmentType.CENTER,
+      spacing: { line: LINE_SINGLE, lineRule: "auto", before: 0, after: LINE_SINGLE * 2 },
+      children: [new TextRun({ text: lc.toc, font: FONT, size: SIZE, bold: true, color: "000000" })],
+    }));
+    children.push(new Paragraph({
+      spacing: { line: LINE_SINGLE, lineRule: "auto", before: 0, after: 0 },
+      children: [],
+    }));
+  }
 
   let lastChapter = null;
   let firstMainSec = true;
