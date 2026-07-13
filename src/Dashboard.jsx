@@ -621,7 +621,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
                     if (filterStatus === "writing") return s === "writing" && o.stage !== "sources";
                     if (filterStatus === "plan_ready") return s === "plan_ready" || s === "plan_approved";
                     if (filterStatus === "done") return s === "done" && !needsSources(o);
-                    if (filterStatus === "new") return s === "new";
+                    if (filterStatus === "new") return s === "new" && !needsSources(o);
                     return true;
                 });
             }
