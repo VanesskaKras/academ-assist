@@ -9,10 +9,10 @@ import {
   buildSYS, SYS_JSON, SYS_JSON_SHORT, STRUCTURE_READING_PROMPT,
   buildMethodologyReadingPrompt,
   buildPracticePlanPrompt, buildPracticeWritingPrompt,
-  buildPracticeDiaryPrompt, buildPracticeSourcesKeywordsPrompt,
+  buildPracticeDiaryPrompt,
   buildTemplateAnalysisPrompt, buildPracticeDetailsPrompt,
 } from "./lib/prompts.js";
-import { parseTemplate } from "./lib/planUtils.js";
+import { parseTemplate, isEcon, isTechnical, getEconSections } from "./lib/planUtils.js";
 import { detectSpecialty } from "./lib/academicDefaults.js";
 import {
   CATEGORY_LABELS, PRACTICE_TYPES, getPracticeGuidance, detectPracticeType,
@@ -21,12 +21,11 @@ import {
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { playDoneSound } from "./lib/audio.js";
 import {
-  generateSearchPhrases, buildSemanticKeywords,
-  searchSourcesForSection, lookupDoiMetadata, lookupDOIByBiblio, paperToCitation,
-  filterSourcesWithGemini,
+  filterSourcesWithGemini, searchByPhrase, getEconInstitutionalSources,
 } from "./lib/sourcesSearch.js";
 import { exportToDocx, exportPracticePlanToDocx } from "./lib/exportDocx.js";
-import { remapAndFormatCitations, applyCitationRemap } from "./lib/citationFormatting.js";
+import { remapAndFormatCitations, applyCitationRemap, createReferenceDeduper } from "./lib/citationFormatting.js";
+import { SourcesStage } from "./components/stages/SourcesStage.jsx";
 import { SpinDot } from "./components/SpinDot.jsx";
 import { DropZone } from "./components/DropZone.jsx";
 import { ClientMaterialsZone } from "./components/ClientMaterialsZone.jsx";
@@ -194,15 +193,21 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
   // Джерела
   const [citInputs, setCitInputs] = useState({});
   const [citStructured, setCitStructured] = useState({});
-  const [citStyle, setCitStyle] = useState("ДСТУ 8302:2015");
-  const [sourcesOrder, setSourcesOrder] = useState("alphabetical");
+  const [citStyle, setCitStyle] = useState(null);
+  const [sourcesOrder, setSourcesOrder] = useState(null);
+  const [citFootnotes, setCitFootnotes] = useState(false);
   const [refList, setRefList] = useState("");
-  const [refSecPapers, setRefSecPapers] = useState({});
-  const [refSecPhrases, setRefSecPhrases] = useState({});
-  const [refSecLoading, setRefSecLoading] = useState({});
-  const [refSecSelected, setRefSecSelected] = useState({});
-  const [refSecOpen, setRefSecOpen] = useState({});
-  const [searchingAll, setSearchingAll] = useState(false);
+  const [abstractsMap, setAbstractsMap] = useState({});
+  const [suggestedSources, setSuggestedSources] = useState({});
+  const [phraseGroups, setPhraseGroups] = useState({});
+  const [sourcesSearchLoading, setSourcesSearchLoading] = useState({});
+  const [sourcesSearchError, setSourcesSearchError] = useState({});
+  const [keywords, setKeywords] = useState({});
+  const [kwLoading, setKwLoading] = useState(false);
+  const [kwError, setKwError] = useState("");
+  const [searchPageCount, setSearchPageCount] = useState({});
+  const [seenSourceKeys, setSeenSourceKeys] = useState({});
+  const stopSearchRef = useRef(false);
 
   // UI стан
   const [running, setRunning] = useState(false);
@@ -355,9 +360,12 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
           if (d.citStructured) setCitStructured(d.citStructured);
           if (d.citStyle) setCitStyle(d.citStyle);
           if (d.sourcesOrder) setSourcesOrder(d.sourcesOrder);
+          if (d.citFootnotes != null) setCitFootnotes(d.citFootnotes);
           if (d.refList) setRefList(d.refList);
-          if (d.refSecPapers) setRefSecPapers(d.refSecPapers);
-          if (d.refSecPhrases) setRefSecPhrases(d.refSecPhrases);
+          if (d.abstractsMap) setAbstractsMap(d.abstractsMap);
+          if (d.suggestedSources) setSuggestedSources(d.suggestedSources);
+          if (d.phraseGroups) setPhraseGroups(d.phraseGroups);
+          if (d.keywords) setKeywords(d.keywords);
           if (d.stage) {
             setStage(d.stage);
             const idx = STAGE_KEYS.indexOf(d.stage);
@@ -539,95 +547,276 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
     setRunning(false); runningRef.current = false; setLoadMsg("");
   };
 
-  // ── Джерела: пошук для секції ───────────────────────────────────────────────
-  const doSearchForSection = async (secId, secLabel) => {
-    setRefSecLoading(prev => ({ ...prev, [secId]: true }));
-    try {
-      const info = getPracticeInfo();
-      const topic = info.topic;
-      const [allPhrases, ukKw] = await Promise.all([
-        generateSearchPhrases(secLabel, topic, info.specialty, info.companyProfile),
-        Promise.resolve(buildSemanticKeywords(secLabel, topic, info.specialty, info.companyProfile)),
-      ]);
-      const ukPhrases = allPhrases.length ? allPhrases.slice(0, 4) : ukKw.slice(0, 4);
-      const enPhrases = allPhrases.slice(4, 8);
-      const displayPhrases = allPhrases.length ? allPhrases : ukKw.slice(0, 6);
-      const mainSecs = sections.filter(s => !["sources", "intro", "conclusions"].includes(s.id));
-      const sourceTarget = calcSourceTarget(mainSecs);
-      const sourceDist = calcSourceDist(mainSecs, sourceTarget);
-      const needed = sourceDist[secId] || Math.ceil(15 / Math.max(mainSecs.length, 1)) + 4;
-      const { flat } = await searchSourcesForSection(ukKw, enPhrases, needed, secLabel, topic, 1, [], [], ukPhrases);
-      const candidates = (flat || []).slice(0, 15);
-      const filtered = await filterSourcesWithGemini(candidates, secLabel, topic, 15);
-      // Ліміт 30% іноземних джерел (як у великих роботах)
-      const maxForeign = Math.max(1, Math.round(needed * 0.3));
-      const ukPapers = filtered.filter(p => p.lang === "uk");
-      const foreignPapers = filtered.filter(p => p.lang !== "uk").slice(0, maxForeign);
-      const papers = [...ukPapers, ...foreignPapers];
-      setRefSecPapers(prev => { const next = { ...prev, [secId]: papers }; saveToFirestore({ refSecPapers: next }); return next; });
-      setRefSecPhrases(prev => { const next = { ...prev, [secId]: displayPhrases }; saveToFirestore({ refSecPhrases: next }); return next; });
-      setRefSecOpen(prev => ({ ...prev, [secId]: true }));
-      setRefSecSelected(prev => ({ ...prev, [secId]: [] }));
-    } catch (e) { setError(e.message); }
-    setRefSecLoading(prev => ({ ...prev, [secId]: false }));
-  };
-
-  // ── Джерела: пошук одразу для всіх розділів ─────────────────────────────────
-  const doSearchAllSections = async () => {
-    setSearchingAll(true);
-    const mainSecs = sections.filter(s => s.id !== "sources");
-    for (const sec of mainSecs) {
-      await doSearchForSection(sec.id, sec.label);
+  // ── Джерела: прогресивний пошук по фразах для розділу (як у великих роботах) ──
+  const doSearchSources = async (secId, thesesData, sectionLabel = '', resetPage = false) => {
+    stopSearchRef.current = false;
+    const info = getPracticeInfo();
+    const mainSecs = sections.filter(s => !["sources", "intro", "conclusions"].includes(s.id));
+    const isFirstSearch = resetPage || (searchPageCount[secId] || 0) === 0;
+    const isEconSecForSources = isEcon(info) && getEconSections(mainSecs, info).includes(secId);
+    const isTechnicalWork = isTechnical(info);
+    const institutionalGroup = (isFirstSearch && isEconSecForSources)
+      ? [{ phrase: "Офіційна статистика", papers: getEconInstitutionalSources() }]
+      : [];
+    if (isFirstSearch) {
+      setSuggestedSources(prev => ({ ...prev, [secId]: institutionalGroup.flatMap(g => g.papers) }));
+      setPhraseGroups(prev => ({ ...prev, [secId]: institutionalGroup }));
+      setSeenSourceKeys(prev => ({ ...prev, [secId]: new Set() }));
     }
-    setSearchingAll(false);
+    setSourcesSearchLoading(prev => ({ ...prev, [secId]: true }));
+    setSourcesSearchError(prev => ({ ...prev, [secId]: null }));
+    const nextCount = resetPage ? 1 : (searchPageCount[secId] || 0) + 1;
+    setSearchPageCount(prev => ({ ...prev, [secId]: nextCount }));
+    const page = nextCount;
+    try {
+      const topicCtx = [info?.topic, info?.direction, info?.subject].filter(Boolean).join(' ');
+      const globalSeen = new Set(isFirstSearch ? [] : (seenSourceKeys[secId] || []));
+      const updatedGroups = isFirstSearch ? [...institutionalGroup] : [...(phraseGroups[secId] || [])];
+
+      const filterLabel = sectionLabel
+        .replace(/^РОЗДІЛ\s+[IVXivxІVХ\d]+[.\s:]+/i, '')
+        .trim() || sectionLabel;
+
+      const normalizedTheses = Array.isArray(thesesData) && thesesData.length > 0 && typeof thesesData[0] === 'string'
+        ? [{ thesis: '', phrases: thesesData }]
+        : (thesesData || []);
+
+      outer:
+      for (const { thesis, phrases } of normalizedTheses) {
+        for (let pi = 0; pi < (phrases || []).length; pi++) {
+          if (stopSearchRef.current) break outer;
+          const phrase = phrases[pi];
+          const useScholar = pi === 0 || isTechnicalWork;
+          const candidates = await searchByPhrase(phrase, 10, page, useScholar, isTechnicalWork);
+          const fresh = candidates.filter(p => {
+            const key = (p.title || '').toLowerCase().slice(0, 60);
+            return key && !globalSeen.has(key);
+          });
+          if (!fresh.length) continue;
+
+          const top15 = await filterSourcesWithGemini(fresh.slice(0, 15), filterLabel, topicCtx, 15, thesis);
+          top15.forEach(p => globalSeen.add((p.title || '').toLowerCase().slice(0, 60)));
+
+          const existingIdx = updatedGroups.findIndex(g => g.phrase === phrase);
+          if (existingIdx >= 0) {
+            updatedGroups[existingIdx] = { phrase, papers: [...updatedGroups[existingIdx].papers, ...top15] };
+          } else {
+            updatedGroups.push({ phrase, papers: top15 });
+          }
+
+          setPhraseGroups(prev => ({ ...prev, [secId]: [...updatedGroups] }));
+          setSuggestedSources(prev => ({ ...prev, [secId]: updatedGroups.flatMap(g => g.papers) }));
+        }
+      }
+
+      setSeenSourceKeys(prev => ({ ...prev, [secId]: globalSeen }));
+      if (updatedGroups.length > 0) {
+        const finalSuggested = { ...suggestedSources, [secId]: updatedGroups.flatMap(g => g.papers) };
+        const finalGroups = { ...phraseGroups, [secId]: updatedGroups };
+        saveToFirestore({ suggestedSources: finalSuggested, phraseGroups: finalGroups, keywords });
+      }
+    } catch (e) {
+      console.error('Source search error:', e.message);
+      setSourcesSearchError(prev => ({ ...prev, [secId]: e.message }));
+    }
+    setSourcesSearchLoading(prev => ({ ...prev, [secId]: false }));
   };
 
-  // ── Джерела: додати вибрані до секції ──────────────────────────────────────
-  const doAddForSection = async (secId) => {
-    const selected = (refSecPapers[secId] || []).filter(p => (refSecSelected[secId] || []).includes(p.id));
-    if (!selected.length) return;
-    setRunning(true); setLoadMsg("Оформлюю джерела...");
+  // ── Ключові слова: тези + пошукові фрази пакетами по всіх розділах ──────────
+  const doGenKeywords = async () => {
+    setKwLoading(true);
+    stopSearchRef.current = false;
+    const info = getPracticeInfo();
+    const mainSecs = sections.filter(s => !["sources", "intro", "conclusions"].includes(s.id));
+    const labelToId = {};
+    for (const s of mainSecs) {
+      labelToId[s.id] = s.id;
+      const m = s.label.match(/^(\d+(?:\.\d+)*)/);
+      if (m) labelToId[m[1]] = s.id;
+    }
+    const normalizeKey = (k) => labelToId[k] || k.match(/^(\d+\.\d+)/)?.[1] || k;
+    const sourceTarget = calcSourceTarget(mainSecs);
+    const sourceDist = calcSourceDist(mainSecs, sourceTarget);
+
+    const BATCH_SIZE = 8;
+    const snippetLen = mainSecs.length > 10 ? 600 : 1200;
+    const allThesesNorm = {};
+
     try {
-      const afterDoi = await Promise.all(selected.map(async p => {
-        if (!p.doi) return p;
-        const meta = await lookupDoiMetadata(p.doi);
-        if (!meta) return p;
-        return {
-          ...p,
-          ...(meta.authorsStructured?.length ? { authorsStructured: meta.authorsStructured } : {}),
-          ...(meta.authors?.length ? { authors: meta.authors } : {}),
-          ...(meta.pages && !p.pages ? { pages: meta.pages } : {}),
-          ...(meta.volume ? { volume: meta.volume } : {}),
-          ...(meta.issue ? { issue: meta.issue } : {}),
-          ...(meta.journal && (!p.venue || /^[\w.-]+\.[a-zA-Z]{2,}$/.test(p.venue.trim())) ? { venue: meta.journal } : {}),
-        };
-      }));
-      const enriched = await Promise.all(afterDoi.map(p => lookupDOIByBiblio(p)));
-      const rawCitations = enriched.map(paperToCitation).filter(Boolean);
-      setCitInputs(prev => {
-        const existing = (prev[secId] || "").trim();
-        const toAdd = rawCitations.filter(c => !existing.includes(c.slice(0, 40)));
-        const next = { ...prev, [secId]: existing ? existing + "\n" + toAdd.join("\n") : toAdd.join("\n") };
-        saveToFirestore({ citInputs: next });
-        return next;
+      for (let bStart = 0; bStart < mainSecs.length; bStart += BATCH_SIZE) {
+        if (stopSearchRef.current) break;
+        const batch = mainSecs.slice(bStart, bStart + BATCH_SIZE);
+        const secBlocks = batch.map(s => {
+          const txt = content[s.id]
+            ? `\n${content[s.id].substring(0, snippetLen).replace(/["\\]/g, " ").replace(/\n+/g, " ")}`
+            : "";
+          return `### [${s.id}] ${s.label} (потрібно ${sourceDist[s.id] || 3} джерела)${txt}`;
+        }).join("\n\n");
+
+        const prompt = `Ти допомагаєш знайти наукові джерела для звіту з практики на тему "${info?.topic}".
+
+ЗАВДАННЯ — для кожного розділу:
+
+КРОК 1. Визнач 4–5 конкретних тез — про що писатиметься у цьому розділі (3–7 слів кожна, конкретний аспект змісту, не загальні назви розділів).
+
+КРОК 2. Для кожної тези склади 2–3 пошукових фрази українською.
+Кожна фраза = [1–2 ключових слова з ТЕМИ роботи] + [конкретний аспект тези].
+ВАЖЛИВО: кожна фраза має містити конкретний предмет теми — не загальні слова без прив'язки.
+
+РОЗДІЛИ:
+${secBlocks}
+
+Поверни валідний JSON з полем:
+- "theses": об'єкт, ключ = ідентифікатор розділу з квадратних дужок ("1.1", "1.2", "3" тощо), значення = масив об'єктів {"thesis": рядок, "phrases": масив рядків}`;
+
+        const res = await fetch("/api/gemini", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            _model: "gemini-2.5-flash-lite",
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            generationConfig: { maxOutputTokens: 8192, responseMimeType: "application/json" },
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error?.message || JSON.stringify(data).slice(0, 200));
+        if (data.usageMetadata) {
+          const cost = (data.usageMetadata.promptTokenCount * 0.10 + data.usageMetadata.candidatesTokenCount * 0.40) / 1_000_000;
+          window.dispatchEvent(new CustomEvent("apicost", { detail: { cost, model: "gemini-2.5-flash-lite", inTok: data.usageMetadata.promptTokenCount, outTok: data.usageMetadata.candidatesTokenCount } }));
+        }
+        const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        const parsed = JSON.parse(raw);
+        const thesesRaw = parsed.theses || {};
+
+        for (const [k, arr] of Object.entries(thesesRaw)) {
+          allThesesNorm[normalizeKey(k)] = (Array.isArray(arr) ? arr : []).map(t => ({
+            thesis: String(t.thesis || '').trim(),
+            phrases: (Array.isArray(t.phrases) ? t.phrases : []).map(String).filter(Boolean),
+          })).filter(t => t.phrases.length > 0);
+        }
+      }
+
+      const kwNorm = Object.fromEntries(
+        Object.entries(allThesesNorm).map(([k, theses]) => [k, theses.flatMap(t => t.phrases)])
+      );
+      setKeywords(kwNorm);
+
+      const econSecIdsForSources = getEconSections(mainSecs, info);
+      for (const s of mainSecs) {
+        if (stopSearchRef.current) break;
+        const normalKey = normalizeKey(s.id);
+        const thesesData = allThesesNorm[normalKey] || allThesesNorm[s.id] || [];
+        if (thesesData.length || econSecIdsForSources.includes(s.id)) {
+          await doSearchSources(s.id, thesesData, s.label || '');
+        }
+      }
+    } catch (e) { console.error(e); setKwError(e.message); }
+    setKwLoading(false);
+  };
+
+  const doStopSearch = () => { stopSearchRef.current = true; };
+
+  // ── Оновлення ключових слів + пошук для одного розділу ──────────────────────
+  const doRegenSectionSources = async (sec) => {
+    setSourcesSearchLoading(prev => ({ ...prev, [sec.id]: true }));
+    setSourcesSearchError(prev => ({ ...prev, [sec.id]: null }));
+    const info = getPracticeInfo();
+    const mainSecs = sections.filter(s => !["sources", "intro", "conclusions"].includes(s.id));
+    const sourceTarget = calcSourceTarget(mainSecs);
+    const sourceDist = calcSourceDist(mainSecs, sourceTarget);
+    try {
+      const txt = content[sec.id]
+        ? `\n${content[sec.id].substring(0, 1200).replace(/["\\]/g, " ").replace(/\n+/g, " ")}`
+        : "";
+      const secBlock = `### ${sec.label} (потрібно ${sourceDist[sec.id] || 3} джерела)${txt}`;
+      const prompt = `Ти допомагаєш знайти наукові джерела для звіту з практики на тему "${info?.topic}".
+
+ЗАВДАННЯ — для розділу:
+
+КРОК 1. Визнач 4–5 конкретних тез — про що писатиметься у цьому розділі (3–7 слів кожна, конкретний аспект змісту, не загальні назви).
+
+КРОК 2. Для кожної тези склади 2–3 пошукових фрази українською.
+Кожна фраза = [1–2 ключових слова з ТЕМИ роботи] + [конкретний аспект тези].
+ВАЖЛИВО: кожна фраза має містити конкретний предмет теми — не загальні слова без прив'язки.
+
+РОЗДІЛ:
+${secBlock}
+
+Поверни валідний JSON: {"theses": масив об'єктів {"thesis": рядок, "phrases": масив рядків}}`;
+
+      const res = await fetch("/api/gemini", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          _model: "gemini-2.5-flash-lite",
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          generationConfig: {
+            maxOutputTokens: 1200,
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: "object",
+              properties: {
+                theses: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      thesis: { type: "string" },
+                      phrases: { type: "array", items: { type: "string" } },
+                    },
+                    required: ["thesis", "phrases"],
+                  },
+                },
+              },
+              required: ["theses"],
+            },
+          },
+        }),
       });
-      setCitStructured(prev => {
-        const next = { ...prev, [secId]: [...(prev[secId] || []), ...enriched] };
-        saveToFirestore({ citStructured: next });
-        return next;
-      });
-      setRefSecSelected(prev => ({ ...prev, [secId]: [] }));
-    } catch (e) { setError(e.message); }
-    setRunning(false); setLoadMsg("");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error?.message || JSON.stringify(data).slice(0, 200));
+      if (data.usageMetadata) {
+        const cost = (data.usageMetadata.promptTokenCount * 0.10 + data.usageMetadata.candidatesTokenCount * 0.40) / 1_000_000;
+        window.dispatchEvent(new CustomEvent("apicost", { detail: { cost, model: "gemini-2.5-flash-lite", inTok: data.usageMetadata.promptTokenCount, outTok: data.usageMetadata.candidatesTokenCount } }));
+      }
+      const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      const parsed = JSON.parse(raw);
+      const newTheses = (Array.isArray(parsed.theses) ? parsed.theses : [])
+        .map(t => ({
+          thesis: String(t.thesis || '').trim(),
+          phrases: (Array.isArray(t.phrases) ? t.phrases : []).map(String).filter(Boolean),
+        }))
+        .filter(t => t.phrases.length > 0);
+      if (newTheses.length) {
+        setKeywords(prev => ({ ...prev, [sec.id]: newTheses.flatMap(t => t.phrases) }));
+        await doSearchSources(sec.id, newTheses, sec.label || '', true);
+      } else {
+        setSourcesSearchLoading(prev => ({ ...prev, [sec.id]: false }));
+      }
+    } catch (e) {
+      console.error('doRegenSectionSources error:', e.message);
+      setSourcesSearchError(prev => ({ ...prev, [sec.id]: e.message }));
+      setSourcesSearchLoading(prev => ({ ...prev, [sec.id]: false }));
+    }
+  };
+
+  // ── Джерела: зберегти короткий зміст джерела (підказка при написанні тексту) ──
+  const onAddAbstracts = (entries) => {
+    setAbstractsMap(prev => {
+      const next = { ...prev, ...entries };
+      saveToFirestore({ abstractsMap: next });
+      return next;
+    });
   };
 
   // ── Джерела: форматувати список ─────────────────────────────────────────────
-  // Нормалізація рядка джерела для дедуплікації (як у великих роботах)
-  const normalizeRef = (s) => s.toLowerCase()
-    .replace(/https?:\/\/\S+/g, "")
-    .replace(/дата звернення[^)]*\)?/gi, "")
-    .replace(/[^\p{L}\p{N}]+/gu, "")
-    .trim();
+  // Ефективні стиль/порядок: явний вибір користувача, інакше — з методички (як у великих роботах)
+  const getEffectiveCitStyle = () => {
+    const extraHints = (methodInfo?.otherRequirements || "") + " " + (methodInfo?.citationStyle || "");
+    const defaultCitStyle = methodInfo?.sourcesStyle || (/APA/i.test(extraHints) ? "APA" : /MLA/i.test(extraHints) ? "MLA" : "ДСТУ 8302:2015");
+    return citStyle || defaultCitStyle;
+  };
+  const getEffectiveSourcesOrder = () => sourcesOrder || methodInfo?.sourcesOrder || "alphabetical";
 
   // Цільова к-сть джерел: явно вказана клієнтом, інакше — з обсягу звіту (як calcSourceDist у великих роботах)
   const calcSourceTarget = (mainSecs) => {
@@ -651,58 +840,65 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
     const mainSecs = sections.filter(s => s.id !== "sources");
     setRunning(true); setLoadMsg("Формую список літератури...");
     try {
-      // 1. Дедуплікація по всіх розділах → глобальний список (порядок першої появи) + мапа локальний→сирий номер
-      const secLocalToRaw = {};
-      const rawRefs = [];
-      const seen = new Map();
+      // 1. Локальна карта: secId → { localN: sourceText }
+      const secLocalSources = {};
       mainSecs.forEach(sec => {
         const lines = (citInputs[sec.id] || "").split("\n").map(l => l.trim()).filter(Boolean);
-        secLocalToRaw[sec.id] = {};
-        lines.forEach((line, i) => {
-          const localN = i + 1;
-          const key = normalizeRef(line);
-          let rawIdx = seen.get(key);
-          if (rawIdx == null) {
-            rawIdx = rawRefs.length;
-            rawRefs.push(line);
-            seen.set(key, rawIdx);
-          }
-          secLocalToRaw[sec.id][localN] = rawIdx + 1;
-        });
+        secLocalSources[sec.id] = {};
+        lines.forEach((line, i) => { secLocalSources[sec.id][i + 1] = line; });
       });
+
+      // 2. Глобальна нечітка дедуплікація (createReferenceDeduper, як у великих роботах) —
+      // об'єднує не лише побайтово однакові тексти, а й "майже дублікати" того самого джерела.
+      const deduper = createReferenceDeduper();
+      mainSecs.forEach(sec => {
+        Object.values(secLocalSources[sec.id]).forEach(text => { deduper.add(text); });
+      });
+      const rawRefs = deduper.canonicalRefs;
 
       if (!rawRefs.length) { setRunning(false); setLoadMsg(""); return; }
 
       const flatStructured = mainSecs.flatMap(sec => citStructured[sec.id] || []);
       const info = getPracticeInfo();
 
-      // 2. Сортування + форматування стилю (спільна функція, як у великих роботах)
+      // 3. Сортування + форматування стилю (спільна функція, як у великих роботах)
       const { refList: fmtList, oldToNew, refCiteText, pageRanges } = await remapAndFormatCitations({
         citations: rawRefs,
         citStructured: flatStructured,
-        citStyle,
+        citStyle: getEffectiveCitStyle(),
         language: info.language,
-        sourcesOrder,
-        citFootnotes: false,
+        sourcesOrder: getEffectiveSourcesOrder(),
+        sourcesFormatRules: methodInfo?.sourcesFormatRules,
+        sourcesGrouping: methodInfo?.sourcesGrouping,
+        citFootnotes,
         callClaude,
       });
 
-      // 3. Переписати [N] (і [N, с. X]) у тексті кожного розділу на нові глобальні номери —
+      // 4. Мапа localN → globalN для кожного розділу
+      const secLocalToGlobal = {};
+      mainSecs.forEach(sec => {
+        secLocalToGlobal[sec.id] = {};
+        Object.entries(secLocalSources[sec.id]).forEach(([localN, text]) => {
+          const rawIdx = deduper.add(text); // ідемпотентно — знаходить уже канонічний індекс
+          secLocalToGlobal[sec.id][Number(localN)] = oldToNew[rawIdx + 1];
+        });
+      });
+
+      // 5. Переписати [N] (і [N, с. X]) у тексті кожного розділу на нові глобальні номери —
       // через спільну applyCitationRemap, яка ще й підставляє сторінки з pageRanges.
       const nextContent = { ...baseContent };
       mainSecs.forEach(sec => {
         const text = nextContent[sec.id] || "";
         if (!text) return;
-        const localMap = secLocalToRaw[sec.id] || {};
-        const sectionOldToNew = {};
-        Object.entries(localMap).forEach(([localN, rawIdx]) => { sectionOldToNew[localN] = oldToNew[rawIdx]; });
-        nextContent[sec.id] = applyCitationRemap(text, sectionOldToNew, refCiteText, { pageRanges });
+        const mapping = secLocalToGlobal[sec.id] || {};
+        if (!Object.keys(mapping).length) return;
+        nextContent[sec.id] = applyCitationRemap(text, mapping, refCiteText, { pageRanges });
       });
 
       const formattedText = fmtList.map((c, i) => `${i + 1}. ${c}`).join("\n");
       setContent(nextContent);
       setRefList(formattedText);
-      await saveToFirestore({ content: nextContent, citInputs, citStructured, citStyle, sourcesOrder, refList: formattedText });
+      await saveToFirestore({ content: nextContent, citInputs, citStructured, citStyle, sourcesOrder, citFootnotes, refList: formattedText });
     } catch (e) { setError(e.message); }
     setRunning(false); setLoadMsg("");
   };
@@ -721,7 +917,7 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
       const sec = writableSecs[idx];
       setGenIdx(idx);
       setLoadMsg(`Генерую: ${sec.label}...`);
-      const instruction = buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterialsSummary, citInputs);
+      const instruction = buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterialsSummary, citInputs, abstractsMap);
       try {
         const maxTok = Math.min(30000, Math.max(6000, Math.round(sec.pages * 1800)));
         const text = await callClaude(
@@ -759,7 +955,7 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
     if (!sec) return;
     setRegenLoading(true);
     const info = getPracticeInfo();
-    let instruction = buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterialsSummary, citInputs);
+    let instruction = buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterialsSummary, citInputs, abstractsMap);
     if (regenPrompt.trim()) instruction += `\n\nДОДАТКОВІ ВИМОГИ: ${regenPrompt.trim()}`;
     try {
       const maxTok = Math.min(30000, Math.max(6000, Math.round(sec.pages * 1800)));
@@ -1379,172 +1575,59 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
   // ─── РЕНДЕР: крок 3 — Джерела ───────────────────────────────────────────────
   const renderSources = () => {
     const mainSecs = sections.filter(s => !["sources", "intro", "conclusions"].includes(s.id));
-    const totalRefsCount = (() => {
-      const seen = new Set();
-      mainSecs.forEach(sec => (citInputs[sec.id] || "").split("\n").map(l => l.trim()).filter(Boolean).forEach(l => seen.add(normalizeRef(l))));
-      return seen.size;
-    })();
     const sourceTarget = calcSourceTarget(mainSecs);
     const sourceDist = calcSourceDist(mainSecs, sourceTarget);
-    const scholarUrl = `https://scholar.google.com/scholar?q=${encodeURIComponent(getPracticeInfo().topic || "")}`;
-    const styleBtn = (label, val, cur, setter) => (
-      <button key={label} type="button" onClick={() => setter(val)}
-        style={{
-          padding: "4px 10px", borderRadius: 6, fontSize: 11, cursor: "pointer",
-          background: cur === val ? "#1a1a14" : "#f0ece2",
-          color: cur === val ? "#e8ff47" : "#333",
-          border: `1px solid ${cur === val ? "#1a1a14" : "#d4cfc4"}`,
-        }}>
-        {label}
-      </button>
-    );
+    const allRefs = (() => {
+      const deduper = createReferenceDeduper();
+      mainSecs.forEach(sec => (citInputs[sec.id] || "").split("\n").map(l => l.trim()).filter(Boolean).forEach(l => deduper.add(l)));
+      return deduper.canonicalRefs;
+    })();
+    const hasGeneratedContent = Object.keys(content).some(id => content[id]);
+    const info = getPracticeInfo();
 
     return (
       <div className="fade">
-        <Heading>Джерела</Heading>
-        <p style={{ fontSize: 13, color: "#888", marginBottom: 12 }}>
-          Введіть джерела для кожного розділу або знайдіть їх автоматично. Після введення — сформуйте список літератури.
-        </p>
-
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, marginBottom: 12 }}>
-          <div style={{ fontSize: 13, color: "#555" }}>
-            Джерел додано: <b>{totalRefsCount}</b> / {sourceTarget}
-            {sourceCountExplicit ? " (вказано клієнтом)" : " (орієнтовно, за обсягом звіту)"}
-          </div>
-          <button
-            onClick={doSearchAllSections}
-            disabled={searchingAll || mainSecs.some(sec => refSecLoading[sec.id])}
-            style={{ background: "#1a3a10", border: "none", color: "#a8d060", borderRadius: 6, padding: "8px 16px", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
-            {searchingAll ? <><SpinDot /> Шукаю для всіх розділів...</> : "Знайти джерела для всіх розділів →"}
-          </button>
-        </div>
-
-        <div style={{ border: "1.5px solid #d4cfc4", borderRadius: 8, padding: "10px 14px", display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 12, fontSize: 12 }}>
-          <span style={{ color: "#888" }}>Оформлення:</span>
-          <span style={{ color: "#888" }}>Стиль</span>
-          {styleBtn("ДСТУ 8302:2015", "ДСТУ 8302:2015", citStyle, setCitStyle)}
-          {styleBtn("APA", "APA", citStyle, setCitStyle)}
-          {styleBtn("MLA", "MLA", citStyle, setCitStyle)}
-          <span style={{ color: "#888", marginLeft: 8 }}>Порядок</span>
-          {styleBtn("Алфавіт", "alphabetical", sourcesOrder, setSourcesOrder)}
-          {styleBtn("За порядком", "appearance", sourcesOrder, setSourcesOrder)}
-        </div>
-
-        <div style={{ background: "#f5f8ee", border: "1px solid #d8e4c0", borderRadius: 8, padding: "12px 16px", fontSize: 12, color: "#3a4a2a", marginBottom: 20, lineHeight: 1.6 }}>
-          <b>Як це працює:</b> Натисніть "Знайти джерела для всіх розділів" — програма знайде відповідні джерела для кожного розділу. Виберіть потрібні галочкою та натисніть "Додати вибрані". Після заповнення натисніть "Сформувати список літератури".
-          <br />
-          Обмеження: іноземних джерел не більше 30% від загальної кількості. Російські та білоруські джерела заборонені.
-          <div style={{ marginTop: 10 }}>
-            <a href={scholarUrl} target="_blank" rel="noreferrer"
-              style={{
-                display: "inline-block", background: "#e8f0ff", border: "1.5px solid #4a9ade44", color: "#1a5a8a",
-                borderRadius: 6, padding: "6px 12px", fontSize: 12, textDecoration: "none", fontFamily: "inherit",
-              }}>
-              🎓 Шукати додатково на Google Scholar →
-            </a>
-          </div>
-        </div>
-
-        {mainSecs.map((sec, idx) => (
-          <Fragment key={sec.id}>
-          {sec.sectionTitle && sec.sectionTitle !== mainSecs[idx - 1]?.sectionTitle && (
-            <div style={{ fontSize: 12, fontWeight: "bold", letterSpacing: "0.5px", color: "#555", margin: "18px 0 8px" }}>{sec.sectionTitle}</div>
-          )}
-          <div style={{ marginBottom: 24, background: "#fff", borderRadius: 10, padding: "16px 18px", boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, gap: 10, flexWrap: "wrap" }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "#1a1a14" }}>
-                {sec.label}
-                <span style={{ fontWeight: 400, fontSize: 11, color: "#999", marginLeft: 8 }}>(рекомендовано ~{sourceDist[sec.id] || 0} джерел)</span>
-              </div>
-              <button
-                onClick={() => doSearchForSection(sec.id, sec.label)}
-                disabled={refSecLoading[sec.id]}
-                style={{ background: "#e8f0ff", border: "1.5px solid #4a9ade44", color: "#1a5a8a", borderRadius: 6, padding: "5px 12px", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>
-                {refSecLoading[sec.id] ? <><SpinDot /> Шукаю...</> : "Ключові слова"}
-              </button>
-            </div>
-
-            {refSecPhrases[sec.id]?.length > 0 && (
-              <div style={{ marginBottom: 8 }}>
-                <div style={{ fontSize: 10, color: "#aaa", marginBottom: 4 }}>Пошукові фрази (Google Scholar):</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                  {refSecPhrases[sec.id].map((ph, i) => (
-                    <span key={i} style={{ background: "#f0e8ff", color: "#5a1a8a", borderRadius: 4, padding: "2px 8px", fontSize: 11 }}>{ph}</span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {refSecOpen[sec.id] && refSecPapers[sec.id]?.length > 0 && (
-              <div style={{ marginBottom: 10 }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-                  <div style={{ fontSize: 10, color: "#aaa" }}>Знайдені публікації:</div>
-                  <button
-                    onClick={() => setRefSecSelected(prev => {
-                      const all = refSecPapers[sec.id].map(p => p.id);
-                      const isAllSelected = (prev[sec.id] || []).length === all.length;
-                      return { ...prev, [sec.id]: isAllSelected ? [] : all };
-                    })}
-                    style={{ background: "transparent", border: "none", color: "#4a9ade", fontSize: 11, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}>
-                    {(refSecSelected[sec.id] || []).length === refSecPapers[sec.id].length ? "Зняти всі" : "Вибрати всі"}
-                  </button>
-                </div>
-                {refSecPapers[sec.id].map(p => (
-                  <div key={p.id} style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 5 }}>
-                    <input type="checkbox"
-                      checked={(refSecSelected[sec.id] || []).includes(p.id)}
-                      onChange={e => setRefSecSelected(prev => ({
-                        ...prev,
-                        [sec.id]: e.target.checked
-                          ? [...(prev[sec.id] || []), p.id]
-                          : (prev[sec.id] || []).filter(id => id !== p.id),
-                      }))}
-                      style={{ marginTop: 2 }} />
-                    <div style={{ fontSize: 12, lineHeight: 1.5 }}>
-                      <span style={{ fontWeight: 600 }}>{p.authors?.[0] || ""}</span> {p.year ? `(${p.year}) ` : ""}
-                      {p.title} {p.venue ? `— ${p.venue}` : ""}
-                    </div>
-                  </div>
-                ))}
-                {(refSecSelected[sec.id] || []).length > 0 && (
-                  <button onClick={() => doAddForSection(sec.id)} disabled={running}
-                    style={{ marginTop: 6, background: "#2a3a1a", color: "#a8d060", border: "none", borderRadius: 6, padding: "5px 12px", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>
-                    {running ? "..." : `Додати вибрані (${(refSecSelected[sec.id] || []).length})`}
-                  </button>
-                )}
-              </div>
-            )}
-
-            <textarea
-              value={citInputs[sec.id] || ""}
-              onChange={e => setCitInputs(prev => { const next = { ...prev, [sec.id]: e.target.value }; saveToFirestore({ citInputs: next }); return next; })}
-              placeholder="Введіть джерела — кожне з нового рядка"
-              style={{ ...TA_WHITE, minHeight: 80, width: "100%" }}
-            />
-          </div>
-          </Fragment>
-        ))}
-
         {error && <div style={{ color: "#c55", fontSize: 13, marginBottom: 12 }}>{error}</div>}
-
-        <p style={{ fontSize: 12, color: "#999", marginBottom: 12 }}>
-          Список літератури формується автоматично одразу після написання всіх розділів — тоді ж посилання [N] у тексті розставляються за фінальними номерами.
-        </p>
-
-        <div style={{ display: "flex", gap: 12 }}>
-          <NavBtn onClick={() => setStage("plan")}>← Назад</NavBtn>
-          <PrimaryBtn
-            onClick={() => {
-              saveToFirestore({ citInputs, stage: "writing", status: "plan_approved" });
-              goToStage("writing");
-              doWrite(0);
-            }}
-            disabled={running}
-            loading={running}
-            msg={loadMsg || "Генерую..."}
-            label="Далі → Генерувати текст"
-          />
-        </div>
+        <SourcesStage
+          mainSections={mainSecs}
+          readyWorkImportedIds={[]}
+          citInputs={citInputs} setCitInputs={setCitInputs}
+          citStructured={citStructured} setCitStructured={setCitStructured}
+          sourceDist={sourceDist} sourceTotal={sourceTarget}
+          keywords={keywords} kwLoading={kwLoading}
+          kwError={kwError} setKwError={setKwError}
+          onStopSearch={doStopSearch}
+          methodInfo={methodInfo} commentAnalysis={null}
+          citStyleOverride={citStyle} sourcesOrderOverride={sourcesOrder}
+          onCitStyleChange={v => { setCitStyle(v); saveToFirestore({ citStyle: v }); }}
+          onSourcesOrderChange={v => { setSourcesOrder(v); saveToFirestore({ sourcesOrder: v }); }}
+          citFootnotes={citFootnotes}
+          onCitFootnotesChange={v => { setCitFootnotes(v); saveToFirestore({ citFootnotes: v }); }}
+          allRefs={allRefs} refList={refList}
+          showMissingSources={false}
+          citInputsSnapshot={null} allCitLoading={false}
+          info={info} doGenKeywords={doGenKeywords}
+          suggestedSources={suggestedSources}
+          phraseGroups={phraseGroups}
+          sourcesSearchLoading={sourcesSearchLoading}
+          sourcesSearchError={sourcesSearchError}
+          doSearchSources={doSearchSources}
+          doRegenSectionSources={doRegenSectionSources}
+          onAddAbstracts={onAddAbstracts}
+          onFinish={async () => { await doFinalizeSources(); goToStage("writing"); }}
+          remapLoading={running}
+          onProceedToWriting={() => goToStage("writing")}
+          setStage={setStage}
+          onSave={() => saveToFirestore({ citInputs, citStructured, abstractsMap, suggestedSources, phraseGroups, keywords })}
+          saving={saving}
+          hasGeneratedContent={hasGeneratedContent}
+          onRegenWithNewSources={() => {
+            if (hasGeneratedContent && !window.confirm("Переписати всю роботу з нуля з новими джерелами? Поточний текст буде замінено.")) return;
+            saveToFirestore({ citInputs, stage: "writing", status: "plan_approved" });
+            goToStage("writing");
+            doWrite(0);
+          }}
+        />
       </div>
     );
   };
@@ -1555,6 +1638,8 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
     const doneCount = writableSecs.filter(s => content[s.id]).length;
     const progress = writableSecs.length ? Math.round(doneCount / writableSecs.length * 100) : 0;
     const allDone = doneCount === writableSecs.length;
+    const effectiveCitStyle = getEffectiveCitStyle();
+    const effectiveSourcesOrder = getEffectiveSourcesOrder();
 
     return (
       <div className="fade">
@@ -1643,14 +1728,14 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
             <span style={{ color: "#888" }}>Стиль</span>
             {["ДСТУ 8302:2015", "APA", "MLA"].map(s => (
               <button key={s} type="button" onClick={() => setCitStyle(s)}
-                style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, cursor: "pointer", background: citStyle === s ? "#1a1a14" : "#f0ece2", color: citStyle === s ? "#e8ff47" : "#333", border: `1px solid ${citStyle === s ? "#1a1a14" : "#d4cfc4"}` }}>
+                style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, cursor: "pointer", background: effectiveCitStyle === s ? "#1a1a14" : "#f0ece2", color: effectiveCitStyle === s ? "#e8ff47" : "#333", border: `1px solid ${effectiveCitStyle === s ? "#1a1a14" : "#d4cfc4"}` }}>
                 {s}
               </button>
             ))}
             <span style={{ color: "#888", marginLeft: 8 }}>Порядок</span>
             {[{ key: "alphabetical", label: "Алфавіт" }, { key: "appearance", label: "За порядком" }].map(o => (
               <button key={o.key} type="button" onClick={() => setSourcesOrder(o.key)}
-                style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, cursor: "pointer", background: sourcesOrder === o.key ? "#1a1a14" : "#f0ece2", color: sourcesOrder === o.key ? "#e8ff47" : "#333", border: `1px solid ${sourcesOrder === o.key ? "#1a1a14" : "#d4cfc4"}` }}>
+                style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, cursor: "pointer", background: effectiveSourcesOrder === o.key ? "#1a1a14" : "#f0ece2", color: effectiveSourcesOrder === o.key ? "#e8ff47" : "#333", border: `1px solid ${effectiveSourcesOrder === o.key ? "#1a1a14" : "#d4cfc4"}` }}>
                 {o.label}
               </button>
             ))}

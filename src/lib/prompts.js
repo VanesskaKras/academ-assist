@@ -850,7 +850,7 @@ ${sectionsJson}
 Адаптуй назви розділів до конкретного підприємства/установи та типу практики. id залишати незмінними.`;
 }
 
-export function buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterialsSummary, citInputs) {
+export function buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterialsSummary, citInputs, abstractsMap) {
   const {
     practiceText = "", language = "Українська", practiceGuidance,
     companyName, supervisorCompany, supervisorUniversity, individualTask,
@@ -872,8 +872,14 @@ export function buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterial
 
   const secCitLines = (citInputs?.[sec.id] || "").split("\n").map(l => l.trim()).filter(Boolean);
   const sourcesBlock = secCitLines.length
-    ? `\nДЖЕРЕЛА для цього розділу (вставляй маркери [N] після відповідних тверджень, де N — номер зі списку нижче):\n${secCitLines.map((l, i) => `${i + 1}. ${l}`).join("\n")}`
+    ? `\nДЖЕРЕЛА для цього розділу (${secCitLines.length} шт.) — спирайся на них при написанні, вставляй посилання [N] після відповідних тверджень:\n${secCitLines.map((l, i) => {
+      const snippet = abstractsMap?.[l];
+      return snippet ? `[${i + 1}] ${l}\n    Зміст: ${snippet}` : `[${i + 1}] ${l}`;
+    }).join("\n")}\n`
     : "";
+  const citNote = secCitLines.length
+    ? "Вставляй [N] у текст одразу після тверджень що спираються на джерело (де N — номер зі списку вище). ЗАБОРОНЕНО вигадувати імена авторів перед цитатою — не пиши 'Іванов А. стверджує...'. Використовуй безособові конструкції: 'у дослідженні зазначається [N]', 'науковці вказують [N]', 'встановлено [N]' тощо. Розподіляй посилання рівномірно між усіма наданими джерелами — спочатку використай кожне хоч раз, і лише потім за потреби повторюй. Одне й те саме джерело [N] НЕ цитувати більше 2 разів у межах цього розділу."
+    : "Без посилань [1],[2].";
 
   const guidanceLine = practiceGuidance
     ? `\nОРІЄНТИР ЗА НАПРЯМОМ ПРАКТИКИ: ${practiceGuidance.reportContent}${practiceGuidance.feature ? ` (${practiceGuidance.feature})` : ""}`
@@ -897,7 +903,7 @@ ${detailsLine ? `\n${detailsLine}` : ""}${individualTaskLine}
 ${hint ? `\nОСОБЛИВОСТІ РОЗДІЛУ: ${hint}` : ""}
 ${methodReq ? `\nВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${sourcesBlock}${guidanceLine}
 
-Обсяг: приблизно ${sec.pages * 225} слів, ±10% (~${sec.pages} стор.).
+Обсяг: приблизно ${sec.pages * 225} слів, ±10% (~${sec.pages} стор.). ${citNote}
 Без markdown заголовків (#, ##). Не повторюй назву розділу на початку тексту.`;
 
   if (clientMaterialsSummary?.rawText) {
@@ -967,20 +973,6 @@ ${comment ? `\nДОДАТКОВІ МАТЕРІАЛИ КЛІЄНТА:\n${comment}
 - university: повна назва університету/закладу вищої освіти для титульної сторінки. "" якщо не вказано.
 - faculty: назва факультету або кафедри. "" якщо не вказано.
 - city: місто для титульної сторінки (напр. "Київ"). "" якщо не вказано.`;
-}
-
-export function buildPracticeSourcesKeywordsPrompt(sections, info) {
-  const secList = sections.filter(s => s.id !== "sources").map(s => `- id:"${s.id}" → ${s.label}`).join("\n");
-  return `Визнач пошукові фрази для наукових джерел до звіту з практики.
-
-ДАНІ ПРАКТИКИ:
-${info?.practiceText || ""}
-
-Розділи:
-${secList}
-
-Поверни ТІЛЬКИ JSON (ключ — id розділу, значення — 3-4 пошукові фрази):
-{"intro":"...","ch1":"...","ch2":"...","ch3":"...","ch4":"...","conclusions":"..."}`;
 }
 
 // ── Застосування одного виправлення до фрагменту тексту файлу ──
