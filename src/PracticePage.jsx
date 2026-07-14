@@ -1019,7 +1019,12 @@ ${secBlock}
         : buildPracticeTitlePageLines(info);
       await exportToDocx({
         content: exportContent,
-        info: { topic: info.topic, type: info.type, language: info.language, pages: info.pages, orderNumber: info.orderNumber },
+        info: {
+          topic: info.topic, type: info.type, language: info.language, pages: info.pages, orderNumber: info.orderNumber,
+          studentName: info.studentName, studentGroup: info.studentGroup, course: info.course,
+          companyName: info.companyName, supervisorCompany: info.supervisorCompany, supervisorUniversity: info.supervisorUniversity,
+          dateStart: info.dateStart, dateEnd: info.dateEnd,
+        },
         displayOrder,
         titlePage: null,
         titlePageLines,
@@ -1042,7 +1047,12 @@ ${secBlock}
         : buildPracticeDiaryTitlePageLines(info);
       await exportToDocx({
         content: { diary: diaryContent },
-        info: { topic: `Щоденник практики ${info.topic || ""}`.trim(), type: "Щоденник", language: info.language, pages: "5", orderNumber: info.orderNumber },
+        info: {
+          topic: `Щоденник практики ${info.topic || ""}`.trim(), type: "Щоденник", language: info.language, pages: "5", orderNumber: info.orderNumber,
+          studentName: info.studentName, studentGroup: info.studentGroup, course: info.course,
+          companyName: info.companyName, supervisorCompany: info.supervisorCompany, supervisorUniversity: info.supervisorUniversity,
+          dateStart: info.dateStart, dateEnd: info.dateEnd,
+        },
         displayOrder: [{ id: "diary", label: "", pages: 0 }],
         titlePage: null,
         titlePageLines: diaryTitlePageLines,

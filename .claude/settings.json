@@ -73,7 +73,18 @@
       "Bash(node -e \"const p = require\\('node_modules/docx/package.json'\\); console.log\\(p.version\\)\")",
       "Bash(node \"C:/Users/vanes/AppData/Local/Temp/claude/c--Users-vanes-academ-assist/624edb2e-c4cc-4b7d-b8a5-c8f5c62a0653/scratchpad/test_diary_full.mjs\")",
       "Bash(python read_docx2.py diary_full.docx out_full.txt)",
-      "Bash(python check_border.py diary_full.docx border_xml.txt)"
+      "Bash(python check_border.py diary_full.docx border_xml.txt)",
+      "Bash(rm -f \"C:/Users/vanes/AppData/Local/Temp/claude/c--Users-vanes-academ-assist/624edb2e-c4cc-4b7d-b8a5-c8f5c62a0653/scratchpad/ph_\"*.docx \"C:/Users/vanes/AppData/Local/Temp/claude/c--Users-vanes-academ-assist/624edb2e-c4cc-4b7d-b8a5-c8f5c62a0653/scratchpad/out_ph_\"*.txt \"C:/Users/vanes/AppData/Local/Temp/claude/c--Users-vanes-academ-assist/624edb2e-c4cc-4b7d-b8a5-c8f5c62a0653/scratchpad/test_placeholders.mjs\" \"C:/Users/vanes/AppData/Local/Temp/claude/c--Users-vanes-academ-assist/624edb2e-c4cc-4b7d-b8a5-c8f5c62a0653/scratchpad/dump.py\")",
+      "Bash(python -c \"import fitz; print\\('fitz ok'\\)\")",
+      "Bash(python -c \"import pdfminer; print\\('pdfminer ok'\\)\")",
+      "Bash(python dump_pdf.py overflow_test.pdf pdf_dump.txt)",
+      "Bash(node \"C:/Users/vanes/AppData/Local/Temp/claude/c--Users-vanes-academ-assist/624edb2e-c4cc-4b7d-b8a5-c8f5c62a0653/scratchpad/test_overflow.mjs\")",
+      "Bash(python dump_pdf.py overflow_test.pdf pdf_dump_old.txt)",
+      "Bash(python dump_pdf.py overflow_test.pdf pdf_dump_old2.txt)",
+      "Bash(python dump_pdf.py overflow_test.pdf pdf_dump_fixed.txt)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\vanes\\AppData\\Local\\Temp\\claude\\c--Users-vanes-academ-assist\\624edb2e-c4cc-4b7d-b8a5-c8f5c62a0653\\scratchpad"
     ]
   }
 }

@@ -720,6 +720,16 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
   const alignMap = { left: AlignmentType.LEFT, center: AlignmentType.CENTER, right: AlignmentType.RIGHT };
   const topicStr = info?.topic || "";
   const currentYear = new Date().getFullYear().toString();
+  const practiceFieldMap = {
+    "[ПІБ]": info?.studentName,
+    "[ГРУПА]": info?.studentGroup,
+    "[КУРС]": info?.course,
+    "[БАЗА_ПРАКТИКИ]": info?.companyName,
+    "[КЕРІВНИК_ПІДПРИЄМСТВА]": info?.supervisorCompany,
+    "[КЕРІВНИК_КАФЕДРИ]": info?.supervisorUniversity,
+    "[ДАТА_ПОЧАТКУ]": info?.dateStart,
+    "[ДАТА_КІНЦЯ]": info?.dateEnd,
+  };
   const applyTopic = (t) => {
     let s = topicStr ? t.replace(/\[ТЕМА\]/g, topicStr) : t;
     if (topicStr) {
@@ -729,6 +739,9 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     }
     s = s.replace(/\[РІК\]/g, currentYear).replace(/\[ДАТА\]/g, currentYear);
     s = s.replace(/(?<![/\d])20\d{2}(?![/\d])/g, currentYear);
+    for (const [token, value] of Object.entries(practiceFieldMap)) {
+      if (s.includes(token)) s = s.split(token).join(value || "___________________");
+    }
     return s;
   };
   const RIGHT_LINE_RE = /^(Група|Курс|ПІБ\s+студента|ПІБ\s+керівника)\s*:/i;
@@ -758,7 +771,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
       const spaceBefore = item.spaceBefore != null ? item.spaceBefore : 0;
       children.push(new Paragraph({
         alignment: alignMap[item.align] || AlignmentType.CENTER,
-        spacing: { line: LINE, lineRule: "auto", before: spaceBefore, after: 0 },
+        spacing: { line: LINE_SINGLE, lineRule: "auto", before: spaceBefore, after: 0 },
         indent: { firstLine: 0 },
         children: [new TextRun({ text: item.text, font: FONT, size: itemSize, bold: !!item.bold, color: "000000" })],
       }));
