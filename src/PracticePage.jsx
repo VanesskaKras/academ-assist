@@ -16,7 +16,7 @@ import { parseTemplate, isEcon, isTechnical, getEconSections } from "./lib/planU
 import { detectSpecialty } from "./lib/academicDefaults.js";
 import {
   CATEGORY_LABELS, PRACTICE_TYPES, getPracticeGuidance, detectPracticeType,
-  parsePracticeDetails, buildPracticeTitlePageLines,
+  parsePracticeDetails, buildPracticeTitlePageLines, buildPracticeDiaryTitlePageLines,
 } from "./lib/practiceDefaults.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { playDoneSound } from "./lib/audio.js";
@@ -566,7 +566,7 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
   const doSearchSources = async (secId, thesesData, sectionLabel = '', resetPage = false) => {
     stopSearchRef.current = false;
     const info = getPracticeInfo();
-    const mainSecs = sections.filter(s => !["sources", "intro", "conclusions"].includes(s.id));
+    const mainSecs = sections.filter(s => !["sources", "intro", "conclusions"].includes(s.id) && !/додат/i.test(s.label || ""));
     const isFirstSearch = resetPage || (searchPageCount[secId] || 0) === 0;
     const isEconSecForSources = isEcon(info) && getEconSections(mainSecs, info).includes(secId);
     const isTechnicalWork = isTechnical(info);
@@ -642,7 +642,7 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
     setKwLoading(true);
     stopSearchRef.current = false;
     const info = getPracticeInfo();
-    const mainSecs = sections.filter(s => !["sources", "intro", "conclusions"].includes(s.id));
+    const mainSecs = sections.filter(s => !["sources", "intro", "conclusions"].includes(s.id) && !/додат/i.test(s.label || ""));
     const labelToId = {};
     for (const s of mainSecs) {
       labelToId[s.id] = s.id;
@@ -736,7 +736,7 @@ ${secBlocks}
     setSourcesSearchLoading(prev => ({ ...prev, [sec.id]: true }));
     setSourcesSearchError(prev => ({ ...prev, [sec.id]: null }));
     const info = getPracticeInfo();
-    const mainSecs = sections.filter(s => !["sources", "intro", "conclusions"].includes(s.id));
+    const mainSecs = sections.filter(s => !["sources", "intro", "conclusions"].includes(s.id) && !/додат/i.test(s.label || ""));
     const sourceTarget = calcSourceTarget(mainSecs);
     const sourceDist = calcSourceDist(mainSecs, sourceTarget);
     try {
@@ -990,7 +990,7 @@ ${secBlock}
     setRunning(true); runningRef.current = true; setLoadMsg("Генерую щоденник практики...");
     const info = getPracticeInfo();
     try {
-      const prompt = buildPracticeDiaryPrompt(info, diaryExampleText);
+      const prompt = buildPracticeDiaryPrompt(info, diaryExampleText, methodInfo);
       const text = await callClaude([{ role: "user", content: prompt }], null, buildSYS(language, methodInfo), 8000);
       setDiaryContent(text);
       await saveToFirestore({ diaryContent: text, stage: "diary", status: "writing" });
@@ -1007,7 +1007,7 @@ ${secBlock}
       const info = getPracticeInfo();
       const displayOrder = [
         ...sections.filter(s => s.id !== "sources"),
-        ...(refList ? [{ id: "sources", label: "СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ", pages: 0 }] : []),
+        ...(refList ? [{ id: "sources", label: "Список використаних джерел", pages: 0 }] : []),
       ];
       const exportContent = {
         ...content,
@@ -1025,6 +1025,7 @@ ${secBlock}
         titlePageLines,
         methodInfo,
         orderId: currentIdRef.current,
+        keepHeadingCase: true,
       });
     } catch (e) { setError(e.message); }
     setDocxLoading(false);
@@ -1036,13 +1037,22 @@ ${secBlock}
     setDiaryDocxLoading(true);
     try {
       const info = getPracticeInfo();
+      const diaryTitlePageLines = methodInfo?.diaryTitlePageTemplate?.length
+        ? methodInfo.diaryTitlePageTemplate
+        : buildPracticeDiaryTitlePageLines(info);
       await exportToDocx({
         content: { diary: diaryContent },
         info: { topic: `Щоденник практики ${info.topic || ""}`.trim(), type: "Щоденник", language: info.language, pages: "5", orderNumber: info.orderNumber },
-        displayOrder: [{ id: "diary", label: "ЩОДЕННИК ПРАКТИКИ", pages: 0 }],
+        displayOrder: [{ id: "diary", label: "", pages: 0 }],
+        titlePage: null,
+        titlePageLines: diaryTitlePageLines,
         methodInfo,
         orderId: currentIdRef.current ? `${currentIdRef.current}_diary` : null,
         skipToc: true,
+        keepHeadingCase: true,
+        diaryArrivalDeparture: !!methodInfo?.hasArrivalDepartureBlock,
+        diaryBlankNotesPages: !!methodInfo?.hasBlankNotesPages,
+        diaryStudentName: info.studentName,
       });
     } catch (e) { setError(e.message); }
     setDiaryDocxLoading(false);
@@ -1052,8 +1062,8 @@ ${secBlock}
   const doCopyAll = () => {
     const writableSecs = sections.filter(s => s.id !== "sources");
     const parts = writableSecs.map(s => `${s.label}\n\n${content[s.id] || ""}`);
-    if (diaryContent) parts.push(`ЩОДЕННИК ПРАКТИКИ\n\n${diaryContent}`);
-    if (refList) parts.push(`СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ\n\n${refList}`);
+    if (diaryContent) parts.push(`Щоденник практики\n\n${diaryContent}`);
+    if (refList) parts.push(`Список використаних джерел\n\n${refList}`);
     navigator.clipboard.writeText(parts.join("\n\n---\n\n"));
   };
 
@@ -1590,7 +1600,7 @@ ${secBlock}
 
   // ─── РЕНДЕР: крок 3 — Джерела ───────────────────────────────────────────────
   const renderSources = () => {
-    const mainSecs = sections.filter(s => !["sources", "intro", "conclusions"].includes(s.id));
+    const mainSecs = sections.filter(s => !["sources", "intro", "conclusions"].includes(s.id) && !/додат/i.test(s.label || ""));
     const sourceTarget = calcSourceTarget(mainSecs);
     const sourceDist = calcSourceDist(mainSecs, sourceTarget);
     const allRefs = (() => {

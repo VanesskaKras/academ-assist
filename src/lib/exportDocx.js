@@ -262,7 +262,7 @@ function getLangWordCode(lang) {
 // ─────────────────────────────────────────────
 // Word export (основний документ)
 // ─────────────────────────────────────────────
-export async function exportToDocx({ content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo, commentAnalysis, orderId, annotationUk, annotationEn, illustrations = [], clientDrawings = [], skipToc = false }) {
+export async function exportToDocx({ content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo, commentAnalysis, orderId, annotationUk, annotationEn, illustrations = [], clientDrawings = [], skipToc = false, keepHeadingCase = false, diaryArrivalDeparture = false, diaryBlankNotesPages = false, diaryStudentName = "" }) {
   const lc = getLangLabels(info?.language);
   const langCode = getLangWordCode(info?.language);
   const numberedContent = renumberTablesAndFigures(content, displayOrder, info?.language);
@@ -430,7 +430,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
       heading: HeadingLevel.HEADING_1,
       spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
       alignment: AlignmentType.CENTER, indent: { firstLine: 0 },
-      children: [new TextRun({ text: text.toUpperCase(), font: FONT, size: SIZE, bold: true, color: "000000" })],
+      children: [new TextRun({ text: keepHeadingCase ? text : text.toUpperCase(), font: FONT, size: SIZE, bold: true, color: "000000" })],
     });
   }
   function headingSubsection(text) {
@@ -997,6 +997,45 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
         children: [new ImageRun({ data: img.data, transformation: { width, height } })],
       }));
     });
+  }
+
+  // ── Щоденник практики: статичні канцелярські додатки (з методички, без участі ШІ) ──
+  if (diaryArrivalDeparture) {
+    const plainLine = (text, opts = {}) => new Paragraph({
+      alignment: AlignmentType.LEFT,
+      indent: { firstLine: 0 },
+      spacing: { line: LINE, lineRule: "auto", before: 0, after: 0, ...opts.spacing },
+      children: [new TextRun({ text, font: FONT, size: opts.size || SIZE, bold: !!opts.bold, color: "000000" })],
+    });
+    children.push(new Paragraph({ pageBreakBefore: true, spacing: { before: 0, after: 0, line: LINE, lineRule: "auto" }, children: [] }));
+    children.push(plainLine(`Здобувач вищої освіти ${diaryStudentName || "___________________________"}`));
+    children.push(new Paragraph({
+      alignment: AlignmentType.CENTER, indent: { firstLine: 0 },
+      spacing: { line: LINE, lineRule: "auto", before: 0, after: LINE },
+      children: [new TextRun({ text: "(прізвище, ім’я, по батькові)", font: FONT, size: SIZE_NUM, color: "000000" })],
+    }));
+    children.push(plainLine("прибув на підприємство ___________________________ практику закінчено з оцінкою ___________"));
+    children.push(plainLine("МП                                                                              «___» _____________ 20__ року"));
+    children.push(plainLine("_________________     (посада, прізвище та ініціали відповідальної особи)", { spacing: { after: LINE } }));
+    children.push(plainLine("Вибув з підприємства", { bold: true }));
+    children.push(plainLine("МП                                                                              «___» _____________ 20__ року"));
+    children.push(plainLine("_________________     (посада, прізвище та ініціали відповідальної особи)"));
+  }
+
+  if (diaryBlankNotesPages) {
+    children.push(new Paragraph({ pageBreakBefore: true, spacing: { before: 0, after: 0, line: LINE, lineRule: "auto" }, children: [] }));
+    children.push(new Paragraph({
+      alignment: AlignmentType.CENTER, indent: { firstLine: 0 },
+      spacing: { line: LINE, lineRule: "auto", before: 0, after: LINE },
+      children: [new TextRun({ text: "Робочі записи під час практики", font: FONT, size: SIZE, bold: true, color: "000000" })],
+    }));
+    for (let i = 0; i < 28; i++) {
+      children.push(new Paragraph({
+        spacing: { line: LINE, lineRule: "auto", before: 0, after: 260 },
+        border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: "000000", space: 1 } },
+        children: [new TextRun({ text: "", font: FONT, size: SIZE })],
+      }));
+    }
   }
 
   const doc = new Document({

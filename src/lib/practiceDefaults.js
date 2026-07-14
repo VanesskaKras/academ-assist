@@ -140,3 +140,41 @@ export function buildPracticeTitlePageLines(info) {
   lines.push({ text: `${city || "[Місто]"} – [РІК]`, align: "center", bold: false, spaceBefore: 0 });
   return lines;
 }
+
+// Будує рядки титульної сторінки щоденника практики (блок "ЗАТВЕРДЖУЮ" + дані студента).
+// Дефолт, якщо в методичці НЕ знайдено власного зразка титулки щоденника — підставляє реальні
+// дані де вони відомі, інакше залишає загальний підпис-плейсхолдер (без вигаданого закладу).
+export function buildPracticeDiaryTitlePageLines(info) {
+  const { faculty, studentName, supervisorCompany, direction, practiceType } = info || {};
+  const practiceLabel = PRACTICE_TYPE_GENITIVE[practiceType]
+    ? `${PRACTICE_TYPE_GENITIVE[practiceType]} практики`
+    : "практики";
+
+  const lines = [];
+  lines.push({ text: "ЗАТВЕРДЖУЮ", align: "right", bold: true, spaceBefore: 0 });
+  lines.push({ text: "Керівник підприємства", align: "right", bold: false, spaceBefore: 0 });
+  lines.push({ text: "(організації, установи)", align: "right", bold: false, spaceBefore: 0 });
+  lines.push({ text: supervisorCompany || "___________________", align: "right", bold: false, spaceBefore: 240 });
+  lines.push({ text: "(підпис)               (ініціали, прізвище)", align: "right", bold: false, spaceBefore: 0 });
+  lines.push({ text: "«___» _____________ 20__ р.", align: "right", bold: false, spaceBefore: 120 });
+
+  lines.push({ text: "", align: "center", spaceBefore: 1200 });
+  lines.push({ text: "ЩОДЕННИК ПРАКТИКИ", align: "center", bold: true, fontSize: 16, spaceBefore: 0 });
+  lines.push({ text: "", align: "center", spaceBefore: 480 });
+
+  lines.push({ text: practiceLabel, align: "center", bold: false, spaceBefore: 0 });
+  lines.push({ text: "(вид і назва практики)", align: "center", bold: false, spaceBefore: 0 });
+  lines.push({ text: "", align: "center", spaceBefore: 240 });
+
+  lines.push({ text: `студента ${studentName || "[ПІБ студента]"}`, align: "left", bold: false, spaceBefore: 0 });
+  lines.push({ text: "(прізвище, ім’я, по батькові)", align: "center", bold: false, spaceBefore: 0 });
+  lines.push({ text: "", align: "center", spaceBefore: 240 });
+
+  lines.push({ text: `інститут (факультет) ${faculty || "___________________"}`, align: "left", bold: false, spaceBefore: 0 });
+  lines.push({ text: "освітньо-кваліфікаційний рівень ___________________", align: "left", bold: false, spaceBefore: 0 });
+  lines.push({ text: `спеціальність ${direction || "___________________"}`, align: "left", bold: false, spaceBefore: 0 });
+  lines.push({ text: "галузь знань ___________________", align: "left", bold: false, spaceBefore: 0 });
+  lines.push({ text: "ОПП ___________________", align: "left", bold: false, spaceBefore: 0 });
+
+  return lines;
+}

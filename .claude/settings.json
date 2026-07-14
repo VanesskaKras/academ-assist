@@ -65,7 +65,15 @@
       "Bash(python -c ' *)",
       "Bash(node test_gemini_tmp.mjs)",
       "Bash(curl -s -w \"\\\\nHTTP_STATUS:%{http_code}\\\\n\" -X POST http://localhost:3000/api/gemini -H \"Content-Type: application/json\" --data-binary @gemini_test_body.json)",
-      "Bash(git reset *)"
+      "Bash(git reset *)",
+      "Bash(node \"C:/Users/vanes/AppData/Local/Temp/claude/c--Users-vanes-academ-assist/624edb2e-c4cc-4b7d-b8a5-c8f5c62a0653/scratchpad/test_diary_export.mjs\")",
+      "Bash(node --check src/PracticePage.jsx)",
+      "Bash(node --check src/lib/exportDocx.js)",
+      "Bash(node --check src/lib/prompts.js)",
+      "Bash(node -e \"const p = require\\('node_modules/docx/package.json'\\); console.log\\(p.version\\)\")",
+      "Bash(node \"C:/Users/vanes/AppData/Local/Temp/claude/c--Users-vanes-academ-assist/624edb2e-c4cc-4b7d-b8a5-c8f5c62a0653/scratchpad/test_diary_full.mjs\")",
+      "Bash(python read_docx2.py diary_full.docx out_full.txt)",
+      "Bash(python check_border.py diary_full.docx border_xml.txt)"
     ]
   }
 }
