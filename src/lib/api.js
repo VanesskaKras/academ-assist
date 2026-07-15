@@ -58,7 +58,7 @@ export async function callClaude(messages, signal, systemPrompt, maxTokens, onWa
       const decoder = new TextDecoder();
       let fullText = "";
       let buffer = "";
-      let inputTokens = 0, outputTokens = 0;
+      let inputTokens = 0, outputTokens = 0, cacheCreationTokens = 0, cacheReadTokens = 0;
 
       try {
         while (true) {
@@ -78,6 +78,8 @@ export async function callClaude(messages, signal, systemPrompt, maxTokens, onWa
                 fullText += evt.delta.text;
               } else if (evt.type === "message_start" && evt.message?.usage) {
                 inputTokens = evt.message.usage.input_tokens || 0;
+                cacheCreationTokens = evt.message.usage.cache_creation_input_tokens || 0;
+                cacheReadTokens = evt.message.usage.cache_read_input_tokens || 0;
               } else if (evt.type === "message_delta" && evt.usage) {
                 outputTokens = evt.usage.output_tokens || 0;
               }
@@ -87,11 +89,12 @@ export async function callClaude(messages, signal, systemPrompt, maxTokens, onWa
       } finally {
         reader.releaseLock();
         // Звітуємо про витрачені токени навіть при перериванні (abort) — Anthropic вже їх обробив
-        if (inputTokens || outputTokens) {
+        if (inputTokens || outputTokens || cacheCreationTokens || cacheReadTokens) {
           const PRICES = { [MODEL]: { in: 3, out: 15 }, [MODEL_FAST]: { in: 0.80, out: 4 } };
           const p = PRICES[model || MODEL] || PRICES[MODEL];
-          const cost = (inputTokens * p.in + outputTokens * p.out) / 1_000_000;
-          window.dispatchEvent(new CustomEvent("apicost", { detail: { cost, model: model || MODEL, inTok: inputTokens, outTok: outputTokens } }));
+          // Запис у кеш коштує 1.25х ціни input, читання з кешу — 0.1х (тарифи Anthropic prompt caching)
+          const cost = (inputTokens * p.in + outputTokens * p.out + cacheCreationTokens * p.in * 1.25 + cacheReadTokens * p.in * 0.1) / 1_000_000;
+          window.dispatchEvent(new CustomEvent("apicost", { detail: { cost, model: model || MODEL, inTok: inputTokens + cacheCreationTokens + cacheReadTokens, outTok: outputTokens } }));
         }
       }
       return fullText;
@@ -106,8 +109,11 @@ export async function callClaude(messages, signal, systemPrompt, maxTokens, onWa
     if (data.usage) {
       const PRICES = { [MODEL]: { in: 3, out: 15 }, [MODEL_FAST]: { in: 0.80, out: 4 } };
       const p = PRICES[model || MODEL] || PRICES[MODEL];
-      const cost = (data.usage.input_tokens * p.in + data.usage.output_tokens * p.out) / 1_000_000;
-      window.dispatchEvent(new CustomEvent("apicost", { detail: { cost, model: model || MODEL, inTok: data.usage.input_tokens, outTok: data.usage.output_tokens } }));
+      const cacheCreationTokens = data.usage.cache_creation_input_tokens || 0;
+      const cacheReadTokens = data.usage.cache_read_input_tokens || 0;
+      // Запис у кеш коштує 1.25х ціни input, читання з кешу — 0.1х (тарифи Anthropic prompt caching)
+      const cost = (data.usage.input_tokens * p.in + data.usage.output_tokens * p.out + cacheCreationTokens * p.in * 1.25 + cacheReadTokens * p.in * 0.1) / 1_000_000;
+      window.dispatchEvent(new CustomEvent("apicost", { detail: { cost, model: model || MODEL, inTok: data.usage.input_tokens + cacheCreationTokens + cacheReadTokens, outTok: data.usage.output_tokens } }));
     }
     return data.content.map(b => b.text || "").join("") || "";
   }

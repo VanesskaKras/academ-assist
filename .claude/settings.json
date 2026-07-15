@@ -81,10 +81,13 @@
       "Bash(node \"C:/Users/vanes/AppData/Local/Temp/claude/c--Users-vanes-academ-assist/624edb2e-c4cc-4b7d-b8a5-c8f5c62a0653/scratchpad/test_overflow.mjs\")",
       "Bash(python dump_pdf.py overflow_test.pdf pdf_dump_old.txt)",
       "Bash(python dump_pdf.py overflow_test.pdf pdf_dump_old2.txt)",
-      "Bash(python dump_pdf.py overflow_test.pdf pdf_dump_fixed.txt)"
+      "Bash(python dump_pdf.py overflow_test.pdf pdf_dump_fixed.txt)",
+      "Bash(xargs cat)",
+      "Bash(rm -f /tmp/test_cache.js 2>/dev/null; echo done)"
     ],
     "additionalDirectories": [
-      "C:\\Users\\vanes\\AppData\\Local\\Temp\\claude\\c--Users-vanes-academ-assist\\624edb2e-c4cc-4b7d-b8a5-c8f5c62a0653\\scratchpad"
+      "C:\\Users\\vanes\\AppData\\Local\\Temp\\claude\\c--Users-vanes-academ-assist\\624edb2e-c4cc-4b7d-b8a5-c8f5c62a0653\\scratchpad",
+      "\\tmp"
     ]
   }
 }

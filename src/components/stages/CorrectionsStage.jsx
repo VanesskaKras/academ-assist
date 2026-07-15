@@ -12,6 +12,8 @@ export function CorrectionsStage({
   correctionLoading,
   correctionApplyLoading,
   correctionApplyProgress,
+  correctionApplyMessages,
+  onDismissApplyMessages,
   correctionHistory,
   doAnalyzeCorrections,
   doApplyCorrections,
@@ -214,6 +216,35 @@ export function CorrectionsStage({
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* ── ПОВІДОМЛЕННЯ ПРО РЕЗУЛЬТАТ ЗАСТОСУВАННЯ ── */}
+      {correctionApplyMessages?.length > 0 && (
+        <div style={{ marginBottom: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+          {correctionApplyMessages.map((msg, i) => (
+            <div
+              key={i}
+              style={{
+                border: `1.5px solid ${msg.type === "error" ? "#c04020" : "#4a6a00"}`,
+                borderRadius: 8, padding: "11px 16px",
+                background: msg.type === "error" ? "#2a1410" : "#1a2a00",
+                display: "flex", alignItems: "flex-start", gap: 10,
+              }}
+            >
+              <div style={{ width: 8, height: 8, borderRadius: "50%", marginTop: 4, background: msg.type === "error" ? "#e07050" : "#a8e060", flexShrink: 0 }} />
+              <div style={{ fontSize: 12.5, lineHeight: 1.6, color: "#f5f2eb", flex: 1 }}>{msg.text}</div>
+              {onDismissApplyMessages && (
+                <button
+                  onClick={onDismissApplyMessages}
+                  style={{ background: "transparent", border: "none", color: "#aaa", cursor: "pointer", fontSize: 14, lineHeight: 1, padding: 0, flexShrink: 0 }}
+                  aria-label="Закрити"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          ))}
         </div>
       )}
 

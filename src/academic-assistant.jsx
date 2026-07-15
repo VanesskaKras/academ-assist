@@ -10,13 +10,13 @@ import { exportToDocx, exportPlanToDocx, exportAppendixToDocx, exportSpeechToDoc
 import { exportToPptxFile } from "./lib/exportPptx.js";
 import { callClaude, callGemini, MODEL, MODEL_FAST } from "./lib/api.js";
 import { playDoneSound } from "./lib/audio.js";
-import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildIllustrationsPdfPrompt, buildDrawingsDescriptionPrompt, buildClientMaterialsAnalysisPrompt, buildCorrectionsAnalysisPrompt, buildCorrectionRewritePrompt, buildSourcesRestructureAnalysisPrompt, buildSourcePlacementPrompt, buildFileToSectionsPrompt, buildExtractStructurePrompt, buildContinuationPlanPrompt, buildAnnotationPrompt, buildAnnotationRegenPrompt, buildAntiPlagiarismSYS } from "./lib/prompts.js";
+import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildIllustrationsPdfPrompt, buildDrawingsDescriptionPrompt, buildClientMaterialsAnalysisPrompt, buildCorrectionsAnalysisPrompt, buildCorrectionRewritePrompt, buildSourcesRestructureAnalysisPrompt, buildSourcePlacementPrompt, buildRemoveCitationsPrompt, buildFileToSectionsPrompt, buildExtractStructurePrompt, buildContinuationPlanPrompt, buildAnnotationPrompt, buildAnnotationRegenPrompt, buildAntiPlagiarismSYS } from "./lib/prompts.js";
 import { extractReadyWorkStructure, quickParsePlanIds } from "./lib/readyWorkExtract.js";
 import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, getEmpiricalSections, getEconSections, getTechnicalSections, CODE_FILE_EXTENSIONS, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, getLangLabels } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { getAcademicDefaults, classifyAppendixItem, detectSpecialty, normalizeWorkType } from "./lib/academicDefaults.js";
 import { searchByPhrase, filterSourcesWithGemini, getEconInstitutionalSources } from "./lib/sourcesSearch.js";
-import { applyCitationRemap, buildFinalReferenceList, buildCiteFormats, createReferenceDeduper, detectSourceGrouping, formatSourcesWithRetry, sortReferencesForDisplay } from "./lib/citationFormatting.js";
+import { applyCitationRemap, buildFinalReferenceList, buildCiteFormats, createReferenceDeduper, detectSourceGrouping, formatSourcesWithRetry, sortReferencesForDisplay, apaOrMlaCiteText } from "./lib/citationFormatting.js";
 import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
 import { StagePills } from "./components/StagePills.jsx";
 import { FieldBox, Heading, NavBtn, PrimaryBtn, GreenBtn, SaveIndicator } from "./components/Buttons.jsx";
@@ -264,6 +264,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [correctionApplyLoading, setCorrectionApplyLoading] = useState(false);
   const [correctionApplyProgress, setCorrectionApplyProgress] = useState(null);
   const [correctionHistory, setCorrectionHistory] = useState([]);
+  const [correctionApplyMessages, setCorrectionApplyMessages] = useState([]); // [{type:"success"|"error", text}] — банер після застосування правок замість alert()
   const [fileParseLoading, setFileParseLoading] = useState(false);
   const [uploadedFileName, setUploadedFileName] = useState("");
   const tokenAccRef = useRef({ inTok: 0, outTok: 0, costUsd: 0, claudeInTok: 0, claudeOutTok: 0, claudeCostUsd: 0, geminiInTok: 0, geminiOutTok: 0, geminiCostUsd: 0, serperCredits: 0, serperCostUsd: 0 });
@@ -3090,13 +3091,20 @@ ${slideSpecs.join("\n\n")}
     setCorrectionLoading(true);
     setCorrectionAnalysis(null);
     setCorrectionChecked({});
+    setCorrectionApplyMessages([]);
     try {
       // Орієнтовний діапазон сторінок кожного розділу — рахуємо за реальним порядком
       // документа (displayOrder), а не сирим порядком масиву sections, інакше номери
       // сторінок не відповідали б фактичному розташуванню в експортованому файлі.
+      // Обсяг беремо за ФАКТИЧНОЮ довжиною вже згенерованого тексту (225 слів/стор. —
+      // та сама норма, що й при генерації розділів), а не за плановим розподілом
+      // s.pages: після кількох раундів правок і додавання ілюстрацій/таблиць реальний
+      // обсяг розділу вже міг помітно відхилитись від початкового плану. План лишається
+      // лише фолбеком для розділів, які ще не згенеровано (немає тексту).
       let cumPage = 0;
       const sectionsWithPages = displayOrder.map(s => {
-        const secPages = Math.max(1, Math.round(s.pages || 1));
+        const text = contentRef.current[s.id];
+        const secPages = Math.max(1, Math.round(text ? countWords(text) / 225 : (s.pages || 1)));
         const pageStart = cumPage + 1;
         cumPage += secPages;
         return { ...s, pageStart, pageEnd: cumPage };
@@ -3129,18 +3137,22 @@ ${slideSpecs.join("\n\n")}
       // Дедуплікація за sectionId — якщо ШІ повернув два окремі зауваження до
       // одного розділу, об'єднуємо їх в один пункт, інакше чекбокс в UI (ключ —
       // sectionId) керував би обома одночасно, і застосування правки продублювалось б.
-      const mergedBySection = {};
+      // Map, а не звичайний об'єкт — щоб зберегти порядок, у якому ШІ повернув розділи:
+      // у plain-об'єкті ключі-числа (id розділів без підрозділів, напр. "1", "2") завжди
+      // спливають на початок у числовому порядку, незалежно від порядку вставки.
+      const mergedBySection = new Map();
       parsed.forEach(item => {
         if (!item?.sectionId) return;
-        if (mergedBySection[item.sectionId]) {
-          mergedBySection[item.sectionId].issue += "; " + item.issue;
-          mergedBySection[item.sectionId].suggestion += "; " + item.suggestion;
-          if (item.sourcesAction === "restructure") mergedBySection[item.sectionId].sourcesAction = "restructure";
+        const existing = mergedBySection.get(item.sectionId);
+        if (existing) {
+          existing.issue += "; " + item.issue;
+          existing.suggestion += "; " + item.suggestion;
+          if (item.sourcesAction === "restructure") existing.sourcesAction = "restructure";
         } else {
-          mergedBySection[item.sectionId] = { ...item };
+          mergedBySection.set(item.sectionId, { ...item });
         }
       });
-      const dedupedParsed = Object.values(mergedBySection);
+      const dedupedParsed = [...mergedBySection.values()];
       const defaultChecked = {};
       dedupedParsed.forEach(item => { defaultChecked[item.sectionId] = true; });
       setCorrectionAnalysis(dedupedParsed);
@@ -3195,10 +3207,25 @@ ${slideSpecs.join("\n\n")}
     const isAlphabeticalOrder = !effectiveOrder || effectiveOrder === "alphabetical";
     const isLatinWork = /англ|english|польськ|polish|нім|german|франц|french|іспан|spanish|італ|italian/i.test(lang);
 
+    // Дублікати серед нових джерел — якщо запропоноване джерело майже дослівно вже є
+    // серед тих, що лишаються в списку (чи повторюється в самому зауваженні), не
+    // форматуємо і не додаємо його вдруге.
+    const dedupeCheck = createReferenceDeduper();
+    survivors.forEach(e => dedupeCheck.add(e.text));
+    const seenNewIdx = new Set();
+    const dedupedAddRaw = [];
+    let duplicatesSkipped = 0;
+    addRaw.forEach(raw => {
+      const idx = dedupeCheck.add(raw);
+      if (idx < survivors.length || seenNewIdx.has(idx)) { duplicatesSkipped++; return; }
+      seenNewIdx.add(idx);
+      dedupedAddRaw.push(raw);
+    });
+
     let newFormatted = [];
-    if (addRaw.length) {
+    if (dedupedAddRaw.length) {
       newFormatted = await formatSourcesWithRetry({
-        rawRefs: addRaw,
+        rawRefs: dedupedAddRaw,
         findStructured: () => null,
         sourcesStyle,
         sourcesFormatRules: methodInfo?.sourcesFormatRules,
@@ -3236,13 +3263,14 @@ ${slideSpecs.join("\n\n")}
 
     // G — перенумерувати наявні посилання по ВСІХ розділах — чистий код, без токенів.
     // Посилання на видалені джерела applyCitationRemap сам прибирає з тексту.
-    // ВАЖЛИВО: у вже фіналізованому тексті ЗАЛИШАЮТЬСЯ маркери [N] тільки для звичайного
-    // ДСТУ без виносок — APA/MLA вже мають вигляд "(Автор, Рік)", а режим виносок уже
-    // "%%FNn%%", і жоден з них ця перенумерація (яка шукає саме "[N]") не знайде й не
-    // зачепить. Тому для цих стилів чесно попереджаємо користувача замість того, щоб
-    // мовчки нічого не зробити з наявними цитатами.
-    const canAutoRenumberInText = isDstu && !isFootnoteMode;
+    // ВАЖЛИВО: у вже фіналізованому тексті ЗАЛИШАЮТЬСЯ маркери [N] для звичайного ДСТУ
+    // і "%%FNn%%" для режиму виносок — обидва формати applyCitationRemap перенумеровує.
+    // APA/MLA вже мають вигляд "(Автор, Рік)" без номера — для них перенумерація не
+    // застосовна (там немає "N" щоб замінити), тож для цих стилів чесно попереджаємо
+    // користувача замість того, щоб мовчки нічого не зробити з наявними цитатами.
+    const canAutoRenumberInText = isDstu;
     const updatedContent = { ...currentContent };
+    const affectedSectionIds = [srcSec.id];
     const mainSecs = sections.filter(s => s.type !== "sources");
     let orphanedCount = 0;
     if (canAutoRenumberInText) {
@@ -3251,7 +3279,9 @@ ${slideSpecs.join("\n\n")}
         if (!text) return;
         if (removedCount > 0) {
           removeNumbers.forEach(n => {
-            const re = new RegExp(`\\[\\s*${n}\\s*(?:,\\s*[сc]\\.?[^\\]]*)?\\]`, "g");
+            const re = isFootnoteMode
+              ? new RegExp(`%%FN${n}%%`, "g")
+              : new RegExp(`\\[\\s*${n}\\s*(?:,\\s*[сc]\\.?[^\\]]*)?\\]`, "g");
             orphanedCount += (text.match(re) || []).length;
           });
         }
@@ -3259,8 +3289,42 @@ ${slideSpecs.join("\n\n")}
       });
     }
 
+    // G2 — APA/MLA: прибрати "осиротілі" цитати на видалені джерела. Формат "(Автор,
+    // Рік)" — вільний текст без номера, тож замість regex просимо ШІ знайти й прибрати
+    // саме ці цитати (з повним бібліографічним описом джерела для контексту, щоб не
+    // сплутати з іншим, живим джерелом того ж автора/року), по одному виклику на розділ,
+    // і лише для розділів, де взагалі є шанс збігу (дешевий текстовий пре-фільтр).
+    const citationCleanupFailures = [];
+    let citationsCleanedCount = 0;
+    if ((isAPA || isMLA) && removedCount > 0) {
+      const removedSources = currentEntries
+        .filter(e => removeNumbers.has(e.number))
+        .map(e => ({ ...apaOrMlaCiteText(e.text, e.number, { isAPA, isMLA }), fullText: e.text }))
+        .filter(Boolean);
+      for (const sec of mainSecs) {
+        const text = updatedContent[sec.id];
+        if (!text) continue;
+        const lowerText = text.toLowerCase();
+        const candidates = removedSources.filter(s => lowerText.includes(s.author.toLowerCase()));
+        if (!candidates.length) continue;
+        try {
+          const cleanupPrompt = buildRemoveCitationsPrompt({
+            removedSources: candidates.map(s => ({ citeText: s.text, fullText: s.fullText })),
+            originalText: text,
+          });
+          const cleanupRaw = await callClaude([{ role: "user", content: cleanupPrompt }], null, buildSYS(lang, methodInfo), Math.min(30000, Math.max(4000, Math.round((sec.pages || 1) * 3000))), null, MODEL, { cache: true });
+          const cleaned = typographQuotes(fixMixedScript(cleanupRaw, lang)).trim();
+          updatedContent[sec.id] = cleaned;
+          if (!affectedSectionIds.includes(sec.id)) affectedSectionIds.push(sec.id);
+          citationsCleanedCount++;
+        } catch (e) {
+          console.error("Помилка очищення цитат на видалене джерело", sec.id, e);
+          citationCleanupFailures.push(sec.label || sec.id);
+        }
+      }
+    }
+
     // H — визначити, куди процитувати нові джерела, і вставити цитування
-    const affectedSectionIds = [srcSec.id];
     const unplacedSources = [];
     if (addRaw.length) {
       const placementPrompt = buildSourcePlacementPrompt({
@@ -3318,8 +3382,10 @@ ${slideSpecs.join("\n\n")}
     const summaryParts = [];
     if (removedCount) summaryParts.push(`видалено ${removedCount} джерел${orphanedCount ? ` (у ${orphanedCount} місцях прибрано посилання на них — перевірте ці твердження)` : ""}`);
     if (newFormatted.length) summaryParts.push(`додано ${newFormatted.length} нових джерел${unplacedSources.length ? ` (для №${unplacedSources.join(", ")} не вдалося автоматично підібрати місце цитування — процитуйте вручну)` : ""}`);
-    if (!canAutoRenumberInText && (removedCount || oldToNew && Object.entries(oldToNew).some(([o, n]) => Number(o) !== n))) {
-      summaryParts.push("увага: для цього стилю цитування (APA/MLA чи виноски) наявні посилання в тексті НЕ перенумеровано автоматично — перевірте їх вручну");
+    if (duplicatesSkipped) summaryParts.push(`пропущено ${duplicatesSkipped} джерел${duplicatesSkipped === 1 ? "о" : ""} як дублікат наявного`);
+    if ((isAPA || isMLA) && removedCount > 0) {
+      if (citationsCleanedCount) summaryParts.push(`прибрано цитати на видалені джерела у ${citationsCleanedCount} розділ${citationsCleanedCount === 1 ? "і" : "ах"}`);
+      if (citationCleanupFailures.length) summaryParts.push(`не вдалося автоматично прибрати цитати на видалені джерела у: ${citationCleanupFailures.join(", ")} — перевірте вручну`);
     }
     if (!summaryParts.length) summaryParts.push("змін у списку джерел не знайдено за цим зауваженням");
 
@@ -3332,6 +3398,7 @@ ${slideSpecs.join("\n\n")}
     const toFix = correctionAnalysis.filter(item => correctionChecked[item.sectionId]);
     if (!toFix.length) return;
     setCorrectionApplyLoading(true);
+    setCorrectionApplyMessages([]);
     setCorrectionApplyProgress({ current: "", done: 0, total: toFix.length });
     const lang = info?.language || "Українська";
     const newContent = { ...contentRef.current };
@@ -3481,12 +3548,14 @@ ${slideSpecs.join("\n\n")}
     }
     setCorrectionApplyLoading(false);
     setCorrectionApplyProgress(null);
+    const messages = [];
     if (restructureSummaries.length) {
-      alert(`Список джерел оновлено: ${restructureSummaries.join(". ")}.`);
+      messages.push({ type: "success", text: `Список джерел оновлено: ${restructureSummaries.join(". ")}.` });
     }
     if (failedSections.length) {
-      alert(`Не вдалося виправити: ${failedSections.join(", ")}. Ці розділи лишились у списку — натисніть «Виправити» ще раз.`);
+      messages.push({ type: "error", text: `Не вдалося виправити: ${failedSections.join(", ")}. Ці розділи лишились у списку — натисніть «Виправити» ще раз.` });
     }
+    setCorrectionApplyMessages(messages);
   };
 
   // ── Завантаження власного файлу і розбивка по розділах ──
@@ -4730,6 +4799,8 @@ ${secBlock}
               correctionLoading={correctionLoading}
               correctionApplyLoading={correctionApplyLoading}
               correctionApplyProgress={correctionApplyProgress}
+              correctionApplyMessages={correctionApplyMessages}
+              onDismissApplyMessages={() => setCorrectionApplyMessages([])}
               correctionHistory={correctionHistory}
               doAnalyzeCorrections={doAnalyzeCorrections}
               doApplyCorrections={doApplyCorrections}

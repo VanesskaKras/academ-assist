@@ -89,14 +89,18 @@ export function pickPageInRange(range, occurrenceIndex) {
   return range.min + Math.round(span * frac);
 }
 
-// Замінює [oldN] / [oldN, с. X] / групові [oldN, oldM] у тексті на нові номери у
-// фінальному форматі стилю. Групові цитати виникають при локалізації посилань готової
-// частини клієнта (localizeCitations у readyWorkExtract.js) — там кілька старих
-// глобальних номерів джерела можуть звестись в один локальний запис виду "[2, 3]".
-// Сторінку, яку вписала сама модель під час написання, зберігаємо як є (якщо вона
-// в межах відомого діапазону джерела); інакше підставляємо сторінку з діапазону.
+// Замінює [oldN] / [oldN, с. X] / групові [oldN, oldM] та виносочні маркери %%FN<oldN>%%
+// у тексті на нові номери у фінальному форматі стилю. Групові цитати виникають при
+// локалізації посилань готової частини клієнта (localizeCitations у readyWorkExtract.js)
+// — там кілька старих глобальних номерів джерела можуть звестись в один локальний запис
+// виду "[2, 3]". Сторінку, яку вписала сама модель під час написання, зберігаємо як є
+// (якщо вона в межах відомого діапазону джерела); інакше підставляємо сторінку з діапазону.
 // Кожна згадка джерела лишається окремою (виноски й так завжди були окремі,
 // а для звичайних [N] повторне цитування — це нормально, не дублікат для видалення).
+// %%FN<oldN>%% — завжди одиночний номер (без групування й сторінки, на відміну від [N]),
+// тож для нього достатньо прямої заміни за oldToNew; якщо джерело видалено — маркер
+// прибирається (порожній рядок), інакше експорт (exportDocx.js) підставить виноску
+// не того джерела, яке зараз реально стоїть під цим номером у списку.
 export function applyCitationRemap(text, oldToNew, refCiteText, { pageRanges = {} } = {}) {
   if (!text) return text;
   const citCount = {};
@@ -132,6 +136,10 @@ export function applyCitationRemap(text, oldToNew, refCiteText, { pageRanges = {
       return `(${bases.map(b => b.slice(1, -1)).join("; ")})`;
     }
     return bases.join(" ");
+  });
+  out = out.replace(/%%FN(\d+)%%/g, (_, oldNStr) => {
+    const newN = oldToNew[Number(oldNStr)];
+    return newN ? `%%FN${newN}%%` : ""; // джерело видалено — прибираємо маркер виноски
   });
   return out;
 }
@@ -450,6 +458,37 @@ export async function buildFinalReferenceList({
   return { finalTexts, indexMap };
 }
 
+// Дістає з бібліографічного опису прізвище автора (+ рік для APA) і формує текст
+// внутрітекстової цитати "(Автор, Рік)" / "(Автор)". Винесено окремо від buildCiteFormats,
+// бо ця сама логіка потрібна і для того, щоб порахувати, як цитата виглядала для ВЖЕ
+// ВИДАЛЕНОГО джерела (щоб потім знайти й прибрати саме її з тексту — applySourcesRestructure
+// в academic-assistant.jsx).
+export function apaOrMlaCiteText(ref, n, { isAPA, isMLA }) {
+  const commaIdx = ref.indexOf(",");
+  const beforeComma = commaIdx > 0 ? ref.substring(0, commaIdx).trim() : "";
+  if (isAPA) {
+    let rawAuthor;
+    if (beforeComma && !beforeComma.includes(" ") && beforeComma.length >= 3) {
+      rawAuthor = beforeComma;
+    } else {
+      const surnameMatch = ref.match(/(?:^|[\s,&])([А-ЯҐЄІЇа-яґєіїA-Za-z]{3,})/);
+      rawAuthor = surnameMatch?.[1] || `Автор${n}`;
+    }
+    const yearMatch = ref.match(/[(.\s](\d{4})[).,\s]/);
+    const author = rawAuthor.charAt(0).toUpperCase() + rawAuthor.slice(1).toLowerCase();
+    const year = yearMatch?.[1] || null;
+    return { text: `(${author}, ${year || "б.р."})`, author, year };
+  }
+  if (isMLA) {
+    const rawSurname = (beforeComma && !beforeComma.includes(" "))
+      ? beforeComma
+      : ref.match(/(?:^|[\s,])([А-ЯҐЄІЇа-яґєіїA-Za-z]{3,})/)?.[1];
+    const author = rawSurname || `Автор${n}`;
+    return { text: `(${author})`, author, year: null };
+  }
+  return null;
+}
+
 // Будує формат внутрітекстового посилання ("[N]" / "(Автор, рік)" / "%%FNn%%") і, для
 // ДСТУ, діапазон сторінок джерела — для кожного фінального номера. Спільна для
 // remapAndFormatCitations і doRemapCitations (academic-assistant.jsx).
@@ -461,26 +500,8 @@ export function buildCiteFormats({ finalTexts, rawRefs, indexMap, findStructured
   const pageRanges = {};
   finalTexts.forEach((ref, i) => {
     const n = i + 1;
-    if (isAPA) {
-      const commaIdx = ref.indexOf(",");
-      const beforeComma = commaIdx > 0 ? ref.substring(0, commaIdx).trim() : "";
-      let rawAuthor;
-      if (beforeComma && !beforeComma.includes(" ") && beforeComma.length >= 3) {
-        rawAuthor = beforeComma;
-      } else {
-        const surnameMatch = ref.match(/(?:^|[\s,&])([А-ЯҐЄІЇа-яґєіїA-Za-z]{3,})/);
-        rawAuthor = surnameMatch?.[1] || `Автор${n}`;
-      }
-      const yearMatch = ref.match(/[(.\s](\d{4})[).,\s]/);
-      const author = rawAuthor.charAt(0).toUpperCase() + rawAuthor.slice(1).toLowerCase();
-      refCiteText[n] = `(${author}, ${yearMatch?.[1] || "б.р."})`;
-    } else if (isMLA) {
-      const commaIdx = ref.indexOf(",");
-      const beforeComma = commaIdx > 0 ? ref.substring(0, commaIdx).trim() : "";
-      const rawSurname = (beforeComma && !beforeComma.includes(" "))
-        ? beforeComma
-        : ref.match(/(?:^|[\s,])([А-ЯҐЄІЇа-яґєіїA-Za-z]{3,})/)?.[1];
-      refCiteText[n] = `(${rawSurname || `Автор${n}`})`;
+    if (isAPA || isMLA) {
+      refCiteText[n] = apaOrMlaCiteText(ref, n, { isAPA, isMLA }).text;
     } else if (isFootnoteMode) {
       // Маркер для exportDocx — буде замінений на справжню Word-виноску з повним
       // описом джерела (ref), узятим зі сформатованого списку.
