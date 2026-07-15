@@ -161,7 +161,14 @@ export function CorrectionsStage({
                     style={{ marginTop: 3, accentColor: "#6a9000", flexShrink: 0, cursor: "pointer" }}
                   />
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: "#2a2a1e", marginBottom: 4 }}>{label}</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: "#2a2a1e", marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}>
+                      {label}
+                      {item.sourcesAction === "restructure" && (
+                        <span style={{ fontSize: 10, fontWeight: 600, color: "#c04020", background: "#fbe8e0", borderRadius: 4, padding: "2px 6px" }}>
+                          ⚠ перебудова списку джерел
+                        </span>
+                      )}
+                    </div>
                     <div style={{ fontSize: 12, color: "#c04020", marginBottom: 3 }}>
                       <span style={{ fontWeight: 600 }}>Проблема:</span> {item.issue}
                     </div>
@@ -237,7 +244,7 @@ export function CorrectionsStage({
                       {affected.length > 0 && (
                         <div style={{ marginTop: 4, display: "flex", flexWrap: "wrap", gap: 4 }}>
                           {affected.map((sid, j) => {
-                            const s = correctionHistory[0] ? sections.find(sec => sec.id === sid) : null;
+                            const s = sections.find(sec => sec.id === sid);
                             return (
                               <span key={j} style={{ fontSize: 10, background: "#e8f4d8", color: "#3a6010", borderRadius: 4, padding: "2px 7px" }}>
                                 {s?.label || sid}

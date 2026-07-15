@@ -3,10 +3,16 @@ import { buildSYS } from "./prompts.js";
 export const MODEL = "claude-sonnet-4-6";
 export const MODEL_FAST = "claude-haiku-4-5-20251001";
 
-export async function callClaude(messages, signal, systemPrompt, maxTokens, onWait, model) {
+export async function callClaude(messages, signal, systemPrompt, maxTokens, onWait, model, opts) {
   const MAX_RETRIES = 5;
   let delay = 12000;
   const useStream = (maxTokens || 8000) >= 2000; // stream for large responses only
+  // Кешування системного промпту (opts.cache) — вигідно коли той самий system
+  // повторюється в кількох послідовних викликах (напр. цикл правок по розділах):
+  // перший виклик пише кеш, наступні читають його в рази дешевше.
+  const systemField = opts?.cache
+    ? [{ type: "text", text: systemPrompt || buildSYS(), cache_control: { type: "ephemeral" } }]
+    : (systemPrompt || buildSYS());
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     const res = await fetch("/api/claude", {
@@ -15,7 +21,7 @@ export async function callClaude(messages, signal, systemPrompt, maxTokens, onWa
       body: JSON.stringify({
         model: model || MODEL,
         max_tokens: maxTokens || 8000,
-        system: systemPrompt || buildSYS(),
+        system: systemField,
         messages,
         ...(useStream ? { stream: true } : {}),
       }),
