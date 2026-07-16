@@ -390,12 +390,20 @@ export async function exportToPptxFile(slideData, info, orderId) {
     });
   };
 
-  // ── renderImagePlaceholder: слайд із великим placeholder для зображення ──
+  // ── renderImagePlaceholder: слайд із зображенням з роботи (або заглушкою, якщо його нема) ──
   const renderImagePlaceholder = (s, data) => {
     addTitle(s, data.title);
     const PH_Y = TITLE_H + 0.2;
     const PH_H = 5.625 - PH_Y - 0.2;
-    addImagePlaceholder(s, CONTENT_X, PH_Y, CONTENT_W, PH_H, data.image || data.content || "Додайте зображення");
+    if (data.image?.b64) {
+      s.addImage({
+        data: `data:${data.image.type || "image/jpeg"};base64,${data.image.b64}`,
+        x: CONTENT_X, y: PH_Y, w: CONTENT_W, h: PH_H,
+        sizing: { type: "contain", w: CONTENT_W, h: PH_H },
+      });
+    } else {
+      addImagePlaceholder(s, CONTENT_X, PH_Y, CONTENT_W, PH_H, data.image || data.content || "Додайте зображення");
+    }
   };
 
   // ── renderChart: графік bar / line / pie / doughnut ──

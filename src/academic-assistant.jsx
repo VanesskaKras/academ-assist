@@ -8,6 +8,7 @@ import {
 import mammoth from "mammoth";
 import { exportToDocx, exportPlanToDocx, exportAppendixToDocx, exportSpeechToDocx, renumberTablesAndFigures } from "./lib/exportDocx.js";
 import { exportToPptxFile } from "./lib/exportPptx.js";
+import { extractPdfPageImages } from "./lib/pdfImages.js";
 import { callClaude, callGemini, MODEL, MODEL_FAST } from "./lib/api.js";
 import { playDoneSound } from "./lib/audio.js";
 import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildIllustrationsPdfPrompt, buildDrawingsDescriptionPrompt, buildClientMaterialsAnalysisPrompt, buildCorrectionsAnalysisPrompt, buildCorrectionRewritePrompt, buildSourcesRestructureAnalysisPrompt, buildSourcePlacementPrompt, buildRemoveCitationsPrompt, buildFileToSectionsPrompt, buildExtractStructurePrompt, buildContinuationPlanPrompt, buildAnnotationPrompt, buildAnnotationRegenPrompt, buildAntiPlagiarismSYS } from "./lib/prompts.js";
@@ -747,6 +748,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
         const illParsed = JSON.parse(illMatch?.[0] || illRaw);
         setIllustrationDescs(illParsed);
         await saveToFirestore({ ...(illustrationsPdf ? {} : { illustrations }), illustrationDescs: illParsed });
+        if (illustrationsPdf) await buildIllustrationsFromPdf(illustrationsPdf, illParsed);
       } catch (e) {
         console.warn("illustrationDescs failed:", e.message);
         setIllustrationDescs([]);
@@ -789,6 +791,27 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
 
     setRunning(false); runningRef.current = false; setLoadMsg("");
   };
+
+  // ── Витяг реальних картинок з PDF-ілюстрацій (сторінка = одна ілюстрація) і підключення
+  // їх до того самого масиву illustrations, яким уже користуються docx- і pptx-експорт.
+  // Не зберігається в Firestore (як і сам illustrationsPdf) — живе лише в пам'яті сесії.
+  async function buildIllustrationsFromPdf(pdfFile, descs) {
+    try {
+      const pageImages = await extractPdfPageImages(pdfFile.b64);
+      const built = descs
+        .map((desc, i) => pageImages[i] ? {
+          name: `Рис. ${desc.figureNum}`,
+          b64: pageImages[i].b64,
+          type: pageImages[i].type,
+          caption: desc.caption || "",
+          targetSection: desc.suggestedSection || "",
+        } : null)
+        .filter(Boolean);
+      if (built.length) setIllustrations(built);
+    } catch (e) {
+      console.warn("extractPdfPageImages failed:", e.message);
+    }
+  }
 
   // ── Підбір ілюстрацій для розділу ──
   function getIllustrationsForSection(sec) {
@@ -915,6 +938,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
           const illParsed = JSON.parse(illMatch?.[0] || illRaw);
           setIllustrationDescs(illParsed);
           await saveToFirestore({ illustrationDescs: illParsed });
+          if (illustrationsPdf) await buildIllustrationsFromPdf(illustrationsPdf, illParsed);
         } catch (e) {
           console.warn("illustrationDescs re-analysis in plan:", e.message);
         }
@@ -3005,6 +3029,7 @@ ${baseSpeech}`;
 
       slideSpecs.push(`Слайд ${next()}: layout "numbered_steps" — title: "Методи дослідження"
   visual.items: до 4 методів з analysis.methods → [{"num":"1","title":"назва","text":"1 речення"}]`);
+      const methodsSlideIdx = slideSpecs.length - 1;
 
       (analysis.main_results || []).slice(0, resultsCount).forEach((res, i) => {
         const hasStat = res.key_stat?.value;
@@ -3061,6 +3086,16 @@ ${slideSpecs.join("\n\n")}
       try {
         slideData = JSON.parse(claudeRaw.replace(/```json\n?|\n?```/g, "").trim());
       } catch { throw new Error("Claude повернув некоректний JSON слайдів"); }
+
+      // ── Вставляємо реальні ілюстрації з роботи (якщо студент їх завантажив) одразу після слайду з методами ──
+      if (illustrations.length > 0 && Array.isArray(slideData.slides)) {
+        const imageSlides = illustrations.map((ill, i) => ({
+          layout: "image_placeholder",
+          title: ill.caption || `Ілюстрація ${i + 1}`,
+          image: { b64: ill.b64, type: ill.type },
+        }));
+        slideData.slides.splice(methodsSlideIdx + 1, 0, ...imageSlides);
+      }
 
       // ── Крок 3: Створюємо PPTX ──
       setPresentationMsg("Створюю файл...");
