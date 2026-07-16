@@ -188,6 +188,11 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
   const TABLE_CAPTION_RE = /^(таблиця|table)\s+\d/i;
   const SOURCE_CAPTION_RE = /^(джерело|source)\s*:/i;
   const ANOTATION_RE = /^(анотація|abstract|ключові слова|keywords)\s*[:.]/i;
+  const UDK_RE = /^(УДК|UDC)\s/i;
+  const TITLE_MARKER = "\x00TITLE\x00";
+  const TITLE_END_MARKER = "\x00/TITLE\x00";
+  const AUTHORBLOCK_PREFIX = "\x00AUTHORBLOCK:";
+  const AUTHORBLOCK_END_MARKER = "\x00/AUTHORBLOCK\x00";
 
   // ── Виноски (ДСТУ-режим): %%FN<n>%% у тексті → реальна Word-виноска ──
   // n → повний текст джерела, узятий з explicit citations або розпарсений зі списку джерел у тексті.
@@ -270,6 +275,52 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
           li++; continue;
         }
         lastWasDiagram = false;
+        li++; continue;
+      }
+
+      // Назва статті — вставлена кодом між маркерами \x00TITLE\x00 — жирним, по
+      // центру, без відступу, незалежно від того, що написала модель довкола.
+      if (trimmed === TITLE_MARKER) {
+        li++;
+        const titleLines = [];
+        while (li < lines.length && lines[li].trim() !== TITLE_END_MARKER) { titleLines.push(lines[li].trim()); li++; }
+        li++; // пропускаємо закриваючий маркер
+        titleLines.filter(Boolean).forEach(t => {
+          children.push(new Paragraph({
+            alignment: AlignmentType.CENTER, indent: { firstLine: 0 },
+            spacing: { line: LINE, lineRule: "auto", before: 0, after: LINE },
+            children: [new TextRun({ text: t, font: FONT, size: SIZE, bold: true, color: "000000" })],
+          }));
+        });
+        continue;
+      }
+
+      // Блок автора — вставлений кодом між маркерами \x00AUTHORBLOCK:format\x00 —
+      // жирним, по центру або праворуч (format), кожен рядок окремим абзацом.
+      if (trimmed.startsWith(AUTHORBLOCK_PREFIX) && trimmed.endsWith("\x00")) {
+        const abFormat = trimmed.slice(AUTHORBLOCK_PREFIX.length, -1);
+        li++;
+        const abLines = [];
+        while (li < lines.length && lines[li].trim() !== AUTHORBLOCK_END_MARKER) { abLines.push(lines[li].trim()); li++; }
+        li++; // пропускаємо закриваючий маркер
+        const nonEmpty = abLines.filter(Boolean);
+        nonEmpty.forEach((t, idx) => {
+          children.push(new Paragraph({
+            alignment: abFormat === "right" ? AlignmentType.RIGHT : AlignmentType.CENTER, indent: { firstLine: 0 },
+            spacing: { line: LINE, lineRule: "auto", before: 0, after: idx === nonEmpty.length - 1 ? LINE : 0 },
+            children: [new TextRun({ text: t, font: FONT, size: SIZE, bold: true, color: "000000" })],
+          }));
+        });
+        continue;
+      }
+
+      // Рядок УДК — без абзацного відступу, звичайним накресленням.
+      if (UDK_RE.test(trimmed)) {
+        children.push(new Paragraph({
+          alignment: AlignmentType.LEFT, indent: { firstLine: 0 },
+          spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
+          children: [new TextRun({ text: trimmedClean, font: FONT, size: SIZE, color: "000000" })],
+        }));
         li++; continue;
       }
 
