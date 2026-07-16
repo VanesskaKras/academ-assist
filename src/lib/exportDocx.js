@@ -114,7 +114,7 @@ function scaleDrawingImage(width, height) {
   return scaleToFit(width, height, DRAWING_MAX_W_PX, DRAWING_MAX_H_PX);
 }
 
-async function renderPlantUmlToPng(source) {
+export async function renderPlantUmlToPng(source) {
   try {
     const res = await fetch("/api/render-diagram", {
       method: "POST",
@@ -260,13 +260,36 @@ function getLangWordCode(lang) {
 }
 
 // ─────────────────────────────────────────────
+// Визначає мову перевірки правопису за фактичним текстом документа
+// (info.language — це заявлена мова роботи, вона не завжди збігається з
+// реальною мовою згенерованого тексту, тому мову правопису беремо з тексту)
+// ─────────────────────────────────────────────
+function detectTextLanguage(text, fallbackLang) {
+  const sample = (text || "").slice(0, 8000);
+  const letters = sample.match(/\p{L}/gu) || [];
+  if (letters.length < 30) return getLangWordCode(fallbackLang);
+  const cyrillic = letters.filter(c => /[Ѐ-ӿ]/.test(c)).length;
+  const cjk = letters.filter(c => /[一-鿿]/.test(c)).length;
+  const latin = letters.filter(c => /[A-Za-z]/.test(c)).length;
+  if (cjk / letters.length > 0.3) return "zh-CN";
+  if (cyrillic >= latin) return "uk-UA";
+  if (/[ąćęłńśźż]/i.test(sample)) return "pl-PL";
+  if (/[ñáéíóúü¡¿]/i.test(sample)) return "es-ES";
+  if (/[äöüß]/i.test(sample)) return "de-DE";
+  if (/[řě]/i.test(sample)) return "cs-CZ";
+  if (/[ľĺŕôňäť]/i.test(sample)) return "sk-SK";
+  const fb = getLangWordCode(fallbackLang);
+  return fb !== "uk-UA" ? fb : "en-US";
+}
+
+// ─────────────────────────────────────────────
 // Word export (основний документ)
 // ─────────────────────────────────────────────
 export async function exportToDocx({ content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo, commentAnalysis, orderId, annotationUk, annotationEn, illustrations = [], clientDrawings = [], skipToc = false, keepHeadingCase = false, diaryArrivalDeparture = false, diaryBlankNotesPages = false, diaryStudentName = "" }) {
   const lc = getLangLabels(info?.language);
-  const langCode = getLangWordCode(info?.language);
   const numberedContent = renumberTablesAndFigures(content, displayOrder, info?.language);
   Object.keys(numberedContent).forEach(k => { if (numberedContent[k]) numberedContent[k] = numberedContent[k].replace(/'/g, '\u2019'); });
+  const langCode = detectTextLanguage(Object.values(numberedContent).join("\n\n"), info?.language);
   const normAppendices = appendicesText ? appendicesText.replace(/'/g, '\u2019') : appendicesText;
   const { content: diagramResolvedContent, diagramImages } = await resolvePlantUmlDiagrams(numberedContent);
   Object.assign(numberedContent, diagramResolvedContent);
@@ -1089,7 +1112,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
 // ─────────────────────────────────────────────
 export async function exportPlanToDocx({ sections, info, methodInfo }) {
   const FONT = "Times New Roman", SIZE = 28, LINE = 360, INDENT = 709;
-  const langCode = getLangWordCode(info?.language);
+  const langCode = detectTextLanguage(sections.map(s => `${s.label || ""} ${s.sectionTitle || ""}`).join(" "), info?.language);
   const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
   const marg = methodInfo?.formatting?.margins || {};
   const toMm = v => (v != null && Number(v) > 0 ? Number(v) : null);
@@ -1158,7 +1181,7 @@ export async function exportPlanToDocx({ sections, info, methodInfo }) {
 // ─────────────────────────────────────────────
 export async function exportPracticePlanToDocx({ sections, info, methodInfo }) {
   const FONT = "Times New Roman", SIZE = 28, LINE = 360, INDENT = 709;
-  const langCode = getLangWordCode(info?.language);
+  const langCode = detectTextLanguage(sections.map(s => `${s.label || ""} ${s.sectionTitle || ""}`).join(" "), info?.language);
   const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
   const marg = methodInfo?.formatting?.margins || {};
   const toMm = v => (v != null && Number(v) > 0 ? Number(v) : null);
@@ -1223,7 +1246,7 @@ export async function exportPracticePlanToDocx({ sections, info, methodInfo }) {
 // ─────────────────────────────────────────────
 export async function exportAppendixToDocx(text, info, methodInfo, orderId) {
   const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
-  const langCode = getLangWordCode(info?.language);
+  const langCode = detectTextLanguage(text, info?.language);
   const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
   const marg = methodInfo?.formatting?.margins || {};
   const toMm = v => (v != null && Number(v) > 0 ? Number(v) : null);
@@ -1396,7 +1419,7 @@ export async function exportAppendixToDocx(text, info, methodInfo, orderId) {
 // ─────────────────────────────────────────────
 export async function exportSpeechToDocx(text, info, methodInfo, orderId, speechLabel) {
   const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
-  const langCode = getLangWordCode(info?.language);
+  const langCode = detectTextLanguage(text, info?.language);
   const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
   const marg = methodInfo?.formatting?.margins || {};
   const toMm = v => (v != null && Number(v) > 0 ? Number(v) : null);

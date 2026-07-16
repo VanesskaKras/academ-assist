@@ -2,6 +2,44 @@
 // shared.js — утиліти спільні для small-works (docx export, стилі, парсинг)
 // Логіка API, промпти, компоненти — в lib/ та components/
 // ─────────────────────────────────────────────
+import { renderPlantUmlToPng } from "./lib/exportDocx.js";
+
+const PLANTUML_FENCE_RE = /^\s*```\s*plantuml\s*$/i;
+const FENCE_END_RE = /^\s*```\s*$/;
+
+// Замінює кожен ```plantuml``` fence-блок у тексті на маркер \x00DIAGRAM<i>\x00 і
+// рендерить відповідні PNG паралельно (та сама логіка, що й для великих робіт).
+async function resolvePlantUmlInSections(sections) {
+  const diagramImages = [];
+  const jobs = [];
+  const updated = sections.map(sec => {
+    if (!sec.text) return sec;
+    const lines = sec.text.split("\n");
+    const outLines = [];
+    let changed = false;
+    let i = 0;
+    while (i < lines.length) {
+      if (PLANTUML_FENCE_RE.test(lines[i])) {
+        const codeLines = [];
+        let j = i + 1;
+        while (j < lines.length && !FENCE_END_RE.test(lines[j])) { codeLines.push(lines[j]); j++; }
+        if (j < lines.length) j++; // пропускаємо закриваючу ```
+        const idx = diagramImages.length;
+        diagramImages.push(null);
+        jobs.push(renderPlantUmlToPng(codeLines.join("\n")).then(img => { diagramImages[idx] = img; }));
+        outLines.push(`\x00DIAGRAM${idx}\x00`);
+        i = j;
+        changed = true;
+        continue;
+      }
+      outLines.push(lines[i]);
+      i++;
+    }
+    return changed ? { ...sec, text: outLines.join("\n") } : sec;
+  });
+  await Promise.all(jobs);
+  return { sections: updated, diagramImages };
+}
 
 // ── Парсинг сторінок ──
 // Дефолт 20 — для малих робіт (реферат, тези, есе). Велика версія в lib/planUtils.js має дефолт 80.
@@ -23,7 +61,9 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
       document.head.appendChild(s);
     });
   }
-  const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel, ExternalHyperlink, InternalHyperlink, Bookmark, FootnoteReferenceRun, Table, TableRow, TableCell, WidthType, BorderStyle } = window.docx;
+  const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel, ExternalHyperlink, InternalHyperlink, Bookmark, FootnoteReferenceRun, ImageRun, Table, TableRow, TableCell, WidthType, BorderStyle } = window.docx;
+  const { sections: resolvedSections, diagramImages } = await resolvePlantUmlInSections(sections);
+  sections = resolvedSections;
   const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
   const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
   const marg = methodInfo?.formatting?.margins || commentAnalysis?.formattingHints?.margins || {};
@@ -39,33 +79,34 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
   const footnoteTextByNum = {};
 
   // [N] → внутрішнє гіперпосилання на закладку джерела; %%FN<n>%% → справжня Word-виноска
-  function parseTextWithCitations(text, bold = false) {
+  function parseTextWithCitations(text, bold = false, italics = false) {
     const CITE_RE = /\[(\d+)\]|%%FN(\d+)%%/g;
     const result = [];
     let lastIndex = 0, match;
     while ((match = CITE_RE.exec(text)) !== null) {
       if (match.index > lastIndex)
-        result.push(new TextRun({ text: text.slice(lastIndex, match.index), font: FONT, size: SIZE, bold, color: "000000" }));
+        result.push(new TextRun({ text: text.slice(lastIndex, match.index), font: FONT, size: SIZE, bold, italics, color: "000000" }));
       if (match[2]) {
         footnoteCounter++;
         const fnText = footnoteTextByNum[Number(match[2])] || "";
         footnotesRegistry[footnoteCounter] = { children: [new Paragraph({ children: [new TextRun({ text: fnText, font: FONT, size: SIZE_NUM, color: "000000" })] })] };
-        result.push(new TextRun({ children: [new FootnoteReferenceRun(footnoteCounter)], font: FONT, size: SIZE, bold }));
+        result.push(new TextRun({ children: [new FootnoteReferenceRun(footnoteCounter)], font: FONT, size: SIZE, bold, italics }));
       } else {
         result.push(new InternalHyperlink({
           anchor: `ref_${match[1]}`,
-          children: [new TextRun({ text: match[0], font: FONT, size: SIZE, color: "000000" })],
+          children: [new TextRun({ text: match[0], font: FONT, size: SIZE, italics, color: "000000" })],
         }));
       }
       lastIndex = match.index + match[0].length;
     }
     if (lastIndex < text.length)
-      result.push(new TextRun({ text: text.slice(lastIndex), font: FONT, size: SIZE, bold, color: "000000" }));
-    return result.length ? result : [new TextRun({ text, font: FONT, size: SIZE, bold, color: "000000" })];
+      result.push(new TextRun({ text: text.slice(lastIndex), font: FONT, size: SIZE, bold, italics, color: "000000" }));
+    return result.length ? result : [new TextRun({ text, font: FONT, size: SIZE, bold, italics, color: "000000" })];
   }
 
-  // **жирний** inline + [N] для абзаців тексту
-  function parseBodyLine(text) {
+  // **жирний** inline + [N] для абзаців тексту; italics — примусовий курсив для
+  // цілого абзацу (анотація за методичкою оформлюється курсивом)
+  function parseBodyLine(text, italics = false) {
     const BOLD_RE = /\*\*(.+?)\*\*/g;
     const parts = [];
     let last = 0, m;
@@ -76,7 +117,13 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
     }
     if (last < text.length) parts.push({ text: text.slice(last), bold: false });
     if (!parts.length) parts.push({ text, bold: false });
-    return parts.flatMap(p => parseTextWithCitations(p.text, p.bold));
+    // Одинарні "*" (курсив markdown) поза межами **жирного** — у звичайних абзацах
+    // не підтримуються (на відміну від списку джерел), тож просто прибираємо їх,
+    // а не лишаємо буквально в тексті.
+    return parts.flatMap(p => parseTextWithCitations(
+      p.bold ? p.text : p.text.replace(/\*(.+?)\*/g, "$1").replace(/\*/g, ""),
+      p.bold, italics
+    ));
   }
 
   // URL → зовнішній гіперлінк, *курсив* → курсив (для рядків джерел)
@@ -138,6 +185,9 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
   const FIG_CAPTION_RE = /^рис\.?\s+\d/i;
   const FIG_INLINE_RE = /рис(?:унок)?\.?\s*\d+/i;
   const FIG_MARKER_RE = /^\[🔍 Рисунок \d+:/;
+  const TABLE_CAPTION_RE = /^(таблиця|table)\s+\d/i;
+  const SOURCE_CAPTION_RE = /^(джерело|source)\s*:/i;
+  const ANOTATION_RE = /^(анотація|abstract|ключові слова|keywords)\s*[:.]/i;
 
   // ── Виноски (ДСТУ-режим): %%FN<n>%% у тексті → реальна Word-виноска ──
   // n → повний текст джерела, узятий з explicit citations або розпарсений зі списку джерел у тексті.
@@ -172,7 +222,7 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
           children: [new Paragraph({
             alignment: isHeader ? AlignmentType.CENTER : AlignmentType.LEFT,
             spacing: { line: 240, lineRule: "exact", before: 0, after: 0 },
-            children: [new TextRun({ text: cellText, font: FONT, size: 24, color: "000000", bold: isHeader })],
+            children: [new TextRun({ text: cellText, font: FONT, size: 24, color: "000000", bold: methodInfo ? isHeader : false })],
           })],
         })),
       });
@@ -194,19 +244,72 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
       }));
     }
     let inSources = false;
+    let lastWasDiagram = false;
     const lines = sec.text.split("\n");
     let li = 0;
     while (li < lines.length) {
       const line = lines[li];
       const trimmed = line.trim();
       const trimmedClean = trimmed.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1");
+      const wasDiagram = lastWasDiagram;
+      lastWasDiagram = false;
 
       // Маркери пошуку рисунків — не потрапляють у docx
       if (FIG_MARKER_RE.test(trimmed)) { li++; continue; }
 
+      // PlantUML-діаграма, вже відрендерена в PNG — вставляємо як зображення
+      if (trimmed.startsWith("\x00DIAGRAM") && trimmed.endsWith("\x00")) {
+        const img = diagramImages[Number(trimmed.slice(8, -1))];
+        if (img) {
+          children.push(new Paragraph({
+            alignment: AlignmentType.CENTER,
+            spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
+            children: [new ImageRun({ data: img.data, transformation: { width: img.width, height: img.height } })],
+          }));
+          lastWasDiagram = true;
+          li++; continue;
+        }
+        lastWasDiagram = false;
+        li++; continue;
+      }
+
       // Якщо citations передано явно — пропускаємо вбудований блок джерел з тексту
       if (citations !== undefined && SOURCES_HEADER_RE.test(trimmedClean)) { inSources = true; li++; continue; }
       if (citations !== undefined && inSources) { li++; continue; }
+
+      // Підпис таблиці: "Таблиця N – Назва" — оформлення за methodInfo.formatting.tableFormat
+      // (та сама логіка, що й для великих робіт): номер окремим рядком праворуч +
+      // (центрована або жирна назва) → два рядки; інакше — один рядок.
+      if (TABLE_CAPTION_RE.test(trimmedClean)) {
+        const tfmt = methodInfo?.formatting || {};
+        const tAlignRight = !!tfmt.tableNumberRight;
+        const tCenter = !!tfmt.tableTitleCenter;
+        const tBold = !!tfmt.tableTitleBold;
+        const tTwoLine = tAlignRight && (tCenter || tBold);
+        const dashIdx = trimmedClean.search(/ [–-] /);
+        if (tTwoLine && dashIdx !== -1) {
+          const numPart = trimmedClean.slice(0, dashIdx).trim();
+          const namePart = trimmedClean.slice(dashIdx + 3).trim();
+          children.push(new Paragraph({
+            alignment: AlignmentType.RIGHT, indent: { firstLine: 0 },
+            spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
+            children: [new TextRun({ text: numPart, font: FONT, size: SIZE, color: "000000" })],
+          }));
+          children.push(new Paragraph({
+            alignment: AlignmentType.CENTER, indent: { firstLine: 0 },
+            spacing: { line: LINE, lineRule: "auto", before: 0, after: LINE },
+            children: [new TextRun({ text: namePart, font: FONT, size: SIZE, bold: tBold, color: "000000" })],
+          }));
+        } else {
+          children.push(new Paragraph({
+            alignment: tAlignRight ? AlignmentType.RIGHT : AlignmentType.BOTH,
+            indent: { firstLine: tAlignRight ? 0 : INDENT },
+            spacing: { line: LINE, lineRule: "auto", before: 0, after: LINE },
+            children: [new TextRun({ text: trimmedClean, font: FONT, size: SIZE, bold: tBold, color: "000000" })],
+          }));
+        }
+        li++; continue;
+      }
 
       // Таблиця markdown (рядки що починаються з |)
       if (/^\s*\|/.test(trimmed)) {
@@ -215,17 +318,38 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
         const tbl = makeSimpleTableDocx(tableLines);
         if (tbl) {
           children.push(tbl);
-          children.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
+          // Якщо одразу під таблицею йде рядок "Джерело:" — без інтервалу перед ним
+          // (за методичкою); інакше — стандартний відступ від наступного тексту.
+          let peek = li;
+          while (peek < lines.length && !lines[peek].trim()) peek++;
+          const nextIsSourceCaption = peek < lines.length && SOURCE_CAPTION_RE.test(lines[peek].trim());
+          if (!nextIsSourceCaption) {
+            children.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
+          }
         }
         continue;
       }
 
-      // Підпис рисунку: "Рис. N — Назва"
+      // Підпис джерела під таблицею: "Джерело: ..." — без відступу, дрібніший шрифт,
+      // без інтервалу від таблиці вище.
+      if (SOURCE_CAPTION_RE.test(trimmedClean)) {
+        children.push(new Paragraph({
+          indent: { firstLine: 0 },
+          spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
+          alignment: AlignmentType.LEFT,
+          children: [new TextRun({ text: trimmedClean, font: FONT, size: SIZE_NUM, color: "000000" })],
+        }));
+        li++; continue;
+      }
+
+      // Підпис рисунку: "Рис. N — Назва" — жирний/курсив за methodInfo.formatting.figureFormat;
+      // чорний, якщо зображення вище реально вставлено, інакше помаранчевий (потрібно вручну).
       if (FIG_CAPTION_RE.test(trimmed)) {
+        const ff = methodInfo?.formatting?.figureFormat || "";
         children.push(new Paragraph({
           alignment: AlignmentType.CENTER, indent: { firstLine: 0 },
           spacing: { line: LINE, lineRule: "auto", before: 0, after: Math.round(LINE * 0.5) },
-          children: [new TextRun({ text: trimmedClean, font: FONT, size: SIZE, color: "B85C00" })],
+          children: [new TextRun({ text: trimmedClean, font: FONT, size: SIZE, bold: /жирн|bold/i.test(ff), italics: /курсив|italic/i.test(ff), color: wasDiagram ? "000000" : "B85C00" })],
         }));
         li++; continue;
       }
@@ -255,13 +379,15 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
       const plain = raw.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1");
       if (!plain) { li++; continue; }
       const hasFig = FIG_INLINE_RE.test(plain);
+      // Анотація/ключові слова (укр. і англ.) — курсивом, за методичкою.
+      const isAnotation = ANOTATION_RE.test(plain);
       children.push(new Paragraph({
         indent: { firstLine: INDENT },
         spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
         alignment: AlignmentType.BOTH,
         children: hasFig
           ? [new TextRun({ text: plain, font: FONT, size: SIZE, color: "B85C00" })]
-          : parseBodyLine(raw),
+          : parseBodyLine(raw, isAnotation),
       }));
       li++;
     }

@@ -407,6 +407,53 @@ conclusionsPages: ${s.conclusionsPages ?? 'null'}
 - requiredFormulas: шукай формули/розрахунки які студент має виконати у роботі. Поверни масив: [{"name":"назва показника","formula":"формула у вигляді plain text, наприклад β = Σ(kij × pi) / (m × n)","variables":"опис кожної змінної через крапку з комою","interpretation":"шкала інтерпретації результату якщо є в методичці","section":"analysis або recommendations"}]. null якщо формул немає.${practiceRules}`;
 }
 
+// ── Промпт: оформлення й джерела з методички для малих робіт (тези/стаття/есе/реферат) ──
+// Спрощена версія buildMethodologyReadingPrompt — без розділів/титулки/додатків,
+// яких у малих роботах немає; той самий формат formatting.*, щоб рендер докс
+// (exportSimpleDocx) міг використати ту саму логіку, що й великі роботи.
+export function buildSmallWorkFormattingPrompt() {
+  return `Уважно прочитай методичку/вимоги. Витягни ЛИШЕ інформацію про оформлення та джерела — структуру розділів НЕ шукай, її тут немає.
+
+Поверни ТІЛЬКИ JSON (без markdown):
+{
+  "sourcesStyle": null,
+  "sourcesOrder": "alphabetical",
+  "sourcesGrouping": null,
+  "citationStyle": null,
+  "sourcesFormatRules": null,
+  "recommendedSources": null,
+  "annotationExample": null,
+  "formatting": {
+    "font": null,
+    "fontSize": null,
+    "lineSpacing": null,
+    "margins": {"left": null, "right": null, "top": null, "bottom": null},
+    "indent": null,
+    "tableFormat": null,
+    "tableNumberRight": false,
+    "tableTitleBold": false,
+    "tableTitleCenter": false,
+    "figureFormat": null,
+    "noLongDash": false
+  }
+}
+
+Правила:
+- sourcesStyle: "APA", "ДСТУ 8302:2015", "MLA" або інший — точно як у методичці. null якщо стиль явно не вказано
+- sourcesOrder: "alphabetical" або "citation_order". Якщо не вказано явно — "alphabetical"
+- sourcesGrouping: якщо є правила групування джерел за мовами (спочатку українські, потім іноземні тощо) — вкажи одним рядком. null якщо немає
+- citationStyle: як оформляти посилання в тексті (напр. "[N]", "[N, с. 25]", "(Автор, рік)", виноски). null якщо не вказано явно
+- sourcesFormatRules: конкретні вимоги до оформлення/порядку списку джерел (нормативні акти окремо, порядок розміщення тощо), одним рядком. null якщо таких вимог немає окрім стилю
+- recommendedSources: список рекомендованої літератури або конкретних авторів/видань з методички, одним рядком через крапку з комою. null якщо таких рекомендацій немає
+- annotationExample: якщо в методичці є зразок або явні вимоги до анотації (обсяг, мови, структура блоків) — скопіюй текст зразка/опис одним блоком. null якщо анотація не згадується
+- formatting.font/fontSize/lineSpacing/indent: базові параметри оформлення тексту, ТІЛЬКИ якщо вказані явно в методичці. null якщо не вказано (НЕ підставляй дефолти "про всяк випадок")
+- formatting.margins: поля сторінки в мм, ТІЛЬКИ якщо вказані явно. null для кожного поля, якщо не вказано
+- formatting.tableNumberRight/tableTitleBold/tableTitleCenter: визнач ЗА ФАКТИЧНИМ ВИГЛЯДОМ ЗРАЗКА ТАБЛИЦІ в методичці (текстовий приклад чи зображення сторінки із заголовком виду «Таблиця Х»), А НЕ за загальним текстовим описом вимог. Жирний текст назви таблиці → tableTitleBold true, звичайне накреслення → false. Назва по центру окремим рядком → tableTitleCenter true, звичайний абзац з відступом → false. Номер таблиці окремим рядком у правому куті → tableNumberRight true, номер і назва в одному рядку зліва → false. Якщо зразка таблиці в методичці немає — усі три false
+- formatting.tableFormat: короткий опис оформлення таблиці одним реченням, лише якщо є зразок. null якщо немає
+- formatting.figureFormat: короткий опис оформлення підпису рисунка (жирний/курсив/звичайний шрифт, де саме номер) одним реченням за зразком. null якщо немає
+- formatting.noLongDash: true ТІЛЬКИ якщо методичка явно забороняє тире "—"/"–" в тексті роботи. Інакше false`;
+}
+
 // ── Промпт для генерації анотації (укр + англ) для магістерських/бакалаврських робіт ──
 export function buildAnnotationPrompt(info, methodInfo, statsText, introText, conclusionsText) {
   const exampleBlock = methodInfo?.annotationExample

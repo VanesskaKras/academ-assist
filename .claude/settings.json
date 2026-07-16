@@ -97,7 +97,11 @@
       "Bash(node test-pdf-extract.mjs)",
       "Bash(pkill -f \"vite\")",
       "Bash(pkill -f \"npm run dev\")",
-      "Bash(npx babel *)"
+      "Bash(npx babel *)",
+      "Bash(sed -i 's/readFileSync\\(\".env.local\", \"utf8\"\\)/readFileSync\\(\".env\", \"utf8\"\\)/; s/l.startsWith\\(\"ANTHROPIC_API_KEY=\"\\)\\).split\\(\"=\"\\)\\\\[1\\\\].trim\\(\\)/l.startsWith\\(\"ANTHROPIC_API_KEY=\"\\)\\).split\\(\"=\"\\)[1].trim\\(\\).replace\\(\\\\/^\"|\"$\\\\/g, \"\"\\)/' test_docx_api_TEMP.mjs)",
+      "Bash(node test_docx_api_TEMP.mjs)",
+      "Bash(git -C \"c:\\\\Users\\\\vanes\\\\academ-assist\" log --oneline -1)",
+      "Bash(echo \"EXIT:$?\")"
     ],
     "additionalDirectories": [
       "C:\\Users\\vanes\\AppData\\Local\\Temp\\claude\\c--Users-vanes-academ-assist\\624edb2e-c4cc-4b7d-b8a5-c8f5c62a0653\\scratchpad",
