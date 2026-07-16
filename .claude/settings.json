@@ -83,7 +83,21 @@
       "Bash(python dump_pdf.py overflow_test.pdf pdf_dump_old2.txt)",
       "Bash(python dump_pdf.py overflow_test.pdf pdf_dump_fixed.txt)",
       "Bash(xargs cat)",
-      "Bash(rm -f /tmp/test_cache.js 2>/dev/null; echo done)"
+      "Bash(rm -f /tmp/test_cache.js 2>/dev/null; echo done)",
+      "Bash(node \"C:\\\\Users\\\\vanes\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-vanes-academ-assist\\\\433955c0-4738-4302-9d47-9876a281dd21\\\\scratchpad\\\\test-pptx-image.mjs\")",
+      "Bash(cp -r \"c:/Users/vanes/academ-assist/node_modules/pptxgenjs\" \"C:/Users/vanes/AppData/Local/Temp/claude/c--Users-vanes-academ-assist/433955c0-4738-4302-9d47-9876a281dd21/scratchpad/node_modules/pptxgenjs\")",
+      "Bash(mkdir -p \"C:/Users/vanes/AppData/Local/Temp/claude/c--Users-vanes-academ-assist/433955c0-4738-4302-9d47-9876a281dd21/scratchpad/node_modules\")",
+      "Bash(mkdir -p C:/Users/vanes/AppData/Local/Temp/claude/c--Users-vanes-academ-assist/433955c0-4738-4302-9d47-9876a281dd21/scratchpad/node_modules)",
+      "Bash(cp -r c:/Users/vanes/academ-assist/node_modules/pptxgenjs C:/Users/vanes/AppData/Local/Temp/claude/c--Users-vanes-academ-assist/433955c0-4738-4302-9d47-9876a281dd21/scratchpad/node_modules/pptxgenjs)",
+      "Bash(node test-pptx-image.mjs)",
+      "Bash(cp \"C:/Users/vanes/AppData/Local/Temp/claude/c--Users-vanes-academ-assist/433955c0-4738-4302-9d47-9876a281dd21/scratchpad/test-pptx-image.mjs\" \"c:/Users/vanes/academ-assist/src/lib/__test-pptx-image.mjs\")",
+      "Bash(node src/lib/__test-pptx-image.mjs)",
+      "Bash(unzip -l test123_презентація.pptx)",
+      "Bash(node -e \"console.log\\(require\\('pdfjs-dist/package.json'\\).version\\)\")",
+      "Bash(node test-pdf-extract.mjs)",
+      "Bash(pkill -f \"vite\")",
+      "Bash(pkill -f \"npm run dev\")",
+      "Bash(npx babel *)"
     ],
     "additionalDirectories": [
       "C:\\Users\\vanes\\AppData\\Local\\Temp\\claude\\c--Users-vanes-academ-assist\\624edb2e-c4cc-4b7d-b8a5-c8f5c62a0653\\scratchpad",

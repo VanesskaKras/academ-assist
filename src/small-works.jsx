@@ -1427,40 +1427,89 @@ ${materialContext}${methodReqBlock}${commentBlock}${sourcesBlock}${!methodReqBlo
         ? `Write an ACADEMIC ARTICLE.
 Title: "${info?.topic}" — in CAPITALS, centered.
 Field: ${[info?.subject, info?.direction].filter(Boolean).join(", ")}.
-Structure: Introduction (relevance, aim), Materials and Methods, Results and Discussion, Conclusions.
+Default structure: Introduction (relevance, aim), Materials and Methods, Results and Discussion, Conclusions. If the requirements or provided materials below specify a different structure — use that instead.
 Length: ~${totalPages} pages. Academic style. No bold.`
         : `Напиши НАУКОВУ СТАТТЮ.
 Назва: "${info?.topic}" — ВЕЛИКИМИ ЛІТЕРАМИ, по центру.
 Галузь: ${[info?.subject, info?.direction].filter(Boolean).join(", ")}.
-Структура: Вступ (актуальність, мета), Матеріали і методи, Результати та обговорення, Висновки.
+Структура за замовчуванням: Вступ (актуальність, мета), Матеріали і методи, Результати та обговорення, Висновки. Якщо у вимогах або наданих матеріалах нижче вказана інша структура — використай її замість цієї.
 Обсяг: ~${totalPages} сторінок. Академічний стиль. Без жирного.`,
       ese: isEnglishLang
         ? `Write an ESSAY.
 Title: "${info?.topic}".
-Structure: thesis, arguments with examples (3-4 paragraphs), counter-argument, conclusion.
+Default structure: thesis, arguments with examples (3-4 paragraphs), counter-argument, conclusion. If the requirements or provided materials below specify a different structure — use that instead.
 Length: ~${totalPages} pages. Analytical style. No bold.`
         : `Напиши ЕСЕ.
 Назва: "${info?.topic}".
-Структура: теза, аргументи з прикладами (3-4 абзаци), контраргумент, висновок.
+Структура за замовчуванням: теза, аргументи з прикладами (3-4 абзаци), контраргумент, висновок. Якщо у вимогах або наданих матеріалах нижче вказана інша структура — використай її замість цієї.
 Обсяг: ~${totalPages} сторінок. Аналітичний стиль. Без жирного.`,
     };
 
-    const prompt = `${typePrompts[workType] || `Напиши роботу на тему "${info?.topic}".`}
-${materialContext}
+    const commonTailBlock = `${materialContext}
 ${comment?.trim() ? `\nКОМЕНТАР ЗАМОВНИКА (виконай обов'язково): ${comment.trim()}\n` : ""}${methodRequirements?.trim() ? `\nВИМОГИ ДО РОБОТИ (ОБОВ'ЯЗКОВО дотримуватись):\n${methodRequirements}` : (info?.requirements ? `\nВИМОГИ: ${info.requirements}` : "")}
 ${info?.uniqueness ? `Унікальність: ${info.uniqueness}.` : ""}
 Мова: ${lang}.
-${sourcesContext}
-${figureInstr}
-${sourcesList ? `\nПісля основного тексту додай (зберігай форматування *курсив* у джерелах без змін):\n${sourcesList}` : ""}`;
+${sourcesContext}`;
 
+    // ── Розбивка генерації на частини по ~6 сторінок — довгий одноразовий виклик
+    // гірше тримає структуру, обсяг і рівномірність цитувань (модель "забуває"
+    // вже використані джерела за тисячі слів поспіль). Короткі роботи (≤6 стор.)
+    // лишаються одним викликом — без змін порівняно з попередньою поведінкою.
+    const CHUNK_PAGES = 6;
+    const numChunks = Math.max(1, Math.ceil(totalPages / CHUNK_PAGES));
+    const basePages = Math.floor(totalPages / numChunks);
+    const extraPages = totalPages % numChunks;
+    const chunkPages = Array.from({ length: numChunks }, (_, i) => basePages + (i < extraPages ? 1 : 0));
+
+    let fullText = "";
     try {
-      const msgs = [{ role: "user", content: [...matFileContext, ...fileContext, { type: "text", text: prompt }] }];
-      const articleMaxTokens = Math.min(60000, Math.max(8000, Math.round(totalPages * 3000)));
-      const text = await callClaude(msgs, null, buildSYSSmall(lang), articleMaxTokens);
-      setResult(text);
+      for (let i = 0; i < numChunks; i++) {
+        const isFirst = i === 0;
+        const isLast = i === numChunks - 1;
+        const pagesForChunk = chunkPages[i];
+        setLoadMsg(numChunks > 1 ? `Генерую частину ${i + 1}/${numChunks}...` : "Генерую...");
+
+        // Джерела, ще жодного разу не процитовані у вже написаному тексті —
+        // щоб наступна частина не тягнулась до тих самих 2-3 "зручних" джерел.
+        let usedNote = "";
+        if (!isFirst && hasSources) {
+          const usedNums = new Set();
+          const reCite = /\[(\d+)(?:\s*,\s*с\.\s*\d+)?\]/g;
+          let m;
+          while ((m = reCite.exec(fullText))) usedNums.add(Number(m[1]));
+          const unused = activeCitations.map((_, idx) => idx + 1).filter(n => !usedNums.has(n));
+          if (unused.length) {
+            usedNote = `\nУЖЕ ПРОЦИТОВАНІ джерела: ${[...usedNums].sort((a, b) => a - b).map(n => `[${n}]`).join(", ") || "—"}. ЩЕ ЖОДНОГО РАЗУ не процитовані: ${unused.map(n => `[${n}]`).join(", ")} — за можливості віддай їм пріоритет там, де це доречно за змістом.`;
+          }
+        }
+
+        let sectionPrompt;
+        if (isFirst) {
+          sectionPrompt = `${typePrompts[workType] || `Напиши роботу на тему "${info?.topic}".`}
+${commonTailBlock}${figureInstr}${usedNote}
+${numChunks > 1 && !isLast ? `\nЦе ПЕРША частина роботи загальним обсягом ~${totalPages} стор. Напиши перші ~${pagesForChunk} стор. НЕ пиши висновків і не завершуй роботу — це буде в наступних частинах.` : ""}`;
+        } else {
+          const tail = fullText.trim().split(/\s+/).slice(-500).join(" ");
+          sectionPrompt = `Ось кінець уже написаної частини роботи на тему "${info?.topic}":
+...${tail}
+
+Продовж органічно, без повторів уже написаного, ще на ~${pagesForChunk} стор. Не повторюй вступ і вже розкриті тези.
+${commonTailBlock}${usedNote}
+${isLast ? "Це ОСТАННЯ частина — заверши роботу логічними висновками." : "Це НЕ остання частина — висновків поки не пиши, вони будуть далі."}`;
+        }
+
+        const msgs = [{ role: "user", content: [...matFileContext, ...fileContext, { type: "text", text: sectionPrompt }] }];
+        const chunkMaxTokens = Math.min(20000, Math.max(4000, Math.round(pagesForChunk * 3000)));
+        const chunkText = await callClaude(msgs, null, buildSYSSmall(lang), chunkMaxTokens);
+        fullText = fullText ? `${fullText}\n\n${chunkText.trim()}` : chunkText.trim();
+      }
+
+      // Список джерел додається кодом (не проситься від моделі) — надійніше й
+      // точно у форматі, який очікує подальший крок форматування/перенумерації.
+      const finalText = `${fullText}${sourcesList ? `\n\n${sourcesList}` : ""}`;
+      setResult(finalText);
       playDoneSound();
-      await saveToFirestore({ result: text, tezyCitations: activeCitations, stage: "done", status: "done" });
+      await saveToFirestore({ result: finalText, tezyCitations: activeCitations, stage: "done", status: "done" });
       setStage("done");
     } catch (e) { setError(e.message); }
     setRunning(false); setLoadMsg("");
