@@ -64,7 +64,9 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
   const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel, ExternalHyperlink, InternalHyperlink, Bookmark, FootnoteReferenceRun, ImageRun, Table, TableRow, TableCell, WidthType, BorderStyle } = window.docx;
   const { sections: resolvedSections, diagramImages } = await resolvePlantUmlInSections(sections);
   sections = resolvedSections;
-  const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
+  const FONT = methodInfo?.formatting?.font || "Times New Roman";
+  const SIZE = Math.round((methodInfo?.formatting?.fontSize || 14) * 2);
+  const SIZE_NUM = Math.max(16, SIZE - 4);
   const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
   const marg = methodInfo?.formatting?.margins || commentAnalysis?.formattingHints?.margins || {};
   const toMm = v => (v != null && Number(v) > 0 ? Number(v) : null);
@@ -227,7 +229,7 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
           children: [new Paragraph({
             alignment: isHeader ? AlignmentType.CENTER : AlignmentType.LEFT,
             spacing: { line: 240, lineRule: "exact", before: 0, after: 0 },
-            children: [new TextRun({ text: cellText, font: FONT, size: 24, color: "000000", bold: methodInfo ? isHeader : false })],
+            children: [new TextRun({ text: cellText, font: FONT, size: SIZE_NUM, color: "000000", bold: methodInfo ? isHeader : false })],
           })],
         })),
       });

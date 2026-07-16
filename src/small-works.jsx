@@ -8,6 +8,7 @@ import { searchSourcesForSection, buildSemanticKeywords, generateSearchPhrases, 
 import { remapAndFormatCitations, applyCitationRemap, detectSourceGrouping, createReferenceDeduper } from "./lib/citationFormatting.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { playDoneSound } from "./lib/audio.js";
+import { enforceWordCount } from "./lib/wordCount.js";
 import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
 import { FieldBox, Heading, NavBtn, PrimaryBtn, GreenBtn, SaveIndicator } from "./components/Buttons.jsx";
 import { DropZone } from "./components/DropZone.jsx";
@@ -1446,7 +1447,11 @@ ${materialContext}${methodReqBlock}${commentBlock}${sourcesBlock}${!methodReqBlo
 
     try {
       const secMaxTokens = Math.min(30000, Math.max(6000, Math.round(pagesPerSec * 3000)));
-      const result = await callClaude(msgs, null, buildSYSSmall(lang), secMaxTokens);
+      const raw = await callClaude(msgs, null, buildSYSSmall(lang), secMaxTokens);
+      const result = await enforceWordCount({
+        text: raw, targetWords: Math.round(pagesPerSec * 270), label: sec.label,
+        callClaude, sys: buildSYSSmall(lang), onProgress: setLoadMsg,
+      });
       setSections(p => {
         const next = p.map((s, i) => i === genIdx ? { ...s, text: result } : s);
         saveToFirestore({ sections: next, stage: "writing", status: "writing", genIdx: genIdx + 1 });
@@ -1601,7 +1606,12 @@ ${isLast ? "Це ОСТАННЯ частина — заверши роботу �
 
         const msgs = [{ role: "user", content: [...matFileContext, ...fileContext, { type: "text", text: sectionPrompt }] }];
         const chunkMaxTokens = Math.min(20000, Math.max(4000, Math.round(pagesForChunk * 3000)));
-        const chunkText = await callClaude(msgs, null, buildSYSSmall(lang), chunkMaxTokens);
+        const rawChunk = await callClaude(msgs, null, buildSYSSmall(lang), chunkMaxTokens);
+        const chunkText = await enforceWordCount({
+          text: rawChunk, targetWords: Math.round(pagesForChunk * 270),
+          label: `${info?.topic || ""}${numChunks > 1 ? ` — частина ${i + 1}/${numChunks}` : ""}`,
+          callClaude, sys: buildSYSSmall(lang), onProgress: setLoadMsg,
+        });
         fullText = fullText ? `${fullText}\n\n${chunkText.trim()}` : chunkText.trim();
       }
 

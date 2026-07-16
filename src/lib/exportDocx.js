@@ -310,7 +310,9 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
   const footnotesRegistry = {};
   let footnoteCounter = 0;
 
-  const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
+  const FONT = methodInfo?.formatting?.font || "Times New Roman";
+  const SIZE = Math.round((methodInfo?.formatting?.fontSize || 14) * 2);
+  const SIZE_NUM = Math.max(16, SIZE - 4);
   function _escRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
   const twRe = new RegExp("^" + _escRe(lc.tableWord) + "\\s+\\d");
   const fwRe = new RegExp("^" + _escRe(lc.figWord) + "\\s+\\d");
@@ -481,7 +483,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
             children: [new Paragraph({
               alignment: isHeader ? AlignmentType.CENTER : AlignmentType.LEFT,
               spacing: { line: 240, lineRule: "exact", before: 0, after: 0 },
-              children: [new TextRun({ text: cellText, font: FONT, size: 24, color: isDiagram ? "1A5EAB" : "000000", bold: methodInfo ? isHeader : false })],
+              children: [new TextRun({ text: cellText, font: FONT, size: SIZE_NUM, color: isDiagram ? "1A5EAB" : "000000", bold: methodInfo ? isHeader : false })],
             })],
           })
         ),
@@ -1111,7 +1113,9 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
 // Export plan to docx
 // ─────────────────────────────────────────────
 export async function exportPlanToDocx({ sections, info, methodInfo }) {
-  const FONT = "Times New Roman", SIZE = 28, LINE = 360, INDENT = 709;
+  const FONT = methodInfo?.formatting?.font || "Times New Roman";
+  const SIZE = Math.round((methodInfo?.formatting?.fontSize || 14) * 2);
+  const LINE = 360, INDENT = 709;
   const langCode = detectTextLanguage(sections.map(s => `${s.label || ""} ${s.sectionTitle || ""}`).join(" "), info?.language);
   const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
   const marg = methodInfo?.formatting?.margins || {};
@@ -1180,7 +1184,9 @@ export async function exportPlanToDocx({ sections, info, methodInfo }) {
 // Export practice report plan to docx (flat id/label shape, no `type` field)
 // ─────────────────────────────────────────────
 export async function exportPracticePlanToDocx({ sections, info, methodInfo }) {
-  const FONT = "Times New Roman", SIZE = 28, LINE = 360, INDENT = 709;
+  const FONT = methodInfo?.formatting?.font || "Times New Roman";
+  const SIZE = Math.round((methodInfo?.formatting?.fontSize || 14) * 2);
+  const LINE = 360, INDENT = 709;
   const langCode = detectTextLanguage(sections.map(s => `${s.label || ""} ${s.sectionTitle || ""}`).join(" "), info?.language);
   const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
   const marg = methodInfo?.formatting?.margins || {};
@@ -1245,7 +1251,9 @@ export async function exportPracticePlanToDocx({ sections, info, methodInfo }) {
 // Додатки (.docx)
 // ─────────────────────────────────────────────
 export async function exportAppendixToDocx(text, info, methodInfo, orderId) {
-  const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
+  const FONT = methodInfo?.formatting?.font || "Times New Roman";
+  const SIZE = Math.round((methodInfo?.formatting?.fontSize || 14) * 2);
+  const SIZE_NUM = Math.max(16, SIZE - 4);
   const langCode = detectTextLanguage(text, info?.language);
   const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
   const marg = methodInfo?.formatting?.margins || {};
@@ -1275,7 +1283,7 @@ export async function exportAppendixToDocx(text, info, methodInfo, orderId) {
             children: [new Paragraph({
               alignment: isHeader ? AlignmentType.CENTER : AlignmentType.LEFT,
               spacing: { line: 240, lineRule: "exact", before: 0, after: 0 },
-              children: [new TextRun({ text: cellText, font: FONT, size: 24, color: "000000", bold: methodInfo ? isHeader : false })],
+              children: [new TextRun({ text: cellText, font: FONT, size: SIZE_NUM, color: "000000", bold: methodInfo ? isHeader : false })],
             })],
           })
         ),
@@ -1418,7 +1426,9 @@ export async function exportAppendixToDocx(text, info, methodInfo, orderId) {
 // Доповідь (.docx)
 // ─────────────────────────────────────────────
 export async function exportSpeechToDocx(text, info, methodInfo, orderId, speechLabel) {
-  const FONT = "Times New Roman", SIZE = 28, SIZE_NUM = 24;
+  const FONT = methodInfo?.formatting?.font || "Times New Roman";
+  const SIZE = Math.round((methodInfo?.formatting?.fontSize || 14) * 2);
+  const SIZE_NUM = Math.max(16, SIZE - 4);
   const langCode = detectTextLanguage(text, info?.language);
   const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
   const marg = methodInfo?.formatting?.margins || {};

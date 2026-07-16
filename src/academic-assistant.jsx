@@ -11,6 +11,7 @@ import { exportToPptxFile } from "./lib/exportPptx.js";
 import { extractPdfPageImages } from "./lib/pdfImages.js";
 import { callClaude, callGemini, MODEL, MODEL_FAST } from "./lib/api.js";
 import { playDoneSound } from "./lib/audio.js";
+import { countWords, enforceWordCount } from "./lib/wordCount.js";
 import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildIllustrationsPdfPrompt, buildDrawingsDescriptionPrompt, buildClientMaterialsAnalysisPrompt, buildCorrectionsAnalysisPrompt, buildCorrectionRewritePrompt, buildSourcesRestructureAnalysisPrompt, buildSourcePlacementPrompt, buildRemoveCitationsPrompt, buildFileToSectionsPrompt, buildExtractStructurePrompt, buildContinuationPlanPrompt, buildAnnotationPrompt, buildAnnotationRegenPrompt, buildAntiPlagiarismSYS } from "./lib/prompts.js";
 import { extractReadyWorkStructure, quickParsePlanIds } from "./lib/readyWorkExtract.js";
 import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, getEmpiricalSections, getEconSections, getTechnicalSections, CODE_FILE_EXTENSIONS, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, getLangLabels } from "./lib/planUtils.js";
@@ -57,10 +58,6 @@ function typographQuotes(text) {
       .replace(/[„""]([^"„""]*)["""]/g, "«$1»")
       .replace(/"([^"]*)"/g, "«$1»")))
     .join("");
-}
-
-function countWords(text) {
-  return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
 // ── Профіль завдань дослідження у вступі: к-сть і характер за типом роботи ──
@@ -2051,32 +2048,14 @@ ${planSummary}
       .replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2");
     // Ціль в словах для перевірки фактичного обсягу після генерації (окремо від тексту промпту)
     const targetWords = sec.type === "chapter_conclusion" ? 135 : Math.round((sec.pages || 1) * 270);
-    const enforceWordCount = async (text) => {
-      if (sec.type === "sources") return text;
-      const n = countWords(text);
-      try {
-        if (n < targetWords * 0.85) {
-          const missing = targetWords - n;
-          setLoadMsg(`Дописую: ${sec.label}...`);
-          const contPrompt = `Ось поточний текст підрозділу "${sec.label}" (${n} слів):\n\n${text}\n\nДопиши ще приблизно ${missing} слів, органічно продовжуючи виклад далі. Не повторюй вже написане. Не додавай вступних фраз на кшталт "Продовжимо" чи "Отже". Просто продовжуй текст з того місця де він закінчився, без заголовків і міток.`;
-          const contRaw = await callClaude([{ role: "user", content: contPrompt }], ctrl.signal, buildSYS(lang, methodInfo), Math.min(20000, Math.max(2000, Math.round(missing * 3))));
-          return text + "\n\n" + cleanResult(contRaw).trim();
-        }
-        if (n > targetWords * 1.2) {
-          setLoadMsg(`Скорочую: ${sec.label}...`);
-          const shortenPrompt = `Ось поточний текст підрозділу "${sec.label}" (${n} слів):\n\n${text}\n\nСкороти його до приблизно ${targetWords} слів: прибери повтори та другорядні деталі, збережи головні тези і структуру абзаців. Поверни лише скорочений текст, без коментарів.`;
-          const shortRaw = await callClaude([{ role: "user", content: shortenPrompt }], ctrl.signal, buildSYS(lang, methodInfo), Math.min(30000, Math.max(4000, Math.round(targetWords * 3))));
-          return cleanResult(shortRaw).trim();
-        }
-      } catch (e) {
-        // Якщо допис/скорочення не вдалось - лишаємо початковий текст як є
-      }
-      return text;
-    };
     try {
       const raw = await callClaude(buildMessages(instruction), ctrl.signal, buildSYS(lang, methodInfo), sectionMaxTokens, (s) => setLoadMsg(`Генерую: ${sec.label}... зачекайте ${s}с`));
       // Видаляємо довге тире на всякий випадок (модель іноді ігнорує заборону)
-      const result = await enforceWordCount(cleanResult(raw));
+      const cleaned = cleanResult(raw);
+      const result = sec.type === "sources" ? cleaned : await enforceWordCount({
+        text: cleaned, targetWords, label: sec.label, callClaude,
+        sys: buildSYS(lang, methodInfo), signal: ctrl.signal, onProgress: setLoadMsg, clean: cleanResult,
+      });
       const newContent = { ...contentRef.current, [sec.id]: result };
       setContent(newContent);
       runningRef.current = false; setRunning(false); setLoadMsg("");
