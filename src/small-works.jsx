@@ -249,6 +249,8 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
   // Тези — дані автора
   const [authorData, setAuthorData] = useState({ authorName: "", supervisor: "", university: "", faculty: "", role: "", email: "" });
   const [authorDataOpen, setAuthorDataOpen] = useState(false);
+  const [authorRawText, setAuthorRawText] = useState("");
+  const [authorRecognizing, setAuthorRecognizing] = useState(false);
 
   // Тези — джерела
   const [tezyPapers, setTezyPapers] = useState([]);
@@ -488,6 +490,35 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
       setSaved(true); setTimeout(() => setSaved(false), 3000);
     } catch (e) { console.error(e); }
     setSaving(false);
+  };
+
+  // ── Розпізнавання даних автора з вільного тексту ──
+  const doRecognizeAuthorData = async () => {
+    if (!authorRawText.trim()) return;
+    setAuthorRecognizing(true);
+    try {
+      const prompt = `Розпізнай дані автора наукової роботи з тексту нижче. Текст може містити ПІБ, курс/посаду, наукового керівника, університет, факультет/кафедру, email — у будь-якому порядку і форматі.
+
+ТЕКСТ:
+${authorRawText.trim()}
+
+Поверни ТІЛЬКИ JSON (без markdown):
+{"authorName":"","role":"","supervisor":"","university":"","faculty":"","email":""}
+
+authorName — ПІБ автора повністю, як у тексті.
+role — курс навчання і/або посада (напр. "2 курс (ОС «магістр»)", "студент 3 курсу", "доцент").
+supervisor — ПІБ та звання наукового керівника, якщо згадано (напр. "проф. Петренко П.П."). Порожній рядок якщо немає.
+university — повна назва університету/закладу освіти. Порожній рядок якщо немає.
+faculty — факультет, кафедра, спеціальність або освітня програма — все що стосується підрозділу/напряму. Порожній рядок якщо немає.
+email — email автора, якщо є в тексті. Порожній рядок якщо немає.
+Не вигадуй нічого, чого немає в тексті — порожній рядок для полів, яких там немає.`;
+      const raw = await callClaude([{ role: "user", content: prompt }], null, "Respond only with valid JSON. No markdown.", 500, null, MODEL_FAST);
+      const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || raw);
+      setAuthorData(d => ({ ...d, ...Object.fromEntries(Object.entries(parsed).filter(([, v]) => v)) }));
+    } catch (e) {
+      setError(e.message);
+    }
+    setAuthorRecognizing(false);
   };
 
   // ── Аналіз шаблону ──
@@ -2126,6 +2157,17 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
                 </button>
                 {authorDataOpen && (
                   <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: 10, background: "#faf8f3" }}>
+                    <div>
+                      <div style={{ fontSize: 11, color: "#888", marginBottom: 4 }}>Вставте текст (як у методичці) — розпізнається автоматично</div>
+                      <textarea value={authorRawText} onChange={e => setAuthorRawText(e.target.value)}
+                        placeholder={"Іваненко І. І., 2 курс (ОС «магістр»)...\nНауковий керівник: проф. Петренко П.П.\nКиївський національний університет..."}
+                        style={{ width: "100%", minHeight: 60, padding: "8px 10px", border: "1px solid #d4cfc4", borderRadius: 6, fontFamily: "inherit", fontSize: 13, background: "#fff", boxSizing: "border-box", resize: "vertical" }} />
+                      <button onClick={doRecognizeAuthorData} disabled={authorRecognizing || !authorRawText.trim()}
+                        style={{ marginTop: 6, fontSize: 12, padding: "6px 14px", borderRadius: 6, border: "1.5px solid #1a1a14", background: authorRecognizing ? "#aaa" : "#1a1a14", color: "#e8ff47", cursor: authorRecognizing || !authorRawText.trim() ? "default" : "pointer", fontFamily: "inherit", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                        {authorRecognizing ? <><SpinDot light />Розпізнаю...</> : "🪄 Розпізнати"}
+                      </button>
+                    </div>
+                    <div style={{ borderTop: "1px solid #e0dcd0", paddingTop: 10, fontSize: 11, color: "#aaa" }}>або заповніть вручну:</div>
                     {[
                       { key: "authorName", label: "ПІБ автора", placeholder: "Іваненко Іван Іванович" },
                       { key: "role", label: "Курс / посада", placeholder: "студент 3 курсу / аспірант / доцент" },
