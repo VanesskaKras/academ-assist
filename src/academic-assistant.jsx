@@ -3444,6 +3444,15 @@ ${slideSpecs.join("\n\n")}
     // Короткий конспект структури роботи (лише назви розділів) — для узгодженості
     // без потреби надсилати повний текст усіх інших розділів (дорого).
     const structureList = sections.filter(s => s.type !== "sources").map(s => s.label);
+    // Наявний список джерел роботи — щоб при правці (напр. "додати перелік науковців
+    // у вступі") модель могла процитувати РЕАЛЬНЕ вже наявне джерело під його реальним
+    // номером, а не вигадувати нове чи вимагати нового введення від користувача.
+    const srcSecForList = sections.find(s => s.type === "sources");
+    const availableSourcesList = [];
+    (contentRef.current[srcSecForList?.id] || "").split("\n").forEach(line => {
+      const m = line.match(/^\s*(\d+)[.)]\s*(.*)$/);
+      if (m) availableSourcesList.push({ number: Number(m[1]), text: m[2].trim() });
+    });
     const econSecIds = getEconSections(sections, info);
     const technicalSecIds = getTechnicalSections(sections, info);
     const clientMaterialsRaw = clientMaterialsSummary?.rawText || clientMaterialsText?.trim() || "";
@@ -3506,6 +3515,7 @@ ${slideSpecs.join("\n\n")}
           existingCitationNumbers,
           extraGroundingBlock,
           hasClientIllustrations,
+          availableSourcesList: sec.type !== "sources" ? availableSourcesList : null,
         });
         const sectionMaxTokens = Math.min(60000, Math.max(4000, Math.round((sec.pages || 1) * 3000)));
         // cache:true — той самий системний промпт (buildSYS) повторюється на кожній
