@@ -877,7 +877,7 @@ ${secBlock}
       const info = getPracticeInfo();
 
       // 3. Сортування + форматування стилю (спільна функція, як у великих роботах)
-      const { refList: fmtList, oldToNew, refCiteText, pageRanges } = await remapAndFormatCitations({
+      const { refList: fmtList, oldToNew, refCiteText, pageRanges, pageAbbrev } = await remapAndFormatCitations({
         citations: rawRefs,
         citStructured: flatStructured,
         citStyle: getEffectiveCitStyle(),
@@ -907,7 +907,7 @@ ${secBlock}
         if (!text) return;
         const mapping = secLocalToGlobal[sec.id] || {};
         if (!Object.keys(mapping).length) return;
-        nextContent[sec.id] = applyCitationRemap(text, mapping, refCiteText, { pageRanges });
+        nextContent[sec.id] = applyCitationRemap(text, mapping, refCiteText, { pageRanges, pageAbbrev });
       });
 
       const formattedText = fmtList.map((c, i) => `${i + 1}. ${c}`).join("\n");

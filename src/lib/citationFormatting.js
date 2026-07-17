@@ -101,7 +101,7 @@ export function pickPageInRange(range, occurrenceIndex) {
 // тож для нього достатньо прямої заміни за oldToNew; якщо джерело видалено — маркер
 // прибирається (порожній рядок), інакше експорт (exportDocx.js) підставить виноску
 // не того джерела, яке зараз реально стоїть під цим номером у списку.
-export function applyCitationRemap(text, oldToNew, refCiteText, { pageRanges = {} } = {}) {
+export function applyCitationRemap(text, oldToNew, refCiteText, { pageRanges = {}, pageAbbrev = "с." } = {}) {
   if (!text) return text;
   const citCount = {};
   let out = text.replace(/\[\s*(\d+(?:\s*[,;]\s*\d+)*)\s*(?:,\s*[сc]\.?\s*(\d+)?[^\]]*)?\s*\]/g, (match, oldNums, oldPage) => {
@@ -120,11 +120,15 @@ export function applyCitationRemap(text, oldToNew, refCiteText, { pageRanges = {
     const n = Number(nStr);
     const base = refCiteText[n] || `[${n}]`;
     const range = pageRanges[n];
-    if (!range) return base; // немає діапазону (закон/сайт, або APA/MLA/виноска — там base вже повний)
+    if (!range) return base; // немає відомого діапазону сторінок (закон/сайт) або виноска — base вже повний
     let page = oldPageStr ? Number(oldPageStr) : null;
     if (page != null && (page < range.min || page > range.max)) page = null; // хибна сторінка поза діапазоном
     if (page == null) page = pickPageInRange(range, Number(occStr));
-    return `[${n}, с. ${page}]`;
+    // APA/MLA — base "(Автор, Рік)": дописуємо сторінку перед закриваючою дужкою.
+    // ДСТУ [N] чи інший маркер, що вже в квадратних дужках — так само перед закриваючою "]".
+    if (base.endsWith(")")) return `${base.slice(0, -1)}, ${pageAbbrev} ${page})`;
+    if (base.endsWith("]")) return `${base.slice(0, -1)}, ${pageAbbrev} ${page}]`;
+    return `[${n}, ${pageAbbrev} ${page}]`;
   });
   out = out.replace(/%%CITGRP([\d-]+)%%/g, (_, numsStr) => {
     const nums = numsStr.split("-").map(Number);
@@ -477,7 +481,8 @@ export function apaOrMlaCiteText(ref, n, { isAPA, isMLA }) {
     const yearMatch = ref.match(/[(.\s](\d{4})[).,\s]/);
     const author = rawAuthor.charAt(0).toUpperCase() + rawAuthor.slice(1).toLowerCase();
     const year = yearMatch?.[1] || null;
-    return { text: `(${author}, ${year || "б.р."})`, author, year };
+    const noYearLabel = isMostlyCyrillic(ref) ? "б.р." : "n.d.";
+    return { text: `(${author}, ${year || noYearLabel})`, author, year };
   }
   if (isMLA) {
     const rawSurname = (beforeComma && !beforeComma.includes(" "))
@@ -490,8 +495,9 @@ export function apaOrMlaCiteText(ref, n, { isAPA, isMLA }) {
 }
 
 // Будує формат внутрітекстового посилання ("[N]" / "(Автор, рік)" / "%%FNn%%") і, для
-// ДСТУ, діапазон сторінок джерела — для кожного фінального номера. Спільна для
-// remapAndFormatCitations і doRemapCitations (academic-assistant.jsx).
+// ДСТУ та APA/MLA (де відомий діапазон сторінок джерела), діапазон сторінок — для
+// кожного фінального номера. Спільна для remapAndFormatCitations і doRemapCitations
+// (academic-assistant.jsx).
 export function buildCiteFormats({ finalTexts, rawRefs, indexMap, findStructured, isAPA, isMLA, isFootnoteMode }) {
   const rawIdxOfFinal = new Array(finalTexts.length);
   indexMap.forEach((finalPos, rawIdx) => { rawIdxOfFinal[finalPos - 1] = rawIdx; });
@@ -500,15 +506,20 @@ export function buildCiteFormats({ finalTexts, rawRefs, indexMap, findStructured
   const pageRanges = {};
   finalTexts.forEach((ref, i) => {
     const n = i + 1;
+    const rawIdx = rawIdxOfFinal[i];
+    const rawRef = rawRefs[rawIdx] ?? ref;
     if (isAPA || isMLA) {
       refCiteText[n] = apaOrMlaCiteText(ref, n, { isAPA, isMLA }).text;
+      // Сторінка для APA/MLA — так само, як для ДСТУ: якщо в описі джерела є
+      // діапазон (стаття/дисертація) чи відомий загальний обсяг (книга), applyCitationRemap
+      // допише її в дужку в потрібному місці (перед закриваючою ")").
+      const range = extractPageRange(rawRef, findStructured(rawRef));
+      if (range) pageRanges[n] = range;
     } else if (isFootnoteMode) {
       // Маркер для exportDocx — буде замінений на справжню Word-виноску з повним
       // описом джерела (ref), узятим зі сформатованого списку.
       refCiteText[n] = `%%FN${n}%%`;
     } else {
-      const rawIdx = rawIdxOfFinal[i];
-      const rawRef = rawRefs[rawIdx] ?? ref;
       const sp = findStructured(rawRef);
       const range = extractPageRange(rawRef, sp);
       if (range) pageRanges[n] = range;
@@ -570,5 +581,10 @@ export async function remapAndFormatCitations({
     isAPA, isMLA, isFootnoteMode: citFootnotes,
   });
 
-  return { refList: finalTexts, oldToNew, refCiteText, pageRanges };
+  // Абревіатура сторінки в дужці цитати ("p." для англомовної роботи, інакше "с.") —
+  // застосовується лише коли applyCitationRemap реально дописує сторінку (APA/MLA з
+  // відомим діапазоном, чи ДСТУ [N, с. X]).
+  const pageAbbrev = /англ|english/i.test(language || "") ? "p." : "с.";
+
+  return { refList: finalTexts, oldToNew, refCiteText, pageRanges, pageAbbrev };
 }
