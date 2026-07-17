@@ -45,10 +45,13 @@ async function resolvePlantUmlInSections(sections) {
 // Дефолт 20 — для малих робіт (реферат, тези, есе). Велика версія в lib/planUtils.js має дефолт 80.
 export function parsePagesAvg(str) {
   if (!str) return 20;
-  const nums = String(str).match(/\d+/g);
+  const s = String(str);
+  const nums = s.match(/\d+/g);
   if (!nums) return 20;
-  if (nums.length === 1) return parseInt(nums[0]);
-  return Math.round(nums.reduce((a, b) => a + parseInt(b), 0) / nums.length);
+  const avg = nums.length === 1 ? parseInt(nums[0]) : Math.round(nums.reduce((a, b) => a + parseInt(b), 0) / nums.length);
+  // Якщо поруч із числом вказано "слів"/"слова"/"words" — це обсяг у словах, конвертуємо в сторінки (~270 слів/стор.)
+  if (/слів|слова|слово|words?\b/i.test(s)) return Math.max(1, Math.round(avg / 270));
+  return avg;
 }
 
 // ── Simple docx export для малих робіт (плоский текст без підрозділів) ──

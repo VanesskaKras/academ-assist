@@ -301,6 +301,7 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
   const [maxStageIdx, setMaxStageIdx] = useState(0);
   const [running, setRunning] = useState(false);
   const runningRef = useRef(false);
+  const genAbortRef = useRef(null); // AbortController активної генерації — для кнопки "Зупинити"
 
   // Прості роботи — один блок тексту або слайди
   const [result, setResult] = useState(""); // для тез/статті/есе
@@ -1492,6 +1493,8 @@ ${materialContext}${methodReqBlock}${commentBlock}${sourcesBlock}${!methodReqBlo
   // ── Генерація статті/есе ──
   const doGenerateSimple = async (citationsOverride) => {
     setRunning(true); setLoadMsg("Генерую...");
+    const controller = new AbortController();
+    genAbortRef.current = controller;
     const lang = info?.language || "Українська";
     const totalPages = parsePagesAvg(info?.pages || "5");
 
@@ -1629,11 +1632,11 @@ ${isLast ? "Це ОСТАННЯ частина — заверши роботу �
 
         const msgs = [{ role: "user", content: [...matFileContext, ...fileContext, { type: "text", text: sectionPrompt }] }];
         const chunkMaxTokens = Math.min(20000, Math.max(4000, Math.round(pagesForChunk * 3000)));
-        const rawChunk = cleanDash(await callClaude(msgs, null, buildSYSSmall(lang), chunkMaxTokens));
+        const rawChunk = cleanDash(await callClaude(msgs, controller.signal, buildSYSSmall(lang), chunkMaxTokens));
         const chunkText = await enforceWordCount({
           text: rawChunk, targetWords: Math.round(pagesForChunk * 270),
           label: `${info?.topic || ""}${numChunks > 1 ? ` — частина ${i + 1}/${numChunks}` : ""}`,
-          callClaude, sys: buildSYSSmall(lang), onProgress: setLoadMsg, clean: cleanDash,
+          callClaude, sys: buildSYSSmall(lang), signal: controller.signal, onProgress: setLoadMsg, clean: cleanDash,
         });
         fullText = fullText ? `${fullText}\n\n${chunkText.trim()}` : chunkText.trim();
       }
@@ -1666,7 +1669,10 @@ ${isLast ? "Це ОСТАННЯ частина — заверши роботу �
       playDoneSound();
       await saveToFirestore({ result: finalText, tezyCitations: activeCitations, stage: "done", status: "done" });
       setStage("done");
-    } catch (e) { setError(e.message); }
+    } catch (e) {
+      setError(e.name === "AbortError" || e.message === "AbortError" ? "Генерацію зупинено." : e.message);
+    }
+    genAbortRef.current = null;
     setRunning(false); setLoadMsg("");
   };
 
@@ -2857,7 +2863,17 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
                   {tezyCitations.length > 0 ? `${tezyCitations.length} джерел обрано. ` : ""}{(materialText.trim() || materialFiles.length > 0) ? "Матеріал для роботи є. " : ""}
                   Натисніть щоб розпочати генерацію.
                 </p>
-                <PrimaryBtn onClick={doGenerateSimple} loading={running} msg={loadMsg} label={`Генерувати ${cfg.label} →`} />
+                <div style={{ display: "flex", gap: 10, justifyContent: "center", alignItems: "center" }}>
+                  <PrimaryBtn onClick={doGenerateSimple} loading={running} msg={loadMsg} label={`Генерувати ${cfg.label} →`} />
+                  {running && (
+                    <button
+                      onClick={() => genAbortRef.current?.abort()}
+                      style={{ background: "transparent", border: "1.5px solid #b03030", color: "#b03030", borderRadius: 7, padding: "10px 20px", fontFamily: "'Spectral',serif", fontSize: 13, cursor: "pointer" }}
+                    >
+                      ✕ Зупинити
+                    </button>
+                  )}
+                </div>
               </div>
             ) : (
               <>

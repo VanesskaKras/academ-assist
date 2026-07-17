@@ -135,10 +135,13 @@ export const ORDER_STATUS = {
 // Дефолт 80 — для великих академічних робіт (курсова, дипломна). Мала версія в shared.jsx має дефолт 20.
 export function parsePagesAvg(str) {
   if (!str) return 80;
-  const nums = String(str).match(/\d+/g);
+  const s = String(str);
+  const nums = s.match(/\d+/g);
   if (!nums) return 80;
-  if (nums.length === 1) return parseInt(nums[0]);
-  return Math.round(nums.reduce((a, b) => a + parseInt(b), 0) / nums.length);
+  const avg = nums.length === 1 ? parseInt(nums[0]) : Math.round(nums.reduce((a, b) => a + parseInt(b), 0) / nums.length);
+  // Якщо поруч із числом вказано "слів"/"слова"/"words" — це обсяг у словах, конвертуємо в сторінки (~270 слів/стор.)
+  if (/слів|слова|слово|words?\b/i.test(s)) return Math.max(1, Math.round(avg / 270));
+  return avg;
 }
 
 export function parseTemplate(text) {
