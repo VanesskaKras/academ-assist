@@ -417,7 +417,7 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
         const ff = methodInfo?.formatting?.figureFormat || "";
         children.push(new Paragraph({
           alignment: AlignmentType.CENTER, indent: { firstLine: 0 },
-          spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
+          spacing: { line: LINE, lineRule: "auto", before: 0, after: LINE },
           children: [new TextRun({ text: trimmedClean, font: FONT, size: SIZE, bold: /жирн|bold/i.test(ff), italics: /курсив|italic/i.test(ff), color: wasDiagram ? "000000" : "B85C00" })],
         }));
         li++; continue;

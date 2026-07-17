@@ -624,7 +624,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
         lastWasDiagramTable = false;
         result.push(new Paragraph({
           alignment: AlignmentType.CENTER,
-          spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
+          spacing: { line: LINE, lineRule: "auto", before: 0, after: LINE },
           children: [new TextRun({ text: line.trim(), font: FONT, size: SIZE, bold: fBold, italics: fItalic, color: isResolved ? "000000" : "B85C00" })],
         }));
         i++;
