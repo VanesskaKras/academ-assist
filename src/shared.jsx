@@ -2,7 +2,7 @@
 // shared.js — утиліти спільні для small-works (docx export, стилі, парсинг)
 // Логіка API, промпти, компоненти — в lib/ та components/
 // ─────────────────────────────────────────────
-import { renderPlantUmlToPng } from "./lib/exportDocx.js";
+import { renderPlantUmlToPng, detectTextLanguage } from "./lib/exportDocx.js";
 
 const PLANTUML_FENCE_RE = /^\s*```\s*plantuml\s*$/i;
 const FENCE_END_RE = /^\s*```\s*$/;
@@ -64,6 +64,7 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
   const { Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel, ExternalHyperlink, InternalHyperlink, Bookmark, FootnoteReferenceRun, ImageRun, Table, TableRow, TableCell, WidthType, BorderStyle } = window.docx;
   const { sections: resolvedSections, diagramImages } = await resolvePlantUmlInSections(sections);
   sections = resolvedSections;
+  const langCode = detectTextLanguage(sections.map(s => s.text || "").join("\n\n"), info?.language);
   const FONT = methodInfo?.formatting?.font || "Times New Roman";
   const SIZE = Math.round((methodInfo?.formatting?.fontSize || 14) * 2);
   const SIZE_NUM = Math.max(16, SIZE - 4);
@@ -185,7 +186,6 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
 
   const SOURCES_HEADER_RE = /^(список використаних джерел|список літератури|використані джерела|references?)\s*[:\.]?\s*$/i;
   const FIG_CAPTION_RE = /^рис\.?\s+\d/i;
-  const FIG_INLINE_RE = /рис(?:унок)?\.?\s*\d+/i;
   const FIG_MARKER_RE = /^\[🔍 Рисунок \d+:/;
   const TABLE_CAPTION_RE = /^(таблиця|table)\s+\d/i;
   const SOURCE_CAPTION_RE = /^(джерело|source)\s*:/i;
@@ -214,8 +214,9 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
     });
   }
 
-  function makeSimpleTableDocx(tableLines) {
-    const border = { style: BorderStyle.SINGLE, size: 1, color: "000000" };
+  function makeSimpleTableDocx(tableLines, isDiagram = false) {
+    const borderColor = isDiagram ? "1A5EAB" : "000000";
+    const border = { style: BorderStyle.SINGLE, size: isDiagram ? 6 : 1, color: borderColor };
     const cellBorders = { top: border, bottom: border, left: border, right: border };
     const dataLines = tableLines.filter(l => !/^\s*\|[-:| ]+\|\s*$/.test(l));
     if (!dataLines.length) return null;
@@ -229,7 +230,7 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
           children: [new Paragraph({
             alignment: isHeader ? AlignmentType.CENTER : AlignmentType.LEFT,
             spacing: { line: 240, lineRule: "exact", before: 0, after: 0 },
-            children: [new TextRun({ text: cellText, font: FONT, size: SIZE_NUM, color: "000000", bold: methodInfo ? isHeader : false })],
+            children: [new TextRun({ text: cellText, font: FONT, size: SIZE_NUM, color: isDiagram ? "1A5EAB" : "000000", bold: isHeader && !!methodInfo?.formatting?.tableHeaderBold })],
           })],
         })),
       });
@@ -368,19 +369,34 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
       if (/^\s*\|/.test(trimmed)) {
         const tableLines = [];
         while (li < lines.length && /^\s*\|/.test(lines[li].trim())) { tableLines.push(lines[li]); li++; }
-        const tbl = makeSimpleTableDocx(tableLines);
+        // Якщо одразу під таблицею йде підпис рисунка — це таблиця-джерело для
+        // діаграми (за системним промптом): виділяємо синім, як у великих роботах,
+        // і позначаємо підпис нижче як "вирішений" (чорний, а не помаранчевий).
+        let peek = li;
+        while (peek < lines.length && !lines[peek].trim()) peek++;
+        const nextIsFigCaption = peek < lines.length && FIG_CAPTION_RE.test(lines[peek].trim());
+        if (nextIsFigCaption) lastWasDiagram = true;
+        const tbl = makeSimpleTableDocx(tableLines, nextIsFigCaption);
         if (tbl) {
           children.push(tbl);
           // Якщо одразу під таблицею йде рядок "Джерело:" — без інтервалу перед ним
           // (за методичкою); інакше — стандартний відступ від наступного тексту.
-          let peek = li;
-          while (peek < lines.length && !lines[peek].trim()) peek++;
           const nextIsSourceCaption = peek < lines.length && SOURCE_CAPTION_RE.test(lines[peek].trim());
           if (!nextIsSourceCaption) {
             children.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
           }
         }
         continue;
+      }
+
+      // Підказка для вставки діаграми в Word — окремим стилем, а не як звичайний абзац.
+      if (/^⚠/.test(trimmed)) {
+        children.push(new Paragraph({
+          alignment: AlignmentType.CENTER, indent: { firstLine: 0 },
+          spacing: { line: LINE, lineRule: "auto", before: 0, after: LINE },
+          children: [new TextRun({ text: trimmedClean, font: FONT, size: SIZE_NUM, color: "1A5EAB", italics: true, bold: true })],
+        }));
+        li++; continue;
       }
 
       // Підпис джерела під таблицею: "Джерело: ..." — без відступу, дрібніший шрифт,
@@ -431,16 +447,13 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
       const raw = trimmed.replace(/^#{1,6}\s+/, "").replace(/^[-*]\s+/, "");
       const plain = raw.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1");
       if (!plain) { li++; continue; }
-      const hasFig = FIG_INLINE_RE.test(plain);
       // Анотація/ключові слова (укр. і англ.) — курсивом, за методичкою.
       const isAnotation = ANOTATION_RE.test(plain);
       children.push(new Paragraph({
         indent: { firstLine: INDENT },
         spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
         alignment: AlignmentType.BOTH,
-        children: hasFig
-          ? [new TextRun({ text: plain, font: FONT, size: SIZE, color: "B85C00" })]
-          : parseBodyLine(raw, isAnotation),
+        children: parseBodyLine(raw, isAnotation),
       }));
       li++;
     }
@@ -461,7 +474,7 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
   }
 
   const doc = new Document({
-    styles: { default: { document: { run: { font: FONT, size: SIZE, color: "000000" }, paragraph: { spacing: { line: LINE, lineRule: "auto" } } } } },
+    styles: { default: { document: { run: { font: FONT, size: SIZE, color: "000000", language: { value: langCode } }, paragraph: { spacing: { line: LINE, lineRule: "auto" } } } } },
     footnotes: footnoteCounter > 0 ? footnotesRegistry : undefined,
     sections: [{
       properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: T, right: R, bottom: B, left: L } }, pageNumberStart: 1, titlePage: true },

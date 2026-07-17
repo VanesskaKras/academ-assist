@@ -20,6 +20,11 @@ import { SYS_JSON_SHORT } from "./lib/prompts.js";
 import { exportToPptxFile } from "./lib/exportPptx.js";
 import { ChecklistStage } from "./components/stages/ChecklistStage.jsx";
 
+// ── Видаляємо довге тире на всякий випадок (модель іноді ігнорує заборону з промпту) ──
+function cleanDash(raw) {
+  return raw.replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "");
+}
+
 // ── Рендер тексту з markdown-таблицями ──
 function renderWithTables(text) {
   if (!text) return null;
@@ -1044,7 +1049,7 @@ ${supervisorBlock}`;
     try {
       const msgs = [{ role: "user", content: [...fileContext, ...matFileContext, { type: "text", text: prompt }] }];
       const tezyMaxTokens = Math.min(30000, Math.max(6000, Math.round(totalPages * 3000)));
-      const text = await callClaude(msgs, null, buildSYSSmall(lang), tezyMaxTokens);
+      const text = cleanDash(await callClaude(msgs, null, buildSYSSmall(lang), tezyMaxTokens));
       setResult(text);
       playDoneSound();
       await saveToFirestore({ result: text, authorData, tezyCitations: activeCitations, stage: "done", status: "done" });
@@ -1447,10 +1452,10 @@ ${materialContext}${methodReqBlock}${commentBlock}${sourcesBlock}${!methodReqBlo
 
     try {
       const secMaxTokens = Math.min(30000, Math.max(6000, Math.round(pagesPerSec * 3000)));
-      const raw = await callClaude(msgs, null, buildSYSSmall(lang), secMaxTokens);
+      const raw = cleanDash(await callClaude(msgs, null, buildSYSSmall(lang), secMaxTokens));
       const result = await enforceWordCount({
         text: raw, targetWords: Math.round(pagesPerSec * 270), label: sec.label,
-        callClaude, sys: buildSYSSmall(lang), onProgress: setLoadMsg,
+        callClaude, sys: buildSYSSmall(lang), onProgress: setLoadMsg, clean: cleanDash,
       });
       setSections(p => {
         const next = p.map((s, i) => i === genIdx ? { ...s, text: result } : s);
@@ -1606,11 +1611,11 @@ ${isLast ? "Це ОСТАННЯ частина — заверши роботу �
 
         const msgs = [{ role: "user", content: [...matFileContext, ...fileContext, { type: "text", text: sectionPrompt }] }];
         const chunkMaxTokens = Math.min(20000, Math.max(4000, Math.round(pagesForChunk * 3000)));
-        const rawChunk = await callClaude(msgs, null, buildSYSSmall(lang), chunkMaxTokens);
+        const rawChunk = cleanDash(await callClaude(msgs, null, buildSYSSmall(lang), chunkMaxTokens));
         const chunkText = await enforceWordCount({
           text: rawChunk, targetWords: Math.round(pagesForChunk * 270),
           label: `${info?.topic || ""}${numChunks > 1 ? ` — частина ${i + 1}/${numChunks}` : ""}`,
-          callClaude, sys: buildSYSSmall(lang), onProgress: setLoadMsg,
+          callClaude, sys: buildSYSSmall(lang), onProgress: setLoadMsg, clean: cleanDash,
         });
         fullText = fullText ? `${fullText}\n\n${chunkText.trim()}` : chunkText.trim();
       }

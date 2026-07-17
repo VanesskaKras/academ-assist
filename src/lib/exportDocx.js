@@ -264,7 +264,7 @@ function getLangWordCode(lang) {
 // (info.language — це заявлена мова роботи, вона не завжди збігається з
 // реальною мовою згенерованого тексту, тому мову правопису беремо з тексту)
 // ─────────────────────────────────────────────
-function detectTextLanguage(text, fallbackLang) {
+export function detectTextLanguage(text, fallbackLang) {
   const sample = (text || "").slice(0, 8000);
   const letters = sample.match(/\p{L}/gu) || [];
   if (letters.length < 30) return getLangWordCode(fallbackLang);
@@ -483,7 +483,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
             children: [new Paragraph({
               alignment: isHeader ? AlignmentType.CENTER : AlignmentType.LEFT,
               spacing: { line: 240, lineRule: "exact", before: 0, after: 0 },
-              children: [new TextRun({ text: cellText, font: FONT, size: SIZE_NUM, color: isDiagram ? "1A5EAB" : "000000", bold: methodInfo ? isHeader : false })],
+              children: [new TextRun({ text: cellText, font: FONT, size: SIZE_NUM, color: isDiagram ? "1A5EAB" : "000000", bold: isHeader && !!methodInfo?.formatting?.tableHeaderBold })],
             })],
           })
         ),
@@ -1283,7 +1283,7 @@ export async function exportAppendixToDocx(text, info, methodInfo, orderId) {
             children: [new Paragraph({
               alignment: isHeader ? AlignmentType.CENTER : AlignmentType.LEFT,
               spacing: { line: 240, lineRule: "exact", before: 0, after: 0 },
-              children: [new TextRun({ text: cellText, font: FONT, size: SIZE_NUM, color: "000000", bold: methodInfo ? isHeader : false })],
+              children: [new TextRun({ text: cellText, font: FONT, size: SIZE_NUM, color: "000000", bold: isHeader && !!methodInfo?.formatting?.tableHeaderBold })],
             })],
           })
         ),
