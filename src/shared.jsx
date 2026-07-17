@@ -404,7 +404,7 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
       if (SOURCE_CAPTION_RE.test(trimmedClean)) {
         children.push(new Paragraph({
           indent: { firstLine: 0 },
-          spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
+          spacing: { line: LINE, lineRule: "auto", before: 0, after: LINE },
           alignment: AlignmentType.LEFT,
           children: [new TextRun({ text: trimmedClean, font: FONT, size: SIZE_NUM, color: "000000" })],
         }));
@@ -417,7 +417,7 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
         const ff = methodInfo?.formatting?.figureFormat || "";
         children.push(new Paragraph({
           alignment: AlignmentType.CENTER, indent: { firstLine: 0 },
-          spacing: { line: LINE, lineRule: "auto", before: 0, after: Math.round(LINE * 0.5) },
+          spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
           children: [new TextRun({ text: trimmedClean, font: FONT, size: SIZE, bold: /жирн|bold/i.test(ff), italics: /курсив|italic/i.test(ff), color: wasDiagram ? "000000" : "B85C00" })],
         }));
         li++; continue;
