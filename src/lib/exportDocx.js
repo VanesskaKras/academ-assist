@@ -833,6 +833,10 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
       spacing: { line: LINE_SINGLE, lineRule: "auto", before: 0, after: LINE_SINGLE * 2 },
       children: [new TextRun({ text: lc.toc, font: FONT, size: SIZE, bold: true, color: "000000" })],
     }));
+    children.push(new TableOfContents(lc.toc, {
+      hyperlink: true,
+      headingStyleRange: "1-2",
+    }));
     children.push(new Paragraph({
       spacing: { line: LINE_SINGLE, lineRule: "auto", before: 0, after: 0 },
       children: [],
