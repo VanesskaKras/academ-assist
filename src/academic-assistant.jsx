@@ -1639,8 +1639,23 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
       if (!writingDoneRef.current) {
         writingDoneRef.current = true;
         playDoneSound();
+
+        // Підставляємо у "Структура роботи" фактичну (пораховану з готового тексту) к-сть сторінок
+        // замість запланованої — токен __TOTAL_PAGES__ ставить AI під час написання вступу.
+        let finalContent = contentRef.current;
+        const introSec = sections.find(s => s.type === "intro");
+        if (introSec && finalContent[introSec.id]?.includes("__TOTAL_PAGES__")) {
+          const totalWords = sections
+            .filter(s => s.type !== "sources")
+            .reduce((sum, s) => sum + (finalContent[s.id] || "").trim().split(/\s+/).filter(Boolean).length, 0);
+          const actualPages = Math.max(1, Math.round(totalWords / 270));
+          finalContent = { ...finalContent, [introSec.id]: finalContent[introSec.id].replaceAll("__TOTAL_PAGES__", String(actualPages)) };
+          contentRef.current = finalContent;
+          setContent(finalContent);
+        }
+
         const allUnlocked = activeStageKeys.length - 1;
-        saveToFirestore({ stage: "writing", status: "writing", content, citInputs, maxStageIdx: allUnlocked });
+        saveToFirestore({ stage: "writing", status: "writing", content: finalContent, citInputs, maxStageIdx: allUnlocked });
       }
       if (!autoRemapDoneRef.current) {
         autoRemapDoneRef.current = true;
@@ -1770,7 +1785,7 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
         }
         if (/структура|structure|struktura|štruktúra/i.test(comp)) {
           const phrase = il.structure || "Структура роботи:";
-          return `${label}: write in format "${phrase} the work consists of introduction," — number of chapters, conclusions, sources list, total page count.`;
+          return `${label}: write in format "${phrase} the work consists of introduction," — number of chapters, conclusions, sources list. For the total page count write the exact literal token __TOTAL_PAGES__ in place of the number (no digits) — it will be replaced automatically with the real page count once the whole work is generated.`;
         }
         return `${label}: write in format "${label} – [content relevant to topic "${d.topic}"]".`;
       });
