@@ -307,14 +307,16 @@ const YEAR_STRICT = new Date().getFullYear() - 4; // >= поточний-4 (ос
 const YEAR_LOOSE  = new Date().getFullYear() - 9; // >= поточний-9 (останні 10 років)
 const YEAR_LOOSE_MIN_SCORE = 2; // мінімальний скор для 6–10-річних джерел
 
-function applyYearFilter(papers, keywords = []) {
+// extraYears: під час добору при нестачі джерел межу "6-10 років" відсовуємо на +2/+3 роки за раунд
+function applyYearFilter(papers, keywords = [], extraYears = 0) {
+  const looseFloor = YEAR_LOOSE - extraYears;
   return papers.map(p => ({
     ...p,
     _score: p._score ?? scoreRelevance((p.title || '').toLowerCase(), keywords),
   })).filter(p => {
     const yr = parseInt(p.year, 10) || 0;
     if (yr >= YEAR_STRICT) return true;
-    if (yr >= YEAR_LOOSE) return (p._score || 0) >= YEAR_LOOSE_MIN_SCORE;
+    if (yr >= looseFloor) return (p._score || 0) >= YEAR_LOOSE_MIN_SCORE;
     return false;
   });
 }
@@ -556,8 +558,8 @@ async function fetchBooksSerper(query, limit) {
 }
 
 // ── CrossRef (добре покриває укр. журнали з DOI) ──
-async function fetchCrossRefUkrainian(query, limit) {
-  const url = `https://api.crossref.org/works?query=${encodeURIComponent(query)}&filter=from-pub-date:${YEAR_LOOSE}&rows=${Math.min(limit * 2, 20)}`;
+async function fetchCrossRefUkrainian(query, limit, extraYears = 0) {
+  const url = `https://api.crossref.org/works?query=${encodeURIComponent(query)}&filter=from-pub-date:${YEAR_LOOSE - extraYears}&rows=${Math.min(limit * 2, 20)}`;
   const r = await fetch(url, {
     cache: 'no-store',
     headers: { 'User-Agent': 'AcademAssist/1.0 (mailto:support@academ-assist.vercel.app)' },
@@ -605,14 +607,14 @@ async function fetchEnglishViaBackend(enKeywords, limit) {
 // ── Пошук за однією фразою: BASE, Scholar (опційно), CORE, OpenAlex uk, CrossRef, OpenAlex pl (+ en для технічних робіт) ──
 // allowEnglish: для технічних/IT робіт англомовних наукових джерел об'єктивно більше,
 // ніж українських — вмикаємо повноцінний англомовний запит (не лише Scholar на першій фразі)
-export async function searchByPhrase(phrase, limit = 10, page = 1, useScholar = false, allowEnglish = false) {
-  const yr = `publication_year:>${YEAR_LOOSE - 1}`;
+export async function searchByPhrase(phrase, limit = 10, page = 1, useScholar = false, allowEnglish = false, extraYears = 0) {
+  const yr = `publication_year:>${YEAR_LOOSE - extraYears - 1}`;
   const [r1, r2, r3, r4, r5, r6, r7] = await Promise.allSettled([
     fetchBASE(phrase, limit),
     useScholar ? fetchScholar(phrase, limit) : Promise.resolve([]),
     fetchCORE(phrase, limit),
     openAlexSearch(phrase, `language:uk,${yr}`, limit, page),
-    fetchCrossRefUkrainian(phrase, limit),
+    fetchCrossRefUkrainian(phrase, limit, extraYears),
     openAlexSearch(phrase, `language:pl,${yr}`, limit, page),
     allowEnglish ? openAlexSearch(phrase, `language:en,${yr}`, limit, page) : Promise.resolve([]),
   ]);
@@ -634,7 +636,7 @@ export async function searchByPhrase(phrase, limit = 10, page = 1, useScholar = 
     raw.push(p);
   }
   const keywords = phrase.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-  return applyYearFilter(raw, keywords);
+  return applyYearFilter(raw, keywords, extraYears);
 }
 
 // ── Офіційні статистичні джерела для економічних/фінансових робіт ──
@@ -881,20 +883,23 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
 // Повертає [{...paper, geminiTier: 'exact'|'analogy', geminiReason: '...'}]
 export async function filterSourcesWithGemini(candidates, sectionTitle, topic, maxResults = 15, thesisContext = '') {
   if (!candidates.length) return candidates;
-  const items = candidates.map((p, i) => `${i}. ${p.title}`).join('\n');
+  const items = candidates.map((p, i) => {
+    const abstractLine = p.abstract ? `\n   Анотація: ${p.abstract.slice(0, 220)}` : '';
+    return `${i}. ${p.title}${abstractLine}`;
+  }).join('\n');
   const thesisLine = thesisContext ? `Конкретний аспект для цих джерел: "${thesisContext}"\n` : '';
   const prompt = `Тема наукової роботи: "${topic}"
 Підрозділ: "${sectionTitle}"
 ${thesisLine}
-Список знайдених статей:
+Список знайдених статей (з анотацією, де є):
 ${items}
 
-Відбери ЛИШЕ статті що безпосередньо стосуються теми і підрозділу: той самий об'єкт дослідження, та сама галузь, той самий контекст.
+Відбери ЛИШЕ статті що безпосередньо стосуються теми і підрозділу: той самий об'єкт дослідження, та сама галузь, той самий контекст. Спирайся на анотацію, якщо вона є — назва сама по собі часто оманлива.
 НЕ включай: статті де спільне лише одне загальне слово без прив'язки до теми, статті з інших галузей, загальні огляди не пов'язані з предметом.
 Якщо жодна стаття не підходить — поверни порожній масив results.
-Для кожної відібраної — одне речення до 12 слів чому підходить.
+Для кожної відібраної — оцінка релевантності 0-100 (100 = точно про цей предмет і контекст, 70 = впевнено релевантна, 50 = дотична/суміжна тема) і одне речення до 12 слів чому підходить.
 
-Поверни JSON: {"results":[{"index":0,"reason":"Розглядає..."}]}`;
+Поверни JSON: {"results":[{"index":0,"score":85,"reason":"Розглядає..."}]}`;
   try {
     const res = await fetch('/api/gemini', {
       method: 'POST',
@@ -920,9 +925,42 @@ ${items}
       .map(r => ({
         ...candidates[r.index],
         geminiReason: r.reason || '',
+        geminiScore: typeof r.score === 'number' ? r.score : 60,
       }));
   } catch {
     return candidates;
+  }
+}
+
+// ── Другий раунд добору при нестачі: альтернативні (синоніми/суміжні терміни) пошукові фрази ──
+export async function generateAlternatePhrases(topic, sectionTitle, triedPhrases = []) {
+  const prompt = `Тема наукової роботи: "${topic}"
+Підрозділ: "${sectionTitle}"
+Вже пробували ці пошукові фрази (результатів бракує): ${triedPhrases.join('; ')}
+
+Запропонуй 3 НОВІ пошукові фрази українською для пошуку наукових джерел — використай синоніми, суміжні терміни або трохи ширше формулювання предмета, але не втрачай зв'язку з темою й підрозділом.
+Поверни JSON: {"phrases":["фраза1","фраза2","фраза3"]}`;
+  try {
+    const res = await fetch('/api/gemini', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        _model: 'gemini-2.5-flash-lite',
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: { maxOutputTokens: 400, responseMimeType: 'application/json' },
+      }),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    if (data.usageMetadata) {
+      const cost = (data.usageMetadata.promptTokenCount * 0.10 + data.usageMetadata.candidatesTokenCount * 0.40) / 1_000_000;
+      window.dispatchEvent(new CustomEvent('apicost', { detail: { cost, model: 'gemini-2.5-flash-lite', inTok: data.usageMetadata.promptTokenCount, outTok: data.usageMetadata.candidatesTokenCount } }));
+    }
+    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const parsed = JSON.parse(raw);
+    return (parsed.phrases || []).map(String).filter(Boolean);
+  } catch {
+    return [];
   }
 }
 

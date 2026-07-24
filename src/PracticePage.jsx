@@ -21,7 +21,7 @@ import {
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { playDoneSound } from "./lib/audio.js";
 import {
-  filterSourcesWithGemini, searchByPhrase, getEconInstitutionalSources,
+  filterSourcesWithGemini, searchByPhrase, getEconInstitutionalSources, generateAlternatePhrases,
 } from "./lib/sourcesSearch.js";
 import { exportToDocx, exportPracticePlanToDocx } from "./lib/exportDocx.js";
 import { remapAndFormatCitations, applyCitationRemap, createReferenceDeduper } from "./lib/citationFormatting.js";
@@ -621,6 +621,51 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
 
           setPhraseGroups(prev => ({ ...prev, [secId]: [...updatedGroups] }));
           setSuggestedSources(prev => ({ ...prev, [secId]: updatedGroups.flatMap(g => g.papers) }));
+        }
+      }
+
+      // ── Добір при нестачі: якщо релевантних (score≥70) джерел менше, ніж треба, — поступово розширюємо діапазон років (+2, потім +3),
+      // а якщо й це не дало результату — пробуємо альтернативні (синонімічні) пошукові фрази ──
+      if (!stopSearchRef.current) {
+        const sourceTarget = calcSourceTarget(mainSecs);
+        const sourceDist = calcSourceDist(mainSecs, sourceTarget);
+        const needed = sourceDist[secId] || 3;
+        const countGood = () => updatedGroups.flatMap(g => g.papers).filter(p => (p.geminiScore ?? 60) >= 70).length;
+        const allTriedPhrases = normalizedTheses.flatMap(t => t.phrases || []);
+
+        const backfillPhrase = async (phrase, extraYears) => {
+          const candidates = await searchByPhrase(phrase, 10, page, false, isTechnicalWork, extraYears);
+          const fresh = candidates.filter(p => {
+            const key = (p.title || '').toLowerCase().slice(0, 60);
+            return key && !globalSeen.has(key);
+          });
+          if (!fresh.length) return;
+          const filtered = await filterSourcesWithGemini(fresh.slice(0, 15), filterLabel, topicCtx, 15);
+          filtered.forEach(p => globalSeen.add((p.title || '').toLowerCase().slice(0, 60)));
+          const existingIdx = updatedGroups.findIndex(g => g.phrase === phrase);
+          if (existingIdx >= 0) {
+            updatedGroups[existingIdx] = { phrase, papers: [...updatedGroups[existingIdx].papers, ...filtered] };
+          } else {
+            updatedGroups.push({ phrase, papers: filtered });
+          }
+          setPhraseGroups(prev => ({ ...prev, [secId]: [...updatedGroups] }));
+          setSuggestedSources(prev => ({ ...prev, [secId]: updatedGroups.flatMap(g => g.papers) }));
+        };
+
+        for (const extraYears of [2, 3]) {
+          if (stopSearchRef.current || countGood() >= needed) break;
+          for (const phrase of allTriedPhrases) {
+            if (stopSearchRef.current || countGood() >= needed) break;
+            await backfillPhrase(phrase, extraYears);
+          }
+        }
+
+        if (!stopSearchRef.current && countGood() < needed && allTriedPhrases.length) {
+          const altPhrases = await generateAlternatePhrases(topicCtx, filterLabel, allTriedPhrases);
+          for (const phrase of altPhrases) {
+            if (stopSearchRef.current || countGood() >= needed) break;
+            await backfillPhrase(phrase, 3);
+          }
         }
       }
 

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { lookupDoiMetadata, fetchPagesFromUrl, paperToCitation, lookupDOIByBiblio, enrichManualLine, enrichFullSourceInfo, fetchGoogleBooksPageCount } from "../../lib/sourcesSearch.js";
 import { isTechnical } from "../../lib/planUtils.js";
 import { TA_WHITE } from "../../shared.jsx";
@@ -126,12 +126,12 @@ export function SourcesStage({
     setSelectedSugg(prev => ({ ...prev, [secId]: [] }));
   };
 
-  const handleAddSelected = async (secId) => {
-    const allSelected = selectedSugg[secId] || [];
-    if (!allSelected.length) return;
+  // Спільна логіка вставки джерел у підрозділ — і для ручного вибору (чекбокси), і для автовставки
+  const insertSources = async (secId, papersToAdd) => {
+    if (!papersToAdd.length) return;
 
     // Крок 1: збагачуємо всі записи з DOI через CrossRef/OpenAlex
-    const afterDoi = await Promise.all(allSelected.map(async p => {
+    const afterDoi = await Promise.all(papersToAdd.map(async p => {
       if (!p.doi) return p;
       const meta = await lookupDoiMetadata(p.doi);
       if (!meta) return p;
@@ -207,14 +207,46 @@ export function SourcesStage({
       }));
     }
 
-    setSelectedSugg(prev => ({ ...prev, [secId]: [] }));
-
     // Авторозтягування textarea після програмного оновлення
     requestAnimationFrame(() => {
       const ta = document.querySelector(`textarea[data-secid="${secId}"]`);
       if (ta) { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; }
     });
   };
+
+  const handleAddSelected = async (secId) => {
+    const allSelected = selectedSugg[secId] || [];
+    await insertSources(secId, allSelected);
+    setSelectedSugg(prev => ({ ...prev, [secId]: [] }));
+  };
+
+  // ── Автовставка: щойно пошук для підрозділу завершується, вставляємо топ-N найрелевантніших (score ≥ 70) джерел
+  // без очікування ручного вибору — користувач перевіряє й редагує результат у полі нижче ──
+  const autoInsertedRef = useRef({});
+  useEffect(() => {
+    for (const sec of mainSections) {
+      const secId = sec.id;
+      const isLoading = sourcesSearchLoading[secId] || false;
+      if (isLoading) { autoInsertedRef.current[secId] = false; continue; }
+      if (autoInsertedRef.current[secId]) continue;
+      const suggestions = suggestedSources[secId] || [];
+      if (!suggestions.length) continue;
+      if ((citInputs[secId] || '').trim()) continue; // вже є джерела — не втручаємось
+      autoInsertedRef.current[secId] = true;
+
+      const needed = sourceDist[secId] || 4;
+      const foreignFraction = isTechnical(info) ? 0.5 : 0.3;
+      const maxForeign = Math.max(1, Math.round(needed * foreignFraction));
+      const good = suggestions
+        .filter(p => (p.geminiScore ?? 60) >= 70)
+        .sort((a, b) => (b.geminiScore ?? 0) - (a.geminiScore ?? 0));
+      const ukGood = good.filter(p => p.lang === 'uk');
+      const foreignGood = good.filter(p => p.lang !== 'uk').slice(0, maxForeign);
+      const top = [...ukGood, ...foreignGood].slice(0, needed);
+      if (top.length) insertSources(secId, top);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourcesSearchLoading, suggestedSources]);
 
   const handleEnrichManual = async (secId) => {
     const lines = (citInputs[secId] || '').split('\n');
@@ -361,7 +393,7 @@ export function SourcesStage({
 
       {/* ── Підказка ── */}
       <div style={{ padding: "12px 16px", background: "#f0f5e8", border: "1px solid #c8dfa0", borderRadius: 8, marginBottom: 20, fontSize: 13, color: "#3a6010", lineHeight: "1.7" }}>
-        <strong>Як це працює:</strong> Натисніть <em>"Знайти джерела автоматично"</em> — програма згенерує ключові слова і знайде відповідні джерела для кожного підрозділу. Виберіть потрібні галочкою та натисніть <em>"Додати вибрані"</em>. Після заповнення натисніть <em>"Розставити всі посилання"</em>.
+        <strong>Як це працює:</strong> Натисніть <em>"Знайти джерела автоматично"</em> — програма згенерує ключові слова, знайде й оцінить джерела та сама вставить найрелевантніші (score ≥ 70) у кожен підрозділ; якщо їх бракує — розширить пошук (роки, альтернативні фрази). Перевірте результат у полях нижче — можна прибрати зайве або додати ще з пропозицій — і натисніть <em>"Розставити всі посилання"</em>, коли будете готові.
         <div style={{ marginTop: 6, fontSize: 12, color: "#5a6a3a" }}>
           Обмеження: іноземних джерел (польськ. + зарубіж.) <strong>не більше {isTechnical(info) ? 50 : 30}%</strong> від загальної кількості{isTechnical(info) ? " (підвищено для технічної роботи)" : ""}. Російські та білоруські джерела <strong>заборонені</strong>.
         </div>
@@ -439,9 +471,19 @@ export function SourcesStage({
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 {secRefs.length > 0 && <div style={{ fontSize: 11, color: "#888" }}>джерела [{startIdx}–{startIdx + secRefs.length - 1}]</div>}
-                {isImported
-                  ? <div style={{ fontSize: 12, color: "#3a6010", background: "#e4f5d0", padding: "2px 10px", borderRadius: 10 }}>✓ з документа клієнта</div>
-                  : <div style={{ fontSize: 12, color: "#e8ff47", background: "#2a2a1a", padding: "2px 10px", borderRadius: 10 }}>потрібно: {sourceDist[sec.id] || "?"} дж.</div>}
+                {isImported ? (
+                  <div style={{ fontSize: 12, color: "#3a6010", background: "#e4f5d0", padding: "2px 10px", borderRadius: 10 }}>✓ з документа клієнта</div>
+                ) : !hasSources ? (
+                  <div style={{ fontSize: 12, color: "#e8ff47", background: "#2a2a1a", padding: "2px 10px", borderRadius: 10 }}>
+                    {isSearching ? "шукаю…" : `потрібно: ${needed} дж.`}
+                  </div>
+                ) : secRefs.length >= needed ? (
+                  <div style={{ fontSize: 12, color: "#3a6010", background: "#e4f5d0", padding: "2px 10px", borderRadius: 10 }}>✓ {secRefs.length}/{needed} дж. автоматично</div>
+                ) : isSearching ? (
+                  <div style={{ fontSize: 12, color: "#8a6010", background: "#fff5e0", padding: "2px 10px", borderRadius: 10 }}>додаю {secRefs.length}/{needed}…</div>
+                ) : (
+                  <div style={{ fontSize: 12, color: "#8a5a00", background: "#fff5e0", padding: "2px 10px", borderRadius: 10 }}>⚠ {secRefs.length} з {needed} — перевірте</div>
+                )}
               </div>
             </div>
 
