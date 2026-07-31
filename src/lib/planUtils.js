@@ -248,6 +248,48 @@ export function parseClientPlan(text, totalPages, lang = "Українська")
   return sections;
 }
 
+const CARDINAL_CHAPTER_WORDS = [
+  [/\bодн[а-яії]*\s+розділ/i, 1],
+  [/\bдв[аі][а-яії]*\s+розділ/i, 2],
+  [/\bтр(?:и|ьох)\s+розділ/i, 3],
+  [/\bчотир(?:и|ьох)\s+розділ/i, 4],
+  [/\bп['ʼ’]?ят(?:ь|и)\s+розділ/i, 5],
+  [/\bшіст(?:ь|и)\s+розділ/i, 6],
+];
+const ORDINAL_CHAPTER_WORDS = [
+  [/\bперш[а-яії]*\s+розділ/i, 1],
+  [/\bдруг[а-яії]*\s+розділ/i, 2],
+  [/\bтрет[а-яії]*\s+розділ/i, 3],
+  [/\bчетверт[а-яії]*\s+розділ/i, 4],
+  [/\bп['ʼ’]?ят[а-яії]*\s+розділ/i, 5],
+  [/\bшост[а-яії]*\s+розділ/i, 6],
+];
+
+// Розпізнає явно вказану клієнтом кількість розділів у вільному тексті (коментар/матеріали клієнта) —
+// цифрою ("3 розділи"), кардинальним числівником ("три розділи") або порядковим числівником, що натякає
+// на мінімальну кількість розділів ("третій розділ — ...", тобто розділів щонайменше 3).
+export function detectRequestedChapterCount(text) {
+  if (!text) return null;
+  const t = String(text).toLowerCase();
+  const digitMatch = t.match(/(\d+)\s*розділ/i);
+  if (digitMatch) return parseInt(digitMatch[1], 10);
+  for (const [re, n] of CARDINAL_CHAPTER_WORDS) if (re.test(t)) return n;
+  let maxOrdinal = 0;
+  for (const [re, n] of ORDINAL_CHAPTER_WORDS) if (re.test(t)) maxOrdinal = Math.max(maxOrdinal, n);
+  return maxOrdinal || null;
+}
+
+// Вставляє нові розділи/підрозділи в кінець "основних" розділів — перед Висновками
+// чи Списком джерел (вони, на відміну від Вступу, завжди останні незалежно від
+// попередніх переміщень стрілками ↑/↓), інакше в кінець масиву.
+export function insertBeforeTail(sections, newItems) {
+  let idx = sections.findIndex(s => s.type === "conclusions");
+  if (idx < 0) idx = sections.findIndex(s => s.type === "sources");
+  return idx >= 0
+    ? [...sections.slice(0, idx), ...newItems, ...sections.slice(idx)]
+    : [...sections, ...newItems];
+}
+
 export function buildPlanText(secs) {
   const intro = secs.find(s => s.type === "intro");
   const concs = secs.find(s => s.type === "conclusions");

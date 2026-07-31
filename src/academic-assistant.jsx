@@ -14,7 +14,7 @@ import { playDoneSound } from "./lib/audio.js";
 import { countWords, enforceWordCount } from "./lib/wordCount.js";
 import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildIllustrationsPdfPrompt, buildDrawingsDescriptionPrompt, buildClientMaterialsAnalysisPrompt, buildCorrectionsAnalysisPrompt, buildCorrectionRewritePrompt, buildSourcesRestructureAnalysisPrompt, buildSourcePlacementPrompt, buildRemoveCitationsPrompt, buildFileToSectionsPrompt, buildExtractStructurePrompt, buildContinuationPlanPrompt, buildAnnotationPrompt, buildAnnotationRegenPrompt, buildAntiPlagiarismSYS } from "./lib/prompts.js";
 import { extractReadyWorkStructure, quickParsePlanIds } from "./lib/readyWorkExtract.js";
-import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, getEmpiricalSections, getEconSections, getTechnicalSections, CODE_FILE_EXTENSIONS, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, getLangLabels } from "./lib/planUtils.js";
+import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, getEmpiricalSections, getEconSections, getTechnicalSections, CODE_FILE_EXTENSIONS, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, getLangLabels, insertBeforeTail, detectRequestedChapterCount } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { getAcademicDefaults, classifyAppendixItem, detectSpecialty, normalizeWorkType } from "./lib/academicDefaults.js";
 import { searchByPhrase, filterSourcesWithGemini, getEconInstitutionalSources, generateAlternatePhrases } from "./lib/sourcesSearch.js";
@@ -840,11 +840,11 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   }
 
   // ── Парсинг плану клієнта ──
-  const buildDefaultPlan = (totalPages, lang = "Українська") => {
+  const buildDefaultPlan = (totalPages, lang = "Українська", chapCountOverride = null) => {
     const lc = getLangLabels(lang);
     const needThirdChapter = totalPages >= 40;
     const mainPages = Math.round(totalPages * 0.80);
-    const chapCount = needThirdChapter ? 3 : 2;
+    const chapCount = chapCountOverride || (needThirdChapter ? 3 : 2);
     const pagesPerCh = Math.max(1, Math.round(mainPages / chapCount));
     const pagesPerSub = Math.max(1, Math.round(pagesPerCh / 3));
     const introPages = 2;
@@ -871,6 +871,13 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     const conclP = wc.conclusionsPages;
     const L = getLangLabels(d?.language);
     const isEnglish = /англ|english/i.test(d?.language || "");
+    // Явно вказана клієнтом к-сть розділів (коментар/матеріали клієнта) має пріоритет
+    // над методичкою й дефолтом за обсягом сторінок. Клемп 1-3 — стільки шаблонів
+    // назв/типів розділів підтримує решта коду (chapterTemplate, chTypes).
+    const requestedChapCountRaw = detectRequestedChapterCount(
+      [comment, clientMaterialsSummary?.rawText, clientMaterialsText].filter(Boolean).join("\n")
+    );
+    const requestedChapCount = requestedChapCountRaw ? Math.min(Math.max(requestedChapCountRaw, 1), 3) : null;
 
     const finalizeSections = async (secsIn) => {
       const secs = secsIn.filter(s => {
@@ -1187,7 +1194,7 @@ Return ONLY JSON without markdown:
 
     if (methodInfo) {
       // Маємо готову структурну інфу з методички — генеруємо план без PDF
-      const chapCount = methodInfo.chaptersCount || (totalPages >= 40 ? 3 : 2);
+      const chapCount = requestedChapCount || methodInfo.chaptersCount || (totalPages >= 40 ? 3 : 2);
       const hasConcl = methodInfo.hasChapterConclusions === true || commentHasConcl || false;
       const chTypes = methodInfo.chapterTypes?.length ? methodInfo.chapterTypes : ["theory", "analysis", "recommendations"].slice(0, chapCount);
       const chapConclP = hasConcl ? chapCount : 0;
@@ -1248,11 +1255,11 @@ Order: subsections grouped by chapter, then intro, conclusions, sources.`;
       } catch (e) { console.error("methodInfo plan error:", e); }
     }
 
-    const defaultSecs = buildDefaultPlan(totalPages, d?.language);
+    const defaultSecs = buildDefaultPlan(totalPages, d?.language, requestedChapCount);
     // Для психології/педагогіки — перейменовуємо емпіричний розділ:
     // до 40 стор (2 розділи): емпіричне = розділ 2 (type "analysis")
     // від 40 стор (3 розділи): емпіричне = розділ 3 (type "recommendations")
-    const hasThreeChapters = totalPages >= 40;
+    const hasThreeChapters = requestedChapCount ? requestedChapCount >= 3 : totalPages >= 40;
     const empiricalChapNum = hasThreeChapters ? 3 : 2;
     const planSecs = isPsychoPed(d)
       ? defaultSecs.map(s => {
@@ -1368,7 +1375,7 @@ Order: subsections grouped by chapter, then intro, conclusions, sources.`;
     const chType = chTypes[Math.min(chapNum - 1, chTypes.length - 1)];
     const pagesPerSub = Math.max(3, Math.round(parsePagesAvg(info?.pages) * 0.10));
     const lc = getLangLabels(info?.language);
-    const sectionTitle = `${lc.chapterWord} ${chapNum}. [${lc.subsWord}]`;
+    const sectionTitle = `${lc.chapterWord} ${chapNum}. [Назва розділу]`;
     const newSubs = [1, 2, 3].map(i => ({
       id: `${chapNum}.${i}`,
       label: `${chapNum}.${i} [${lc.subsWord}]`,
@@ -1378,10 +1385,7 @@ Order: subsections grouped by chapter, then intro, conclusions, sources.`;
       type: chType,
     }));
     setSections(prev => {
-      const introIdx = prev.findIndex(s => s.type === "intro");
-      const next = introIdx >= 0
-        ? [...prev.slice(0, introIdx), ...newSubs, ...prev.slice(introIdx)]
-        : [...prev, ...newSubs];
+      const next = insertBeforeTail(prev, newSubs);
       setPlanDisplay(buildPlanText(next));
       return next;
     });
