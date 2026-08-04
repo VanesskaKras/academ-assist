@@ -237,12 +237,18 @@ export function SourcesStage({
       const needed = sourceDist[secId] || 4;
       const foreignFraction = isTechnical(info) ? 0.5 : 0.3;
       const maxForeign = Math.max(1, Math.round(needed * foreignFraction));
-      const good = suggestions
-        .filter(p => (p.geminiScore ?? 60) >= 70)
-        .sort((a, b) => (b.geminiScore ?? 0) - (a.geminiScore ?? 0));
-      const ukGood = good.filter(p => p.lang === 'uk');
-      const foreignGood = good.filter(p => p.lang !== 'uk').slice(0, maxForeign);
-      const top = [...ukGood, ...foreignGood].slice(0, needed);
+      const buildTop = (minScore) => {
+        const good = suggestions
+          .filter(p => (p.geminiScore ?? 60) >= minScore)
+          .sort((a, b) => (b.geminiScore ?? 0) - (a.geminiScore ?? 0));
+        const ukGood = good.filter(p => p.lang === 'uk');
+        const foreignGood = good.filter(p => p.lang !== 'uk').slice(0, maxForeign);
+        return [...ukGood, ...foreignGood].slice(0, needed);
+      };
+      // Якщо строгий поріг (70) не дав достатньо джерел — другий прохід з пом'якшеним порогом (60),
+      // щоб не залишати підрозділ без джерел через занадто суворий відсів релевантності
+      let top = buildTop(70);
+      if (top.length < needed) top = buildTop(60);
       if (top.length) insertSources(secId, top);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
