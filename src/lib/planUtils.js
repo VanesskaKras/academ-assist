@@ -339,11 +339,19 @@ export function calcSourceDist(secs, overallPages) {
   if (!secPagesSum) return { dist: {}, total: 0 };
   const total = Math.max(mainSecs.length * 2, overallPages || secPagesSum);
   const minPerSec = Math.max(1, Math.floor(total / mainSecs.length / 2));
-  const dist = {}; let assigned = 0;
-  mainSecs.forEach((s, i) => {
-    if (i === mainSecs.length - 1) { dist[s.id] = Math.max(minPerSec, total - assigned); }
-    else { const share = Math.max(minPerSec, Math.round((s.pages / secPagesSum) * total)); dist[s.id] = share; assigned += share; }
-  });
+  // Пропорційна частка (дробова) кожного підрозділу за обсягом сторінок, не нижче minPerSec
+  const raw = mainSecs.map(s => Math.max(minPerSec, (s.pages / secPagesSum) * total));
+  const floors = raw.map(v => Math.floor(v));
+  let remainder = Math.round(total) - floors.reduce((a, b) => a + b, 0);
+  // Метод найбільших остач: залишок від округлення розподіляємо по одному джерелу
+  // підрозділам з найбільшою дробовою частиною — а не скидаємо все на останній підрозділ
+  const order = raw
+    .map((v, i) => ({ i, frac: v - Math.floor(v) }))
+    .sort((a, b) => b.frac - a.frac);
+  const result = [...floors];
+  for (let k = 0; k < order.length && remainder > 0; k++) { result[order[k].i] += 1; remainder--; }
+  const dist = {};
+  mainSecs.forEach((s, i) => { dist[s.id] = result[i]; });
   return { dist, total: Object.values(dist).reduce((a, b) => a + b, 0) };
 }
 

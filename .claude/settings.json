@@ -104,7 +104,8 @@
       "Bash(echo \"EXIT:$?\")",
       "Bash(echo \"exit:$?\")",
       "Bash(git rev-list *)",
-      "Bash(npx --yes vite build --mode development)"
+      "Bash(npx --yes vite build --mode development)",
+      "Bash(powershell -Command \"Get-ChildItem -Path 'C:\\\\Users\\\\vanes\\\\OneDrive\\\\Робочий стіл\\\\work\\\\Ai pM\\\\Тестові роботи\\\\тест 2\\\\Нова папка' -Recurse | Select-Object FullName, Length\")"
     ],
     "additionalDirectories": [
       "C:\\Users\\vanes\\AppData\\Local\\Temp\\claude\\c--Users-vanes-academ-assist\\624edb2e-c4cc-4b7d-b8a5-c8f5c62a0653\\scratchpad",
