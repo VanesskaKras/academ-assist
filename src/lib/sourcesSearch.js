@@ -316,7 +316,12 @@ function applyYearFilter(papers, keywords = [], extraYears = 0) {
   })).filter(p => {
     const yr = parseInt(p.year, 10) || 0;
     if (yr >= YEAR_STRICT) return true;
-    if (yr >= looseFloor) return (p._score || 0) >= YEAR_LOOSE_MIN_SCORE;
+    if (yr >= looseFloor) {
+      // keywords — українська фраза; для не-uk/pl джерел збіг зі скором об'єктивно
+      // неможливий (інший алфавіт) — реальний відсів релевантності робить Gemini-фільтр далі
+      if (p.lang !== 'uk' && p.lang !== 'pl') return true;
+      return (p._score || 0) >= YEAR_LOOSE_MIN_SCORE;
+    }
     return false;
   });
 }

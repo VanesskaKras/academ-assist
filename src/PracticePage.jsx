@@ -609,7 +609,7 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
           });
           if (!fresh.length) continue;
 
-          const top15 = await filterSourcesWithGemini(fresh.slice(0, 15), filterLabel, topicCtx, 15, thesis);
+          const top15 = await filterSourcesWithGemini(fresh.slice(0, 20), filterLabel, topicCtx, 20, thesis);
           top15.forEach(p => globalSeen.add((p.title || '').toLowerCase().slice(0, 60)));
 
           const existingIdx = updatedGroups.findIndex(g => g.phrase === phrase);
@@ -640,7 +640,7 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
             return key && !globalSeen.has(key);
           });
           if (!fresh.length) return;
-          const filtered = await filterSourcesWithGemini(fresh.slice(0, 15), filterLabel, topicCtx, 15);
+          const filtered = await filterSourcesWithGemini(fresh.slice(0, 20), filterLabel, topicCtx, 20);
           filtered.forEach(p => globalSeen.add((p.title || '').toLowerCase().slice(0, 60)));
           const existingIdx = updatedGroups.findIndex(g => g.phrase === phrase);
           if (existingIdx >= 0) {
@@ -1665,6 +1665,10 @@ ${secBlock}
     const mainSecs = sections.filter(s => !["sources", "intro", "conclusions"].includes(s.id) && !/додат/i.test(s.label || ""));
     const sourceTarget = calcSourceTarget(mainSecs);
     const sourceDist = calcSourceDist(mainSecs, sourceTarget);
+    // minPerSec-підлога в calcSourceDist може дати суму дистрибуції вище sourceTarget
+    // (напр. багато підрозділів при малому обсязі) — показуємо користувачу фактичну суму,
+    // а не недосяжну вихідну ціль
+    const sourceTotalActual = Object.values(sourceDist).reduce((a, b) => a + b, 0) || sourceTarget;
     const allRefs = (() => {
       const deduper = createReferenceDeduper();
       mainSecs.forEach(sec => (citInputs[sec.id] || "").split("\n").map(l => l.trim()).filter(Boolean).forEach(l => deduper.add(l)));
@@ -1681,7 +1685,7 @@ ${secBlock}
           readyWorkImportedIds={[]}
           citInputs={citInputs} setCitInputs={setCitInputs}
           citStructured={citStructured} setCitStructured={setCitStructured}
-          sourceDist={sourceDist} sourceTotal={sourceTarget}
+          sourceDist={sourceDist} sourceTotal={sourceTotalActual}
           keywords={keywords} kwLoading={kwLoading}
           kwError={kwError} setKwError={setKwError}
           onStopSearch={doStopSearch}

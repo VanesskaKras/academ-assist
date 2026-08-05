@@ -3908,7 +3908,7 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
           });
           if (!fresh.length) continue;
 
-          const top15 = await filterSourcesWithGemini(fresh.slice(0, 15), filterLabel, topicCtx, 15, thesis);
+          const top15 = await filterSourcesWithGemini(fresh.slice(0, 20), filterLabel, topicCtx, 20, thesis);
           top15.forEach(p => globalSeen.add((p.title || '').toLowerCase().slice(0, 60)));
 
           const existingIdx = updatedGroups.findIndex(g => g.phrase === phrase);
@@ -3941,7 +3941,7 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
             return key && !globalSeen.has(key);
           });
           if (!fresh.length) return;
-          const filtered = await filterSourcesWithGemini(fresh.slice(0, 15), filterLabel, topicCtx, 15);
+          const filtered = await filterSourcesWithGemini(fresh.slice(0, 20), filterLabel, topicCtx, 20);
           filtered.forEach(p => globalSeen.add((p.title || '').toLowerCase().slice(0, 60)));
           const existingIdx = updatedGroups.findIndex(g => g.phrase === phrase);
           if (existingIdx >= 0) {
