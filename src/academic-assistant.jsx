@@ -297,6 +297,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   // true, якщо створення документа в Firestore вже підтверджено успішним збереженням
   const createdConfirmedRef = useRef(!!orderId);
   const abortRef = useRef(null);
+  const remapAbortRef = useRef(null);
   const contentRef = useRef(content);
   const savedTimerRef = useRef(null);
   useEffect(() => { contentRef.current = content; }, [content]);
@@ -4335,8 +4336,16 @@ ${secBlock}
   };
 
   // ── sources-first: ремаппінг локальних [N] → глобальні номери + форматування списку ──
+  const stopRemap = () => { remapAbortRef.current?.abort(); setRemapLoading(false); };
+
   const doRemapCitations = async () => {
     setRemapLoading(true);
+    const ctrl = new AbortController(); remapAbortRef.current = ctrl;
+    // callClaude, прив'язана до сигналу скасування цього запуску — щоб «⏹ Зупинити»
+    // переривала й вкладені виклики (форматування списку, довставлення цитат), а не
+    // лишала їх довиконуватись у фоні після того, як користувач уже пішов з екрана.
+    const callClaudeAbortable = (messages, _sig, systemPrompt, maxTokens, onWait, model, opts) =>
+      callClaude(messages, ctrl.signal, systemPrompt, maxTokens, onWait, model, opts);
     // Усі секції, що можуть містити цитати клієнта чи ШІ, окрім самого списку джерел
     // (вступ і висновки теж можуть цитувати джерела — раніше вони виключались і їхні
     // цитати так і лишались зі старими, не перенумерованими локальними номерами).
@@ -4396,9 +4405,10 @@ ${secBlock}
 
     const { finalTexts: allRefs, indexMap } = await buildFinalReferenceList({
       rawRefs, findStructured: findStructured2, sourcesStyle, isLatinWork: _remapLatinFirst,
-      sourcesFormatRules: methodInfo?.sourcesFormatRules, sourcesGrouping: methodInfo?.sourcesGrouping, callClaude,
+      sourcesFormatRules: methodInfo?.sourcesFormatRules, sourcesGrouping: methodInfo?.sourcesGrouping, callClaude: callClaudeAbortable,
       skipSort: !isAlphabeticalOrder && !isDstu,
     });
+    if (ctrl.signal.aborted) { setRemapLoading(false); return; }
     const fmtLines = allRefs;
     let fmtResult = allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n");
 
@@ -4475,6 +4485,7 @@ ${secBlock}
     });
     await Promise.all([...orphansBySec.values()].map(async (secOrphans) => {
       for (const { sec, globalN } of secOrphans) {
+        if (ctrl.signal.aborted) return;
         const citationMarker = refCiteText[globalN] || `[${globalN}]`;
         const sourceText = allRefs[globalN - 1];
         const existingCitationNumbers = [...new Set(
@@ -4490,7 +4501,7 @@ ${secBlock}
           allowedNewCitation: { number: globalN, marker: citationMarker, sourceText },
         });
         try {
-          const insertRaw = await callClaude([{ role: "user", content: insertPrompt }], null, buildSYS(_remapWorkLang, methodInfo), Math.min(60000, Math.max(4000, Math.round((sec.pages || 1) * 3000))), null, MODEL, { cache: true });
+          const insertRaw = await callClaude([{ role: "user", content: insertPrompt }], ctrl.signal, buildSYS(_remapWorkLang, methodInfo), Math.min(60000, Math.max(4000, Math.round((sec.pages || 1) * 3000))), null, MODEL, { cache: true });
           const cleaned = typographQuotes(fixMixedScript(insertRaw, _remapWorkLang)
             .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
             .replace(/[ᄀ-ᇿ⺀-鿿ꀀ-꓿가-퟿豈-﫿]/g, "")
@@ -4502,6 +4513,7 @@ ${secBlock}
         }
       }
     }));
+    if (ctrl.signal.aborted) { setRemapLoading(false); return; }
     if (unresolvedOrphans.length) {
       alert(`Не вдалося автоматично процитувати ${unresolvedOrphans.length} джерел${unresolvedOrphans.length === 1 ? "о" : ""} зі списку літератури (№${unresolvedOrphans.join(", ")}) — перевірте вручну.`);
     }
@@ -4885,7 +4897,7 @@ ${secBlock}
               regenAllAbortRef={regenAllAbortRef}
               stopGen={stopGen} resumeGen={resumeGen} doRegenAll={doRegenAll}
               doRegenSection={doRegenSection} setStage={setStage}
-              doRemapCitations={doRemapCitations} remapLoading={remapLoading}
+              doRemapCitations={doRemapCitations} remapLoading={remapLoading} stopRemap={stopRemap}
               appendicesText={appendicesText} appendicesLoading={appendicesLoading}
             />
           )}
@@ -4914,7 +4926,7 @@ ${secBlock}
               doSearchSources={doSearchSources}
               doRegenSectionSources={doRegenSectionSources}
               onAddAbstracts={(entries) => setAbstractsMap(prev => ({ ...prev, ...entries }))}
-              onFinish={doRemapCitations} remapLoading={remapLoading}
+              onFinish={doRemapCitations} remapLoading={remapLoading} stopRemap={stopRemap}
               onProceedToWriting={() => setStage("writing")}
               setStage={setStage}
               onSave={() => saveToFirestore({ citInputs, citStructured, abstractsMap, suggestedSources, phraseGroups, keywords })}

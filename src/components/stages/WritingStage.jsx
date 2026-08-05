@@ -6,7 +6,7 @@ export function WritingStage({
   regenLoading, regenAllLoading, loadMsg, apiError, setApiError, progress,
   displayOrder, sections, genIdx, content, regenAllAbortRef,
   stopGen, resumeGen, doRegenAll, doRegenSection, setStage,
-  doRemapCitations, remapLoading,
+  doRemapCitations, remapLoading, stopRemap,
   appendicesText, appendicesLoading,
 }) {
   return (
@@ -94,6 +94,7 @@ export function WritingStage({
         {!running && progress === 100 && (
           <GreenBtn onClick={doRemapCitations} loading={remapLoading} msg="Формую список літератури..." label="Сформувати список літератури та посилання →" />
         )}
+        {remapLoading && <button onClick={stopRemap} style={{ background: "#7a1010", color: "#fff", border: "none", borderRadius: 6, padding: "6px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>⏹ Зупинити</button>}
       </div>
     </div>
   );

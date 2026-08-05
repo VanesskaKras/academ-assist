@@ -78,7 +78,7 @@ export function SourcesStage({
   keywords, kwLoading, kwError, setKwError, methodInfo, commentAnalysis, onStopSearch,
   allRefs, refList, showMissingSources, citInputsSnapshot, allCitLoading, info,
   suggestedSources, phraseGroups, sourcesSearchLoading, sourcesSearchError, doSearchSources, doRegenSectionSources,
-  doGenKeywords, onAddAbstracts, onFinish, remapLoading, onProceedToWriting, setStage,
+  doGenKeywords, onAddAbstracts, onFinish, remapLoading, stopRemap, onProceedToWriting, setStage,
   onRegenWithNewSources, hasGeneratedContent, onSave, saving,
   citStyleOverride, sourcesOrderOverride, onCitStyleChange, onSourcesOrderChange,
   citFootnotes, onCitFootnotesChange,
@@ -756,6 +756,9 @@ export function SourcesStage({
           </button>
           {hasGeneratedContent && (
             <PrimaryBtn onClick={onFinish} loading={remapLoading} msg="Формую список літератури..." label="До готового тексту →" />
+          )}
+          {remapLoading && (
+            <button onClick={stopRemap} style={{ background: "#7a1010", color: "#fff", border: "none", borderRadius: 6, padding: "8px 20px", fontFamily: "'Spectral',serif", fontSize: 13, cursor: "pointer" }}>⏹ Зупинити</button>
           )}
         </>
       </div>
