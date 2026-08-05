@@ -3901,7 +3901,7 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
           if (stopSearchRef.current) break outer;
           const phrase = phrases[pi];
           const useScholar = pi === 0 || isTechnicalWork; // Scholar тільки для першої фрази тези; для технічних робіт — на кожній
-          const candidates = await searchByPhrase(phrase, 10, page, useScholar, isTechnicalWork);
+          const candidates = await searchByPhrase(phrase, 10, page, useScholar);
           const fresh = candidates.filter(p => {
             const key = (p.title || '').toLowerCase().slice(0, 60);
             return key && !globalSeen.has(key);
@@ -3935,7 +3935,7 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
         const allTriedPhrases = normalizedTheses.flatMap(t => t.phrases || []);
 
         const backfillPhrase = async (phrase, extraYears) => {
-          const candidates = await searchByPhrase(phrase, 10, page, false, isTechnicalWork, extraYears);
+          const candidates = await searchByPhrase(phrase, 10, page, false, extraYears);
           const fresh = candidates.filter(p => {
             const key = (p.title || '').toLowerCase().slice(0, 60);
             return key && !globalSeen.has(key);

@@ -604,10 +604,11 @@ async function fetchEnglishViaBackend(enKeywords, limit) {
   }
 }
 
-// ── Пошук за однією фразою: BASE, Scholar (опційно), CORE, OpenAlex uk, CrossRef, OpenAlex pl (+ en для технічних робіт) ──
-// allowEnglish: для технічних/IT робіт англомовних наукових джерел об'єктивно більше,
-// ніж українських — вмикаємо повноцінний англомовний запит (не лише Scholar на першій фразі)
-export async function searchByPhrase(phrase, limit = 10, page = 1, useScholar = false, allowEnglish = false, extraYears = 0) {
+// ── Пошук за однією фразою: BASE, Scholar (опційно), CORE, OpenAlex uk, CrossRef, OpenAlex pl, OpenAlex en ──
+// OpenAlex-EN запитуємо завжди (безкоштовний), навіть для нетехнічних робіт: для тем з переважно
+// англомовною літературою (напр. військова медицина) відсів іноземних джерел і так відбувається
+// пізніше, на етапі відбору (квота maxForeign) — тут важливо не звузити пул кандидатів заздалегідь
+export async function searchByPhrase(phrase, limit = 10, page = 1, useScholar = false, extraYears = 0) {
   const yr = `publication_year:>${YEAR_LOOSE - extraYears - 1}`;
   const [r1, r2, r3, r4, r5, r6, r7] = await Promise.allSettled([
     fetchBASE(phrase, limit),
@@ -616,7 +617,7 @@ export async function searchByPhrase(phrase, limit = 10, page = 1, useScholar = 
     openAlexSearch(phrase, `language:uk,${yr}`, limit, page),
     fetchCrossRefUkrainian(phrase, limit, extraYears),
     openAlexSearch(phrase, `language:pl,${yr}`, limit, page),
-    allowEnglish ? openAlexSearch(phrase, `language:en,${yr}`, limit, page) : Promise.resolve([]),
+    openAlexSearch(phrase, `language:en,${yr}`, limit, page),
   ]);
 
   const baseRaw    = r1.status === 'fulfilled' ? r1.value.map(mapBASE) : [];
