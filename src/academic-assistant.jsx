@@ -185,6 +185,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [sourceTotal, setSourceTotal] = useState(0);
   const [keywords, setKeywords] = useState({});
   const [searchAnchors, setSearchAnchors] = useState({});
+  const [enKeywords, setEnKeywords] = useState({});
   const [kwLoading, setKwLoading] = useState(false);
   const [kwError, setKwError] = useState("");
   const stopSearchRef = useRef(false);
@@ -366,6 +367,8 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
           }
           if (d.phraseGroups) setPhraseGroups(d.phraseGroups);
           if (d.keywords) setKeywords(d.keywords);
+          if (d.searchAnchors) setSearchAnchors(d.searchAnchors);
+          if (d.enKeywords) setEnKeywords(d.enKeywords);
           if (d.speechText) setSpeechText(d.speechText);
           if (d.appendicesText) setAppendicesText(d.appendicesText.replace(/\n{2,}/g, '\n'));
           if (d.econProfile) setEconProfile(d.econProfile);
@@ -1563,7 +1566,8 @@ Return ONLY JSON:
     setGenIdx(0); setPaused(false); writingDoneRef.current = false; autoRemapDoneRef.current = false; appendixFillDoneRef.current = false;
     const practicalApproachForGen = commentAnalysis?.practicalApproach;
     const acadDefaultsForGen = getAcademicDefaults(info?.subject, info?.type, info?.course, info?.topic);
-    const needsAppendixForGen = practicalApproachForGen || isPsychoPed(info) || (acadDefaultsForGen?.appendicesAiGen?.length > 0);
+    const specialtyRecognizedForGen = !!detectSpecialty(info?.subject || "");
+    const needsAppendixForGen = practicalApproachForGen || isPsychoPed(info) || (acadDefaultsForGen?.appendicesAiGen?.length > 0) || !specialtyRecognizedForGen;
     const needsEconProfileForGen = !econProfile && isEcon(info);
     (async () => {
       // Для економічних робіт додатки мають спиратись на той самий профіль підприємства,
@@ -3859,7 +3863,7 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
   };
 
   // ── Автоматичний пошук джерел ──
-  const doSearchSources = async (secId, thesesData, sectionLabel = '', resetPage = false) => {
+  const doSearchSources = async (secId, thesesData, sectionLabel = '', resetPage = false, anchors = [], enPhrases = []) => {
     stopSearchRef.current = false;
     const isFirstSearch = resetPage || (searchPageCount[secId] || 0) === 0;
     // Для econ-аналітичних підрозділів додаємо офіційну статистику (Держстат/НБУ/Мінфін/World Bank)
@@ -3893,7 +3897,13 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
       // Нормалізація: підтримка як [{thesis, phrases}], так і старого плоского рядкового масиву
       const normalizedTheses = Array.isArray(thesesData) && thesesData.length > 0 && typeof thesesData[0] === 'string'
         ? [{ thesis: '', phrases: thesesData }]
-        : (thesesData || []);
+        : [...(thesesData || [])]; // копія — нижче можемо доштовхнути anchors, не чіпаючи параметр виклику
+      // Якірні фрази від Gemini (searchAnchors) — раніше генерувались і одразу викидались;
+      // тепер це ще один "псевдо-тезовий" раунд пошуку, без прив'язки до конкретної тези
+      if (isFirstSearch && anchors.length) {
+        normalizedTheses.push({ thesis: '', phrases: anchors });
+      }
+      const nextEnPhrase = (i) => enPhrases.length ? enPhrases[i % enPhrases.length] : '';
 
       outer:
       for (const { thesis, phrases } of normalizedTheses) {
@@ -3901,7 +3911,7 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
           if (stopSearchRef.current) break outer;
           const phrase = phrases[pi];
           const useScholar = pi === 0 || isTechnicalWork; // Scholar тільки для першої фрази тези; для технічних робіт — на кожній
-          const candidates = await searchByPhrase(phrase, 10, page, useScholar);
+          const candidates = await searchByPhrase(phrase, 10, page, useScholar, 0, nextEnPhrase(pi));
           const fresh = candidates.filter(p => {
             const key = (p.title || '').toLowerCase().slice(0, 60);
             return key && !globalSeen.has(key);
@@ -3934,8 +3944,10 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
         const countGood = () => updatedGroups.flatMap(g => g.papers).filter(p => (p.geminiScore ?? 60) >= 70).length;
         const allTriedPhrases = normalizedTheses.flatMap(t => t.phrases || []);
 
-        const backfillPhrase = async (phrase, extraYears) => {
-          const candidates = await searchByPhrase(phrase, 10, page, false, extraYears);
+        const backfillPhrase = async (phrase, extraYears, enPhrase = '') => {
+          // Scholar тут (на відміну від першого проходу) увімкнено завжди: ми вже точно знаємо,
+          // що інших джерел бракує, а Scholar — найкраще джерело саме для вузьких/локальних тем
+          const candidates = await searchByPhrase(phrase, 10, page, true, extraYears, enPhrase);
           const fresh = candidates.filter(p => {
             const key = (p.title || '').toLowerCase().slice(0, 60);
             return key && !globalSeen.has(key);
@@ -3955,17 +3967,17 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
 
         for (const extraYears of [2, 3]) {
           if (stopSearchRef.current || countGood() >= needed) break;
-          for (const phrase of allTriedPhrases) {
+          for (let i = 0; i < allTriedPhrases.length; i++) {
             if (stopSearchRef.current || countGood() >= needed) break;
-            await backfillPhrase(phrase, extraYears);
+            await backfillPhrase(allTriedPhrases[i], extraYears, nextEnPhrase(i));
           }
         }
 
         if (!stopSearchRef.current && countGood() < needed && allTriedPhrases.length) {
           const altPhrases = await generateAlternatePhrases(topicCtx, filterLabel, allTriedPhrases);
-          for (const phrase of altPhrases) {
+          for (let i = 0; i < altPhrases.length; i++) {
             if (stopSearchRef.current || countGood() >= needed) break;
-            await backfillPhrase(phrase, 3);
+            await backfillPhrase(altPhrases[i], 3, nextEnPhrase(i));
           }
         }
       }
@@ -3975,7 +3987,7 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
       if (updatedGroups.length > 0) {
         const finalSuggested = { ...suggestedSources, [secId]: updatedGroups.flatMap(g => g.papers) };
         const finalGroups = { ...phraseGroups, [secId]: updatedGroups };
-        saveToFirestore({ suggestedSources: finalSuggested, phraseGroups: finalGroups, keywords });
+        saveToFirestore({ suggestedSources: finalSuggested, phraseGroups: finalGroups, keywords, searchAnchors, enKeywords });
       }
     } catch (e) {
       console.error('Source search error:', e.message);
@@ -4006,6 +4018,7 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
     const snippetLen = mainSecs.length > 10 ? 600 : 1200;
     const allThesesNorm = {};
     const allAnchorsNorm = {};
+    const allEnNorm = {};
 
     try {
       for (let bStart = 0; bStart < mainSecs.length; bStart += BATCH_SIZE) {
@@ -4029,12 +4042,16 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
 Приклад: тема "ЕІ підлітки", теза "структура компонентів ЕІ" → "компоненти емоційного інтелекту підлітки", "структура ЕІ психологічна модель".
 ВАЖЛИВО: кожна фраза має містити конкретний предмет теми — не загальні слова без прив'язки.${commentCtx ? `\nПОБАЖАННЯ КЛІЄНТА: ${commentCtx}` : ''}${methodCtx ? `\nВИМОГИ МЕТОДИЧКИ: ${methodCtx}` : ''}
 
+КРОК 3. Додай 3 пошукові фрази АНГЛІЙСЬКОЮ для підрозділу загалом (academic English, ширші за тезу) —
+для пошуку в міжнародних англомовних базах (OpenAlex, Semantic Scholar), де є суттєва профільна література.
+
 ПІДРОЗДІЛИ:
 ${secBlocks}
 
-Поверни валідний JSON з двома полями:
+Поверни валідний JSON з трьома полями:
 - "theses": об'єкт, ключ = ідентифікатор підрозділу з квадратних дужок ("1.1", "1.2", "3" тощо), значення = масив об'єктів {"thesis": рядок, "phrases": масив рядків}
-- "searchAnchors": об'єкт, ключ = ідентифікатор підрозділу з квадратних дужок, значення = масив з 2–3 якірних фраз (рядки)`;
+- "searchAnchors": об'єкт, ключ = ідентифікатор підрозділу з квадратних дужок, значення = масив з 2–3 якірних фраз (рядки)
+- "enPhrases": об'єкт, ключ = ідентифікатор підрозділу з квадратних дужок, значення = масив з 3 англомовних фраз (рядки)`;
 
         const res = await fetch("/api/gemini", {
           method: "POST",
@@ -4055,9 +4072,13 @@ ${secBlocks}
         const parsed = JSON.parse(raw);
         const thesesRaw = parsed.theses || {};
         const anchorsRaw = parsed.searchAnchors || {};
+        const enPhrasesRaw = parsed.enPhrases || {};
 
         for (const [k, v] of Object.entries(anchorsRaw)) {
           allAnchorsNorm[normalizeKey(k)] = Array.isArray(v) ? v.map(String).filter(Boolean) : [];
+        }
+        for (const [k, v] of Object.entries(enPhrasesRaw)) {
+          allEnNorm[normalizeKey(k)] = Array.isArray(v) ? v.map(String).filter(Boolean) : [];
         }
         for (const [k, arr] of Object.entries(thesesRaw)) {
           allThesesNorm[normalizeKey(k)] = (Array.isArray(arr) ? arr : []).map(t => ({
@@ -4068,6 +4089,7 @@ ${secBlocks}
       }
 
       setSearchAnchors(allAnchorsNorm);
+      setEnKeywords(allEnNorm);
 
       const kwNorm = Object.fromEntries(
         Object.entries(allThesesNorm).map(([k, theses]) => [k, theses.flatMap(t => t.phrases)])
@@ -4082,7 +4104,7 @@ ${secBlocks}
         // Навіть якщо Gemini не повернув тез для econ-підрозділу (обрізаний батч, збій парсингу),
         // офіційна статистика (Держстат/НБУ/Мінфін/World Bank) все одно має з'явитись
         if (thesesData.length || econSecIdsForSources.includes(s.id)) {
-          await doSearchSources(s.id, thesesData, s.label || '');
+          await doSearchSources(s.id, thesesData, s.label || '', false, allAnchorsNorm[normalKey] || [], allEnNorm[normalKey] || []);
         }
       }
     } catch (e) { console.error(e); setKwError(e.message); }
@@ -4113,10 +4135,13 @@ ${secBlocks}
 Кожна фраза = [1–2 ключових слова з ТЕМИ роботи] + [конкретний аспект тези].
 ВАЖЛИВО: кожна фраза має містити конкретний предмет теми — не загальні слова без прив'язки.${commentCtx ? `\nПОБАЖАННЯ КЛІЄНТА: ${commentCtx}` : ''}${methodCtx ? `\nВИМОГИ МЕТОДИЧКИ: ${methodCtx}` : ''}
 
+КРОК 3. Додай 3 пошукові фрази АНГЛІЙСЬКОЮ для підрозділу загалом (academic English, ширші за тезу) —
+для пошуку в міжнародних англомовних базах.
+
 ПІДРОЗДІЛ:
 ${secBlock}
 
-Поверни валідний JSON: {"theses": масив об'єктів {"thesis": рядок, "phrases": масив рядків}}`;
+Поверни валідний JSON: {"theses": масив об'єктів {"thesis": рядок, "phrases": масив рядків}, "enPhrases": масив з 3 англомовних фраз}`;
 
       const res = await fetch("/api/gemini", {
         method: "POST",
@@ -4141,6 +4166,7 @@ ${secBlock}
                     required: ["thesis", "phrases"],
                   },
                 },
+                enPhrases: { type: "array", items: { type: "string" } },
               },
               required: ["theses"],
             },
@@ -4161,9 +4187,11 @@ ${secBlock}
           phrases: (Array.isArray(t.phrases) ? t.phrases : []).map(String).filter(Boolean),
         }))
         .filter(t => t.phrases.length > 0);
+      const newEnPhrases = (Array.isArray(parsed.enPhrases) ? parsed.enPhrases : []).map(String).filter(Boolean);
       if (newTheses.length) {
         setKeywords(prev => ({ ...prev, [sec.id]: newTheses.flatMap(t => t.phrases) }));
-        await doSearchSources(sec.id, newTheses, sec.label || '', true);
+        setEnKeywords(prev => ({ ...prev, [sec.id]: newEnPhrases }));
+        await doSearchSources(sec.id, newTheses, sec.label || '', true, searchAnchors[sec.id] || [], newEnPhrases);
       } else {
         setSourcesSearchLoading(prev => ({ ...prev, [sec.id]: false }));
       }
@@ -4397,13 +4425,75 @@ ${secBlock}
     // Логіка спільна з applyCitationRemap (citationFormatting.js) — вона ж підтримує
     // групові цитати [N, M], які може породжувати localizeCitations для готової
     // частини клієнта.
-    const newContent = { ...content };
+    const newContent = { ...contentRef.current };
     mainSecs.forEach(sec => {
       if (!newContent[sec.id]) return;
       const mapping = secLocalToGlobal[sec.id];
       if (!mapping || !Object.keys(mapping).length) return;
       newContent[sec.id] = applyCitationRemap(newContent[sec.id], mapping, refCiteText, { pageRanges: pageRanges2, pageAbbrev: _remapPageAbbrev });
     });
+
+    // ── 7б. Довставлення цитат для джерел, призначених підрозділу на етапі "Джерела",
+    // але які модель під час написання не процитувала жодного разу (типово — коли
+    // підрозділу призначено багато джерел і частина просто ігнорується). Без цього
+    // такі джерела тихо лишаються в бібліографії без жодної згадки в тексті.
+    const citedGlobalNums = new Set();
+    mainSecs.forEach(sec => {
+      const text = newContent[sec.id];
+      if (!text) return;
+      if (isFootnoteMode) {
+        [...text.matchAll(/%%FN(\d+)%%/g)].forEach(m => citedGlobalNums.add(Number(m[1])));
+      } else if (isAPA || isMLA) {
+        Object.entries(refCiteText).forEach(([n, cite]) => { if (text.includes(cite)) citedGlobalNums.add(Number(n)); });
+      } else {
+        [...text.matchAll(/\[\s*(\d+(?:\s*[,;]\s*\d+)*)/g)].forEach(m => {
+          m[1].split(/[,;]/).forEach(s => citedGlobalNums.add(Number(s.trim())));
+        });
+      }
+    });
+
+    const orphans = [];
+    const seenOrphanGlobalNums = new Set();
+    mainSecs.forEach(sec => {
+      Object.entries(secLocalToGlobal[sec.id] || {}).forEach(([, globalN]) => {
+        if (!globalN || citedGlobalNums.has(globalN) || seenOrphanGlobalNums.has(globalN)) return;
+        seenOrphanGlobalNums.add(globalN);
+        orphans.push({ sec, globalN });
+      });
+    });
+
+    const unresolvedOrphans = [];
+    for (const { sec, globalN } of orphans) {
+      if (!newContent[sec.id]) continue;
+      const citationMarker = refCiteText[globalN] || `[${globalN}]`;
+      const sourceText = allRefs[globalN - 1];
+      const existingCitationNumbers = [...new Set(
+        [...newContent[sec.id].matchAll(/\[(\d+)\]|%%FN(\d+)%%/g)].map(m => m[1] || m[2])
+      )];
+      const insertPrompt = buildCorrectionRewritePrompt({
+        section: sec,
+        originalText: newContent[sec.id],
+        issue: "Підрозділ не містить посилання на джерело зі списку літератури, яке було йому призначене під час генерації.",
+        suggestion: `Встав посилання ${citationMarker} до речення, яке найбільше стосується змісту цього джерела.`,
+        info, methodInfo, lang: _remapWorkLang,
+        existingCitationNumbers,
+        allowedNewCitation: { number: globalN, marker: citationMarker, sourceText },
+      });
+      try {
+        const insertRaw = await callClaude([{ role: "user", content: insertPrompt }], null, buildSYS(_remapWorkLang, methodInfo), Math.min(60000, Math.max(4000, Math.round((sec.pages || 1) * 3000))), null, MODEL, { cache: true });
+        const cleaned = typographQuotes(fixMixedScript(insertRaw, _remapWorkLang)
+          .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
+          .replace(/[ᄀ-ᇿ⺀-鿿ꀀ-꓿가-퟿豈-﫿]/g, "")
+        ).replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2").replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2").trim();
+        newContent[sec.id] = cleaned;
+      } catch (e) {
+        console.error("Помилка вставки цитати непроцитованого джерела", sec.id, globalN, e);
+        unresolvedOrphans.push(globalN);
+      }
+    }
+    if (unresolvedOrphans.length) {
+      alert(`Не вдалося автоматично процитувати ${unresolvedOrphans.length} джерел${unresolvedOrphans.length === 1 ? "о" : ""} зі списку літератури (№${unresolvedOrphans.join(", ")}) — перевірте вручну.`);
+    }
 
     // ── 8а. Очищення: прибираємо номери поза діапазоном реального списку (будь-який стиль) ──
     if (!isAPA && !isMLA) {

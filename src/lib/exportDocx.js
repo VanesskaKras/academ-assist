@@ -10,6 +10,15 @@ import {
 // ─────────────────────────────────────────────
 function isFenceLine(line) { return /^\s*```/.test(line || ""); }
 
+// Підпис таблиці ("Таблиця 2.3 – Назва") відрізняється від речення аналізу, що
+// теж починається з "Таблиця 2.3 ..." (напр. "Таблиця 2.3 наочно підтверджує...")
+// тим, що одразу за ним (без порожніх рядків між ними) іде markdown-таблиця.
+function isFollowedByTable(lines, index) {
+  let j = index + 1;
+  while (j < lines.length && !lines[j].trim()) j++;
+  return j < lines.length && /^\s*\|/.test(lines[j]);
+}
+
 function codeListingParagraphs(lines, methodInfo) {
   const fmt = methodInfo?.formatting || {};
   const font = fmt.codeFont || "Courier New";
@@ -198,10 +207,17 @@ export function renumberTablesAndFigures(content, displayOrder, lang) {
     secRenamings[sec.id] = [];
 
     let m;
-    const tableRe = new RegExp(`^${escRe(tw)}\\s+(\\d+\\.\\d+)`, "gm");
-    while ((m = tableRe.exec(txt)) !== null) {
-      chTableCount[ch]++;
-      secRenamings[sec.id].push({ oldRef: m[1], newRef: `${ch}.${chTableCount[ch]}`, type: "table" });
+    // Рахуємо лише справжні підписи таблиць (одразу за рядком іде markdown-таблиця),
+    // а не речення аналізу, що теж починаються з "Таблиця X.Y" (напр. "Таблиця 2.3 наочно
+    // підтверджує...") — інакше такі речення з'їдають номер і справжні підписи проскакують.
+    const tableCapRe = new RegExp(`^${escRe(tw)}\\s+(\\d+\\.\\d+)`);
+    const txtLines = txt.split("\n");
+    for (let li = 0; li < txtLines.length; li++) {
+      const cap = txtLines[li].match(tableCapRe);
+      if (cap && isFollowedByTable(txtLines, li)) {
+        chTableCount[ch]++;
+        secRenamings[sec.id].push({ oldRef: cap[1], newRef: `${ch}.${chTableCount[ch]}`, type: "table" });
+      }
     }
     const figRe = new RegExp(`^${escRe(fw)}\\s+(\\d+\\.\\d+)`, "gm");
     while ((m = figRe.exec(txt)) !== null) {
@@ -581,7 +597,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
         }
         continue;
       }
-      if (twRe.test(line.trim())) {
+      if (twRe.test(line.trim()) && isFollowedByTable(lines, i)) {
         const fmt = methodInfo?.formatting || {};
         const tf = fmt.tableFormat || "";
         const tAlignRight = fmt.tableNumberRight ?? /правий|right|справа|верхн.*кут/i.test(tf);
@@ -754,6 +770,14 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     "[КЕРІВНИК_КАФЕДРИ]": info?.supervisorUniversity,
     "[ДАТА_ПОЧАТКУ]": info?.dateStart,
     "[ДАТА_КІНЦЯ]": info?.dateEnd,
+    // Узагальнені токени титулки (не лише практика) — методичка іноді наводить у Додатках
+    // уже ЗАПОВНЕНИЙ приклад титулки (чуже ім'я/кафедра), і крок читання методички заміняє
+    // такі конкретні значення на ці токени, щоб вони не потрапили в роботу клієнта як є.
+    // Даних для підстановки поки немає (немає окремого поля вводу для звичайної роботи) —
+    // тому лишається видимий плейсхолдер, який видно й треба вручну заповнити на кроці "Готово".
+    "[ФАКУЛЬТЕТ]": info?.faculty,
+    "[КАФЕДРА]": info?.department,
+    "[КЕРІВНИК]": info?.supervisorUniversity,
   };
   const applyTopic = (t) => {
     let s = topicStr ? t.replace(/\[ТЕМА\]/g, topicStr) : t;
@@ -1087,6 +1111,8 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
       paragraphStyles: [
         { id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal", run: { font: FONT, size: SIZE, bold: true, color: "000000", language: { value: langCode } }, paragraph: { spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, alignment: AlignmentType.CENTER, indent: { firstLine: 0 } } },
         { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", run: { font: FONT, size: SIZE, bold: true, color: "000000", language: { value: langCode } }, paragraph: { spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, alignment: AlignmentType.BOTH, indent: { firstLine: INDENT } } },
+        { id: "TOC1", name: "TOC 1", basedOn: "Normal", next: "Normal", run: { font: FONT, size: SIZE, color: "000000", language: { value: langCode } }, paragraph: { spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, indent: { firstLine: 0 } } },
+        { id: "TOC2", name: "TOC 2", basedOn: "Normal", next: "Normal", run: { font: FONT, size: SIZE, color: "000000", language: { value: langCode } }, paragraph: { spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, indent: { firstLine: 0 } } },
       ],
     },
     footnotes: footnoteCounter > 0 ? footnotesRegistry : undefined,
@@ -1327,7 +1353,7 @@ export async function exportAppendixToDocx(text, info, methodInfo, orderId) {
       }));
       i++; continue;
     }
-    if (/^Таблиця\s+\d/.test(line.trim())) {
+    if (/^Таблиця\s+\d/.test(line.trim()) && isFollowedByTable(lines, i)) {
       const fmt = methodInfo?.formatting || {};
       const tf = fmt.tableFormat || "";
       const tAlignRight = fmt.tableNumberRight ?? /правий|right|справа|верхн.*кут/i.test(tf);

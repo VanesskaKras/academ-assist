@@ -308,7 +308,10 @@ const YEAR_LOOSE  = new Date().getFullYear() - 9; // >= поточний-9 (ос
 const YEAR_LOOSE_MIN_SCORE = 2; // мінімальний скор для 6–10-річних джерел
 
 // extraYears: під час добору при нестачі джерел межу "6-10 років" відсовуємо на +2/+3 роки за раунд
-function applyYearFilter(papers, keywords = [], extraYears = 0) {
+// matchableLangs: мови статей, для яких скор проти keywords взагалі щось означає (той самий алфавіт/мова,
+// що й keywords) — лише для них має сенс вимагати YEAR_LOOSE_MIN_SCORE; інші мови пропускаємо без перевірки
+// скору, бо збіг об'єктивно неможливий (напр. українська фраза проти англомовної назви)
+function applyYearFilter(papers, keywords = [], extraYears = 0, matchableLangs = ['uk', 'pl']) {
   const looseFloor = YEAR_LOOSE - extraYears;
   return papers.map(p => ({
     ...p,
@@ -317,9 +320,7 @@ function applyYearFilter(papers, keywords = [], extraYears = 0) {
     const yr = parseInt(p.year, 10) || 0;
     if (yr >= YEAR_STRICT) return true;
     if (yr >= looseFloor) {
-      // keywords — українська фраза; для не-uk/pl джерел збіг зі скором об'єктивно
-      // неможливий (інший алфавіт) — реальний відсів релевантності робить Gemini-фільтр далі
-      if (p.lang !== 'uk' && p.lang !== 'pl') return true;
+      if (!matchableLangs.includes(p.lang)) return true;
       return (p._score || 0) >= YEAR_LOOSE_MIN_SCORE;
     }
     return false;
@@ -343,9 +344,11 @@ async function openAlexSearch(query, filterStr, limit, page = 1) {
 }
 
 // Пошук тільки по заголовках — набагато точніший
+// ВАЖЛИВО: OpenAlex ігнорує повторні query-параметри filter= (лишає лише останній) —
+// усі умови мають бути об'єднані комою в ОДНОМУ filter= (AND), як і в openAlexSearch
 async function openAlexTitleSearch(query, filters, limit, page = 1) {
-  const filterParams = filters.map(f => `filter=${f}`).join('&');
-  const url = `${OA_BASE}?filter=title.search:${encodeURIComponent(query)}&${filterParams}&per_page=${limit}&page=${page}&select=${OA_FIELDS}${OA_KEY_PARAM}`;
+  const filterStr = [`title.search:${encodeURIComponent(query)}`, ...filters].join(',');
+  const url = `${OA_BASE}?filter=${filterStr}&per_page=${limit}&page=${page}&select=${OA_FIELDS}${OA_KEY_PARAM}`;
   const r = await fetch(url, { cache: 'no-store' });
   if (!r.ok) return [];
   const d = await r.json();
@@ -603,26 +606,28 @@ async function fetchEnglishViaBackend(enKeywords, limit) {
     });
     if (!res.ok) return [];
     const data = await res.json();
-    return (data.sources || []).filter(p => p.lang === 'en');
+    return (data.sources || []).filter(p => p.lang === 'en' && !isBlocked(p));
   } catch {
     return [];
   }
 }
 
-// ── Пошук за однією фразою: BASE, Scholar (опційно), CORE, OpenAlex uk, CrossRef, OpenAlex pl, OpenAlex en ──
-// OpenAlex-EN запитуємо завжди (безкоштовний), навіть для нетехнічних робіт: для тем з переважно
-// англомовною літературою (напр. військова медицина) відсів іноземних джерел і так відбувається
-// пізніше, на етапі відбору (квота maxForeign) — тут важливо не звузити пул кандидатів заздалегідь
-export async function searchByPhrase(phrase, limit = 10, page = 1, useScholar = false, extraYears = 0) {
+// ── Пошук за однією фразою: BASE, Scholar (опційно), CORE, OpenAlex uk, CrossRef, OpenAlex pl, OpenAlex en, Semantic Scholar en ──
+// enPhrase: англійський відповідник phrase (якщо є) — українська фраза не матчиться з англомовними
+// статтями за текстом, тому EN-джерела (OpenAlex-en, Semantic Scholar) шукають саме за ним,
+// а якщо enPhrase не передали — фолбек на phrase (як було раніше, краще ніж нічого)
+export async function searchByPhrase(phrase, limit = 10, page = 1, useScholar = false, extraYears = 0, enPhrase = '') {
   const yr = `publication_year:>${YEAR_LOOSE - extraYears - 1}`;
-  const [r1, r2, r3, r4, r5, r6, r7] = await Promise.allSettled([
+  const enQuery = enPhrase || phrase;
+  const [r1, r2, r3, r4, r5, r6, r7, r8] = await Promise.allSettled([
     fetchBASE(phrase, limit),
     useScholar ? fetchScholar(phrase, limit) : Promise.resolve([]),
     fetchCORE(phrase, limit),
     openAlexSearch(phrase, `language:uk,${yr}`, limit, page),
     fetchCrossRefUkrainian(phrase, limit, extraYears),
     openAlexSearch(phrase, `language:pl,${yr}`, limit, page),
-    openAlexSearch(phrase, `language:en,${yr}`, limit, page),
+    openAlexSearch(enQuery, `language:en,${yr}`, limit, page),
+    enPhrase ? fetchEnglishViaBackend([enPhrase], limit) : Promise.resolve([]),
   ]);
 
   const baseRaw    = r1.status === 'fulfilled' ? r1.value.map(mapBASE) : [];
@@ -632,10 +637,11 @@ export async function searchByPhrase(phrase, limit = 10, page = 1, useScholar = 
   const crRaw      = r5.status === 'fulfilled' ? r5.value.filter(p => hasCyrillic(p.title || '')) : [];
   const plRaw      = r6.status === 'fulfilled' ? r6.value.map(p => mapOpenAlex(p, 'pl')) : [];
   const enRaw      = r7.status === 'fulfilled' ? r7.value.map(p => mapOpenAlex(p, 'en')) : [];
+  const ssRaw      = r8.status === 'fulfilled' ? r8.value : [];
 
   const seen = new Set();
   const raw = [];
-  for (const p of [...baseRaw, ...scholarRaw, ...coreRaw, ...ukRaw, ...crRaw, ...plRaw, ...enRaw]) {
+  for (const p of [...baseRaw, ...scholarRaw, ...coreRaw, ...ukRaw, ...crRaw, ...plRaw, ...enRaw, ...ssRaw]) {
     const key = (p.title || '').toLowerCase().slice(0, 60);
     if (!key || seen.has(key)) continue;
     seen.add(key);
@@ -829,6 +835,8 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
       _score: scoreRelevance((p.title || '').toLowerCase(), enKeywords),
     })).sort((a, b) => b._score - a._score),
     enKeywords,
+    0,
+    ['en'], // enKeywords звіряються з англомовними назвами — на відміну від pl, тут скор має сенс
   );
 
   const ukSeen = new Set(boosted.slice(0, target).map(p => (p.title || '').toLowerCase().slice(0, 60)));

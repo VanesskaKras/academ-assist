@@ -4,7 +4,8 @@ export const config = { maxDuration: 25 };
 const BLOCKED = [
   'russia', 'russian federation', 'москв', 'санкт-петербург', 'новосибирск',
   'екатеринбург', 'казань', 'самар', 'нижн', 'российск', 'росс', 'rsci',
-  'elibrary.ru', 'cyberleninka', 'белорус', 'беларус', 'minsk', 'минск',
+  'elibrary.ru', 'cyberleninka', 'киберленинк',
+  'белорус', 'беларус', 'minsk', 'минск', 'гродн', 'витебск', 'брест',
 ];
 
 function isBlocked(obj) {
@@ -19,6 +20,10 @@ function withTimeout(promise, ms = 10000) {
   ]);
 }
 
+// Той самий "нестрогий" поріг (останні 10 років), що й YEAR_LOOSE у src/lib/sourcesSearch.js —
+// рахуємо від поточного року, а не захардкоджуємо конкретний рік
+const YEAR_LOOSE = new Date().getFullYear() - 9;
+
 async function searchSemanticScholar(query, limit) {
   const url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(query)}&fields=title,authors,year,venue,externalIds&limit=${limit}`;
   const r = await fetch(url, { headers: { 'User-Agent': 'AcademAssist/1.0' } });
@@ -26,7 +31,7 @@ async function searchSemanticScholar(query, limit) {
   const data = await r.json();
   return (data.data || [])
     .filter(p => {
-      if (!p.title || !p.year || p.year < 2020) return false;
+      if (!p.title || !p.year || p.year < YEAR_LOOSE) return false;
       if (isBlocked(p)) return false;
       // Тільки латиниця (англомовні)
       const cyr = (p.title.match(/[А-ЯҐЄІЇа-яґєіїёЁ]/g) || []).length;

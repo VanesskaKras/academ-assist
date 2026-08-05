@@ -218,6 +218,7 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
   const [sourcesSearchLoading, setSourcesSearchLoading] = useState({});
   const [sourcesSearchError, setSourcesSearchError] = useState({});
   const [keywords, setKeywords] = useState({});
+  const [enKeywords, setEnKeywords] = useState({});
   const [kwLoading, setKwLoading] = useState(false);
   const [kwError, setKwError] = useState("");
   const [searchPageCount, setSearchPageCount] = useState({});
@@ -381,6 +382,7 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
           if (d.suggestedSources) setSuggestedSources(d.suggestedSources);
           if (d.phraseGroups) setPhraseGroups(d.phraseGroups);
           if (d.keywords) setKeywords(d.keywords);
+          if (d.enKeywords) setEnKeywords(d.enKeywords);
           if (d.stage) {
             setStage(d.stage);
             const idx = STAGE_KEYS.indexOf(d.stage);
@@ -563,7 +565,7 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
   };
 
   // ── Джерела: прогресивний пошук по фразах для розділу (як у великих роботах) ──
-  const doSearchSources = async (secId, thesesData, sectionLabel = '', resetPage = false) => {
+  const doSearchSources = async (secId, thesesData, sectionLabel = '', resetPage = false, anchors = [], enPhrases = []) => {
     stopSearchRef.current = false;
     const info = getPracticeInfo();
     const mainSecs = sections.filter(s => !["sources", "intro", "conclusions"].includes(s.id) && !/додат/i.test(s.label || ""));
@@ -594,7 +596,11 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
 
       const normalizedTheses = Array.isArray(thesesData) && thesesData.length > 0 && typeof thesesData[0] === 'string'
         ? [{ thesis: '', phrases: thesesData }]
-        : (thesesData || []);
+        : [...(thesesData || [])]; // копія — нижче можемо доштовхнути anchors, не чіпаючи параметр виклику
+      if (isFirstSearch && anchors.length) {
+        normalizedTheses.push({ thesis: '', phrases: anchors });
+      }
+      const nextEnPhrase = (i) => enPhrases.length ? enPhrases[i % enPhrases.length] : '';
 
       outer:
       for (const { thesis, phrases } of normalizedTheses) {
@@ -602,7 +608,7 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
           if (stopSearchRef.current) break outer;
           const phrase = phrases[pi];
           const useScholar = pi === 0 || isTechnicalWork;
-          const candidates = await searchByPhrase(phrase, 10, page, useScholar);
+          const candidates = await searchByPhrase(phrase, 10, page, useScholar, 0, nextEnPhrase(pi));
           const fresh = candidates.filter(p => {
             const key = (p.title || '').toLowerCase().slice(0, 60);
             return key && !globalSeen.has(key);
@@ -633,8 +639,8 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
         const countGood = () => updatedGroups.flatMap(g => g.papers).filter(p => (p.geminiScore ?? 60) >= 70).length;
         const allTriedPhrases = normalizedTheses.flatMap(t => t.phrases || []);
 
-        const backfillPhrase = async (phrase, extraYears) => {
-          const candidates = await searchByPhrase(phrase, 10, page, false, extraYears);
+        const backfillPhrase = async (phrase, extraYears, enPhrase = '') => {
+          const candidates = await searchByPhrase(phrase, 10, page, true, extraYears, enPhrase);
           const fresh = candidates.filter(p => {
             const key = (p.title || '').toLowerCase().slice(0, 60);
             return key && !globalSeen.has(key);
@@ -654,17 +660,17 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
 
         for (const extraYears of [2, 3]) {
           if (stopSearchRef.current || countGood() >= needed) break;
-          for (const phrase of allTriedPhrases) {
+          for (let i = 0; i < allTriedPhrases.length; i++) {
             if (stopSearchRef.current || countGood() >= needed) break;
-            await backfillPhrase(phrase, extraYears);
+            await backfillPhrase(allTriedPhrases[i], extraYears, nextEnPhrase(i));
           }
         }
 
         if (!stopSearchRef.current && countGood() < needed && allTriedPhrases.length) {
           const altPhrases = await generateAlternatePhrases(topicCtx, filterLabel, allTriedPhrases);
-          for (const phrase of altPhrases) {
+          for (let i = 0; i < altPhrases.length; i++) {
             if (stopSearchRef.current || countGood() >= needed) break;
-            await backfillPhrase(phrase, 3);
+            await backfillPhrase(altPhrases[i], 3, nextEnPhrase(i));
           }
         }
       }
@@ -673,7 +679,7 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
       if (updatedGroups.length > 0) {
         const finalSuggested = { ...suggestedSources, [secId]: updatedGroups.flatMap(g => g.papers) };
         const finalGroups = { ...phraseGroups, [secId]: updatedGroups };
-        saveToFirestore({ suggestedSources: finalSuggested, phraseGroups: finalGroups, keywords });
+        saveToFirestore({ suggestedSources: finalSuggested, phraseGroups: finalGroups, keywords, enKeywords });
       }
     } catch (e) {
       console.error('Source search error:', e.message);
@@ -701,6 +707,7 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
     const BATCH_SIZE = 8;
     const snippetLen = mainSecs.length > 10 ? 600 : 1200;
     const allThesesNorm = {};
+    const allEnNorm = {};
 
     try {
       for (let bStart = 0; bStart < mainSecs.length; bStart += BATCH_SIZE) {
@@ -723,11 +730,15 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
 Кожна фраза = [1–2 ключових слова з ТЕМИ роботи] + [конкретний аспект тези].
 ВАЖЛИВО: кожна фраза має містити конкретний предмет теми — не загальні слова без прив'язки.
 
+КРОК 3. Додай 3 пошукові фрази АНГЛІЙСЬКОЮ для розділу загалом (academic English, ширші за тезу) —
+для пошуку в міжнародних англомовних базах.
+
 РОЗДІЛИ:
 ${secBlocks}
 
-Поверни валідний JSON з полем:
-- "theses": об'єкт, ключ = ідентифікатор розділу з квадратних дужок ("1.1", "1.2", "3" тощо), значення = масив об'єктів {"thesis": рядок, "phrases": масив рядків}`;
+Поверни валідний JSON з полями:
+- "theses": об'єкт, ключ = ідентифікатор розділу з квадратних дужок ("1.1", "1.2", "3" тощо), значення = масив об'єктів {"thesis": рядок, "phrases": масив рядків}
+- "enPhrases": об'єкт, ключ = ідентифікатор розділу з квадратних дужок, значення = масив з 3 англомовних фраз (рядки)`;
 
         const res = await fetch("/api/gemini", {
           method: "POST",
@@ -747,6 +758,7 @@ ${secBlocks}
         const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
         const parsed = JSON.parse(raw);
         const thesesRaw = parsed.theses || {};
+        const enPhrasesRaw = parsed.enPhrases || {};
 
         for (const [k, arr] of Object.entries(thesesRaw)) {
           allThesesNorm[normalizeKey(k)] = (Array.isArray(arr) ? arr : []).map(t => ({
@@ -754,12 +766,16 @@ ${secBlocks}
             phrases: (Array.isArray(t.phrases) ? t.phrases : []).map(String).filter(Boolean),
           })).filter(t => t.phrases.length > 0);
         }
+        for (const [k, v] of Object.entries(enPhrasesRaw)) {
+          allEnNorm[normalizeKey(k)] = Array.isArray(v) ? v.map(String).filter(Boolean) : [];
+        }
       }
 
       const kwNorm = Object.fromEntries(
         Object.entries(allThesesNorm).map(([k, theses]) => [k, theses.flatMap(t => t.phrases)])
       );
       setKeywords(kwNorm);
+      setEnKeywords(allEnNorm);
 
       const econSecIdsForSources = getEconSections(mainSecs, info);
       for (const s of mainSecs) {
@@ -767,7 +783,7 @@ ${secBlocks}
         const normalKey = normalizeKey(s.id);
         const thesesData = allThesesNorm[normalKey] || allThesesNorm[s.id] || [];
         if (thesesData.length || econSecIdsForSources.includes(s.id)) {
-          await doSearchSources(s.id, thesesData, s.label || '');
+          await doSearchSources(s.id, thesesData, s.label || '', false, [], allEnNorm[normalKey] || []);
         }
       }
     } catch (e) { console.error(e); setKwError(e.message); }
@@ -799,10 +815,13 @@ ${secBlocks}
 Кожна фраза = [1–2 ключових слова з ТЕМИ роботи] + [конкретний аспект тези].
 ВАЖЛИВО: кожна фраза має містити конкретний предмет теми — не загальні слова без прив'язки.
 
+КРОК 3. Додай 3 пошукові фрази АНГЛІЙСЬКОЮ для розділу загалом (academic English, ширші за тезу) —
+для пошуку в міжнародних англомовних базах.
+
 РОЗДІЛ:
 ${secBlock}
 
-Поверни валідний JSON: {"theses": масив об'єктів {"thesis": рядок, "phrases": масив рядків}}`;
+Поверни валідний JSON: {"theses": масив об'єктів {"thesis": рядок, "phrases": масив рядків}, "enPhrases": масив з 3 англомовних фраз}`;
 
       const res = await fetch("/api/gemini", {
         method: "POST",
@@ -827,6 +846,7 @@ ${secBlock}
                     required: ["thesis", "phrases"],
                   },
                 },
+                enPhrases: { type: "array", items: { type: "string" } },
               },
               required: ["theses"],
             },
@@ -847,9 +867,11 @@ ${secBlock}
           phrases: (Array.isArray(t.phrases) ? t.phrases : []).map(String).filter(Boolean),
         }))
         .filter(t => t.phrases.length > 0);
+      const newEnPhrases = (Array.isArray(parsed.enPhrases) ? parsed.enPhrases : []).map(String).filter(Boolean);
       if (newTheses.length) {
         setKeywords(prev => ({ ...prev, [sec.id]: newTheses.flatMap(t => t.phrases) }));
-        await doSearchSources(sec.id, newTheses, sec.label || '', true);
+        setEnKeywords(prev => ({ ...prev, [sec.id]: newEnPhrases }));
+        await doSearchSources(sec.id, newTheses, sec.label || '', true, [], newEnPhrases);
       } else {
         setSourcesSearchLoading(prev => ({ ...prev, [sec.id]: false }));
       }

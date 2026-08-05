@@ -4,7 +4,8 @@ export const config = { maxDuration: 15 };
 const BLOCKED = [
   'russia', 'russian federation', 'москв', 'санкт-петербург', 'новосибирск',
   'екатеринбург', 'казань', 'самар', 'нижн', 'российск', 'росс', 'rsci',
-  'elibrary.ru', 'cyberleninka', 'белорус', 'беларус', 'minsk', 'минск',
+  'elibrary.ru', 'cyberleninka', 'киберленинк',
+  'белорус', 'беларус', 'minsk', 'минск', 'гродн', 'витебск', 'брест',
 ];
 
 function isRussianUrl(url = '') {
