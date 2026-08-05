@@ -4462,35 +4462,46 @@ ${secBlock}
       });
     });
 
+    // Групуємо за підрозділом: вставки в один і той самий підрозділ мають лишатись
+    // послідовними (кожна спирається на текст, залишений попередньою), а самі підрозділи
+    // йдуть паралельно — без цього вставка N осиротілих джерел могла тривати хвилини
+    // (послідовно, до 60с таймауту на кожен виклик Claude).
     const unresolvedOrphans = [];
-    for (const { sec, globalN } of orphans) {
-      if (!newContent[sec.id]) continue;
-      const citationMarker = refCiteText[globalN] || `[${globalN}]`;
-      const sourceText = allRefs[globalN - 1];
-      const existingCitationNumbers = [...new Set(
-        [...newContent[sec.id].matchAll(/\[(\d+)\]|%%FN(\d+)%%/g)].map(m => m[1] || m[2])
-      )];
-      const insertPrompt = buildCorrectionRewritePrompt({
-        section: sec,
-        originalText: newContent[sec.id],
-        issue: "Підрозділ не містить посилання на джерело зі списку літератури, яке було йому призначене під час генерації.",
-        suggestion: `Встав посилання ${citationMarker} до речення, яке найбільше стосується змісту цього джерела.`,
-        info, methodInfo, lang: _remapWorkLang,
-        existingCitationNumbers,
-        allowedNewCitation: { number: globalN, marker: citationMarker, sourceText },
-      });
-      try {
-        const insertRaw = await callClaude([{ role: "user", content: insertPrompt }], null, buildSYS(_remapWorkLang, methodInfo), Math.min(60000, Math.max(4000, Math.round((sec.pages || 1) * 3000))), null, MODEL, { cache: true });
-        const cleaned = typographQuotes(fixMixedScript(insertRaw, _remapWorkLang)
-          .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
-          .replace(/[ᄀ-ᇿ⺀-鿿ꀀ-꓿가-퟿豈-﫿]/g, "")
-        ).replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2").replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2").trim();
-        newContent[sec.id] = cleaned;
-      } catch (e) {
-        console.error("Помилка вставки цитати непроцитованого джерела", sec.id, globalN, e);
-        unresolvedOrphans.push(globalN);
+    const orphansBySec = new Map();
+    orphans.forEach(o => {
+      if (!newContent[o.sec.id]) return;
+      if (!orphansBySec.has(o.sec.id)) orphansBySec.set(o.sec.id, []);
+      orphansBySec.get(o.sec.id).push(o);
+    });
+    await Promise.all([...orphansBySec.values()].map(async (secOrphans) => {
+      for (const { sec, globalN } of secOrphans) {
+        const citationMarker = refCiteText[globalN] || `[${globalN}]`;
+        const sourceText = allRefs[globalN - 1];
+        const existingCitationNumbers = [...new Set(
+          [...newContent[sec.id].matchAll(/\[(\d+)\]|%%FN(\d+)%%/g)].map(m => m[1] || m[2])
+        )];
+        const insertPrompt = buildCorrectionRewritePrompt({
+          section: sec,
+          originalText: newContent[sec.id],
+          issue: "Підрозділ не містить посилання на джерело зі списку літератури, яке було йому призначене під час генерації.",
+          suggestion: `Встав посилання ${citationMarker} до речення, яке найбільше стосується змісту цього джерела.`,
+          info, methodInfo, lang: _remapWorkLang,
+          existingCitationNumbers,
+          allowedNewCitation: { number: globalN, marker: citationMarker, sourceText },
+        });
+        try {
+          const insertRaw = await callClaude([{ role: "user", content: insertPrompt }], null, buildSYS(_remapWorkLang, methodInfo), Math.min(60000, Math.max(4000, Math.round((sec.pages || 1) * 3000))), null, MODEL, { cache: true });
+          const cleaned = typographQuotes(fixMixedScript(insertRaw, _remapWorkLang)
+            .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
+            .replace(/[ᄀ-ᇿ⺀-鿿ꀀ-꓿가-퟿豈-﫿]/g, "")
+          ).replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2").replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2").trim();
+          newContent[sec.id] = cleaned;
+        } catch (e) {
+          console.error("Помилка вставки цитати непроцитованого джерела", sec.id, globalN, e);
+          unresolvedOrphans.push(globalN);
+        }
       }
-    }
+    }));
     if (unresolvedOrphans.length) {
       alert(`Не вдалося автоматично процитувати ${unresolvedOrphans.length} джерел${unresolvedOrphans.length === 1 ? "о" : ""} зі списку літератури (№${unresolvedOrphans.join(", ")}) — перевірте вручну.`);
     }
