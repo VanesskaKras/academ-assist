@@ -86,7 +86,7 @@ Semicolons: STRICTLY FORBIDDEN.
 Forbidden words (and all derivatives): ${forbiddenWords}.
 
 ## WRITING STYLE
-Begin each subsection with an engaging hook that immediately introduces the topic.
+Vary how each subsection opens across the whole work. Do NOT open every subsection the same way. Rotate between these opening styles: an engaging hook, a concrete fact or statistic, a direct claim about the topic, a brief definition, or a short real-world example. If earlier subsections are shown to you as prior context above, look at how the last one or two of them opened and deliberately pick a different style now.
 Write short, clear sentences. Use active voice.
 Replace jargon and complex terms with accessible language. Use minimal abbreviations.
 Avoid overly long sentences. Break long sentences into smaller parts.
@@ -98,6 +98,10 @@ STRICTLY FORBIDDEN to use sequential enumerators ("по-перше", "по-др�
 STRICTLY FORBIDDEN to open a sentence with an ordinal number word that implies a list position: "Перша умова...", "Друга умова...", "Третя умова...", "Перший крок...", "Другий крок...", "Перша помилка...", "Друга помилка...", "Перша причина...", "Перший фактор...", or any equivalent ordinal opener in any language (First condition, Second step, Third mistake, etc.). Do NOT structure content as a hidden numbered list. Instead, name each item by its actual characteristic: "Важливою умовою є...", "Не менш суттєвим є...", "Окремої уваги заслуговує...".
 STRICTLY FORBIDDEN openers and phrases (AI-detection triggers — never use or derive from): "Варто зазначити", "Слід відмітити", "Слід зазначити", "Необхідно підкреслити", "Варто підкреслити", "Зазначимо що", "Необхідно зауважити", "В умовах сьогодення", "В сучасних умовах", "В сучасних реаліях", "На сучасному етапі розвитку", "відіграє важливу роль", "відіграє ключову роль", "відіграє значну роль", "має важливе значення", "слугує основою для"; English equivalents: "It is worth noting", "It should be noted", "It is important to note", "In today's world", "In the modern era", "plays a crucial role", "plays a key role", "is of great importance", "serves as a foundation".
 Do NOT start two consecutive paragraphs with the same grammatical construction. Do NOT start two consecutive sentences with the same word.
+STRICTLY FORBIDDEN generic connector words as sentence or paragraph openers (extremely common AI-detector triggers): "Таким чином", "Отже", "Крім того", "Більше того", "Підсумовуючи", "Загалом", "Насамкінець", "Зрештою", "У результаті", "Варто додати", "Не можна не відзначити", "Одним із ключових аспектів", "Важливо розуміти, що", "Слід підкреслити, що"; English equivalents: "Thus", "Therefore", "In conclusion", "Overall", "Furthermore", "Moreover", "As a result", "It is worth adding", "One of the key aspects", "It is important to understand that". Open the sentence with a concrete detail, fact, or direct claim instead.
+STRICTLY FORBIDDEN to list exactly three parallel examples, items, or clauses within one sentence using identical grammatical structure (the "rule of three" pattern, e.g. "X, Y, and Z" or "X, Y, а також Z"). Use two items, four or more, or split into separate sentences instead.
+Vary paragraph macrostructure: do NOT make every paragraph follow the same claim-then-elaboration-then-summary shape. Some paragraphs should open with a concrete example or fact, others with a direct claim, others as a mid-thought continuation of the previous paragraph's idea.
+Do NOT repeat the same synonym or phrase for the same recurring concept more than twice within one subsection. Vary word choice for recurring concepts.
 SENTENCE BURSTINESS: naturally scatter clusters of 2-3 consecutive very short sentences (under 10 words each) at least once per 200 words — this is the strongest signal of human writing and breaks the uniform rhythm that AI detectors flag.
 Insert simple metaphors for clarity where appropriate.
 Soften categorical statements into gentle propositions. Add short transitions between paragraphs.
@@ -165,7 +169,7 @@ Semicolons: STRICTLY FORBIDDEN.
 Forbidden words (and all derivatives): ${forbiddenWords}.
 
 ## WRITING STYLE
-Begin each section or paragraph with an engaging hook.
+Vary how each section opens. Do NOT default to the same opening style every time. Rotate between an engaging hook, a concrete fact or statistic, a direct claim, a brief definition, or a short real-world example.
 Write short, clear sentences. Use active voice.
 Replace jargon with accessible language. Use minimal abbreviations.
 Vary sentence and paragraph length for natural reading rhythm.
@@ -175,6 +179,10 @@ STRICTLY FORBIDDEN to use sequential enumerators ("по-перше", "по-др�
 STRICTLY FORBIDDEN to open a sentence with an ordinal number word that implies a list position: "Перша умова...", "Друга умова...", "Третя умова...", "Перший крок...", "Другий крок...", "Перша помилка...", "Друга помилка...", or any equivalent ordinal opener in any language (First condition, Second step, Third mistake, etc.). Do NOT structure content as a hidden numbered list. Name each item by its actual characteristic instead.
 STRICTLY FORBIDDEN openers and phrases (AI-detection triggers — never use or derive from): "Варто зазначити", "Слід відмітити", "Слід зазначити", "Необхідно підкреслити", "Варто підкреслити", "Зазначимо що", "Необхідно зауважити", "В умовах сьогодення", "В сучасних умовах", "В сучасних реаліях", "На сучасному етапі розвитку", "відіграє важливу роль", "відіграє ключову роль", "відіграє значну роль", "має важливе значення", "слугує основою для"; English equivalents: "It is worth noting", "It should be noted", "It is important to note", "In today's world", "In the modern era", "plays a crucial role", "plays a key role", "is of great importance", "serves as a foundation".
 Do NOT start two consecutive paragraphs with the same grammatical construction. Do NOT start two consecutive sentences with the same word.
+STRICTLY FORBIDDEN generic connector words as sentence or paragraph openers (extremely common AI-detector triggers): "Таким чином", "Отже", "Крім того", "Більше того", "Підсумовуючи", "Загалом", "Насамкінець", "Зрештою", "У результаті", "Варто додати", "Не можна не відзначити", "Одним із ключових аспектів", "Важливо розуміти, що", "Слід підкреслити, що"; English equivalents: "Thus", "Therefore", "In conclusion", "Overall", "Furthermore", "Moreover", "As a result", "It is worth adding", "One of the key aspects", "It is important to understand that". Open the sentence with a concrete detail, fact, or direct claim instead.
+STRICTLY FORBIDDEN to list exactly three parallel examples, items, or clauses within one sentence using identical grammatical structure (the "rule of three" pattern, e.g. "X, Y, and Z" or "X, Y, а також Z"). Use two items, four or more, or split into separate sentences instead.
+Vary paragraph macrostructure: do NOT make every paragraph follow the same claim-then-elaboration-then-summary shape. Some paragraphs should open with a concrete example or fact, others with a direct claim, others as a mid-thought continuation of the previous paragraph's idea.
+Do NOT repeat the same synonym or phrase for the same recurring concept more than twice within one subsection. Vary word choice for recurring concepts.
 SENTENCE BURSTINESS: naturally scatter clusters of 2-3 consecutive very short sentences (under 10 words each) at least once per 200 words — this is the strongest signal of human writing and breaks the uniform rhythm that AI detectors flag.
 Insert simple metaphors for clarity where appropriate. Soften categorical statements. Add short transitions between paragraphs.
 Keep all key facts intact. Adopt a simple, conversational yet academic tone.
