@@ -3912,14 +3912,14 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
           if (stopSearchRef.current) break outer;
           const phrase = phrases[pi];
           const useScholar = pi === 0 || isTechnicalWork; // Scholar тільки для першої фрази тези; для технічних робіт — на кожній
-          const candidates = await searchByPhrase(phrase, 10, page, useScholar, 0, nextEnPhrase(pi));
+          const candidates = await searchByPhrase(phrase, 15, page, useScholar, 0, nextEnPhrase(pi));
           const fresh = candidates.filter(p => {
             const key = (p.title || '').toLowerCase().slice(0, 60);
             return key && !globalSeen.has(key);
           });
           if (!fresh.length) continue;
 
-          const top15 = await filterSourcesWithGemini(fresh.slice(0, 20), filterLabel, topicCtx, 20, thesis);
+          const top15 = await filterSourcesWithGemini(fresh.slice(0, 25), filterLabel, topicCtx, 20, thesis);
           top15.forEach(p => globalSeen.add((p.title || '').toLowerCase().slice(0, 60)));
 
           const existingIdx = updatedGroups.findIndex(g => g.phrase === phrase);
@@ -3948,13 +3948,13 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
         const backfillPhrase = async (phrase, extraYears, enPhrase = '') => {
           // Scholar тут (на відміну від першого проходу) увімкнено завжди: ми вже точно знаємо,
           // що інших джерел бракує, а Scholar — найкраще джерело саме для вузьких/локальних тем
-          const candidates = await searchByPhrase(phrase, 10, page, true, extraYears, enPhrase);
+          const candidates = await searchByPhrase(phrase, 15, page, true, extraYears, enPhrase);
           const fresh = candidates.filter(p => {
             const key = (p.title || '').toLowerCase().slice(0, 60);
             return key && !globalSeen.has(key);
           });
           if (!fresh.length) return;
-          const filtered = await filterSourcesWithGemini(fresh.slice(0, 20), filterLabel, topicCtx, 20);
+          const filtered = await filterSourcesWithGemini(fresh.slice(0, 25), filterLabel, topicCtx, 20);
           filtered.forEach(p => globalSeen.add((p.title || '').toLowerCase().slice(0, 60)));
           const existingIdx = updatedGroups.findIndex(g => g.phrase === phrase);
           if (existingIdx >= 0) {

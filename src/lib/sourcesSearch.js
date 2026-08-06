@@ -271,6 +271,12 @@ function snippetAbstract(text) {
   return words.length > 100 ? words.slice(0, 100).join(' ') + '...' : snippet;
 }
 
+// CrossRef іноді повертає анотацію як JATS XML (<jats:p>текст</jats:p>) — знімаємо теги
+function stripJatsAbstract(text) {
+  if (!text) return '';
+  return text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 /**
  * Будує семантичні ключові слова з контексту роботи (не від AI).
  * Витягує значущі слова з назви підрозділу, теми, галузі та коментарів,
@@ -504,6 +510,48 @@ function mapCORE(result) {
   };
 }
 
+// ── DOAJ (Directory of Open Access Journals) — мультидисциплінарний, добре покриває укр. журнали ──
+// Немає гарантованого CORS у браузері — проксимо через /api/search-doaj (Vercel)
+async function fetchDOAJ(query, limit) {
+  try {
+    const res = await fetch('/api/search-doaj', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, limit }),
+    });
+    if (!res.ok) return [];
+    const d = await res.json();
+    return (d.results || []).filter(p => p.bibjson?.title && !isBlocked(p));
+  } catch { return []; }
+}
+
+function mapDOAJ(result) {
+  const bj = result.bibjson || {};
+  const title = bj.title || '';
+  const identifiers = bj.identifier || [];
+  const doi = identifiers.find(i => i.type === 'doi')?.id || '';
+  const links = bj.link || [];
+  const fulltextUrl = links.find(l => l.type === 'fulltext')?.url || links[0]?.url || '';
+  const url = fulltextUrl || (doi ? `https://doi.org/${doi}` : '');
+  const authors = (bj.author || []).slice(0, 3).map(a => a.name || '').filter(Boolean);
+  const lang = hasCyrillic(title) ? 'uk' : 'en';
+  return {
+    id: result.id ? `doaj-${result.id}` : String(Math.random()),
+    title,
+    authors: normalizeAuthorsScript(authors, lang === 'uk'),
+    year: bj.year || '',
+    venue: bj.journal?.title || '',
+    doi,
+    volume: bj.journal?.volume || '',
+    issue: bj.journal?.number || '',
+    pages: extractPagesFromDoi(doi),
+    lang,
+    source: 'doaj',
+    abstract: snippetAbstract(bj.abstract || ''),
+    url,
+  };
+}
+
 // ── OpenAlex книги (тип book/monograph, україномовні) ──
 async function fetchOpenAlexBooks(query, limit) {
   try {
@@ -543,6 +591,7 @@ async function fetchCrossRefBooks(query, limit) {
         lang: 'uk',
         source: 'crossref',
         type: 'book',
+        abstract: snippetAbstract(stripJatsAbstract(p.abstract || '')),
         url: p.DOI ? `https://doi.org/${p.DOI}` : '',
       }));
   } catch { return []; }
@@ -592,6 +641,7 @@ async function fetchCrossRefUkrainian(query, limit, extraYears = 0) {
       pages: p.page ? p.page.replace('-', '–') : extractPagesFromDoi(p.DOI || ''),
       lang: 'uk',
       source: 'crossref',
+      abstract: snippetAbstract(stripJatsAbstract(p.abstract || '')),
       url: p.DOI ? `https://doi.org/${p.DOI}` : '',
     }));
 }
@@ -612,14 +662,14 @@ async function fetchEnglishViaBackend(enKeywords, limit) {
   }
 }
 
-// ── Пошук за однією фразою: BASE, Scholar (опційно), CORE, OpenAlex uk, CrossRef, OpenAlex pl, OpenAlex en, Semantic Scholar en ──
+// ── Пошук за однією фразою: BASE, Scholar (опційно), CORE, DOAJ, OpenAlex uk, CrossRef, OpenAlex pl, OpenAlex en, Semantic Scholar en ──
 // enPhrase: англійський відповідник phrase (якщо є) — українська фраза не матчиться з англомовними
 // статтями за текстом, тому EN-джерела (OpenAlex-en, Semantic Scholar) шукають саме за ним,
 // а якщо enPhrase не передали — фолбек на phrase (як було раніше, краще ніж нічого)
 export async function searchByPhrase(phrase, limit = 10, page = 1, useScholar = false, extraYears = 0, enPhrase = '') {
   const yr = `publication_year:>${YEAR_LOOSE - extraYears - 1}`;
   const enQuery = enPhrase || phrase;
-  const [r1, r2, r3, r4, r5, r6, r7, r8] = await Promise.allSettled([
+  const [r1, r2, r3, r4, r5, r6, r7, r8, r9] = await Promise.allSettled([
     fetchBASE(phrase, limit),
     useScholar ? fetchScholar(phrase, limit) : Promise.resolve([]),
     fetchCORE(phrase, limit),
@@ -628,6 +678,7 @@ export async function searchByPhrase(phrase, limit = 10, page = 1, useScholar = 
     openAlexSearch(phrase, `language:pl,${yr}`, limit, page),
     openAlexSearch(enQuery, `language:en,${yr}`, limit, page),
     enPhrase ? fetchEnglishViaBackend([enPhrase], limit) : Promise.resolve([]),
+    fetchDOAJ(phrase, limit),
   ]);
 
   const baseRaw    = r1.status === 'fulfilled' ? r1.value.map(mapBASE) : [];
@@ -638,10 +689,11 @@ export async function searchByPhrase(phrase, limit = 10, page = 1, useScholar = 
   const plRaw      = r6.status === 'fulfilled' ? r6.value.map(p => mapOpenAlex(p, 'pl')) : [];
   const enRaw      = r7.status === 'fulfilled' ? r7.value.map(p => mapOpenAlex(p, 'en')) : [];
   const ssRaw      = r8.status === 'fulfilled' ? r8.value : [];
+  const doajRaw    = r9.status === 'fulfilled' ? r9.value.map(mapDOAJ) : [];
 
   const seen = new Set();
   const raw = [];
-  for (const p of [...baseRaw, ...scholarRaw, ...coreRaw, ...ukRaw, ...crRaw, ...plRaw, ...enRaw, ...ssRaw]) {
+  for (const p of [...baseRaw, ...scholarRaw, ...coreRaw, ...ukRaw, ...crRaw, ...plRaw, ...enRaw, ...ssRaw, ...doajRaw]) {
     const key = (p.title || '').toLowerCase().slice(0, 60);
     if (!key || seen.has(key)) continue;
     seen.add(key);
@@ -717,7 +769,7 @@ export function getEconInstitutionalSources() {
 // r2, r8      — CrossRef (вже відформатовано fetchCrossRefUkrainian) → без маппінгу
 export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4, sectionTitle = '', topic = '', page = 1, semKeywords = [], anchors = [], geminiPhrases = []) {
   const target = 25;
-  const fetchLimit = 15;
+  const fetchLimit = 20;
   const allUkKeywords = [...new Set([...ukKeywords, ...semKeywords])];
   const yr = `publication_year:>${YEAR_LOOSE - 1}`;
 

@@ -20,12 +20,22 @@ function withTimeout(promise, ms = 10000) {
   ]);
 }
 
+// Обрізає анотацію до перших 2 речень / 100 слів (як snippetAbstract у src/lib/sourcesSearch.js)
+function snippetAbstract(text) {
+  if (!text) return '';
+  const sentences = text.match(/[^.!?]+[.!?]+/g) || [];
+  const snippet = sentences.slice(0, 2).join(' ').trim();
+  if (!snippet) return '';
+  const words = snippet.split(/\s+/);
+  return words.length > 100 ? words.slice(0, 100).join(' ') + '...' : snippet;
+}
+
 // Той самий "нестрогий" поріг (останні 10 років), що й YEAR_LOOSE у src/lib/sourcesSearch.js —
 // рахуємо від поточного року, а не захардкоджуємо конкретний рік
 const YEAR_LOOSE = new Date().getFullYear() - 9;
 
 async function searchSemanticScholar(query, limit) {
-  const url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(query)}&fields=title,authors,year,venue,externalIds&limit=${limit}`;
+  const url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(query)}&fields=title,authors,year,venue,externalIds,abstract&limit=${limit}`;
   const r = await fetch(url, { headers: { 'User-Agent': 'AcademAssist/1.0' } });
   if (!r.ok) return [];
   const data = await r.json();
@@ -46,6 +56,7 @@ async function searchSemanticScholar(query, limit) {
       doi: p.externalIds?.DOI || '',
       lang: 'en',
       source: 'ss',
+      abstract: snippetAbstract(p.abstract || ''),
       url: p.externalIds?.DOI
         ? `https://doi.org/${p.externalIds.DOI}`
         : `https://www.semanticscholar.org/paper/${p.paperId}`,
