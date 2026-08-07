@@ -169,9 +169,7 @@ export async function lookupDoiMetadata(doi) {
   if (!doi) return null;
   let result = null;
   try {
-    const r = await fetch(`https://api.crossref.org/works/${encodeURIComponent(doi)}`, {
-      headers: { 'User-Agent': 'AcademAssist/1.0 (mailto:support@academ-assist.vercel.app)' },
-    });
+    const r = await fetch(`https://api.crossref.org/works/${encodeURIComponent(doi)}?mailto=support@academ-assist.vercel.app`);
     if (r.ok) {
       const d = await r.json();
       const p = d.message;
@@ -569,11 +567,8 @@ async function fetchOpenAlexBooks(query, limit) {
 // ── CrossRef монографії ──
 async function fetchCrossRefBooks(query, limit) {
   try {
-    const url = `https://api.crossref.org/works?query=${encodeURIComponent(query)}&filter=type:monograph&rows=${Math.min(limit, 10)}`;
-    const r = await fetch(url, {
-      cache: 'no-store',
-      headers: { 'User-Agent': 'AcademAssist/1.0 (mailto:support@academ-assist.vercel.app)' },
-    });
+    const url = `https://api.crossref.org/works?query=${encodeURIComponent(query)}&filter=type:monograph&rows=${Math.min(limit, 10)}&mailto=support@academ-assist.vercel.app`;
+    const r = await fetch(url, { cache: 'no-store' });
     if (!r.ok) return [];
     const d = await r.json();
     return (d.message?.items || [])
@@ -616,11 +611,8 @@ async function fetchBooksSerper(query, limit) {
 
 // ── CrossRef (добре покриває укр. журнали з DOI) ──
 async function fetchCrossRefUkrainian(query, limit, extraYears = 0) {
-  const url = `https://api.crossref.org/works?query=${encodeURIComponent(query)}&filter=from-pub-date:${YEAR_LOOSE - extraYears}&rows=${Math.min(limit * 2, 20)}`;
-  const r = await fetch(url, {
-    cache: 'no-store',
-    headers: { 'User-Agent': 'AcademAssist/1.0 (mailto:support@academ-assist.vercel.app)' },
-  });
+  const url = `https://api.crossref.org/works?query=${encodeURIComponent(query)}&filter=from-pub-date:${YEAR_LOOSE - extraYears}&rows=${Math.min(limit * 2, 20)}&mailto=support@academ-assist.vercel.app`;
+  const r = await fetch(url, { cache: 'no-store' });
   if (!r.ok) return [];
   const d = await r.json();
   return (d.message?.items || [])
@@ -1045,8 +1037,7 @@ export async function lookupDOIByBiblio(paper) {
   try {
     const q = [title, firstAuthorFamily, year].filter(Boolean).join(' ');
     const r = await fetch(
-      `https://api.crossref.org/works?query.bibliographic=${encodeURIComponent(q)}&rows=1&select=DOI,published,title`,
-      { headers: { 'User-Agent': 'AcademAssist/1.0 (mailto:support@academ-assist.vercel.app)' } },
+      `https://api.crossref.org/works?query.bibliographic=${encodeURIComponent(q)}&rows=1&select=DOI,published,title&mailto=support@academ-assist.vercel.app`,
     );
     if (!r.ok) return paper;
     const d = await r.json();
@@ -1183,8 +1174,7 @@ export async function enrichManualLine(line) {
     try {
       const q = encodeURIComponent(textOnly.slice(0, 220));
       const r = await fetch(
-        `https://api.crossref.org/works?query.bibliographic=${q}&rows=1&select=DOI,page,published`,
-        { headers: { 'User-Agent': 'AcademAssist/1.0 (mailto:support@academ-assist.vercel.app)' } },
+        `https://api.crossref.org/works?query.bibliographic=${q}&rows=1&select=DOI,page,published&mailto=support@academ-assist.vercel.app`,
       );
       if (r.ok) {
         const d = await r.json();
