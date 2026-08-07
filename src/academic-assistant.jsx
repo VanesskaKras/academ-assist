@@ -3863,6 +3863,82 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
     setLoadMsg("");
   };
 
+  // ── Спільна генерація нових тез+фраз для підрозділу через Gemini — використовується і кнопкою
+  // «регенерувати» (doRegenSectionSources), і автоескалацією при нестачі джерел (doSearchSources) ──
+  const regenerateThesesAndPhrases = async (secId, sectionLabel) => {
+    const txt = content[secId]
+      ? `\n${content[secId].substring(0, 1200).replace(/["\\]/g, " ").replace(/\n+/g, " ")}`
+      : "";
+    const domainCtx = [info?.direction, info?.subject].filter(Boolean).join(', ');
+    const commentCtx = [commentAnalysis?.planHints, commentAnalysis?.writingHints].filter(Boolean).join(' ').slice(0, 400);
+    const methodCtx = [methodInfo?.otherRequirements, methodInfo?.theoryRequirements, methodInfo?.analysisRequirements].filter(Boolean).join(' ').slice(0, 400);
+    const secBlock = `### ${sectionLabel} (потрібно ${sourceDist[secId] || 3} джерела)${txt}`;
+    const prompt = `Ти допомагаєш знайти наукові джерела для академічної роботи на тему "${info?.topic}"${domainCtx ? ` (галузь: ${domainCtx})` : ''}.
+
+ЗАВДАННЯ — для підрозділу:
+
+КРОК 1. Визнач 4–5 конкретних тез — про що писатиметься у цьому підрозділі (3–7 слів кожна, конкретний аспект змісту, не загальні назви).
+
+КРОК 2. Для кожної тези склади 2–3 пошукових фрази українською.
+Кожна фраза = [1–2 ключових слова з ТЕМИ роботи] + [конкретний аспект тези].
+ВАЖЛИВО: кожна фраза має містити конкретний предмет теми — не загальні слова без прив'язки.${commentCtx ? `\nПОБАЖАННЯ КЛІЄНТА: ${commentCtx}` : ''}${methodCtx ? `\nВИМОГИ МЕТОДИЧКИ: ${methodCtx}` : ''}
+
+КРОК 3. Додай 3 пошукові фрази АНГЛІЙСЬКОЮ для підрозділу загалом (academic English, ширші за тезу) —
+для пошуку в міжнародних англомовних базах.
+
+ПІДРОЗДІЛ:
+${secBlock}
+
+Поверни валідний JSON: {"theses": масив об'єктів {"thesis": рядок, "phrases": масив рядків}, "enPhrases": масив з 3 англомовних фраз}`;
+
+    const res = await fetch("/api/gemini", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        _model: "gemini-2.5-flash-lite",
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: {
+          maxOutputTokens: 1200,
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: "object",
+            properties: {
+              theses: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    thesis: { type: "string" },
+                    phrases: { type: "array", items: { type: "string" } },
+                  },
+                  required: ["thesis", "phrases"],
+                },
+              },
+              enPhrases: { type: "array", items: { type: "string" } },
+            },
+            required: ["theses"],
+          },
+        },
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error?.message || JSON.stringify(data).slice(0, 200));
+    if (data.usageMetadata) {
+      const cost = (data.usageMetadata.promptTokenCount * 0.10 + data.usageMetadata.candidatesTokenCount * 0.40) / 1_000_000;
+      window.dispatchEvent(new CustomEvent("apicost", { detail: { cost, model: "gemini-2.5-flash-lite", inTok: data.usageMetadata.promptTokenCount, outTok: data.usageMetadata.candidatesTokenCount } }));
+    }
+    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    const parsed = JSON.parse(raw);
+    const theses = (Array.isArray(parsed.theses) ? parsed.theses : [])
+      .map(t => ({
+        thesis: String(t.thesis || '').trim(),
+        phrases: (Array.isArray(t.phrases) ? t.phrases : []).map(String).filter(Boolean),
+      }))
+      .filter(t => t.phrases.length > 0);
+    const enPhrases = (Array.isArray(parsed.enPhrases) ? parsed.enPhrases : []).map(String).filter(Boolean);
+    return { theses, enPhrases };
+  };
+
   // ── Автоматичний пошук джерел ──
   const doSearchSources = async (secId, thesesData, sectionLabel = '', resetPage = false, anchors = [], enPhrases = []) => {
     stopSearchRef.current = false;
@@ -3942,8 +4018,13 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
       // а якщо й це не дало результату — пробуємо альтернативні (синонімічні) пошукові фрази ──
       if (!stopSearchRef.current) {
         const needed = sourceDist[secId] || 3;
-        const countGood = () => updatedGroups.flatMap(g => g.papers).filter(p => (p.geminiScore ?? 60) >= 70).length;
-        const allTriedPhrases = normalizedTheses.flatMap(t => t.phrases || []);
+        const countAtScore = (min) => updatedGroups.flatMap(g => g.papers).filter(p => (p.geminiScore ?? 60) >= min).length;
+        const countGood = () => countAtScore(70);
+        // Джерела зі score≥60 однаково пройдуть м'який fallback-поріг при автовставці
+        // (SourcesStage.jsx buildTop) — якщо їх уже досить, немає сенсу витрачати ще
+        // Gemini-виклики на пошук ідеальних (≥70) джерел.
+        const stillShort = () => !stopSearchRef.current && countGood() < needed && countAtScore(60) < needed;
+        let triedPhrases = normalizedTheses.flatMap(t => t.phrases || []);
 
         const backfillPhrase = async (phrase, extraYears, enPhrase = '') => {
           // Scholar тут (на відміну від першого проходу) увімкнено завжди: ми вже точно знаємо,
@@ -3968,17 +4049,38 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
 
         for (const extraYears of [2, 3]) {
           if (stopSearchRef.current || countGood() >= needed) break;
-          for (let i = 0; i < allTriedPhrases.length; i++) {
+          for (let i = 0; i < triedPhrases.length; i++) {
             if (stopSearchRef.current || countGood() >= needed) break;
-            await backfillPhrase(allTriedPhrases[i], extraYears, nextEnPhrase(i));
+            await backfillPhrase(triedPhrases[i], extraYears, nextEnPhrase(i));
           }
         }
 
-        if (!stopSearchRef.current && countGood() < needed && allTriedPhrases.length) {
-          const altPhrases = await generateAlternatePhrases(topicCtx, filterLabel, allTriedPhrases);
+        // Альтернативні (синонімічні) пошукові фрази — до 3 раундів; кожен наступний
+        // раунд враховує всі раніше спробувані фрази, щоб Gemini не повторював варіанти.
+        const maxAltRounds = 3;
+        for (let round = 0; round < maxAltRounds && stillShort() && triedPhrases.length; round++) {
+          const altPhrases = await generateAlternatePhrases(topicCtx, filterLabel, triedPhrases);
+          if (!altPhrases.length) break;
+          triedPhrases = [...triedPhrases, ...altPhrases];
           for (let i = 0; i < altPhrases.length; i++) {
-            if (stopSearchRef.current || countGood() >= needed) break;
+            if (!stillShort()) break;
             await backfillPhrase(altPhrases[i], 3, nextEnPhrase(i));
+          }
+        }
+
+        // Остання автоматична спроба — повна регенерація тез підрозділу (та сама логіка,
+        // що й за кнопкою «регенерувати»), перш ніж лишити користувачу попередження про нестачу.
+        if (stillShort()) {
+          try {
+            const { theses: regenTheses, enPhrases: regenEnPhrases } = await regenerateThesesAndPhrases(secId, sectionLabel);
+            const regenPhrases = regenTheses.flatMap(t => t.phrases || []);
+            const nextRegenEnPhrase = (i) => regenEnPhrases.length ? regenEnPhrases[i % regenEnPhrases.length] : '';
+            for (let i = 0; i < regenPhrases.length; i++) {
+              if (!stillShort()) break;
+              await backfillPhrase(regenPhrases[i], 3, nextRegenEnPhrase(i));
+            }
+          } catch (e) {
+            console.error('Auto thesis regeneration error:', e.message);
           }
         }
       }
@@ -4119,76 +4221,7 @@ ${secBlocks}
     setSourcesSearchLoading(prev => ({ ...prev, [sec.id]: true }));
     setSourcesSearchError(prev => ({ ...prev, [sec.id]: null }));
     try {
-      const txt = content[sec.id]
-        ? `\n${content[sec.id].substring(0, 1200).replace(/["\\]/g, " ").replace(/\n+/g, " ")}`
-        : "";
-      const domainCtx = [info?.direction, info?.subject].filter(Boolean).join(', ');
-      const commentCtx = [commentAnalysis?.planHints, commentAnalysis?.writingHints].filter(Boolean).join(' ').slice(0, 400);
-      const methodCtx = [methodInfo?.otherRequirements, methodInfo?.theoryRequirements, methodInfo?.analysisRequirements].filter(Boolean).join(' ').slice(0, 400);
-      const secBlock = `### ${sec.label} (потрібно ${sourceDist[sec.id] || 3} джерела)${txt}`;
-      const prompt = `Ти допомагаєш знайти наукові джерела для академічної роботи на тему "${info?.topic}"${domainCtx ? ` (галузь: ${domainCtx})` : ''}.
-
-ЗАВДАННЯ — для підрозділу:
-
-КРОК 1. Визнач 4–5 конкретних тез — про що писатиметься у цьому підрозділі (3–7 слів кожна, конкретний аспект змісту, не загальні назви).
-
-КРОК 2. Для кожної тези склади 2–3 пошукових фрази українською.
-Кожна фраза = [1–2 ключових слова з ТЕМИ роботи] + [конкретний аспект тези].
-ВАЖЛИВО: кожна фраза має містити конкретний предмет теми — не загальні слова без прив'язки.${commentCtx ? `\nПОБАЖАННЯ КЛІЄНТА: ${commentCtx}` : ''}${methodCtx ? `\nВИМОГИ МЕТОДИЧКИ: ${methodCtx}` : ''}
-
-КРОК 3. Додай 3 пошукові фрази АНГЛІЙСЬКОЮ для підрозділу загалом (academic English, ширші за тезу) —
-для пошуку в міжнародних англомовних базах.
-
-ПІДРОЗДІЛ:
-${secBlock}
-
-Поверни валідний JSON: {"theses": масив об'єктів {"thesis": рядок, "phrases": масив рядків}, "enPhrases": масив з 3 англомовних фраз}`;
-
-      const res = await fetch("/api/gemini", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          _model: "gemini-2.5-flash-lite",
-          contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: {
-            maxOutputTokens: 1200,
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: "object",
-              properties: {
-                theses: {
-                  type: "array",
-                  items: {
-                    type: "object",
-                    properties: {
-                      thesis: { type: "string" },
-                      phrases: { type: "array", items: { type: "string" } },
-                    },
-                    required: ["thesis", "phrases"],
-                  },
-                },
-                enPhrases: { type: "array", items: { type: "string" } },
-              },
-              required: ["theses"],
-            },
-          },
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error?.message || JSON.stringify(data).slice(0, 200));
-      if (data.usageMetadata) {
-        const cost = (data.usageMetadata.promptTokenCount * 0.10 + data.usageMetadata.candidatesTokenCount * 0.40) / 1_000_000;
-        window.dispatchEvent(new CustomEvent("apicost", { detail: { cost, model: "gemini-2.5-flash-lite", inTok: data.usageMetadata.promptTokenCount, outTok: data.usageMetadata.candidatesTokenCount } }));
-      }
-      const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-      const parsed = JSON.parse(raw);
-      const newTheses = (Array.isArray(parsed.theses) ? parsed.theses : [])
-        .map(t => ({
-          thesis: String(t.thesis || '').trim(),
-          phrases: (Array.isArray(t.phrases) ? t.phrases : []).map(String).filter(Boolean),
-        }))
-        .filter(t => t.phrases.length > 0);
-      const newEnPhrases = (Array.isArray(parsed.enPhrases) ? parsed.enPhrases : []).map(String).filter(Boolean);
+      const { theses: newTheses, enPhrases: newEnPhrases } = await regenerateThesesAndPhrases(sec.id, sec.label || '');
       if (newTheses.length) {
         setKeywords(prev => ({ ...prev, [sec.id]: newTheses.flatMap(t => t.phrases) }));
         setEnKeywords(prev => ({ ...prev, [sec.id]: newEnPhrases }));

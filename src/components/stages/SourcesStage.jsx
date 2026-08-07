@@ -127,7 +127,7 @@ export function SourcesStage({
   };
 
   // Спільна логіка вставки джерел у підрозділ — і для ручного вибору (чекбокси), і для автовставки
-  const insertSources = async (secId, papersToAdd) => {
+  const insertSources = async (secId, papersToAdd, { capForeign = true } = {}) => {
     if (!papersToAdd.length) return;
 
     // Крок 1: збагачуємо всі записи з DOI через CrossRef/OpenAlex
@@ -169,12 +169,16 @@ export function SourcesStage({
       return totalPages ? { ...p, totalPages } : p;
     }));
 
-    // Обмежуємо зарубіжні до 30% (для технічних робіт — до 50%, бо якісних укр. джерел по вузьких IT-темах об'єктивно мало)
+    // Обмежуємо зарубіжні до 30% (для технічних робіт — до 50%, бо якісних укр. джерел по вузьких IT-темах об'єктивно мало).
+    // capForeign=false — свідома відмова від квоти (ручний вибір користувача або останній fallback
+    // при нестачі кількості, коли інакше знайдені релевантні іноземні джерела просто викидались би)
     const needed = sourceDist[secId] || 4;
     const foreignFraction = isTechnical(info) ? 0.5 : 0.3;
     const maxForeign = Math.max(1, Math.round(needed * foreignFraction));
     const ukPapers = enriched.filter(p => p.lang === 'uk');
-    const enPapers = enriched.filter(p => p.lang !== 'uk').slice(0, maxForeign);
+    const enPapers = capForeign
+      ? enriched.filter(p => p.lang !== 'uk').slice(0, maxForeign)
+      : enriched.filter(p => p.lang !== 'uk');
     const papers = [...ukPapers, ...enPapers];
 
     const newLines = papers.map(paperToCitation).filter(Boolean);
@@ -216,7 +220,8 @@ export function SourcesStage({
 
   const handleAddSelected = async (secId) => {
     const allSelected = selectedSugg[secId] || [];
-    await insertSources(secId, allSelected);
+    // capForeign:false — це явний вибір користувача (галочки), мовна квота тут недоречна
+    await insertSources(secId, allSelected, { capForeign: false });
     setSelectedSugg(prev => ({ ...prev, [secId]: [] }));
   };
 
@@ -237,19 +242,23 @@ export function SourcesStage({
       const needed = sourceDist[secId] || 4;
       const foreignFraction = isTechnical(info) ? 0.5 : 0.3;
       const maxForeign = Math.max(1, Math.round(needed * foreignFraction));
-      const buildTop = (minScore) => {
+      const buildTop = (minScore, { capForeign = true } = {}) => {
         const good = suggestions
           .filter(p => (p.geminiScore ?? 60) >= minScore)
           .sort((a, b) => (b.geminiScore ?? 0) - (a.geminiScore ?? 0));
         const ukGood = good.filter(p => p.lang === 'uk');
-        const foreignGood = good.filter(p => p.lang !== 'uk').slice(0, maxForeign);
-        return [...ukGood, ...foreignGood].slice(0, needed);
+        const foreignGood = good.filter(p => p.lang !== 'uk');
+        const foreignSlice = capForeign ? foreignGood.slice(0, maxForeign) : foreignGood;
+        return [...ukGood, ...foreignSlice].slice(0, needed);
       };
-      // Якщо строгий поріг (70) не дав достатньо джерел — другий прохід з пом'якшеним порогом (60),
-      // щоб не залишати підрозділ без джерел через занадто суворий відсів релевантності
+      // Якщо строгий поріг (70) не дав достатньо джерел — другий прохід з пом'якшеним порогом (60);
+      // якщо навіть це не набирає потрібної кількості — третій прохід знімає мовну квоту (60,
+      // без капу на іноземні), щоб не відкидати вже знайдені релевантні джерела лише через мовний мікс
       let top = buildTop(70);
+      let capForeign = true;
       if (top.length < needed) top = buildTop(60);
-      if (top.length) insertSources(secId, top);
+      if (top.length < needed) { top = buildTop(60, { capForeign: false }); capForeign = false; }
+      if (top.length) insertSources(secId, top, { capForeign });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourcesSearchLoading, suggestedSources]);
