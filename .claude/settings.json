@@ -129,7 +129,8 @@
       "Bash(curl -s \"https://api.openalex.org/works?filter=title.search%3A%D0%BE%D1%81%D0%B2%D1%96%D1%82%D0%B0%20%D0%B4%D1%96%D1%82%D0%B5%D0%B9%2Clanguage%3Auk%2Cpublication_year%3A%3E2017&per_page=3&select=id,title,language,publication_year\")",
       "Bash(curl -s \"https://api.openalex.org/works?filter=institutions.country_code:pl,language:uk&per_page=3&select=id,language\")",
       "Bash(node -e \"console.log\\(encodeURIComponent\\('освіта дітей'\\)\\)\")",
-      "Bash(curl -s \"https://api.openalex.org/works?filter=title.search:%D0%BE%D1%81%D0%B2%D1%96%D1%82%D0%B0%20%D0%B4%D1%96%D1%82%D0%B5%D0%B9,language:uk&per_page=3&select=id,title,language\")"
+      "Bash(curl -s \"https://api.openalex.org/works?filter=title.search:%D0%BE%D1%81%D0%B2%D1%96%D1%82%D0%B0%20%D0%B4%D1%96%D1%82%D0%B5%D0%B9,language:uk&per_page=3&select=id,title,language\")",
+      "Bash(node --check api/search-sources.js)"
     ],
     "additionalDirectories": [
       "C:\\Users\\vanes\\AppData\\Local\\Temp\\claude\\c--Users-vanes-academ-assist\\624edb2e-c4cc-4b7d-b8a5-c8f5c62a0653\\scratchpad",
