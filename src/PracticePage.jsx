@@ -903,7 +903,7 @@ ${secBlock}
   // Цільова к-сть джерел: явно вказана клієнтом, інакше — з обсягу звіту (як calcSourceDist у великих роботах)
   const calcSourceTarget = (mainSecs) => {
     if (sourceCountExplicit) return sourceCountExplicit;
-    return Math.max(mainSecs.length * 2, parseInt(pages) || mainSecs.length * 3);
+    return Math.round(Math.max(mainSecs.length * 2, parseInt(pages) || mainSecs.length * 3) / 2);
   };
   // Розподіл цільової к-сті по розділах пропорційно їхньому обсягу в сторінках
   const calcSourceDist = (mainSecs, total) => {
