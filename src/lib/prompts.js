@@ -123,6 +123,53 @@ function _lc(lang) {
   return { tableWord: "Таблиця", figWord: "Рис.", tableRef: "наведено в Таблиці", figRef: "показано на Рис.", forbiddenWords: "аспект, важливий, особливий, значущий, ключовий, критичний, фундаментальний", latinScript: false, sources: "Список використаних джерел" };
 }
 
+// Полегшений системний промпт для звітів-анкет (методичка вимагає подати весь звіт
+// як послідовність заповнених таблиць). Не тягне за собою правила наративного письма
+// (ритм речень, заборонені відкривачі абзаців, "burstiness" тощо) — вони не застосовні
+// до табличних клітинок і лише плутають модель.
+export function buildSYSTable(lang = "Українська", methodInfo = null) {
+  const { tableWord, forbiddenWords, latinScript, sources: sourcesLabel } = _lc(lang);
+  const isEnglish = /англ|english/i.test(lang || "");
+  const isChinese = /китайськ|chinese|中文/i.test(lang || "");
+  const isUkrainian = !isEnglish && !latinScript && !isChinese;
+
+  const langLine = isEnglish
+    ? `Language: Write ONLY in English. All content must be in English.`
+    : `Language: ONLY ${lang}. All text — exclusively in this language. Do NOT mix with any other language.`;
+
+  const scriptRule = isUkrainian
+    ? `STRICTLY FORBIDDEN to use Latin-script words or terms in cell text. Transliterate foreign names into Ukrainian.`
+    : isChinese
+    ? `所有表格内容必须使用中文。`
+    : `Write entirely in ${lang}. STRICTLY FORBIDDEN to use Cyrillic script anywhere in cell text.`;
+
+  const mTableFormat = methodInfo?.formatting?.tableFormat;
+  const captionRule = mTableFormat
+    ? `If you add a short one-line caption above a table, follow this format from the methodology: ${mTableFormat}.`
+    : `A short one-line caption above a table (e.g. "${tableWord} N – Назва") is optional and allowed.`;
+
+  return `You are an expert filling in a "questionnaire-style" practice report (звіт-анкета): a document made ENTIRELY of filled-in data tables, not flowing prose.
+
+## LANGUAGE
+${langLine}
+${scriptRule}
+Sources: only non-Russian and non-Belarusian.
+
+## FORMAT (strict)
+Output ONLY markdown tables: first row = column headers with |, second row = separator |---|---|, then data rows with |. No other markdown (#, ##, **, *, - at line start) anywhere.
+${captionRule}
+STRICTLY FORBIDDEN to write introductory, transitional, or concluding sentences outside a table. STRICTLY FORBIDDEN to write narrative paragraphs. The ONLY non-table lines allowed are short table captions.
+Cell values must be concrete and specific (real or plausible data about the actual company/institution given in the task) — never leave a cell as a placeholder dash "___", "N/A", or empty unless the source methodology's own template explicitly leaves that exact cell for later handwritten completion (e.g. a signature line).
+Do not invent precise financial figures presented as officially audited data; when exact numbers are not available, use realistic illustrative figures consistent with the described organization, without claiming they come from official reporting.
+INSERT citation markers [N] inside a cell only where a claim is drawn from a provided source. Use provided sources only, never invented author names.
+STRICTLY FORBIDDEN to use em dash "—". A short hyphen "-" is fine inside cell text.
+
+## FORBIDDEN WORDS
+Avoid (and derivatives): ${forbiddenWords}.
+
+STRICTLY FORBIDDEN to add a reference list at the end. No "${sourcesLabel}:" section here.`;
+}
+
 export function buildSYSSmall(lang = "Українська") {
   const { tableWord, figWord, tableRef, figRef, forbiddenWords, latinScript, sources: sourcesLabel } = _lc(lang);
   const isEnglish = /англ|english/i.test(lang || "");
@@ -276,6 +323,7 @@ export function buildMethodologyReadingPrompt(structureInfo, practiceMode) {
   const chTypes = s.chapterTypes?.length ? s.chapterTypes : ["theory", "analysis"].slice(0, chapCount);
 
   const practiceFields = practiceMode ? `,
+  "reportFormat": "narrative",
   "practiceDateStart": null,
   "practiceDateEnd": null,
   "practiceCompanyName": null,
@@ -288,9 +336,12 @@ export function buildMethodologyReadingPrompt(structureInfo, practiceMode) {
   "diaryTableFormat": null,
   "diaryTableColumns": null,
   "hasArrivalDepartureBlock": false,
-  "hasBlankNotesPages": false` : "";
+  "hasBlankNotesPages": false,
+  "contentPlans": null` : "";
 
   const practiceRules = practiceMode ? `
+- contentPlans: ЛИШЕ якщо методичка НЕ містить класичного зразка змісту (тобто exampleTOC вище буде null — немає сторінки виду "ВСТУП / РОЗДІЛ 1 / 1.1 / ВИСНОВКИ"), але замість цього в основному тексті методички (зазвичай у розділі про завдання/зміст практики) є ОПИСОВИЙ перелік того, що має містити звіт — послідовність пунктів з заголовками чи номерами (напр. "1. Загальна інформація", "3.1 Організація...", "Аналіз і планування прибутку підприємства" як підпункт тощо). Витягни цей перелік як структуру звіту. ВАЖЛИВО: деякі методички практики (особливо для напрямів на кшталт туризму, готельно-ресторанної справи) наводять ДЕКІЛЬКА альтернативних варіантів такого переліку — по одному для кожного типу бази практики (напр. окремо "Характеристика туристичного підприємства" для турфірм, окремо "Загальна характеристика закладу готельно-ресторанного господарства" для готелів/ресторанів, окремо "Загальна характеристика музею" для музеїв/культурних закладів). Якщо знайшов кілька таких альтернативних блоків — поверни КОЖЕН окремим елементом масиву. Якщо блок один — один елемент. Формат: масив об'єктів [{"appliesTo":"короткий опис типу бази практики яким словами описана ця альтернатива в методичці, напр. 'готель, ресторан, заклад готельно-ресторанного господарства' або 'туристична фірма, турагентство, туроператор' або 'музей, культурно-мистецький заклад'","items":[{"label":"1. Назва пункту як у методичці","subitems":["1.1 Назва підпункту","1.2 Назва підпункту"]},{"label":"2. Назва пункту без підпунктів","subitems":[]}]}]. Адаптуй нумерацію так, щоб вона йшла послідовно (1, 2, 3... з підпунктами N.M). Якщо структуру звіту неможливо визначити взагалі (немає ні класичного змісту, ні такого переліку) — поверни null.
+- reportFormat: "table_questionnaire" ТІЛЬКИ якщо методичка ЯВНО вимагає оформити звіт як "звіт-анкету" — тобто основна частина звіту складається з набору заповнених таблиць (характерні формулювання: "звіт-анкета", "оформлений у вигляді анкети", "у вигляді таблиць", явна вказівка кількості таблиць на весь звіт на кшталт "15-18 таблиць"). Це НЕ те саме, що звичайна вимога "оформити результати аналізу таблицею" в одному-двох місцях — для такого випадку залиш "narrative". "narrative" — типовий випадок (звіт це зв'язний текст, можливо з окремими таблицями/рисунками всередині).
 - practiceDateStart, practiceDateEnd: якщо в документі є розклад/графік практики (по днях чи тижнях) — дати початку і закінчення цього періоду у форматі "дд.мм.рррр" (перша і остання дата розкладу). null якщо графіка/дат немає.
 - practiceCompanyName: назва бази практики — підприємство/установа/служба, де студенти її проходять (напр. "Психологічна служба [Назва університету]"). null якщо не вказано.
 - practiceSupervisorCompany: ПІБ та посада відповідальної особи/керівника від бази практики (напр. керівник(-ця) служби/відділу). null якщо не вказано.
@@ -904,6 +955,32 @@ ${instrLine}
 
 // ── Промпти для звіту з практики ──
 
+// Обирає найбільш підхожий варіант описового плану звіту (methodInfo.contentPlans), коли методичка
+// наводить кілька альтернатив залежно від типу бази практики (напр. турфірма / готель-ресторан / музей) —
+// зіставляє слова опису кожного варіанта ("appliesTo") з реальними даними практики (місце, текст завдання).
+function pickContentPlan(plans, info) {
+  if (!Array.isArray(plans) || !plans.length) return null;
+  if (plans.length === 1) return plans[0];
+  const hay = `${info.companyName || ""} ${info.practiceText || ""} ${info.direction || ""} ${info.subject || ""}`.toLowerCase();
+  let best = null, bestScore = 0;
+  for (const p of plans) {
+    const words = String(p.appliesTo || "").toLowerCase().split(/[^а-яіїєґa-z0-9]+/i).filter(w => w.length > 3);
+    const score = words.reduce((s, w) => s + (hay.includes(w) ? 1 : 0), 0);
+    if (score > bestScore) { bestScore = score; best = p; }
+  }
+  return best || plans[0];
+}
+
+// Перетворює обраний contentPlan у текст у форматі "зразка змісту" (як exampleTOC), щоб його можна
+// було подати в той самий сценарій генерації плану, що й для методичок з класичним ВСТУП/РОЗДІЛ/1.1.
+function contentPlanToToc(plan) {
+  if (!plan?.items?.length) return "";
+  return plan.items.map(it => {
+    const subLines = (it.subitems || []).filter(Boolean).join("\n");
+    return subLines ? `${it.label}\n${subLines}` : it.label;
+  }).join("\n");
+}
+
 export function buildPracticePlanPrompt(info, methodInfo, structureExampleText) {
   const { practiceText = "", practiceCategory = "economy", pages = 30, practiceGuidance } = info;
   const total = parseInt(pages) || 30;
@@ -980,8 +1057,15 @@ export function buildPracticePlanPrompt(info, methodInfo, structureExampleText) 
   // Якщо в методичці є власний зразок змісту з підрозділами (1.1, 1.2 ...) —
   // будуємо структуру за ним замість плоского шаблону по категорії.
   // Зразок готового звіту від клієнта (якщо завантажений) має пріоритет над зразком з методички.
-  const toc = methodInfo?.exampleTOC || "";
-  const hasSubsections = !!structureExampleText || /^\s*\d+\.\d+/m.test(toc);
+  let toc = methodInfo?.exampleTOC || "";
+  let hasSubsections = !!structureExampleText || /^\s*\d+\.\d+/m.test(toc);
+  // Немає класичного зразка змісту, але методичка описала зміст звіту переліком пунктів
+  // (contentPlans, витягнутих на кроці читання методички) — використовуємо найбільш підхожий варіант.
+  if (!hasSubsections && !structureExampleText && methodInfo?.contentPlans?.length) {
+    const chosenPlan = pickContentPlan(methodInfo.contentPlans, info);
+    const planToc = contentPlanToToc(chosenPlan);
+    if (planToc) { toc = planToc; hasSubsections = true; }
+  }
   const sampleBlock = structureExampleText
     ? `ЗРАЗОК ГОТОВОГО ЗВІТУ (візьми з нього реальну структуру розділів і підрозділів — кількість, порядок, рівень деталізації; це повний текст зразка, орієнтуйся лише на заголовки та поділ на частини):\n${structureExampleText}`
     : `ЗРАЗОК ПЛАНУ З МЕТОДИЧКИ (відтвори ЦЮ структуру розділів і підрозділів — кількість, порядок і рівень вкладеності, адаптувавши лише назви під конкретне підприємство/установу та тип практики):\n${toc}`;
@@ -1077,7 +1161,33 @@ export function buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterial
     ? `\nІНДИВІДУАЛЬНЕ ЗАВДАННЯ (розкрий саме це завдання в розділі): ${individualTask}`
     : "";
 
-  let instruction = `Напиши розділ "${sec.label}" звіту з практики. Мова: ${language}.
+  const isTableFormat = methodInfo?.reportFormat === "table_questionnaire";
+
+  let instruction;
+  if (isTableFormat) {
+    // Звіт-анкета: розділ = одна або кілька заповнених таблиць, без суцільного тексту-опису.
+    const labelWords = (sec.label || "").toLowerCase().split(/[^а-яіїєґa-z0-9]+/i).filter(w => w.length > 3);
+    const matchingTables = (methodInfo?.requiredTables || []).filter(t => {
+      const hay = `${t.name || ""} ${t.section || ""}`.toLowerCase();
+      return labelWords.some(w => hay.includes(w));
+    });
+    const tablesHint = matchingTables.length
+      ? `\nЗРАЗКИ ТАБЛИЦЬ З МЕТОДИЧКИ, що стосуються цього пункту (використай ЯК ЗРАЗОК структури колонок, заповни реальними даними — не копіюй заглушки):\n${matchingTables.map(t => `— ${t.name}${t.structure ? `\n  ${t.structure}` : ""}${t.instructions ? `\n  (${t.instructions})` : ""}`).join("\n")}`
+      : "";
+
+    instruction = `Склади пункт "${sec.label}" звіту-анкети з практики. Мова: ${language}.
+
+ДАНІ ПРАКТИКИ:
+${practiceText}
+${detailsLine ? `\n${detailsLine}` : ""}${individualTaskLine}
+${methodReq ? `\nВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${tablesHint}${sourcesBlock}${guidanceLine}
+
+ФОРМАТ ОБОВ'ЯЗКОВИЙ: ця методичка вимагає звіт-анкету — подай пункт ВИКЛЮЧНО як одну або кілька markdown-таблиць (вертикальні риски), БЕЗ жодного суцільного тексту-опису до/після/між таблицями (короткий підпис-заголовок таблиці одним рядком дозволений). Якщо для розкриття пункту природно потрібно кілька таблиць (напр. окремо по рокам, або окремо структура/показники) — став їх послідовно.
+Значення в клітинках мають бути конкретними: реальні чи правдоподібні дані про базу практики (${companyName || "підприємство"}), НЕ порожні риски "___" і НЕ плейсхолдери — так, ніби це вже заповнений студентом звіт.
+Обсяг: ${matchingTables.length ? "стільки рядків, скільки в зразку" : "5-10 рядків на таблицю"}, загалом орієнтовно ${sec.pages} стор. ${citNote}
+Не пиши вступних чи підсумкових речень поза таблицею. Не повторюй назву розділу як окремий рядок тексту (лише як підпис таблиці, якщо доречно).`;
+  } else {
+    instruction = `Напиши розділ "${sec.label}" звіту з практики. Мова: ${language}.
 
 ДАНІ ПРАКТИКИ:
 ${practiceText}
@@ -1087,6 +1197,7 @@ ${methodReq ? `\nВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${sourcesBl
 
 Обсяг: приблизно ${sec.pages * 225} слів, ±10% (~${sec.pages} стор.). ${citNote}
 Без markdown заголовків (#, ##). Не повторюй назву розділу на початку тексту.`;
+  }
 
   if (clientMaterialsSummary?.rawText) {
     instruction += `\n\nМАТЕРІАЛИ КЛІЄНТА (використовуй ці дані — не вигадуй, не замінюй):\n${clientMaterialsSummary.rawText.slice(0, 80000)}`;

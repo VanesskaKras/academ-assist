@@ -6,7 +6,7 @@ import {
   callClaude, callGemini, MODEL, MODEL_FAST,
 } from "./lib/api.js";
 import {
-  buildSYS, SYS_JSON, SYS_JSON_SHORT, STRUCTURE_READING_PROMPT,
+  buildSYS, buildSYSTable, SYS_JSON, SYS_JSON_SHORT, STRUCTURE_READING_PROMPT,
   buildMethodologyReadingPrompt,
   buildPracticePlanPrompt, buildPracticeWritingPrompt,
   buildPracticeDiaryPrompt,
@@ -1007,12 +1007,13 @@ ${secBlock}
       setGenIdx(idx);
       setLoadMsg(`Генерую: ${sec.label}...`);
       const instruction = buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterialsSummary, citInputs, abstractsMap);
+      const sysPrompt = methodInfo?.reportFormat === "table_questionnaire" ? buildSYSTable(lang, methodInfo) : buildSYS(lang, methodInfo);
       try {
         const maxTok = Math.min(30000, Math.max(6000, Math.round(sec.pages * 1800)));
         const text = await callClaude(
           [{ role: "user", content: instruction }],
           null,
-          buildSYS(lang, methodInfo),
+          sysPrompt,
           maxTok,
         );
         finalContent = { ...finalContent, [sec.id]: text };
@@ -1046,9 +1047,10 @@ ${secBlock}
     const info = getPracticeInfo();
     let instruction = buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterialsSummary, citInputs, abstractsMap);
     if (regenPrompt.trim()) instruction += `\n\nДОДАТКОВІ ВИМОГИ: ${regenPrompt.trim()}`;
+    const sysPrompt = methodInfo?.reportFormat === "table_questionnaire" ? buildSYSTable(language, methodInfo) : buildSYS(language, methodInfo);
     try {
       const maxTok = Math.min(30000, Math.max(6000, Math.round(sec.pages * 1800)));
-      const text = await callClaude([{ role: "user", content: instruction }], null, buildSYS(language, methodInfo), maxTok);
+      const text = await callClaude([{ role: "user", content: instruction }], null, sysPrompt, maxTok);
       setContent(prev => {
         const next = { ...prev, [secId]: text };
         saveToFirestore({ content: next });
