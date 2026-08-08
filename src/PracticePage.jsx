@@ -427,8 +427,8 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
 
         await new Promise(r => setTimeout(r, 1500));
         setLoadMsg("Читаю методичку... крок 2/2");
-        const methodMsgs = [docPart, { type: "text", text: buildMethodologyReadingPrompt(structureInfo, true) }];
-        const raw = await callGemini([{ role: "user", content: methodMsgs }], null, SYS_JSON_SHORT, 8000, (s) => setLoadMsg(`Читаю методичку... зачекайте ${s}с`), "gemini-2.5-flash", true);
+        const methodMsgs = [docPart, { type: "text", text: buildMethodologyReadingPrompt(structureInfo, true, practiceText) }];
+        const raw = await callGemini([{ role: "user", content: methodMsgs }], null, SYS_JSON_SHORT, 10000, (s) => setLoadMsg(`Читаю методичку... зачекайте ${s}с`), "gemini-2.5-flash", true);
         const jsonMatch = raw.match(/\{[\s\S]*\}/);
         parsedMethodInfo = JSON.parse(jsonMatch?.[0] || raw.replace(/```json|```/g, "").trim());
         if (structureInfo) {
@@ -553,7 +553,7 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
     const info = getPracticeInfo();
     try {
       const prompt = buildPracticePlanPrompt(info, methodInfo, structureExampleText);
-      const raw = await callClaude([{ role: "user", content: prompt }], null, "Respond only with valid JSON. No markdown.", 1500, null, MODEL_FAST);
+      const raw = await callClaude([{ role: "user", content: prompt }], null, "Respond only with valid JSON. No markdown.", 4000, null, MODEL_FAST);
       const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || raw);
       if (parsed.sections?.length) setSections(parsed.sections);
       await saveToFirestore({ info, sections: parsed.sections, stage: "plan", status: "new" });

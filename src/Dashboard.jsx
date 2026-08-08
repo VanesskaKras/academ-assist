@@ -432,7 +432,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
     const [filterStatus, setFilterStatus] = useState(null); // null = всі
     const [dlFrom, setDlFrom] = useState(null);
     const [dlTo, setDlTo] = useState(null);
-    const [sortBy, setSortBy] = useState("deadline_asc");
+    const [sortBy, setSortBy] = useState("updated_desc");
     const [filterManager, setFilterManager] = useState("all");
     const [infoOrder, setInfoOrder] = useState(null); // модалка деталей
     const [showHelp, setShowHelp] = useState(false);
@@ -671,6 +671,13 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
                     return sortBy === "created_asc" ? cA.localeCompare(cB) : cB.localeCompare(cA);
                 }
 
+                if (sortBy === "updated_asc" || sortBy === "updated_desc") {
+                    const uA = a.updatedAt || a.createdAt || "";
+                    const uB = b.updatedAt || b.createdAt || "";
+                    if (uA === uB) return 0;
+                    return sortBy === "updated_asc" ? uA.localeCompare(uB) : uB.localeCompare(uA);
+                }
+
                 // Обидва активні або обидва Готово — сортуємо за дедлайном
                 const dA = parseDeadline(a.deadline);
                 const dB = parseDeadline(b.deadline);
@@ -808,7 +815,9 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
                         <div style={{ marginBottom: 12 }}>
                             <div style={{ fontSize: 11, color: "#aaa", fontWeight: 600, letterSpacing: 1, textTransform: "uppercase", marginBottom: 4 }}>Сортування</div>
                             <select value={sortBy} onChange={e => setSortBy(e.target.value)}
-                                style={{ padding: "7px 12px", border: `1.5px solid ${sortBy !== "deadline_asc" ? "#1a1a14" : "#d4cfc4"}`, borderRadius: 8, fontSize: 13, fontFamily: "'Spectral',serif", background: "#fff", color: "#1a1a14", outline: "none", cursor: "pointer" }}>
+                                style={{ padding: "7px 12px", border: `1.5px solid ${sortBy !== "updated_desc" ? "#1a1a14" : "#d4cfc4"}`, borderRadius: 8, fontSize: 13, fontFamily: "'Spectral',serif", background: "#fff", color: "#1a1a14", outline: "none", cursor: "pointer" }}>
+                                <option value="updated_desc">Останнє редагування: спочатку нові</option>
+                                <option value="updated_asc">Останнє редагування: спочатку старі</option>
                                 <option value="deadline_asc">Дедлайн: найближчі спочатку</option>
                                 <option value="deadline_desc">Дедлайн: найдальші спочатку</option>
                                 <option value="created_desc">Дата створення: нові спочатку</option>

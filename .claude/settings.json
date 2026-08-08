@@ -130,7 +130,13 @@
       "Bash(curl -s \"https://api.openalex.org/works?filter=institutions.country_code:pl,language:uk&per_page=3&select=id,language\")",
       "Bash(node -e \"console.log\\(encodeURIComponent\\('освіта дітей'\\)\\)\")",
       "Bash(curl -s \"https://api.openalex.org/works?filter=title.search:%D0%BE%D1%81%D0%B2%D1%96%D1%82%D0%B0%20%D0%B4%D1%96%D1%82%D0%B5%D0%B9,language:uk&per_page=3&select=id,title,language\")",
-      "Bash(node --check api/search-sources.js)"
+      "Bash(node --check api/search-sources.js)",
+      "Bash(awk 'NR<=100{print NR\": \"$0}' src/academic-assistant.jsx)",
+      "Bash(grep -Ev '^\\\\s*$')",
+      "Bash(rm \"C:\\\\Users\\\\vanes\\\\.claude\\\\projects\\\\c--Users-vanes-academ-assist\\\\memory\\\\feedback_large_tables_to_appendix.md\")",
+      "Bash(export PYTHONIOENCODING=utf-8)",
+      "Bash(python3 -c ' *)",
+      "Bash(iconv -f utf-8 -t utf-8 out.txt)"
     ],
     "additionalDirectories": [
       "C:\\Users\\vanes\\AppData\\Local\\Temp\\claude\\c--Users-vanes-academ-assist\\624edb2e-c4cc-4b7d-b8a5-c8f5c62a0653\\scratchpad",
