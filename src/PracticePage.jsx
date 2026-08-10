@@ -19,6 +19,7 @@ import {
   parsePracticeDetails, buildPracticeTitlePageLines, buildPracticeDiaryTitlePageLines,
 } from "./lib/practiceDefaults.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
+import { enforceWordCount } from "./lib/wordCount.js";
 import { playDoneSound } from "./lib/audio.js";
 import {
   filterSourcesWithGemini, searchByPhrase, getEconInstitutionalSources, generateAlternatePhrases,
@@ -1007,15 +1008,20 @@ ${secBlock}
       setGenIdx(idx);
       setLoadMsg(`Генерую: ${sec.label}...`);
       const instruction = buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterialsSummary, citInputs, abstractsMap);
-      const sysPrompt = methodInfo?.reportFormat === "table_questionnaire" ? buildSYSTable(lang, methodInfo) : buildSYS(lang, methodInfo);
+      const isTableSec = methodInfo?.reportFormat === "table_questionnaire" && sec.id !== "intro" && sec.id !== "conclusions";
+      const sysPrompt = isTableSec ? buildSYSTable(lang, methodInfo) : buildSYS(lang, methodInfo);
       try {
         const maxTok = Math.min(30000, Math.max(6000, Math.round(sec.pages * 1800)));
-        const text = await callClaude(
+        const raw = await callClaude(
           [{ role: "user", content: instruction }],
           null,
           sysPrompt,
           maxTok,
         );
+        const text = isTableSec ? raw : await enforceWordCount({
+          text: raw, targetWords: Math.round((sec.pages || 1) * 270), label: sec.label,
+          callClaude, sys: sysPrompt, onProgress: setLoadMsg,
+        });
         finalContent = { ...finalContent, [sec.id]: text };
         setContent(prev => {
           const next = { ...prev, [sec.id]: text };
@@ -1047,10 +1053,15 @@ ${secBlock}
     const info = getPracticeInfo();
     let instruction = buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterialsSummary, citInputs, abstractsMap);
     if (regenPrompt.trim()) instruction += `\n\nДОДАТКОВІ ВИМОГИ: ${regenPrompt.trim()}`;
-    const sysPrompt = methodInfo?.reportFormat === "table_questionnaire" ? buildSYSTable(language, methodInfo) : buildSYS(language, methodInfo);
+    const isTableSec = methodInfo?.reportFormat === "table_questionnaire" && sec.id !== "intro" && sec.id !== "conclusions";
+    const sysPrompt = isTableSec ? buildSYSTable(language, methodInfo) : buildSYS(language, methodInfo);
     try {
       const maxTok = Math.min(30000, Math.max(6000, Math.round(sec.pages * 1800)));
-      const text = await callClaude([{ role: "user", content: instruction }], null, sysPrompt, maxTok);
+      const raw = await callClaude([{ role: "user", content: instruction }], null, sysPrompt, maxTok);
+      const text = isTableSec ? raw : await enforceWordCount({
+        text: raw, targetWords: Math.round((sec.pages || 1) * 270), label: sec.label,
+        callClaude, sys: sysPrompt, onProgress: setLoadMsg,
+      });
       setContent(prev => {
         const next = { ...prev, [secId]: text };
         saveToFirestore({ content: next });

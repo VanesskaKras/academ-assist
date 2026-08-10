@@ -148,7 +148,7 @@ export function buildSYSTable(lang = "Українська", methodInfo = null) 
     ? `If you add a short one-line caption above a table, follow this format from the methodology: ${mTableFormat}.`
     : `A short one-line caption above a table (e.g. "${tableWord} N – Назва") is optional and allowed.`;
 
-  return `You are an expert filling in a "questionnaire-style" practice report (звіт-анкета): a document made ENTIRELY of filled-in data tables, not flowing prose.
+  return `You are an expert filling in a "questionnaire-style" practice report (звіт-анкета): a document built primarily around filled-in data tables, with short explanatory text where it helps.
 
 ## LANGUAGE
 ${langLine}
@@ -156,9 +156,9 @@ ${scriptRule}
 Sources: only non-Russian and non-Belarusian.
 
 ## FORMAT (strict)
-Output ONLY markdown tables: first row = column headers with |, second row = separator |---|---|, then data rows with |. No other markdown (#, ##, **, *, - at line start) anywhere.
+Tables are the main content. Format them as markdown: first row = column headers with |, second row = separator |---|---|, then data rows with |. No other markdown (#, ##, **, *, - at line start) anywhere.
 ${captionRule}
-STRICTLY FORBIDDEN to write introductory, transitional, or concluding sentences outside a table. STRICTLY FORBIDDEN to write narrative paragraphs. The ONLY non-table lines allowed are short table captions.
+Short explanatory text (1-3 sentences) is allowed before or after a table when it helps introduce or clarify the data — but it must stay brief and factual, never a full narrative paragraph or a generic intro/summary filler. Do NOT let text outweigh the tables: tables remain the primary way information is presented.
 Cell values must be concrete and specific (real or plausible data about the actual company/institution given in the task) — never leave a cell as a placeholder dash "___", "N/A", or empty unless the source methodology's own template explicitly leaves that exact cell for later handwritten completion (e.g. a signature line).
 Do not invent precise financial figures presented as officially audited data; when exact numbers are not available, use realistic illustrative figures consistent with the described organization, without claiming they come from official reporting.
 INSERT citation markers [N] inside a cell only where a claim is drawn from a provided source. Use provided sources only, never invented author names.
@@ -1166,11 +1166,11 @@ export function buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterial
     ? `\nІНДИВІДУАЛЬНЕ ЗАВДАННЯ (розкрий саме це завдання в розділі): ${individualTask}`
     : "";
 
-  const isTableFormat = methodInfo?.reportFormat === "table_questionnaire";
+  const isTableFormat = methodInfo?.reportFormat === "table_questionnaire" && !isIntro && !isConclusions;
 
   let instruction;
   if (isTableFormat) {
-    // Звіт-анкета: розділ = одна або кілька заповнених таблиць, без суцільного тексту-опису.
+    // Звіт-анкета: розділ = одна або кілька заповнених таблиць, з коротким пояснювальним текстом за потреби.
     const labelWords = (sec.label || "").toLowerCase().split(/[^а-яіїєґa-z0-9]+/i).filter(w => w.length > 3);
     const matchingTables = (methodInfo?.requiredTables || []).filter(t => {
       const hay = `${t.name || ""} ${t.section || ""}`.toLowerCase();
@@ -1187,10 +1187,11 @@ ${practiceText}
 ${detailsLine ? `\n${detailsLine}` : ""}${individualTaskLine}
 ${methodReq ? `\nВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${tablesHint}${sourcesBlock}${guidanceLine}
 
-ФОРМАТ ОБОВ'ЯЗКОВИЙ: ця методичка вимагає звіт-анкету — подай пункт ВИКЛЮЧНО як одну або кілька markdown-таблиць (вертикальні риски), БЕЗ жодного суцільного тексту-опису до/після/між таблицями (короткий підпис-заголовок таблиці одним рядком дозволений). Якщо для розкриття пункту природно потрібно кілька таблиць (напр. окремо по рокам, або окремо структура/показники) — став їх послідовно.
+ФОРМАТ: ця методичка вимагає звіт-анкету — основний зміст пункту подай як одну або кілька markdown-таблиць (вертикальні риски). Якщо для розкриття пункту природно потрібно кілька таблиць (напр. окремо по рокам, або окремо структура/показники) — став їх послідовно.
+Короткий пояснювальний текст (1-3 речення) до або після таблиці дозволений, якщо він допомагає ввести чи прокоментувати дані (напр. коротко пояснити методику розрахунку чи узагальнити висновок з таблиці) — але це не має перетворюватись на суцільний опис: таблиці лишаються основним способом подачі інформації, текст — лише короткий супровід.
 Значення в клітинках мають бути конкретними: реальні чи правдоподібні дані про базу практики (${companyName || "підприємство"}), НЕ порожні риски "___" і НЕ плейсхолдери — так, ніби це вже заповнений студентом звіт.
 Обсяг: ${matchingTables.length ? "стільки рядків, скільки в зразку" : "5-10 рядків на таблицю"}, загалом орієнтовно ${sec.pages} стор. ${citNote}
-Не пиши вступних чи підсумкових речень поза таблицею. Не повторюй назву розділу як окремий рядок тексту (лише як підпис таблиці, якщо доречно).`;
+Не повторюй назву розділу як окремий рядок тексту (лише як підпис таблиці, якщо доречно).`;
   } else {
     instruction = `Напиши розділ "${sec.label}" звіту з практики. Мова: ${language}.
 
