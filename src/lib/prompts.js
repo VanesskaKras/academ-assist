@@ -829,8 +829,7 @@ ${citationGuard}
 // ── Розбивка завантаженого файлу по розділах замовлення ──
 export function buildFileToSectionsPrompt({ sections, documentText }) {
   const sectionsList = sections
-    .filter(s => s.type !== "sources")
-    .map(s => `- id: "${s.id}", назва: "${s.label}"`)
+    .map(s => `- id: "${s.id}", назва: "${s.label}"${s.type === "sources" ? " (список використаних джерел — перенеси ТОЧНО як в оригіналі: ту саму нумерацію, порядок і текст кожного джерела, без жодних змін)" : ""}`)
     .join("\n");
 
   return `Розбий текст академічної роботи по розділах відповідно до структури.
