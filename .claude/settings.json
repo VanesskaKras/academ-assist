@@ -136,7 +136,9 @@
       "Bash(rm \"C:\\\\Users\\\\vanes\\\\.claude\\\\projects\\\\c--Users-vanes-academ-assist\\\\memory\\\\feedback_large_tables_to_appendix.md\")",
       "Bash(export PYTHONIOENCODING=utf-8)",
       "Bash(python3 -c ' *)",
-      "Bash(iconv -f utf-8 -t utf-8 out.txt)"
+      "Bash(iconv -f utf-8 -t utf-8 out.txt)",
+      "Bash(git -C \"c:\\\\Users\\\\vanes\\\\academ-assist\" log --oneline -15)",
+      "Bash(node --check src/lib/docxAnnotations.js)"
     ],
     "additionalDirectories": [
       "C:\\Users\\vanes\\AppData\\Local\\Temp\\claude\\c--Users-vanes-academ-assist\\624edb2e-c4cc-4b7d-b8a5-c8f5c62a0653\\scratchpad",

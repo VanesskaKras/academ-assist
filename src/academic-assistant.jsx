@@ -17,6 +17,7 @@ import { extractReadyWorkStructure, quickParsePlanIds } from "./lib/readyWorkExt
 import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, getEmpiricalSections, getEconSections, getTechnicalSections, CODE_FILE_EXTENSIONS, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, getLangLabels, insertBeforeTail, detectRequestedChapterCount } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { getAcademicDefaults, classifyAppendixItem, detectSpecialty, normalizeWorkType } from "./lib/academicDefaults.js";
+import { extractAnnotations, formatAnnotationsAsCorrectionText } from "./lib/docxAnnotations.js";
 import { searchByPhrase, filterSourcesWithGemini, getEconInstitutionalSources, generateAlternatePhrases } from "./lib/sourcesSearch.js";
 import { applyCitationRemap, buildFinalReferenceList, buildCiteFormats, createReferenceDeduper, detectSourceGrouping, formatSourcesWithRetry, sortReferencesForDisplay, apaOrMlaCiteText } from "./lib/citationFormatting.js";
 import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
@@ -587,7 +588,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
       const raw = await callClaude([{ role: "user", content: msgs }], null, SYS_JSON, 1000, null, MODEL_FAST);
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
       const parsed = JSON.parse(jsonMatch?.[0] || raw.replace(/```json|```/g, "").trim());
-      newInfo = { ...parseTemplate(tplText), ...parsed };
+      newInfo = { ...parseTemplate(tplText), ...Object.fromEntries(Object.entries(parsed).filter(([, v]) => v != null && v !== "")) };
     } catch (e) {
       console.warn("doAnalyze fallback:", e.message);
       newInfo = parseTemplate(tplText);
@@ -3629,6 +3630,17 @@ ${slideSpecs.join("\n\n")}
       setContent(newContent);
       contentRef.current = newContent;
       await saveToFirestore({ content: newContent });
+
+      // Коментарі й кольорові виділення Word (якщо є) — підставляємо як готовий
+      // текст зауважень, щоб не змушувати користувача переписувати їх вручну.
+      // Необов'язково: якщо файл без анотацій чи парсинг не вдався, нічого не міняємо.
+      try {
+        const annotations = await extractAnnotations(arrayBuffer);
+        const annotationsText = formatAnnotationsAsCorrectionText(annotations, fileName);
+        if (annotationsText) {
+          setCorrectionText(prev => prev.trim() ? `${prev.trim()}\n\n${annotationsText}` : annotationsText);
+        }
+      } catch { /* коментарі/виділення необов'язкові */ }
     } catch (e) {
       alert("Помилка завантаження файлу: " + e.message);
       setUploadedFileName("");
