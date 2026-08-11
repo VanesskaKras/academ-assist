@@ -15,6 +15,48 @@ import { PhotoDropZone } from "./components/PhotoDropZone.jsx";
 import { extractAnnotations } from "./lib/docxAnnotations.js";
 
 // ─────────────────────────────────────────────
+// Пошук фрагмента для заміни: дослівно → в межах абзаца-контексту (рятує, якщо
+// той самий рядок трапляється в тексті кілька разів) → гнучкий regex, що ігнорує
+// різницю в пробілах/лапках/тире (рятує, коли ШІ трохи розходиться з оригіналом
+// у пунктуації). Якщо нічого не знайдено — повертає null, і виклик має це
+// показати користувачу, а не мовчки пропустити завдання.
+// ─────────────────────────────────────────────
+function escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buildFuzzyPattern(str) {
+  return escapeRegex(str.trim())
+    .replace(/\s+/g, "\\s+")
+    .replace(/["""«»]/g, "[\"“”«»]")
+    .replace(/['''`]/g, "['‘’`]")
+    .replace(/[-–—]/g, "[-–—]");
+}
+
+function locateFragment(text, original, context) {
+  if (!original) return null;
+  if (context && text.includes(context)) {
+    const ctxStart = text.indexOf(context);
+    const localIdx = context.indexOf(original);
+    if (localIdx !== -1) return { start: ctxStart + localIdx, end: ctxStart + localIdx + original.length };
+    try {
+      const m = context.match(new RegExp(buildFuzzyPattern(original)));
+      if (m) {
+        const idx = ctxStart + context.indexOf(m[0]);
+        return { start: idx, end: idx + m[0].length };
+      }
+    } catch { /* некоректний патерн — пробуємо далі по всьому тексту */ }
+  }
+  const exactIdx = text.indexOf(original);
+  if (exactIdx !== -1) return { start: exactIdx, end: exactIdx + original.length };
+  try {
+    const m = text.match(new RegExp(buildFuzzyPattern(original)));
+    if (m) return { start: m.index, end: m.index + m[0].length };
+  } catch { /* некоректний regex-патерн з фрагмента */ }
+  return null;
+}
+
+// ─────────────────────────────────────────────
 // Конвертація анотацій → tasks
 // ─────────────────────────────────────────────
 function annotationsToTasks(annotations) {
@@ -295,6 +337,7 @@ export default function FileCorrectionsPage({ onBack }) {
   const [applyProgress, setApplyProgress] = useState(0);
   const [currentDocText, setCurrentDocText] = useState("");
   const [correctedText, setCorrectedText] = useState("");
+  const [failedTasks, setFailedTasks] = useState([]);
   const [error, setError] = useState("");
 
   // Витрати
@@ -411,7 +454,9 @@ export default function FileCorrectionsPage({ onBack }) {
     setApplyLoading(true);
     setApplyProgress(0);
     setError("");
+    setFailedTasks([]);
     let text = currentDocText;
+    const failed = [];
     try {
       for (let i = 0; i < toFix.length; i++) {
         const task = toFix[i];
@@ -433,15 +478,26 @@ export default function FileCorrectionsPage({ onBack }) {
         }
         const result = await callClaude([{ role: "user", content: prompt }], null, SYS_JSON, 10000, null, MODEL);
         try {
-          const { original, replacement } = JSON.parse(result.replace(/```json|```/g, "").trim());
-          if (original && text.includes(original)) {
-            text = text.replace(original, replacement || "");
+          const parsed = JSON.parse(result.replace(/```json|```/g, "").trim());
+          if (parsed.status === "needs_review") {
+            failed.push({ task, reason: parsed.note || "Потрібна ручна перевірка — ШІ не може підтвердити правильне значення." });
+          } else {
+            const { original, replacement } = parsed;
+            const loc = original ? locateFragment(text, original, task.context) : null;
+            if (loc) {
+              text = text.slice(0, loc.start) + (replacement || "") + text.slice(loc.end);
+            } else {
+              failed.push({ task, reason: "Фрагмент не знайдено в тексті документа — заміну не застосовано." });
+            }
           }
-        } catch { /* пропускаємо якщо не розпарсилось */ }
+        } catch {
+          failed.push({ task, reason: "Не вдалося розпізнати відповідь ШІ." });
+        }
         setApplyProgress(i + 1);
       }
       setCorrectedText(text);
       setCurrentDocText(text);
+      setFailedTasks(failed);
       setStep(3);
       try {
         const acc = tokenAccRef.current;
@@ -449,7 +505,7 @@ export default function FileCorrectionsPage({ onBack }) {
           mode: "file_corrections", type: "file_corrections",
           topic: `Правки: ${fileName}`, uid: user?.uid || null,
           createdAt: new Date().toISOString(), timestamp: serverTimestamp(),
-          fileName, correctionsApplied: toFix.length,
+          fileName, correctionsApplied: toFix.length - failed.length, correctionsFailed: failed.length,
           totalInTok: acc.inTok, totalOutTok: acc.outTok, totalCostUsd: acc.costUsd,
           claudeInTok: acc.claudeInTok, claudeOutTok: acc.claudeOutTok, claudeCostUsd: acc.claudeCostUsd,
           geminiInTok: 0, geminiOutTok: 0, geminiCostUsd: 0, serperCredits: 0, serperCostUsd: 0,
@@ -473,7 +529,7 @@ export default function FileCorrectionsPage({ onBack }) {
     setAnnotations({ highlights: [], comments: [] }); setTasksA([]); setTasksB([]);
     setChecked({}); setCorrectionsText(""); setCorrectionPhotos([]);
     setCorrectedText(""); setCurrentDocText(""); setError("");
-    setApplyProgress(0);
+    setApplyProgress(0); setFailedTasks([]);
   }
 
   // ─────────────────────────────────────────────
@@ -489,7 +545,7 @@ export default function FileCorrectionsPage({ onBack }) {
             if (step === 0) { setMode(null); setError(""); return; }
             if (step === 1) { setStep(0); setTasksA([]); setAnnotations({ highlights: [], comments: [] }); return; }
             if (step === 2) { setStep(mode === "A" ? 1 : 1); setApplyProgress(0); return; }
-            if (step === 3) { setStep(mode === "A" ? 1 : 2); setCorrectedText(""); setCurrentDocText(docText); setApplyProgress(0); }
+            if (step === 3) { setStep(mode === "A" ? 1 : 2); setCorrectedText(""); setCurrentDocText(docText); setApplyProgress(0); setFailedTasks([]); }
           }}
           style={{ background: "none", border: "none", color: "#888", fontSize: 18, cursor: "pointer", lineHeight: 1, padding: 4 }}
         >←</button>
@@ -802,7 +858,7 @@ export default function FileCorrectionsPage({ onBack }) {
             <div style={{ ...cardStyle, border: "1.5px solid #4a6a00" }}>
               <div style={cardHead("#1a2a00")}>
                 <div style={dot("#a8e060")} />
-                <div style={labelStyle}>Виправлення внесено</div>
+                <div style={labelStyle}>{failedTasks.length ? "Виправлення внесено частково" : "Виправлення внесено"}</div>
               </div>
               <div style={{ ...cardBody, maxHeight: 300, overflowY: "auto" }}>
                 <pre style={{ fontSize: 12, color: "#333", whiteSpace: "pre-wrap", margin: 0, fontFamily: "inherit", lineHeight: 1.7 }}>
@@ -810,12 +866,32 @@ export default function FileCorrectionsPage({ onBack }) {
                 </pre>
               </div>
             </div>
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+
+            {failedTasks.length > 0 && (
+              <div style={{ ...cardStyle, border: "1.5px solid #a04a1a", marginTop: 14 }}>
+                <div style={cardHead("#3a1a0a")}>
+                  <div style={dot("#e8a060")} />
+                  <div style={labelStyle}>Не вдалося виправити автоматично ({failedTasks.length}) — перевірте вручну</div>
+                </div>
+                <div style={{ background: "#faf8f3" }}>
+                  {failedTasks.map(({ task, reason }, i) => (
+                    <div key={i} style={{ padding: "12px 16px", borderBottom: i < failedTasks.length - 1 ? "1px solid #e8e4dc" : "none" }}>
+                      <div style={{ fontSize: 12, color: "#c04020", fontStyle: "italic", marginBottom: 3 }}>
+                        «{(task.annotatedText || task.issue || task.location || "").slice(0, 140)}»
+                      </div>
+                      <div style={{ fontSize: 12, color: "#a04a1a" }}><span style={{ fontWeight: 600 }}>Причина:</span> {reason}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 14 }}>
               <button onClick={() => exportCorrectedDocx(correctedText, fileName)} style={btnGreen(false)}>
                 Завантажити виправлений .docx
               </button>
               <button
-                onClick={() => { setStep(mode === "A" ? 1 : 1); setApplyProgress(0); setCorrectedText(""); setCurrentDocText(docText); }}
+                onClick={() => { setStep(mode === "A" ? 1 : 1); setApplyProgress(0); setCorrectedText(""); setCurrentDocText(docText); setFailedTasks([]); }}
                 style={{ ...btnPrimary(false), background: "transparent", color: "#555", border: "1px solid #ccc" }}
               >
                 Внести ще правки

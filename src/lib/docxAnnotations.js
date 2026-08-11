@@ -78,6 +78,28 @@ export async function extractAnnotations(arrayBuffer) {
     const runs = para.getElementsByTagName("w:r");
     let curColor = null;
     let curText = "";
+    // Короткий нерозфарбований розрив (звичайно — пробіл) між двома виділеннями
+    // ТОГО САМОГО кольору не повинен розривати їх на окремі анотації: керівники
+    // часто виділяють і сам проблемний фрагмент, і власний коментар одразу після
+    // нього — розділені лише пробілом-раном без highlight. Якщо розривати тут,
+    // завдання на виправлення губить половину контексту (див. "6678-6679]." +
+    // "Що це за нереальні сторінки?" — без об'єднання ШІ не бачить, до чого
+    // відноситься коментар).
+    let pendingGap = "";
+
+    const flush = () => {
+      if (curText && curColor) {
+        highlights.push({
+          color: curColor,
+          colorInfo: HIGHLIGHT_COLORS[curColor] || { ua: curColor, css: "#e5e7eb", text: "#374151" },
+          text: curText.trim(),
+          context: paraText.trim(),
+        });
+      }
+      curColor = null;
+      curText = "";
+      pendingGap = "";
+    };
 
     for (const run of runs) {
       const rPr = run.getElementsByTagName("w:rPr")[0];
@@ -92,40 +114,22 @@ export async function extractAnnotations(arrayBuffer) {
 
       if (isHighlighted) {
         if (color === curColor) {
-          curText += runText;
+          curText += pendingGap + runText;
+          pendingGap = "";
         } else {
-          if (curText && curColor) {
-            highlights.push({
-              color: curColor,
-              colorInfo: HIGHLIGHT_COLORS[curColor] || { ua: curColor, css: "#e5e7eb", text: "#374151" },
-              text: curText.trim(),
-              context: paraText.trim(),
-            });
-          }
+          flush();
           curColor = color;
           curText = runText;
         }
+      } else if (curColor && /^\s*$/.test(runText)) {
+        // пробільний розрив під час активного виділення — тримаємо про запас,
+        // не скидаємо накопичене одразу
+        pendingGap += runText;
       } else {
-        if (curText && curColor) {
-          highlights.push({
-            color: curColor,
-            colorInfo: HIGHLIGHT_COLORS[curColor] || { ua: curColor, css: "#e5e7eb", text: "#374151" },
-            text: curText.trim(),
-            context: paraText.trim(),
-          });
-          curColor = null;
-          curText = "";
-        }
+        flush();
       }
     }
-    if (curText && curColor) {
-      highlights.push({
-        color: curColor,
-        colorInfo: HIGHLIGHT_COLORS[curColor] || { ua: curColor, css: "#e5e7eb", text: "#374151" },
-        text: curText.trim(),
-        context: paraText.trim(),
-      });
-    }
+    flush();
   }
 
   // ── Коментарі з прив'язкою до тексту ──
