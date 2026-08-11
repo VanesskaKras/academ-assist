@@ -89,6 +89,66 @@ export function pickPageInRange(range, occurrenceIndex) {
   return range.min + Math.round(span * frac);
 }
 
+// ── Виправлення сторінок у цитатах, що виходять за межі реального обсягу джерела ──
+// Суто кодова перевірка (без ШІ): для кожної цитати "[N, с. X]" чи "[N, с. X–Y]" у
+// тексті звіряє сторінку(и) з реальним діапазоном джерела N (extractPageRange із
+// самого бібліографічного опису) і, якщо вона поза межами, підбирає нову коректну
+// (pickPageInRange) — число підбирає код, а не ЛЛМ, тож ризику вигадування немає.
+// Для діапазону зберігає ширину оригіналу (Y−X), звужену до реально доступної в
+// джерелі, а не схлопує в одну сторінку — так "с. 120–125" лишається діапазоном,
+// а не перетворюється на щось на кшталт "с. 50–50".
+const CITATION_PAGE_RE = /\[\s*(\d+)\s*,\s*([сc]\.?)\s*(\d+)(?:\s*[–\-—]\s*(\d+))?\s*\]/g;
+
+export function fixOutOfRangeCitationPages({ content, sections }) {
+  const srcSec = sections.find(s => s.type === "sources");
+  if (!srcSec) return { updatedContent: content, fixedCount: 0, affectedSectionIds: [] };
+  const sourcesText = content[srcSec.id] || "";
+
+  const ranges = {};
+  sourcesText.split("\n").forEach(line => {
+    const m = line.match(/^\s*(\d+)[.)]\s*(.*)$/);
+    if (!m) return;
+    const range = extractPageRange(m[2].trim(), null);
+    if (range && range.min <= range.max) ranges[Number(m[1])] = range;
+  });
+
+  const occCount = {};
+  let fixedCount = 0;
+  const updatedContent = { ...content };
+  const affectedSectionIds = [];
+
+  sections.filter(s => s.type !== "sources").forEach(sec => {
+    const text = content[sec.id];
+    if (!text) return;
+    const newText = text.replace(CITATION_PAGE_RE, (match, nStr, abbrev, xStr, yStr) => {
+      const n = Number(nStr);
+      const range = ranges[n];
+      if (!range) return match; // джерело без відомого діапазону (закон/сайт) — не чіпаємо
+      occCount[n] = (occCount[n] || 0) + 1;
+      const x = Number(xStr);
+      if (yStr == null) {
+        if (x >= range.min && x <= range.max) return match; // валідна — лишаємо
+        const newPage = pickPageInRange(range, occCount[n]);
+        fixedCount++;
+        return `[${n}, ${abbrev} ${newPage}]`;
+      }
+      const y = Number(yStr);
+      if (x >= range.min && y <= range.max && x <= y) return match; // валідний діапазон
+      const availableWidth = range.max - range.min;
+      const width = Math.min(Math.max(0, y - x), availableWidth);
+      const newStart = pickPageInRange({ min: range.min, max: range.max - width }, occCount[n]);
+      fixedCount++;
+      return `[${n}, ${abbrev} ${newStart}–${newStart + width}]`;
+    });
+    if (newText !== text) {
+      updatedContent[sec.id] = newText;
+      affectedSectionIds.push(sec.id);
+    }
+  });
+
+  return { updatedContent, fixedCount, affectedSectionIds };
+}
+
 // Замінює [oldN] / [oldN, с. X] / групові [oldN, oldM] та виносочні маркери %%FN<oldN>%%
 // у тексті на нові номери у фінальному форматі стилю. Групові цитати виникають при
 // локалізації посилань готової частини клієнта (localizeCitations у readyWorkExtract.js)

@@ -152,7 +152,7 @@ export function CorrectionsStage({
           <div style={{ background: "#faf8f3" }}>
             {analysisItems.map((item, i) => {
               const sec = sections.find(s => s.id === item.sectionId);
-              const label = sec?.label || item.sectionId;
+              const label = item.sectionId === "_citation_pages" ? "Сторінки в цитатах на джерела" : (sec?.label || item.sectionId);
               const checked = correctionChecked[item.sectionId] !== false;
               return (
                 <div key={i} style={{ padding: "12px 16px", borderBottom: i < analysisItems.length - 1 ? "1px solid #e8e4dc" : "none", display: "flex", gap: 12, alignItems: "flex-start" }}>

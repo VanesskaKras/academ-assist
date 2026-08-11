@@ -32,6 +32,7 @@ export function InputStage({
   readyWorkFileName, onReadyWorkFile, onRemoveReadyWork,
   info, running, loadMsg,
   handleFile, doAnalyze, setStage,
+  isAdmin, autoRunning, onRunAuto,
 }) {
   const readyWorkFileRef = useRef();
   return (
@@ -175,12 +176,23 @@ export function InputStage({
         </FieldBox>
       </div>
 
-      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-        <PrimaryBtn onClick={doAnalyze} disabled={!tplText.trim()} loading={running} msg={loadMsg} label="Аналізувати →" />
-        {info && !running && (
+      <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+        <PrimaryBtn onClick={doAnalyze} disabled={!tplText.trim() || autoRunning} loading={running} msg={loadMsg} label="Аналізувати →" />
+        {info && !running && !autoRunning && (
           <button onClick={() => setStage("parsed")}
             style={{ background: "transparent", border: "1.5px solid #555", color: "#555", borderRadius: 8, padding: "11px 22px", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
             Продовжити без повторного аналізу →
+          </button>
+        )}
+        {isAdmin && (
+          <button onClick={onRunAuto} disabled={!tplText.trim() || running || autoRunning}
+            title="Тестовий режим: весь конвеєр (аналіз → план → джерела → написання) запускається без ручних кроків. Вкладку не закривайте до завершення."
+            style={{
+              background: "transparent", border: "1.5px solid #7a9e50", color: "#5ca83c", borderRadius: 8,
+              padding: "11px 22px", fontSize: 13, cursor: (!tplText.trim() || running || autoRunning) ? "default" : "pointer",
+              fontFamily: "inherit", opacity: (!tplText.trim() || running || autoRunning) ? 0.5 : 1,
+            }}>
+            ⚡ Автоматичний режим (тест) →
           </button>
         )}
       </div>

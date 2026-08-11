@@ -19,7 +19,7 @@ import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { getAcademicDefaults, classifyAppendixItem, detectSpecialty, normalizeWorkType } from "./lib/academicDefaults.js";
 import { extractAnnotations, formatAnnotationsAsCorrectionText } from "./lib/docxAnnotations.js";
 import { searchByPhrase, filterSourcesWithGemini, getEconInstitutionalSources, generateAlternatePhrases } from "./lib/sourcesSearch.js";
-import { applyCitationRemap, buildFinalReferenceList, buildCiteFormats, createReferenceDeduper, detectSourceGrouping, formatSourcesWithRetry, sortReferencesForDisplay, apaOrMlaCiteText } from "./lib/citationFormatting.js";
+import { applyCitationRemap, buildFinalReferenceList, buildCiteFormats, createReferenceDeduper, detectSourceGrouping, formatSourcesWithRetry, sortReferencesForDisplay, apaOrMlaCiteText, fixOutOfRangeCitationPages } from "./lib/citationFormatting.js";
 import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
 import { StagePills } from "./components/StagePills.jsx";
 import { FieldBox, Heading, NavBtn, PrimaryBtn, GreenBtn, SaveIndicator } from "./components/Buttons.jsx";
@@ -144,8 +144,11 @@ function rebuildWithChapterConclusions(prev, newMainSecs) {
   return result;
 }
 
+const AUTO_STEPS = { analyze: "Аналіз шаблону", plan: "Генерація плану", sources: "Підбір джерел", writing: "Написання тексту" };
+
 export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
+  const isAdmin = profile?.role === "admin";
 
   const [scrolled, setScrolled] = useState(false);
   const [headerOpen, setHeaderOpen] = useState(true);
@@ -566,15 +569,33 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     setReadyWorkFileName(""); setReadyWorkText(""); setReadyWorkImportedIds([]); setReadyWorkNeedsManualAI(false);
   }, []);
 
+  // ── Автоматичний режим (тест): refs-дзеркала стейту для читання актуальних значень
+  // усередині orchestrator-функції runAutoPipeline (звичайний стейт там був би застарілим,
+  // бо async-функція не перерендерюється разом з рештою компонента) ──
+  const [autoRunning, setAutoRunning] = useState(false);
+  const [autoStepLabel, setAutoStepLabel] = useState("");
+  const [autoError, setAutoError] = useState(null); // { step, kind: "api" | "missing", message }
+  const autoModeRef = useRef(false);
+  const sectionsRef = useRef(sections);
+  const citInputsRef = useRef(citInputs);
+  const kwErrorRef = useRef("");
+  const sourcesSearchLoadingRef = useRef({});
+  const readyWorkImportedIdsRef = useRef(readyWorkImportedIds);
+  useEffect(() => { sectionsRef.current = sections; }, [sections]);
+  useEffect(() => { citInputsRef.current = citInputs; }, [citInputs]);
+  useEffect(() => { kwErrorRef.current = kwError; }, [kwError]);
+  useEffect(() => { sourcesSearchLoadingRef.current = sourcesSearchLoading; }, [sourcesSearchLoading]);
+  useEffect(() => { readyWorkImportedIdsRef.current = readyWorkImportedIds; }, [readyWorkImportedIds]);
+
   const handleNavigateMain = useCallback((s) => {
-    if (running) return;
+    if (running || autoRunning) return;
     setStage(s);
-  }, [running]);
+  }, [running, autoRunning]);
 
   const handleNavigateHeader = useCallback((s) => {
-    if (running) return;
+    if (running || autoRunning) return;
     setStage(s);
-  }, [running]);
+  }, [running, autoRunning]);
 
   // ── Аналіз шаблону ──
   const doAnalyze = async () => {
@@ -792,6 +813,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     }
 
     setRunning(false); runningRef.current = false; setLoadMsg("");
+    return newInfo;
   };
 
   // ── Витяг реальних картинок з PDF-ілюстрацій (сторінка = одна ілюстрація) і підключення
@@ -3445,6 +3467,7 @@ ${slideSpecs.join("\n\n")}
     const failedSections = [];
     const failedItems = [];
     const restructureSummaries = [];
+    const citationPageSummaries = [];
     // Короткий конспект структури роботи (лише назви розділів) — для узгодженості
     // без потреби надсилати повний текст усіх інших розділів (дорого).
     const structureList = sections.filter(s => s.type !== "sources").map(s => s.label);
@@ -3462,6 +3485,26 @@ ${slideSpecs.join("\n\n")}
     const clientMaterialsRaw = clientMaterialsSummary?.rawText || clientMaterialsText?.trim() || "";
     for (let i = 0; i < toFix.length; i++) {
       const item = toFix[i];
+      // Сторінки в цитатах поза межами джерела — окремий чисто кодовий прохід по
+      // всій роботі (не по одному розділу), без ШІ: число сторінки підбирає код
+      // (pickPageInRange), а не модель, тож ризику вигадування тут немає.
+      if (item.sectionId === "_citation_pages") {
+        setCorrectionApplyProgress({ current: "Сторінки в цитатах", done: i, total: toFix.length });
+        try {
+          const { updatedContent, fixedCount, affectedSectionIds } = fixOutOfRangeCitationPages({ content: contentRef.current, sections });
+          Object.assign(newContent, updatedContent);
+          contentRef.current = { ...newContent };
+          setContent({ ...newContent });
+          affectedSectionIds.forEach(sid => { if (!sectionsAffected.includes(sid)) sectionsAffected.push(sid); });
+          citationPageSummaries.push(fixedCount ? `виправлено сторінок: ${fixedCount}` : "невалідних сторінок не знайдено");
+          await saveToFirestore({ content: newContent });
+        } catch (e) {
+          console.error("Помилка виправлення сторінок у цитатах", e);
+          failedSections.push("Сторінки в цитатах");
+          failedItems.push(item);
+        }
+        continue;
+      }
       const sec = sections.find(s => s.id === item.sectionId);
       if (!sec) { failedSections.push(item.sectionId); failedItems.push(item); continue; }
       setCorrectionApplyProgress({ current: sec.label || sec.id, done: i, total: toFix.length });
@@ -3600,6 +3643,9 @@ ${slideSpecs.join("\n\n")}
     const messages = [];
     if (restructureSummaries.length) {
       messages.push({ type: "success", text: `Список джерел оновлено: ${restructureSummaries.join(". ")}.` });
+    }
+    if (citationPageSummaries.length) {
+      messages.push({ type: "success", text: `Сторінки в цитатах: ${citationPageSummaries.join(". ")}.` });
     }
     if (failedSections.length) {
       messages.push({ type: "error", text: `Не вдалося виправити: ${failedSections.join(", ")}. Ці розділи лишились у списку — натисніть «Виправити» ще раз.` });
@@ -4691,6 +4737,120 @@ ${secBlocks}
     setAnnotationUk(""); setAnnotationEn(""); setAnnotationLoading(false); setAnnotationConfirmed(false);
     setPresentationReady(false); setPresentationMsg(""); setSlideJson(null);
     runningRef.current = false; setRunning(false);
+    autoModeRef.current = false; setAutoRunning(false); setAutoError(null); setAutoStepLabel("");
+  };
+
+  // ── Автоматичний режим (тест): один клік проганяє Дані→Перевірка→План→Джерела→Написання
+  // без ручних воріт. Написання→Готово вже автоматичне (useEffect на stage==="writing"), тож
+  // оркестратор лише доводить до setStage("writing") і далі стежить за завершенням/помилками. ──
+  const tick = (ms = 80) => new Promise(r => setTimeout(r, ms));
+
+  const stopAutoWithError = (step, kind, message) => {
+    autoModeRef.current = false;
+    setAutoRunning(false);
+    setAutoError({ step, kind, message });
+  };
+
+  const runAutoPipeline = async () => {
+    setAutoRunning(true); autoModeRef.current = true; setAutoError(null);
+
+    // КРОК 1 — аналіз шаблону
+    setAutoStepLabel(AUTO_STEPS.analyze);
+    let newInfo;
+    try {
+      newInfo = await doAnalyze();
+    } catch (e) {
+      stopAutoWithError(AUTO_STEPS.analyze, "api", e.message); return;
+    }
+    if (!autoModeRef.current) return;
+    await tick();
+    const missingInfo = [];
+    if (!newInfo?.type) missingInfo.push("тип роботи");
+    if (!newInfo?.subject && !newInfo?.direction) missingInfo.push("спеціальність/напрям");
+    if (!newInfo?.topic) missingInfo.push("тема");
+    if (missingInfo.length) {
+      stopAutoWithError(AUTO_STEPS.analyze, "missing", `Не вдалося визначити: ${missingInfo.join(", ")}. Уточніть вручну на кроці «Перевірка» і продовжте звичайним флоу.`);
+      return;
+    }
+
+    // КРОК 2 — план
+    setAutoStepLabel(AUTO_STEPS.plan);
+    try {
+      await doGenPlan();
+    } catch (e) {
+      stopAutoWithError(AUTO_STEPS.plan, "api", e.message); return;
+    }
+    if (!autoModeRef.current) return;
+    await tick();
+    if (!sectionsRef.current?.length) {
+      stopAutoWithError(AUTO_STEPS.plan, "missing", "Не вдалося згенерувати структуру роботи (план вийшов порожнім). Перевірте вручну на кроці «План».");
+      return;
+    }
+
+    // КРОК 3 — джерела (автопідбір з розширенням пошуку вже вбудований у doGenKeywords/doSearchSources)
+    setAutoStepLabel(AUTO_STEPS.sources);
+    setKwError("");
+    startGen();
+    await tick();
+    try {
+      await doGenKeywords();
+    } catch (e) {
+      stopAutoWithError(AUTO_STEPS.sources, "api", e.message); return;
+    }
+    if (!autoModeRef.current) return;
+    await tick();
+    if (kwErrorRef.current) {
+      stopAutoWithError(AUTO_STEPS.sources, "api", kwErrorRef.current); return;
+    }
+
+    // Чекаємо поки завершиться пошук і автовставка релевантних джерел (ефект у SourcesStage) добіжить до кінця
+    const searchStart = Date.now();
+    while (Object.values(sourcesSearchLoadingRef.current || {}).some(Boolean)) {
+      if (Date.now() - searchStart > 60000) break;
+      await tick(400);
+    }
+    await tick(4000); // час на довставку (DOI/сторінки/Google Books) усередині SourcesStage
+    if (!autoModeRef.current) return;
+
+    const mainSecsForCheck = (sectionsRef.current || []).filter(s =>
+      !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type) &&
+      !(readyWorkImportedIdsRef.current || []).includes(s.id)
+    );
+    const shortSecs = mainSecsForCheck.filter(s => !(citInputsRef.current[s.id] || "").trim());
+    if (shortSecs.length) {
+      stopAutoWithError(
+        AUTO_STEPS.sources, "missing",
+        `Не знайдено достатньо релевантних джерел для: ${shortSecs.map(s => s.label).join(", ")}. Додайте джерела вручну на кроці «Джерела» й продовжте звичайним флоу.`
+      );
+      return;
+    }
+
+    // КРОК 4 — написання (далі повністю автоматичний наявний конвеєр: writing → doRemapCitations → done)
+    setAutoStepLabel(AUTO_STEPS.writing);
+    setStage("writing");
+  };
+
+  // Завершення автопрогону на "Готово", або зупинка з показом помилки, якщо наявний конвеєр
+  // сам поставив paused+apiError під час написання (rate limit, вичерпаний баланс тощо).
+  useEffect(() => {
+    if (!autoRunning) return;
+    if (stage === "done") {
+      autoModeRef.current = false;
+      setAutoRunning(false);
+      return;
+    }
+    if (stage === "writing" && paused && apiError) {
+      autoModeRef.current = false;
+      setAutoRunning(false);
+      setAutoError({ step: AUTO_STEPS.writing, kind: "api", message: apiError });
+    }
+  }, [autoRunning, stage, paused, apiError]);
+
+  const stopAutoPipeline = () => {
+    autoModeRef.current = false;
+    setAutoRunning(false);
+    if (stage === "writing") stopGen();
+    if (kwLoading) doStopSearch();
   };
 
   if (dbLoading) return (
@@ -4737,7 +4897,7 @@ ${secBlocks}
             {info?.topic && <div style={{ fontSize: 12, color: "#666", flex: 1, minWidth: 0, lineHeight: 1.4 }}>{info.topic}</div>}
             <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0, marginLeft: "auto" }}>
               <SaveIndicator saving={saving} saved={saved} error={saveError} />
-              <StagePills stage={stage} maxStageIdx={maxStageIdx} onNavigate={running ? null : handleNavigateMain} stages={activeStages} stageKeys={activeStageKeys} />
+              <StagePills stage={stage} maxStageIdx={maxStageIdx} onNavigate={(running || autoRunning) ? null : handleNavigateMain} stages={activeStages} stageKeys={activeStageKeys} />
               <button
                 onClick={() => setMaxStageIdx(activeStageKeys.length - 1)}
                 style={{ background: "transparent", border: "1px solid #555", color: "#888", fontSize: 10, letterSpacing: 1, padding: "4px 10px", borderRadius: 20, cursor: "pointer" }}>
@@ -4758,12 +4918,45 @@ ${secBlocks}
               {info?.orderNumber && <span style={{ fontSize: 11, color: "#555" }}>#{info.orderNumber}</span>}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <StagePills stage={stage} maxStageIdx={maxStageIdx} onNavigate={running ? null : handleNavigateHeader} stages={activeStages} stageKeys={activeStageKeys} />
+              <StagePills stage={stage} maxStageIdx={maxStageIdx} onNavigate={(running || autoRunning) ? null : handleNavigateHeader} stages={activeStages} stageKeys={activeStageKeys} />
               <span style={{ fontSize: 11, color: "#555", marginLeft: 6 }}>▼</span>
             </div>
           </div>
         )}
       </div>
+
+      {/* ══ Автоматичний режим: банер прогресу / помилки ══ */}
+      {(autoRunning || autoError) && (
+        <div style={{
+          position: "sticky", top: headerOpen ? 0 : 0, zIndex: 90,
+          background: autoError ? "#3a1414" : "#14261a",
+          borderBottom: `1px solid ${autoError ? "#5a2020" : "#2a4a30"}`,
+          color: "#f0ece0", padding: "10px 32px",
+          display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap",
+        }}>
+          {autoRunning && !autoError && (
+            <>
+              <SpinDot />
+              <div style={{ fontSize: 13 }}>⚡ Автоматичний режим: {autoStepLabel}…</div>
+              <button onClick={stopAutoPipeline}
+                style={{ marginLeft: "auto", background: "transparent", border: "1px solid #7a7a5a", color: "#ddd8cc", borderRadius: 6, padding: "5px 14px", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                ⏹ Зупинити
+              </button>
+            </>
+          )}
+          {autoError && (
+            <>
+              <div style={{ fontSize: 13, lineHeight: 1.5 }}>
+                <b>⚠ Автоматичний режим зупинено</b> на кроці «{autoError.step}»{autoError.kind === "missing" ? " — бракує інформації" : " — помилка"}: {autoError.message}
+              </div>
+              <button onClick={() => setAutoError(null)}
+                style={{ marginLeft: "auto", background: "transparent", border: "1px solid #7a7a5a", color: "#ddd8cc", borderRadius: 6, padding: "5px 14px", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                Зрозуміло
+              </button>
+            </>
+          )}
+        </div>
+      )}
 
       {/* ══ LEFT SIDEBAR (fixed, план / джерела / готово) ══ */}
       {["plan", "sources", "done"].includes(stage) && info && (() => {
@@ -4896,6 +5089,7 @@ ${secBlocks}
               onRemoveReadyWork={handleRemoveReadyWork}
               running={running} loadMsg={loadMsg}
               handleFile={handleFile} doAnalyze={doAnalyze} setStage={setStage}
+              isAdmin={isAdmin} autoRunning={autoRunning} onRunAuto={runAutoPipeline}
             />
           )}
           {stage === "parsed" && info && (
