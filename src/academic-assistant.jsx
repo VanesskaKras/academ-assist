@@ -4162,7 +4162,7 @@ ${secBlock}
     setKwLoading(true);
     stopSearchRef.current = false;
     // Розділи, вже імпортовані з готової частини роботи клієнта, мають реальні джерела з документа — не шукаємо для них додатково
-    const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type) && !readyWorkImportedIds.includes(s.id));
+    const mainSecs = sectionsRef.current.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type) && !readyWorkImportedIds.includes(s.id));
     const labelToId = {};
     for (const s of mainSecs) {
       labelToId[s.id] = s.id;
@@ -4257,7 +4257,7 @@ ${secBlocks}
       );
       setKeywords(kwNorm);
 
-      const econSecIdsForSources = getEconSections(sections, info);
+      const econSecIdsForSources = getEconSections(sectionsRef.current, info);
       for (const s of mainSecs) {
         if (stopSearchRef.current) break;
         const normalKey = normalizeKey(s.id);
