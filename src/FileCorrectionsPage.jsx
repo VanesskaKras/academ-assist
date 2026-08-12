@@ -1,18 +1,53 @@
 import { useState, useRef, useEffect } from "react";
-import mammoth from "mammoth";
 import { db } from "./firebase";
 import { useAuth } from "./AuthContext";
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
-import { callClaude, MODEL, MODEL_FAST } from "./lib/api.js";
+import { collection, addDoc, serverTimestamp, query, where, getDocs, doc, getDoc } from "firebase/firestore";
+import { callClaude, callGemini, MODEL, MODEL_FAST } from "./lib/api.js";
 import {
-  SYS_JSON, SYS_JSON_ARRAY,
+  SYS_JSON_ARRAY, SYS_JSON_SHORT, STRUCTURE_READING_PROMPT,
   buildFileCorrectionsAnalysisPrompt,
-  buildFileApplyCorrectionPrompt,
-  buildAnnotationCorrectionPrompt,
+  buildFileApplyCorrectionBatchPrompt,
+  buildAnnotationCorrectionBatchPrompt,
+  buildMethodologyReadingPrompt,
 } from "./lib/prompts.js";
 import { SpinDot } from "./components/SpinDot.jsx";
 import { PhotoDropZone } from "./components/PhotoDropZone.jsx";
+import { DropZone } from "./components/DropZone.jsx";
+import { ClientMaterialsZone } from "./components/ClientMaterialsZone.jsx";
 import { extractAnnotations } from "./lib/docxAnnotations.js";
+import { openDocxForEditing, refreshTextMap, applyDocxReplacement, removeDocxComment, serializeDocx } from "./lib/docxSurgicalEdit.js";
+
+// Скільки завдань групувати в один виклик ШІ при застосуванні правок — основне
+// джерело економії токенів: повний текст роботи надсилається раз на групу.
+const BATCH_SIZE = 5;
+
+// ─────────────────────────────────────────────
+// Чи стосується конкретна правка методички/матеріалів клієнта — щоб не тягнути
+// їх у КОЖЕН запит на виправлення (дорого), а лише туди, де це справді потрібно.
+// ─────────────────────────────────────────────
+const METHODICHKA_HINT_RE = /методичк|оформленн|стил[ьяю].*цитуванн|цитуванн.*стил|шрифт|інтервал|поля\b|таблиц.*оформ|номер.*сторінк|структур.*розділ|дсту|apa|mla/i;
+const CLIENT_MATERIALS_HINT_RE = /матеріал.*клієнт|дані клієнта|розрахун|калькуляц|фактичні дані|компані[їя]|підприємств|наведені дані/i;
+
+function classifyContextNeed(task) {
+  const text = [task.annotatedText, task.instruction, task.issue, task.suggestion, task.location].filter(Boolean).join(" ");
+  return {
+    needsMethodichka: METHODICHKA_HINT_RE.test(text),
+    needsClientMaterials: CLIENT_MATERIALS_HINT_RE.test(text),
+  };
+}
+
+function buildExtraContext(task, methodInfo, clientMaterialsSummary) {
+  const { needsMethodichka, needsClientMaterials } = classifyContextNeed(task);
+  let block = "";
+  if (needsMethodichka && methodInfo) {
+    const parts = [methodInfo.sourcesFormatRules, methodInfo.citationStyle, methodInfo.formatting?.tableFormat, methodInfo.theoryRequirements].filter(Boolean);
+    if (parts.length) block += `\nВИМОГИ МЕТОДИЧКИ: ${parts.join(". ")}`;
+  }
+  if (needsClientMaterials && clientMaterialsSummary?.rawText) {
+    block += `\n\nМАТЕРІАЛИ КЛІЄНТА (використовуй ці дані — не вигадуй, не замінюй):\n${clientMaterialsSummary.rawText.slice(0, 80000)}`;
+  }
+  return block;
+}
 
 // ─────────────────────────────────────────────
 // Пошук фрагмента для заміни: дослівно → в межах абзаца-контексту (рятує, якщо
@@ -81,174 +116,17 @@ function annotationsToTasks(annotations) {
       annotatedText: c.commentedText,
       context: null,
       instruction: c.instruction,
+      commentId: c.id,
     });
   });
   return tasks;
 }
 
 // ─────────────────────────────────────────────
-// Покращений експорт .docx
+// Завантаження хірургічно відредагованого .docx — serializeDocx уже повертає
+// готовий Blob з оригінальним файлом, у якому змінено лише виправлені фрагменти.
 // ─────────────────────────────────────────────
-async function exportCorrectedDocx(text, originalName) {
-  if (!window.docx) {
-    await new Promise((resolve, reject) => {
-      const s = document.createElement("script");
-      s.src = "https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.min.js";
-      s.onload = resolve; s.onerror = reject;
-      document.head.appendChild(s);
-    });
-  }
-  const { Document, Packer, Paragraph, TextRun, AlignmentType, Table, TableRow, TableCell, WidthType, BorderStyle, Header, PageNumber } = window.docx;
-  const FONT = "Times New Roman", SIZE = 28, LINE = 360, INDENT = 709;
-
-  const TABLE_RE = /^\s*\|/;
-  const LIST_RE = /^[–—-]\s+/;
-
-  // Висновки до розділу / chapter conclusions — підзаголовок без нової сторінки
-  const CHAPTER_CONCL_RE = /^(висновки до |podsumowanie rozdzia|fazit zu kapitel|conclusiones del cap)/i;
-  // Підрозділи типу "1.1", "2.3.1" — підзаголовок без нової сторінки
-  const SUBSECTION_RE = /^\d+\.\d+/;
-  // Великі розділи — нова сторінка
-  const MAJOR_RE = /^(ЗМІСТ|ВСТУП|ВИСНОВКИ|СПИСОК|ДОДАТКИ|РОЗДІЛ|INTRODUCTION|CHAPTER|CONCLUSIONS|REFERENCES|APPENDIX|BIBLIOGRAPHY|CONTENTS|ROZDZIAŁ|WSTĘP|WNIOSKI|ZAKOŃCZENIE|PODSUMOWANIE|BIBLIOGRAFIA|SPIS|CAPÍTULO|INTRODUCCIÓN|CONCLUSIONES|BIBLIOGRAFÍA|REFERENCIAS|APÉNDICE|KAPITEL|EINLEITUNG|FAZIT|SCHLUSSFOLGERUNG|LITERATURVERZEICHNIS|ANHANG|INHALTSVERZEICHNIS|KAPITOLA|ÚVOD|ZÁVĚR|SEZNAM|PŘÍLOHY|ZÁVER|ZOZNAM|PRÍLOHY|第|绪论|结论|参考文献|附录|目录)/i;
-
-  function classifyLine(t) {
-    if (CHAPTER_CONCL_RE.test(t)) return "subsection";   // висновки до розділу
-    if (SUBSECTION_RE.test(t))    return "subsection";   // 1.1 Назва
-    if (MAJOR_RE.test(t))         return "major";        // РОЗДІЛ, ВСТУП тощо
-    return "body";
-  }
-
-  function makeTableFromLines(lines) {
-    const filtered = lines.filter(l => !/^\s*\|[-:|\s]+\|\s*$/.test(l));
-    if (!filtered.length) return null;
-    const rows = filtered.map((l, ri) => {
-      const cells = l.replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.trim());
-      return new TableRow({
-        children: cells.map(cellText => new TableCell({
-          borders: { top: { style: BorderStyle.SINGLE, size: 1 }, bottom: { style: BorderStyle.SINGLE, size: 1 }, left: { style: BorderStyle.SINGLE, size: 1 }, right: { style: BorderStyle.SINGLE, size: 1 } },
-          margins: { left: 57, right: 57, top: 57, bottom: 57 },
-          children: [new Paragraph({
-            alignment: ri === 0 ? AlignmentType.CENTER : AlignmentType.LEFT,
-            spacing: { line: 240, lineRule: "exact", before: 0, after: 0 },
-            children: [new TextRun({ text: cellText, font: FONT, size: 24, bold: ri === 0 })],
-          })],
-        })),
-      });
-    });
-    return new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows });
-  }
-
-  // Ключові слова вступу що потребують жирного початку
-  const INTRO_BOLD_RE = /^(Актуальн|Мет(?:ою|а[\s.])|Завдання|Для досягн|Для вирішен|Об['']?єкт|Предмет|Метод(?:и|ологічн)|Наукова новизна|Практична знач|Апробац|Структур|Теоретико|Матеріал|Хронологічн)/i;
-
-  function makeIntroBoldPara(t) {
-    let boldEnd = -1;
-    const colon = t.indexOf(":");
-    if (colon > 0 && colon < 120) { boldEnd = colon + 1; }
-    else {
-      const dash = t.search(/ [–—-] /);
-      if (dash > 0 && dash < 80) { boldEnd = dash + 2; }
-      else {
-        const dot = t.indexOf(".");
-        if (dot > 0 && dot < 50) { boldEnd = dot + 1; }
-      }
-    }
-    if (boldEnd <= 0) {
-      return new Paragraph({
-        indent: { firstLine: INDENT }, spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
-        alignment: AlignmentType.BOTH,
-        children: [new TextRun({ text: t, font: FONT, size: SIZE })],
-      });
-    }
-    return new Paragraph({
-      indent: { firstLine: INDENT }, spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
-      alignment: AlignmentType.BOTH,
-      children: [
-        new TextRun({ text: t.slice(0, boldEnd), font: FONT, size: SIZE, bold: true }),
-        new TextRun({ text: t.slice(boldEnd), font: FONT, size: SIZE }),
-      ],
-    });
-  }
-
-  const docChildren = [];
-  const lines = text.split("\n");
-  let inIntro = false;
-  let i = 0;
-
-  while (i < lines.length) {
-    const line = lines[i];
-    const trimmed = line.trim();
-
-    if (TABLE_RE.test(line)) {
-      const tableLines = [];
-      while (i < lines.length && TABLE_RE.test(lines[i])) { tableLines.push(lines[i]); i++; }
-      const tbl = makeTableFromLines(tableLines);
-      if (tbl) {
-        docChildren.push(tbl);
-        docChildren.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
-      }
-      continue;
-    }
-
-    if (!trimmed) { i++; continue; }
-
-    const kind = classifyLine(trimmed);
-    const isList = LIST_RE.test(trimmed);
-
-    if (kind === "major") {
-      // Відстежуємо чи ми у вступі
-      inIntro = /^(ВСТУП|INTRODUCTION|WSTĘP|ÚVOD|EINLEITUNG|INTRODUCCIÓN|绪论)$/i.test(trimmed);
-      docChildren.push(new Paragraph({
-        pageBreakBefore: docChildren.length > 0,
-        alignment: AlignmentType.CENTER,
-        spacing: { line: LINE, lineRule: "auto", before: 0, after: Math.round(LINE * 0.3) },
-        indent: { firstLine: 0 },
-        children: [new TextRun({ text: trimmed, font: FONT, size: SIZE, bold: true })],
-      }));
-    } else if (kind === "subsection") {
-      inIntro = false;
-      docChildren.push(new Paragraph({
-        alignment: AlignmentType.BOTH,
-        spacing: { line: LINE, lineRule: "auto", before: Math.round(LINE * 0.3), after: Math.round(LINE * 0.2) },
-        indent: { firstLine: INDENT },
-        children: [new TextRun({ text: trimmed, font: FONT, size: SIZE, bold: true })],
-      }));
-    } else if (isList) {
-      docChildren.push(new Paragraph({
-        indent: { left: INDENT, hanging: 360 },
-        spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
-        alignment: AlignmentType.BOTH,
-        children: [new TextRun({ text: trimmed, font: FONT, size: SIZE })],
-      }));
-    } else if (inIntro && INTRO_BOLD_RE.test(trimmed)) {
-      // Абзаци вступу з жирним початком: "Мета дослідження –", "Актуальність теми." тощо
-      docChildren.push(makeIntroBoldPara(trimmed));
-    } else {
-      docChildren.push(new Paragraph({
-        alignment: AlignmentType.BOTH,
-        spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
-        indent: { firstLine: INDENT },
-        children: [new TextRun({ text: trimmed, font: FONT, size: SIZE })],
-      }));
-    }
-    i++;
-  }
-
-  const doc = new Document({
-    sections: [{
-      properties: {
-        page: { size: { width: 11906, height: 16838 }, margin: { top: 1134, bottom: 1134, left: 1701, right: 851 } },
-        pageNumberStart: 1, titlePage: true,
-      },
-      headers: {
-        first: new Header({ children: [] }),
-        default: new Header({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, spacing: { before: 0, after: 0 }, children: [new TextRun({ children: [PageNumber.CURRENT], font: FONT, size: 24 })] })] }),
-      },
-      children: docChildren,
-    }],
-  });
-
-  const blob = await Packer.toBlob(doc);
+function downloadDocxBlob(blob, originalName) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   const base = originalName?.replace(/\.docx$/i, "") || "документ";
@@ -316,9 +194,11 @@ export default function FileCorrectionsPage({ onBack }) {
   // Файл
   const [fileName, setFileName] = useState("");
   const [docText, setDocText] = useState("");
-  const [storedBuffer, setStoredBuffer] = useState(null);
   const [fileLoading, setFileLoading] = useState(false);
   const fileRef = useRef();
+  // {zip, docXml, map} — живі об'єкти для хірургічного редагування оригінального
+  // .docx; не в React-стейті, бо мутуються напряму (DOM/JSZip), а не через рендер.
+  const docStateRef = useRef(null);
 
   // Режим А
   const [extractLoading, setExtractLoading] = useState(false);
@@ -335,10 +215,30 @@ export default function FileCorrectionsPage({ onBack }) {
   const [checked, setChecked] = useState({});
   const [applyLoading, setApplyLoading] = useState(false);
   const [applyProgress, setApplyProgress] = useState(0);
-  const [currentDocText, setCurrentDocText] = useState("");
   const [correctedText, setCorrectedText] = useState("");
   const [failedTasks, setFailedTasks] = useState([]);
   const [error, setError] = useState("");
+
+  // Контекст (необов'язково): методичка + матеріали клієнта — підтягуються лише
+  // до тих правок, де це справді доречно (classifyContextNeed), а не завжди й одразу.
+  const [contextOpen, setContextOpen] = useState(false);
+  const [myOrders, setMyOrders] = useState(null); // null = ще не завантажено
+  const [myOrdersLoading, setMyOrdersLoading] = useState(false);
+  const [selectedOrderId, setSelectedOrderId] = useState("");
+  const [methodInfo, setMethodInfo] = useState(null);
+  const [methodFileLabel, setMethodFileLabel] = useState("");
+  const [methodLoading, setMethodLoading] = useState(false);
+  const [methodError, setMethodError] = useState("");
+  const [clientMaterials, setClientMaterials] = useState([]);
+  const [clientMaterialsManualText, setClientMaterialsManualText] = useState("");
+
+  const clientMaterialsSummary = (() => {
+    const combined = [
+      ...clientMaterials.map(m => `=== ${m.name} ===\n${m.text}`),
+      clientMaterialsManualText.trim(),
+    ].filter(Boolean).join("\n\n");
+    return combined ? { rawText: combined } : null;
+  })();
 
   // Витрати
   const tokenAccRef = useRef({ inTok: 0, outTok: 0, costUsd: 0, claudeInTok: 0, claudeOutTok: 0, claudeCostUsd: 0 });
@@ -371,6 +271,64 @@ export default function FileCorrectionsPage({ onBack }) {
     setError("");
   }
 
+  // ── Список власних замовлень із уже проаналізованою методичкою (для автопідвантаження,
+  // щоб не змушувати завантажувати методичку вдруге для роботи, згенерованої в цій програмі) ──
+  async function loadMyOrders() {
+    if (!user?.uid || myOrders !== null) return;
+    setMyOrdersLoading(true);
+    try {
+      const q = query(collection(db, "orders"), where("uid", "==", user.uid));
+      const snap = await getDocs(q);
+      const withMethod = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(d => d.methodInfo)
+        .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""))
+        .slice(0, 30);
+      setMyOrders(withMethod);
+    } catch (e) {
+      console.error("Не вдалося завантажити список замовлень", e);
+      setMyOrders([]);
+    }
+    setMyOrdersLoading(false);
+  }
+
+  async function selectOrder(orderId) {
+    setSelectedOrderId(orderId);
+    if (!orderId) { setMethodInfo(null); return; }
+    try {
+      const snap = await getDoc(doc(db, "orders", orderId));
+      const d = snap.data();
+      if (d?.methodInfo) setMethodInfo(d.methodInfo);
+      if (d?.clientMaterialsSummary?.rawText) setClientMaterialsManualText(d.clientMaterialsSummary.rawText);
+    } catch (e) {
+      setMethodError("Не вдалося завантажити дані замовлення: " + e.message);
+    }
+  }
+
+  // ── Ручне завантаження методички (якщо роботу згенеровано не в цій програмі) ──
+  async function handleMethodFile(name, b64, type) {
+    setMethodFileLabel(name);
+    setMethodLoading(true);
+    setMethodError("");
+    try {
+      const docPart = { type: "document", source: { type: "base64", media_type: type || "application/pdf", data: b64 } };
+      const structMsgs = [docPart, { type: "text", text: STRUCTURE_READING_PROMPT }];
+      const structRaw = await callGemini([{ role: "user", content: structMsgs }], null, SYS_JSON_SHORT, 2000, null, "gemini-2.5-flash", true);
+      const structMatch = structRaw.match(/\{[\s\S]*\}/);
+      let structureInfo = null;
+      try { structureInfo = structMatch ? JSON.parse(structMatch[0]) : null; } catch { /* необов'язковий крок */ }
+
+      const methodMsgs = [docPart, { type: "text", text: buildMethodologyReadingPrompt(structureInfo) }];
+      const raw = await callGemini([{ role: "user", content: methodMsgs }], null, SYS_JSON_SHORT, 8000, null, "gemini-2.5-flash", true);
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      const parsed = JSON.parse(jsonMatch?.[0] || raw.replace(/```json|```/g, "").trim());
+      setMethodInfo(parsed);
+    } catch (e) {
+      setMethodError("Не вдалося проаналізувати методичку: " + e.message);
+    }
+    setMethodLoading(false);
+  }
+
   // ── Завантаження файлу ──
   async function handleFile(file) {
     if (!file) return;
@@ -378,17 +336,15 @@ export default function FileCorrectionsPage({ onBack }) {
     setError("");
     try {
       const arrayBuffer = await file.arrayBuffer();
-      const result = await mammoth.extractRawText({ arrayBuffer });
-      const text = result.value.trim();
-      if (!text) throw new Error("Не вдалося витягти текст з документа");
+      const { zip, docXml, plainText } = await openDocxForEditing(arrayBuffer);
+      if (!plainText.trim()) throw new Error("Не вдалося витягти текст з документа");
+      docStateRef.current = { zip, docXml };
       setFileName(file.name);
-      setDocText(text);
-      setCurrentDocText(text);
-      setStoredBuffer(arrayBuffer);
+      setDocText(plainText);
 
       if (mode === "A") {
         // Одразу витягуємо анотації
-        await doExtract(arrayBuffer, text);
+        await doExtract(arrayBuffer, plainText);
       } else {
         setStep(1);
       }
@@ -455,48 +411,63 @@ export default function FileCorrectionsPage({ onBack }) {
     setApplyProgress(0);
     setError("");
     setFailedTasks([]);
-    let text = currentDocText;
+    // map/text перебудовуються після КОЖНОЇ застосованої правки (refreshTextMap) —
+    // інакше позиції наступних locateFragment з'їдуть відносно вже зміненого XML.
+    let { map, plainText: text } = refreshTextMap(docStateRef.current.docXml);
     const failed = [];
+    // Групуємо по BATCH_SIZE завдань в один виклик ШІ — повний текст роботи
+    // надсилається раз на групу, а не окремо для кожної правки (основна економія).
+    // Застосування результату лишається по одному завданню з оновленням map/text
+    // після кожного — щоб наступні locateFragment у батчі бачили вже змінений текст.
+    const batches = [];
+    for (let i = 0; i < toFix.length; i += BATCH_SIZE) batches.push(toFix.slice(i, i + BATCH_SIZE));
+    let done = 0;
     try {
-      for (let i = 0; i < toFix.length; i++) {
-        const task = toFix[i];
-        let prompt;
-        if (mode === "A") {
-          prompt = buildAnnotationCorrectionPrompt({
-            documentText: text,
-            annotatedText: task.annotatedText,
-            context: task.context,
-            instruction: task.instruction,
-          });
-        } else {
-          prompt = buildFileApplyCorrectionPrompt({
-            documentText: text,
-            location: task.location,
-            issue: task.issue,
-            suggestion: task.suggestion,
-          });
-        }
-        const result = await callClaude([{ role: "user", content: prompt }], null, SYS_JSON, 10000, null, MODEL);
+      for (const batch of batches) {
+        const tasksForPrompt = batch.map(t => ({
+          ...t,
+          extraContext: buildExtraContext(t, methodInfo, clientMaterialsSummary),
+        }));
+        const prompt = mode === "A"
+          ? buildAnnotationCorrectionBatchPrompt({ documentText: text, tasks: tasksForPrompt })
+          : buildFileApplyCorrectionBatchPrompt({ documentText: text, tasks: tasksForPrompt });
+        const maxTokens = Math.min(80000, Math.max(6000, 6000 * batch.length));
+
+        let items = null;
         try {
+          const result = await callClaude([{ role: "user", content: prompt }], null, SYS_JSON_ARRAY, maxTokens, null, MODEL);
           const parsed = JSON.parse(result.replace(/```json|```/g, "").trim());
-          if (parsed.status === "needs_review") {
-            failed.push({ task, reason: parsed.note || "Потрібна ручна перевірка — ШІ не може підтвердити правильне значення." });
+          if (!Array.isArray(parsed)) throw new Error("не масив");
+          items = parsed;
+        } catch {
+          batch.forEach(task => failed.push({ task, reason: "Не вдалося розпізнати відповідь ШІ." }));
+          done += batch.length;
+          setApplyProgress(done);
+          continue;
+        }
+
+        for (let i = 0; i < batch.length; i++) {
+          const task = batch[i];
+          const item = items.find(p => p?.index === i) ?? items[i];
+          if (!item) {
+            failed.push({ task, reason: "ШІ не повернув результат для цього завдання." });
+          } else if (item.status === "needs_review") {
+            failed.push({ task, reason: item.note || "Потрібна ручна перевірка — ШІ не може підтвердити правильне значення." });
           } else {
-            const { original, replacement } = parsed;
-            const loc = original ? locateFragment(text, original, task.context) : null;
+            const loc = item.original ? locateFragment(text, item.original, task.context) : null;
             if (loc) {
-              text = text.slice(0, loc.start) + (replacement || "") + text.slice(loc.end);
+              applyDocxReplacement(map, loc.start, loc.end, item.replacement || "");
+              if (task.commentId) await removeDocxComment(docStateRef.current.zip, docStateRef.current.docXml, task.commentId);
+              ({ map, plainText: text } = refreshTextMap(docStateRef.current.docXml));
             } else {
               failed.push({ task, reason: "Фрагмент не знайдено в тексті документа — заміну не застосовано." });
             }
           }
-        } catch {
-          failed.push({ task, reason: "Не вдалося розпізнати відповідь ШІ." });
+          done++;
+          setApplyProgress(done);
         }
-        setApplyProgress(i + 1);
       }
       setCorrectedText(text);
-      setCurrentDocText(text);
       setFailedTasks(failed);
       setStep(3);
       try {
@@ -525,11 +496,14 @@ export default function FileCorrectionsPage({ onBack }) {
   }
 
   function reset() {
-    setMode(null); setStep(0); setFileName(""); setDocText(""); setStoredBuffer(null);
+    docStateRef.current = null;
+    setMode(null); setStep(0); setFileName(""); setDocText("");
     setAnnotations({ highlights: [], comments: [] }); setTasksA([]); setTasksB([]);
     setChecked({}); setCorrectionsText(""); setCorrectionPhotos([]);
-    setCorrectedText(""); setCurrentDocText(""); setError("");
+    setCorrectedText(""); setError("");
     setApplyProgress(0); setFailedTasks([]);
+    setContextOpen(false); setSelectedOrderId(""); setMethodInfo(null);
+    setMethodFileLabel(""); setMethodError(""); setClientMaterials([]); setClientMaterialsManualText("");
   }
 
   // ─────────────────────────────────────────────
@@ -545,7 +519,10 @@ export default function FileCorrectionsPage({ onBack }) {
             if (step === 0) { setMode(null); setError(""); return; }
             if (step === 1) { setStep(0); setTasksA([]); setAnnotations({ highlights: [], comments: [] }); return; }
             if (step === 2) { setStep(mode === "A" ? 1 : 1); setApplyProgress(0); return; }
-            if (step === 3) { setStep(mode === "A" ? 1 : 2); setCorrectedText(""); setCurrentDocText(docText); setApplyProgress(0); setFailedTasks([]); }
+            // currentDocText НЕ скидаємо на docText — оригінальний docXml у docStateRef
+            // вже незворотно змінено попередніми правками, тож currentDocText має й
+            // далі відповідати саме йому, а не давно застарілому вихідному тексту.
+            if (step === 3) { setStep(mode === "A" ? 1 : 2); setCorrectedText(""); setApplyProgress(0); setFailedTasks([]); }
           }}
           style={{ background: "none", border: "none", color: "#888", fontSize: 18, cursor: "pointer", lineHeight: 1, padding: 4 }}
         >←</button>
@@ -645,6 +622,70 @@ export default function FileCorrectionsPage({ onBack }) {
                   </div>
                   <input ref={fileRef} type="file" accept=".docx" style={{ display: "none" }} onChange={e => handleFile(e.target.files[0])} />
                 </div>
+              </div>
+            )}
+
+            {/* Опціональний контекст: методичка / матеріали клієнта — підтягуються лише
+                до тих правок, де це дійсно доречно (формат, стиль цитування, розрахунки тощо) */}
+            {mode && (
+              <div style={{ ...cardStyle, marginTop: 14 }}>
+                <div
+                  onClick={() => { setContextOpen(o => !o); if (!contextOpen) loadMyOrders(); }}
+                  style={{ ...cardHead("#2a2a1e"), cursor: "pointer", justifyContent: "space-between" }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <div style={dot(methodInfo || clientMaterialsSummary ? "#a8e060" : "#666")} />
+                    <div style={labelStyle}>Контекст роботи (необов'язково): методичка, матеріали клієнта</div>
+                  </div>
+                  <div style={{ color: "#888", fontSize: 12 }}>{contextOpen ? "▲" : "▼"}</div>
+                </div>
+                {contextOpen && (
+                  <div style={cardBody}>
+                    <div style={{ fontSize: 11, color: "#888", marginBottom: 10, lineHeight: 1.6 }}>
+                      Потрібно лише для правок, що стосуються оформлення за методичкою (таблиці, цитування) або даних клієнта. Для звичайних стилістичних правок можна пропустити.
+                    </div>
+
+                    <div style={{ marginBottom: 14 }}>
+                      <div style={{ fontSize: 11, color: "#aaa", marginBottom: 6, letterSpacing: 0.5 }}>ЦЯ РОБОТА ЗГЕНЕРОВАНА В ACADEM ASSIST?</div>
+                      {myOrdersLoading ? (
+                        <div style={{ fontSize: 12, color: "#888", display: "flex", alignItems: "center", gap: 8 }}><SpinDot />Завантажую ваші замовлення...</div>
+                      ) : (
+                        <select
+                          value={selectedOrderId}
+                          onChange={e => selectOrder(e.target.value)}
+                          style={{ width: "100%", fontSize: 13, padding: "8px 10px", borderRadius: 6, border: "1px solid #d4cfc4", background: "#f5f2ea", color: "#2a2a1e", fontFamily: "inherit" }}
+                        >
+                          <option value="">— оберіть замовлення, якщо є —</option>
+                          {(myOrders || []).map(o => (
+                            <option key={o.id} value={o.id}>{o.topic || o.info?.topic || o.id}</option>
+                          ))}
+                        </select>
+                      )}
+                      {selectedOrderId && methodInfo && (
+                        <div style={{ fontSize: 11, color: "#6a9000", marginTop: 6 }}>✓ Дані методички й матеріалів підтягнуто із замовлення</div>
+                      )}
+                    </div>
+
+                    <div style={{ marginBottom: 14 }}>
+                      <div style={{ fontSize: 11, color: "#aaa", marginBottom: 6, letterSpacing: 0.5 }}>АБО ЗАВАНТАЖТЕ МЕТОДИЧКУ САМІ (PDF)</div>
+                      <DropZone fileLabel={methodFileLabel} onFile={handleMethodFile} />
+                      {methodLoading && <div style={{ fontSize: 12, color: "#888", marginTop: 6, display: "flex", alignItems: "center", gap: 8 }}><SpinDot />Аналізую методичку...</div>}
+                      {methodError && <div style={{ fontSize: 12, color: "#c00", marginTop: 6 }}>{methodError}</div>}
+                      {methodInfo && !methodLoading && !selectedOrderId && <div style={{ fontSize: 11, color: "#6a9000", marginTop: 6 }}>✓ Методичку проаналізовано</div>}
+                    </div>
+
+                    <div>
+                      <div style={{ fontSize: 11, color: "#aaa", marginBottom: 6, letterSpacing: 0.5 }}>МАТЕРІАЛИ КЛІЄНТА (необов'язково)</div>
+                      <ClientMaterialsZone
+                        materials={clientMaterials}
+                        onAdd={m => setClientMaterials(prev => [...prev, m])}
+                        onRemove={i => setClientMaterials(prev => prev.filter((_, idx) => idx !== i))}
+                        manualText={clientMaterialsManualText}
+                        onManualText={setClientMaterialsManualText}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -887,11 +928,17 @@ export default function FileCorrectionsPage({ onBack }) {
             )}
 
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 14 }}>
-              <button onClick={() => exportCorrectedDocx(correctedText, fileName)} style={btnGreen(false)}>
+              <button
+                onClick={async () => {
+                  const blob = await serializeDocx(docStateRef.current.zip, docStateRef.current.docXml);
+                  downloadDocxBlob(blob, fileName);
+                }}
+                style={btnGreen(false)}
+              >
                 Завантажити виправлений .docx
               </button>
               <button
-                onClick={() => { setStep(mode === "A" ? 1 : 1); setApplyProgress(0); setCorrectedText(""); setCurrentDocText(docText); setFailedTasks([]); }}
+                onClick={() => { setStep(mode === "A" ? 1 : 1); setApplyProgress(0); setCorrectedText(""); setFailedTasks([]); }}
                 style={{ ...btnPrimary(false), background: "transparent", color: "#555", border: "1px solid #ccc" }}
               >
                 Внести ще правки

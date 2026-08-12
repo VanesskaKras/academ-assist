@@ -114,8 +114,8 @@ export const getTechnicalSections = (sections, info) => {
     .map(s => s.id);
 };
 
-export const STAGES_SOURCES_FIRST = ["Дані", "Перевірка", "План", "Джерела", "Написання", "Готово", "Чек-лист", "Правки"];
-export const STAGE_KEYS_SOURCES_FIRST = ["input", "parsed", "plan", "sources", "writing", "done", "checklist", "corrections"];
+export const STAGES_SOURCES_FIRST = ["Дані", "Перевірка", "План", "Джерела", "Написання", "Готово", "Чек-лист"];
+export const STAGE_KEYS_SOURCES_FIRST = ["input", "parsed", "plan", "sources", "writing", "done", "checklist"];
 
 export const STAGES     = STAGES_SOURCES_FIRST;
 export const STAGE_KEYS = STAGE_KEYS_SOURCES_FIRST;
@@ -129,7 +129,6 @@ export const ORDER_STATUS = {
   sources: "writing",
   done: "done",
   checklist: "done",
-  corrections: "corrections",
 };
 
 // Дефолт 80 — для великих академічних робіт (курсова, дипломна). Мала версія в shared.jsx має дефолт 20.

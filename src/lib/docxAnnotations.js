@@ -187,17 +187,3 @@ export async function extractAnnotations(arrayBuffer) {
 
   return { highlights, comments };
 }
-
-// ─────────────────────────────────────────────
-// Форматування виділень/коментарів у текст зауважень для форми правок
-// (CorrectionsStage) — той самий вигляд, який очікує buildCorrectionsAnalysisPrompt.
-// ─────────────────────────────────────────────
-export function formatAnnotationsAsCorrectionText(annotations, fileName) {
-  const lines = [
-    ...annotations.comments.map(c => `Коментар (${c.author}) до фрагмента «${c.commentedText}»: ${c.instruction}`),
-    ...annotations.highlights.map(h => `Виділено ${h.colorInfo?.ua || h.color}: «${h.text}»`),
-  ];
-  if (!lines.length) return "";
-  const header = fileName ? `Зауваження з файлу "${fileName}":` : "Зауваження з файлу:";
-  return `${header}\n${lines.map((l, i) => `${i + 1}. ${l}`).join("\n")}`;
-}
