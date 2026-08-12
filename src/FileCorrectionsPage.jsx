@@ -1,13 +1,16 @@
 import { useState, useRef, useEffect } from "react";
 import { db } from "./firebase";
 import { useAuth } from "./AuthContext";
-import { collection, addDoc, serverTimestamp, query, where, getDocs, doc, getDoc } from "firebase/firestore";
+import { collection, addDoc, updateDoc, serverTimestamp, query, where, getDocs, doc, getDoc } from "firebase/firestore";
 import { callClaude, callGemini, MODEL, MODEL_FAST } from "./lib/api.js";
 import {
-  SYS_JSON_ARRAY, SYS_JSON_SHORT, STRUCTURE_READING_PROMPT,
+  SYS_JSON, SYS_JSON_ARRAY, SYS_JSON_SHORT, STRUCTURE_READING_PROMPT,
+  buildSYS,
   buildFileCorrectionsAnalysisPrompt,
   buildFileApplyCorrectionBatchPrompt,
   buildAnnotationCorrectionBatchPrompt,
+  buildSourcesRestructureAnalysisPrompt,
+  buildSourcePlacementInTextPrompt,
   buildMethodologyReadingPrompt,
 } from "./lib/prompts.js";
 import { SpinDot } from "./components/SpinDot.jsx";
@@ -16,11 +19,13 @@ import { DropZone } from "./components/DropZone.jsx";
 import { ClientMaterialsZone } from "./components/ClientMaterialsZone.jsx";
 import { extractAnnotations } from "./lib/docxAnnotations.js";
 import { openDocxForEditing, refreshTextMap, applyDocxReplacement, removeDocxComment, serializeDocx } from "./lib/docxSurgicalEdit.js";
-import { findOutOfRangeCitationInText, countOutOfRangeCitations } from "./lib/citationFormatting.js";
+import { findOutOfRangeCitationInText, countOutOfRangeCitations, locateSourcesZone, findNextCitationToRenumber, formatSourcesWithRetry } from "./lib/citationFormatting.js";
 
 // Скільки завдань ОДНОГО типу групувати в один виклик ШІ при застосуванні правок —
 // основне джерело економії токенів: повний текст роботи надсилається раз на групу.
 const BATCH_SIZE = 5;
+
+const LANG_OPTIONS = ["Українська", "English", "Польська", "Німецька", "Французька", "Іспанська"];
 
 // ─────────────────────────────────────────────
 // Чи стосується конкретна правка методички/матеріалів клієнта — щоб не тягнути
@@ -37,7 +42,58 @@ function classifyContextNeed(task) {
   };
 }
 
-function buildExtraContext(task, methodInfo, clientMaterialsSummary) {
+// ─────────────────────────────────────────────
+// Типова обізнаність розділу — знаходить, чи фрагмент лежить у Вступі/Висновках/
+// Списку джерел (за найближчим заголовком ПЕРЕД ним), щоб не дати ШІ поламати
+// структурні вимоги до цих розділів (нумерацію джерел, склад вступу тощо).
+// ─────────────────────────────────────────────
+const ZONE_HEADING_RE = /^(ВСТУП|INTRODUCTION|ВИСНОВКИ|CONCLUSIONS?|СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ|СПИСОК ЛІТЕРАТУРИ|REFERENCES|BIBLIOGRAPHY|РОЗДІЛ\s+\d+|CHAPTER\s+\d+)\s*$/im;
+
+function detectZoneAtPosition(text, pos) {
+  if (pos == null || pos < 0) return null;
+  const before = text.slice(0, pos);
+  const re = new RegExp(ZONE_HEADING_RE.source, "gim");
+  let m, zone = null;
+  while ((m = re.exec(before))) {
+    const h = m[1].toUpperCase();
+    if (/ВСТУП|INTRODUCTION/.test(h)) zone = "intro";
+    else if (/ВИСНОВК|CONCLUSION/.test(h)) zone = "conclusions";
+    else if (/ДЖЕРЕЛ|ЛІТЕРАТУР|REFERENCES|BIBLIOGRAPHY/.test(h)) zone = "sources";
+    else zone = null;
+  }
+  return zone;
+}
+
+function detectZoneFromLocation(location) {
+  if (!location) return null;
+  if (/джерел|літератур|references|bibliography/i.test(location)) return "sources";
+  if (/висновк|conclusion/i.test(location)) return "conclusions";
+  if (/вступ|introduction/i.test(location)) return "intro";
+  return null;
+}
+
+function buildZoneGuard(zone) {
+  if (zone === "intro") return "\nЦе ВСТУП — обов'язково збережи всі стандартні структурні елементи (актуальність теми, мета, завдання дослідження, об'єкт, предмет, методи дослідження, практичне значення, структура роботи) в тому ж порядку й кількості, навіть якщо виправляєш лише частину.";
+  if (zone === "conclusions") return "\nЦе ВИСНОВКИ — збережи структуру по одному абзацу на кожен пункт, без нумерації та без нових посилань [N].";
+  if (zone === "sources") return "\nЦе СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ — КАТЕГОРИЧНО ЗАБОРОНЕНО змінювати нумерацію, порядок чи кількість джерел. Виправляй ЛИШЕ те, про що сказано в завданні (форматування, розділові знаки).";
+  return "";
+}
+
+function buildCitationGuard(existingCitationNumbers) {
+  if (!existingCitationNumbers?.length) {
+    return "\nЦИТУВАННЯ: у цьому фрагменті немає визначеного списку джерел — категорично заборонено додавати нові посилання [N].";
+  }
+  return `\nЦИТУВАННЯ: у документі існують лише джерела з номерами ${existingCitationNumbers.join(", ")}. Можеш посилатись на будь-яке з них під його реальним номером, якщо доречно. КАТЕГОРИЧНО ЗАБОРОНЕНО вигадувати номер джерела, якого немає в цьому списку.`;
+}
+
+function buildIllustrationGuard(hasIt) {
+  return hasIt ? "\nІЛЮСТРАЦІЇ КЛІЄНТА: якщо у фрагменті є рядок-маркер [КЛІЄНТ-ІЛЮСТРАЦІЯ:N] — ОБОВ'ЯЗКОВО збережи його ТОЧНО без змін, включно з номером N." : "";
+}
+
+// Комбінує весь додатковий контекст для одного завдання: методичка/матеріали
+// клієнта (лише коли ключові слова завдання натякають, що це доречно) + захисні
+// правила (цитування, тип розділу, маркери ілюстрацій) — застосовуються завжди.
+function buildTaskPromptExtras(task, { methodInfo, clientMaterialsSummary, existingCitationNumbers, text }) {
   const { needsMethodichka, needsClientMaterials } = classifyContextNeed(task);
   let block = "";
   if (needsMethodichka && methodInfo) {
@@ -47,7 +103,50 @@ function buildExtraContext(task, methodInfo, clientMaterialsSummary) {
   if (needsClientMaterials && clientMaterialsSummary?.rawText) {
     block += `\n\nМАТЕРІАЛИ КЛІЄНТА (використовуй ці дані — не вигадуй, не замінюй):\n${clientMaterialsSummary.rawText.slice(0, 80000)}`;
   }
+
+  const zone = task.kind === "manual"
+    ? detectZoneFromLocation(task.location)
+    : detectZoneAtPosition(text, locateFragment(text, task.annotatedText, task.context)?.start);
+  block += buildZoneGuard(zone);
+  block += buildCitationGuard(existingCitationNumbers);
+
+  const hasIllustrations = /\[КЛІЄНТ-ІЛЮСТРАЦІЯ:/.test(task.annotatedText || task.context || task.location || "");
+  block += buildIllustrationGuard(hasIllustrations);
+
   return block;
+}
+
+// ─────────────────────────────────────────────
+// Контроль обсягу — якщо виправлений фрагмент сильно "поплив" відносно оригіналу
+// (значне ручне завдання, не дрібна правка), допрошуємо ШІ дописати чи скоротити
+// до приблизно того самого обсягу, щоб довжина роботи не "гуляла" від правок.
+// ─────────────────────────────────────────────
+function wc(s) {
+  const t = (s || "").trim();
+  return t ? t.split(/\s+/).length : 0;
+}
+
+async function adjustVolume({ original, replacement, lang, methodInfo, label }) {
+  const origWords = wc(original);
+  const newWords = wc(replacement);
+  if (origWords <= 30 || !replacement) return replacement;
+  const sys = buildSYS(lang, methodInfo);
+  if (newWords < origWords * 0.7) {
+    const missing = origWords - newWords;
+    const contPrompt = `Ось поточний текст фрагмента "${label || ""}" (${newWords} слів, оригінал мав ${origWords}):\n\n${replacement}\n\nДопиши ще приблизно ${missing} слів, органічно продовжуючи виклад далі, не повторюючи вже написане. Без вступних фраз, без заголовків. Просто продовж текст.`;
+    try {
+      const contRaw = await callClaude([{ role: "user", content: contPrompt }], null, sys, Math.min(20000, Math.max(2000, Math.round(missing * 3))), null, MODEL, { cache: true });
+      return (replacement + "\n\n" + contRaw).trim();
+    } catch { return replacement; }
+  }
+  if (newWords > origWords * 1.5) {
+    const shortenPrompt = `Ось поточний текст фрагмента "${label || ""}" (${newWords} слів):\n\n${replacement}\n\nСкороти його до приблизно ${origWords} слів: прибери повтори та другорядні деталі, збережи головні тези. Поверни лише скорочений текст, без коментарів.`;
+    try {
+      const shortRaw = await callClaude([{ role: "user", content: shortenPrompt }], null, sys, Math.min(30000, Math.max(4000, Math.round(origWords * 3))), null, MODEL, { cache: true });
+      return shortRaw.trim();
+    } catch { return replacement; }
+  }
+  return replacement;
 }
 
 // ─────────────────────────────────────────────
@@ -186,7 +285,8 @@ function StepBar({ current }) {
 }
 
 // ─────────────────────────────────────────────
-// Рядок одного завдання (анотація або ручне зауваження) у списку кроку 1
+// Рядок одного завдання (анотація, ручне зауваження, сторінки в цитатах чи
+// перебудова джерел) у списку кроку 1
 // ─────────────────────────────────────────────
 function TaskRow({ task, isChecked, onToggle }) {
   return (
@@ -224,6 +324,14 @@ function TaskRow({ task, isChecked, onToggle }) {
             <div style={{ fontSize: 13, color: "#2a2a1e" }}>{task.label}</div>
             <div style={{ fontSize: 12, color: "#888", marginTop: 2 }}>Номер сторінки підбирається кодом у межах реального обсягу джерела — без ризику вигадування.</div>
           </>
+        ) : task.kind === "sources_restructure" ? (
+          <>
+            <div style={{ fontSize: 10, background: "#fbe8e0", color: "#c04020", display: "inline-block", borderRadius: 3, padding: "1px 7px", fontWeight: 600, marginBottom: 4 }}>
+              ⚠ Перебудова списку джерел
+            </div>
+            <div style={{ fontSize: 13, color: "#c04020", marginBottom: 3 }}><span style={{ fontWeight: 600 }}>Проблема:</span> {task.issue}</div>
+            <div style={{ fontSize: 13, color: "#3a6010" }}><span style={{ fontWeight: 600 }}>Що зробити:</span> {task.suggestion}</div>
+          </>
         ) : (
           <>
             <div style={{ fontSize: 10, background: "#e8dcc8", color: "#7a5a2a", display: "inline-block", borderRadius: 3, padding: "1px 7px", fontWeight: 600, marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 }}>
@@ -254,6 +362,10 @@ export default function FileCorrectionsPage({ onBack }) {
   // {zip, docXml} — живі об'єкти для хірургічного редагування оригінального
   // .docx; не в React-стейті, бо мутуються напряму (DOM/JSZip), а не через рендер.
   const docStateRef = useRef(null);
+  // Той самий Firestore-документ оновлюється (не пересоздається) на кожному
+  // наступному раунді правок у межах цієї сесії — так history накопичується
+  // в одному записі, а не розсипається по окремих.
+  const orderDocIdRef = useRef(null);
 
   // Завдання: об'єднує і автоматично знайдені виділення/коментарі (kind:"annotation"),
   // і ручно введені зауваження (kind:"manual") — програма сама розпізнає перше під
@@ -272,9 +384,17 @@ export default function FileCorrectionsPage({ onBack }) {
   // Застосування (крок 2-3)
   const [applyLoading, setApplyLoading] = useState(false);
   const [applyProgress, setApplyProgress] = useState(0);
+  const [currentBatchLabel, setCurrentBatchLabel] = useState("");
   const [correctedText, setCorrectedText] = useState("");
   const [failedTasks, setFailedTasks] = useState([]);
+  const [applyMessages, setApplyMessages] = useState([]); // [{type:"success"|"error", text}]
+  const [correctionHistory, setCorrectionHistory] = useState([]);
   const [error, setError] = useState("");
+
+  // Мова роботи — впливає на системний промпт (заборона змішування скриптів,
+  // заборона рос./біл. джерел тощо). За замовчуванням українська; автопідтягується
+  // з обраного замовлення, якщо його вибрано.
+  const [lang, setLang] = useState("Українська");
 
   // Контекст (необов'язково): методичка + матеріали клієнта — підтягуються лише
   // до тих правок, де це справді доречно (classifyContextNeed), а не завжди й одразу.
@@ -350,6 +470,7 @@ export default function FileCorrectionsPage({ onBack }) {
       const d = snap.data();
       if (d?.methodInfo) setMethodInfo(d.methodInfo);
       if (d?.clientMaterialsSummary?.rawText) setClientMaterialsManualText(d.clientMaterialsSummary.rawText);
+      if (d?.info?.language) setLang(d.info.language);
     } catch (e) {
       setMethodError("Не вдалося завантажити дані замовлення: " + e.message);
     }
@@ -424,6 +545,7 @@ export default function FileCorrectionsPage({ onBack }) {
     setError("");
     setTasks([]); setChecked({}); setAnnotations({ highlights: [], comments: [] });
     setManualOpen(false); setCorrectionsText(""); setCorrectionPhotos([]);
+    orderDocIdRef.current = null; setCorrectionHistory([]);
     try {
       const arrayBuffer = await file.arrayBuffer();
       const { zip, docXml, plainText } = await openDocxForEditing(arrayBuffer);
@@ -454,7 +576,11 @@ export default function FileCorrectionsPage({ onBack }) {
       if (!Array.isArray(parsed)) throw new Error("Некоректна відповідь");
       // Власний унікальний id (а не той, що повернув ШІ) — інакше повторний аналіз
       // міг би дати ті самі "task_1" і зіштовхнутись зі стейтом checked.
-      const manualTasks = parsed.map((t, i) => ({ ...t, id: `m_${Date.now()}_${i}`, kind: "manual" }));
+      const manualTasks = parsed.map((t, i) => ({
+        ...t,
+        id: `m_${Date.now()}_${i}`,
+        kind: t.sourcesAction === "restructure" ? "sources_restructure" : "manual",
+      }));
       const defaultChecked = {};
       manualTasks.forEach(t => { defaultChecked[t.id] = true; });
       setTasks(prev => [...prev, ...manualTasks]);
@@ -475,30 +601,194 @@ export default function FileCorrectionsPage({ onBack }) {
     setApplyProgress(0);
     setError("");
     setFailedTasks([]);
+    setApplyMessages([]);
     // map/text перебудовуються після КОЖНОЇ застосованої правки (refreshTextMap) —
     // інакше позиції наступних locateFragment з'їдуть відносно вже зміненого XML.
     let { map, plainText: text } = refreshTextMap(docStateRef.current.docXml);
     const failed = [];
+    const messages = [];
 
     // Групуємо підряд по BATCH_SIZE завдань ОДНОГО типу (annotation/manual — різні
     // промпти) в один виклик ШІ: повний текст роботи надсилається раз на групу.
+    // citation_pages і sources_restructure не батчуються — кожне йде своїм окремим
+    // кодовим чи багатоетапним шляхом.
     const batches = [];
     for (let i = 0; i < toFix.length;) {
       const kind = toFix[i].kind;
       const group = [];
-      while (i < toFix.length && toFix[i].kind === kind && group.length < BATCH_SIZE) {
+      while (i < toFix.length && toFix[i].kind === kind && group.length < BATCH_SIZE && kind !== "sources_restructure") {
         group.push(toFix[i]); i++;
       }
+      if (!group.length) { group.push(toFix[i]); i++; }
       batches.push({ kind, items: group });
     }
 
     let done = 0;
+    const sysPromptSuffix = "\n\nВідповідай ЛИШЕ JSON, як описано вище. Без markdown, без пояснень поза ним.";
+
+    // Один виклик ШІ на батч — якщо ВЕСЬ масив не розпарсився (типово: одна відповідь
+    // містить незекрановані лапки й ламає JSON цілого батчу), пробуємо кожне завдання
+    // окремо, а не валимо всі одразу — так само надійно, як старий підхід "один виклик
+    // на завдання", але дешевше в щасливому випадку, коли батч парситься з першого разу.
+    async function applyOneBatch(kind, batch) {
+      setCurrentBatchLabel(kind === "annotation" ? `Виділення та коментарі (${batch.length})` : `Ручні зауваження (${batch.length})`);
+      const zoneNow = locateSourcesZone(text);
+      const existingCitationNumbers = zoneNow?.entries.map(e => e.number) || [];
+      const tasksForPrompt = batch.map(t => ({
+        ...t,
+        extraContext: buildTaskPromptExtras(t, { methodInfo, clientMaterialsSummary, existingCitationNumbers, text }),
+      }));
+      const prompt = kind === "annotation"
+        ? buildAnnotationCorrectionBatchPrompt({ documentText: text, tasks: tasksForPrompt })
+        : buildFileApplyCorrectionBatchPrompt({ documentText: text, tasks: tasksForPrompt });
+      const maxTokens = Math.min(80000, Math.max(8000, 6000 * batch.length));
+      const sysPrompt = buildSYS(lang, methodInfo) + sysPromptSuffix;
+
+      let items;
+      try {
+        const result = await callClaude([{ role: "user", content: prompt }], null, sysPrompt, maxTokens, null, MODEL, { cache: true });
+        const parsed = JSON.parse(result.replace(/```json|```/g, "").trim());
+        if (!Array.isArray(parsed)) throw new Error("не масив");
+        items = parsed;
+      } catch {
+        if (batch.length === 1) {
+          failed.push({ task: batch[0], reason: "Не вдалося розпізнати відповідь ШІ." });
+          done++;
+          setApplyProgress(done);
+          return;
+        }
+        for (const singleTask of batch) await applyOneBatch(kind, [singleTask]);
+        return;
+      }
+
+      for (let i = 0; i < batch.length; i++) {
+        const task = batch[i];
+        const item = items.find(p => p?.index === i) ?? items[i];
+        if (!item) {
+          failed.push({ task, reason: "ШІ не повернув результат для цього завдання." });
+        } else if (item.status === "needs_review") {
+          failed.push({ task, reason: item.note || "Потрібна ручна перевірка — ШІ не може підтвердити правильне значення." });
+        } else {
+          // Для виділень/коментарів фрагмент для заміни вже точно відомий програмі
+          // (task.annotatedText, узятий напряму з XML при витягу анотацій) — не
+          // покладаємось на те, що ШІ дослівно процитує його в JSON. Саме тут раніше
+          // ламався парсинг через незекрановані лапки в довгих виділеннях.
+          const original = kind === "annotation" ? task.annotatedText : item.original;
+          const loc = original ? locateFragment(text, original, task.context) : null;
+          if (loc) {
+            // Контроль обсягу — лише для суттєвих ручних завдань (кілька речень
+            // і більше); для короткого виділення природно, що заміна коротша.
+            let replacement = item.replacement || "";
+            if (kind === "manual" && original) {
+              replacement = await adjustVolume({ original, replacement, lang, methodInfo, label: task.location });
+            }
+            applyDocxReplacement(map, loc.start, loc.end, replacement);
+            if (task.commentId) await removeDocxComment(docStateRef.current.zip, docStateRef.current.docXml, task.commentId);
+            ({ map, plainText: text } = refreshTextMap(docStateRef.current.docXml));
+          } else {
+            failed.push({ task, reason: "Фрагмент не знайдено в тексті документа — заміну не застосовано." });
+          }
+        }
+        done++;
+        setApplyProgress(done);
+      }
+    }
+
+    // ── Перебудова списку джерел: додати/видалити конкретне джерело, перенумерувати
+    // всі цитати по документу, вставити цитування нових джерел. Без структури
+    // sections/content — усе працює прямо на плоскому тексті через хірургічні
+    // заміни, як і решта інструмента. Підтримує лише нумерований стиль [N]. ──
+    async function applySourcesRestructureTask(task) {
+      setCurrentBatchLabel("Перебудовую список джерел...");
+      const zone = locateSourcesZone(text);
+      if (!zone || !zone.entries.length) {
+        failed.push({ task, reason: "Не вдалося знайти пронумерований список джерел у документі." });
+        done++; setApplyProgress(done);
+        return;
+      }
+      try {
+        const currentSourcesText = zone.entries.map(e => `${e.number}. ${e.text}`).join("\n");
+        const restructurePrompt = buildSourcesRestructureAnalysisPrompt({ currentSourcesText, issue: task.issue, suggestion: task.suggestion });
+        const restructureRaw = await callClaude([{ role: "user", content: restructurePrompt }], null, SYS_JSON, 2000, null, MODEL);
+        const restructureParsed = JSON.parse(restructureRaw.replace(/```json|```/g, "").trim());
+        const removeNumbers = new Set((restructureParsed.remove || []).map(Number).filter(Number.isFinite));
+        const addRaw = (restructureParsed.add || []).filter(s => s && s.trim());
+
+        const survivors = zone.entries.filter(e => !removeNumbers.has(e.number));
+        const removedCount = zone.entries.length - survivors.length;
+
+        const sourcesStyle = methodInfo?.sourcesStyle || "ДСТУ 8302:2015";
+        let newFormatted = [];
+        if (addRaw.length) {
+          newFormatted = await formatSourcesWithRetry({
+            rawRefs: addRaw, findStructured: () => null, sourcesStyle,
+            sourcesFormatRules: methodInfo?.sourcesFormatRules, callClaude,
+          });
+        }
+
+        const finalTexts = [...survivors.map(e => e.text), ...newFormatted];
+        const oldToNew = {};
+        survivors.forEach((e, idx) => { oldToNew[e.number] = idx + 1; });
+        removeNumbers.forEach(n => { oldToNew[n] = null; });
+        const newSourceFinalNumbers = newFormatted.map((_, idx) => survivors.length + idx + 1);
+
+        // 1) Замінити сам блок списку джерел на новий пронумерований варіант
+        const newSourcesBlock = finalTexts.map((t2, i) => `${i + 1}. ${t2}`).join("\n");
+        applyDocxReplacement(map, zone.sourcesStart, zone.sourcesEnd, "\n" + newSourcesBlock + "\n");
+        ({ map, plainText: text } = refreshTextMap(docStateRef.current.docXml));
+
+        // 2) Перенумерувати/прибрати цитати по всьому тексту поза списком джерел —
+        // одна за одною, без ШІ, так само як сторінки в цитатах.
+        let renumberedCount = 0;
+        for (let guard = 0; guard < 2000; guard++) {
+          const zoneNow = locateSourcesZone(text);
+          const fix = findNextCitationToRenumber(text, oldToNew, zoneNow?.sourcesStart ?? text.length, zoneNow?.sourcesEnd ?? text.length);
+          if (!fix) break;
+          applyDocxReplacement(map, fix.start, fix.end, fix.replacement);
+          ({ map, plainText: text } = refreshTextMap(docStateRef.current.docXml));
+          renumberedCount++;
+        }
+
+        // 3) Знайти в тексті доречне місце й вставити цитування кожного нового джерела
+        const unplaced = [];
+        for (let i = 0; i < newFormatted.length; i++) {
+          const finalN = newSourceFinalNumbers[i];
+          const marker = `[${finalN}]`;
+          try {
+            const placementPrompt = buildSourcePlacementInTextPrompt({ documentText: text, newSourceText: newFormatted[i], citationMarker: marker });
+            const placementRaw = await callClaude([{ role: "user", content: placementPrompt }], null, SYS_JSON, 2000, null, MODEL);
+            const placementParsed = JSON.parse(placementRaw.replace(/```json|```/g, "").trim());
+            const anchorLoc = placementParsed?.found && placementParsed.anchor ? locateFragment(text, placementParsed.anchor, null) : null;
+            if (anchorLoc) {
+              applyDocxReplacement(map, anchorLoc.start, anchorLoc.end, text.slice(anchorLoc.start, anchorLoc.end) + ` ${marker}`);
+              ({ map, plainText: text } = refreshTextMap(docStateRef.current.docXml));
+            } else {
+              unplaced.push(finalN);
+            }
+          } catch {
+            unplaced.push(finalN);
+          }
+        }
+
+        const summaryParts = [];
+        if (removedCount) summaryParts.push(`видалено ${removedCount} джерел${renumberedCount ? ` (прибрано/перенумеровано посилань: ${renumberedCount})` : ""}`);
+        if (newFormatted.length) summaryParts.push(`додано ${newFormatted.length} нових джерел${unplaced.length ? ` (для №${unplaced.join(", ")} не вдалося автоматично підібрати місце цитування — процитуйте вручну)` : ""}`);
+        if (!summaryParts.length) summaryParts.push("змін у списку джерел не знайдено за цим зауваженням");
+        messages.push({ type: "success", text: `Список джерел оновлено: ${summaryParts.join("; ")}.` });
+      } catch (e) {
+        failed.push({ task, reason: "Помилка перебудови списку джерел: " + e.message });
+      }
+      done++;
+      setApplyProgress(done);
+    }
+
     try {
       for (const { kind, items: batch } of batches) {
         // Сторінки в цитатах — суто кодова перевірка, без ШІ: номер підбирає
         // pickPageInRange у межах реального обсягу джерела, тож ризику
         // вигадування немає. Застосовуємо всі знайдені випадки одразу.
         if (kind === "citation_pages") {
+          setCurrentBatchLabel("Сторінки в цитатах (без ШІ)");
           const task = batch[0];
           let fixedCount = 0;
           for (let guard = 0; guard < 500; guard++) {
@@ -510,75 +800,75 @@ export default function FileCorrectionsPage({ onBack }) {
           }
           if (fixedCount === 0) {
             failed.push({ task, reason: "Не вдалося повторно знайти невалідні сторінки — можливо, документ змінився з моменту завантаження." });
-          }
-          done += batch.length;
-          setApplyProgress(done);
-          continue;
-        }
-
-        const tasksForPrompt = batch.map(t => ({
-          ...t,
-          extraContext: buildExtraContext(t, methodInfo, clientMaterialsSummary),
-        }));
-        const prompt = kind === "annotation"
-          ? buildAnnotationCorrectionBatchPrompt({ documentText: text, tasks: tasksForPrompt })
-          : buildFileApplyCorrectionBatchPrompt({ documentText: text, tasks: tasksForPrompt });
-        const maxTokens = Math.min(80000, Math.max(6000, 6000 * batch.length));
-
-        let items = null;
-        try {
-          const result = await callClaude([{ role: "user", content: prompt }], null, SYS_JSON_ARRAY, maxTokens, null, MODEL);
-          const parsed = JSON.parse(result.replace(/```json|```/g, "").trim());
-          if (!Array.isArray(parsed)) throw new Error("не масив");
-          items = parsed;
-        } catch {
-          batch.forEach(task => failed.push({ task, reason: "Не вдалося розпізнати відповідь ШІ." }));
-          done += batch.length;
-          setApplyProgress(done);
-          continue;
-        }
-
-        for (let i = 0; i < batch.length; i++) {
-          const task = batch[i];
-          const item = items.find(p => p?.index === i) ?? items[i];
-          if (!item) {
-            failed.push({ task, reason: "ШІ не повернув результат для цього завдання." });
-          } else if (item.status === "needs_review") {
-            failed.push({ task, reason: item.note || "Потрібна ручна перевірка — ШІ не може підтвердити правильне значення." });
           } else {
-            const loc = item.original ? locateFragment(text, item.original, task.context) : null;
-            if (loc) {
-              applyDocxReplacement(map, loc.start, loc.end, item.replacement || "");
-              if (task.commentId) await removeDocxComment(docStateRef.current.zip, docStateRef.current.docXml, task.commentId);
-              ({ map, plainText: text } = refreshTextMap(docStateRef.current.docXml));
-            } else {
-              failed.push({ task, reason: "Фрагмент не знайдено в тексті документа — заміну не застосовано." });
-            }
+            messages.push({ type: "success", text: `Сторінки в цитатах: виправлено ${fixedCount}.` });
           }
-          done++;
+          done += batch.length;
           setApplyProgress(done);
+          continue;
         }
+
+        if (kind === "sources_restructure") {
+          await applySourcesRestructureTask(batch[0]);
+          continue;
+        }
+
+        await applyOneBatch(kind, batch);
       }
       setCorrectedText(text);
       setFailedTasks(failed);
+      setApplyMessages(messages);
+
+      // Успішно застосовані завдання — знімаємо чекбокс (щоб повторний "Виправити
+      // обрані" не намагався заново виправити вже виправлене — для анотацій
+      // фрагмент цього разу просто не знайдеться); невдалі лишаються позначені,
+      // готові до повторної спроби одним кліком.
+      const failedIds = new Set(failed.map(f => f.task.id));
+      const appliedCount = toFix.length - failed.length;
+      setChecked(prev => {
+        const next = { ...prev };
+        toFix.forEach(t => { next[t.id] = failedIds.has(t.id); });
+        return next;
+      });
+
+      let updatedHistory = correctionHistory;
+      if (appliedCount > 0) {
+        const entry = {
+          clientTimestamp: Date.now(),
+          appliedCount,
+          failedCount: failed.length,
+          labels: toFix.filter(t => !failedIds.has(t.id)).map(t => t.label || t.location || (t.annotatedText || "").slice(0, 40)).filter(Boolean).slice(0, 10),
+        };
+        updatedHistory = [...correctionHistory, entry];
+        setCorrectionHistory(updatedHistory);
+      }
+
       setStep(3);
       try {
         const acc = tokenAccRef.current;
-        await addDoc(collection(db, "orders"), {
+        const payload = {
           mode: "file_corrections", type: "file_corrections",
           topic: `Правки: ${fileName}`, uid: user?.uid || null,
-          createdAt: new Date().toISOString(), timestamp: serverTimestamp(),
-          fileName, correctionsApplied: toFix.length - failed.length, correctionsFailed: failed.length,
+          fileName, correctionsApplied: appliedCount, correctionsFailed: failed.length,
           totalInTok: acc.inTok, totalOutTok: acc.outTok, totalCostUsd: acc.costUsd,
           claudeInTok: acc.claudeInTok, claudeOutTok: acc.claudeOutTok, claudeCostUsd: acc.claudeCostUsd,
           geminiInTok: 0, geminiOutTok: 0, geminiCostUsd: 0, serperCredits: 0, serperCostUsd: 0,
           info: { topic: `Правки: ${fileName}`, orderNumber: null },
-        });
+          correctionHistory: updatedHistory,
+          timestamp: serverTimestamp(),
+        };
+        if (orderDocIdRef.current) {
+          await updateDoc(doc(db, "orders", orderDocIdRef.current), payload);
+        } else {
+          const ref = await addDoc(collection(db, "orders"), { ...payload, createdAt: new Date().toISOString() });
+          orderDocIdRef.current = ref.id;
+        }
       } catch { /**/ }
     } catch (e) {
       setError("Помилка виправлення: " + e.message);
     }
     setApplyLoading(false);
+    setCurrentBatchLabel("");
   }
 
   function toggleAll(val) {
@@ -589,16 +879,19 @@ export default function FileCorrectionsPage({ onBack }) {
 
   function resetFile() {
     docStateRef.current = null;
+    orderDocIdRef.current = null;
     setStep(0); setFileName(""); setDocText("");
     setAnnotations({ highlights: [], comments: [] }); setTasks([]); setChecked({});
     setManualOpen(false); setCorrectionsText(""); setCorrectionPhotos([]);
     setCorrectedText(""); setError(""); setApplyProgress(0); setFailedTasks([]);
+    setApplyMessages([]); setCorrectionHistory([]);
   }
 
   function reset() {
     resetFile();
     setContextOpen(false); setSelectedOrderId(""); setMethodInfo(null);
     setMethodFileLabel(""); setMethodError(""); setClientMaterials([]); setClientMaterialsManualText("");
+    setLang("Українська");
   }
 
   // ─────────────────────────────────────────────
@@ -616,7 +909,7 @@ export default function FileCorrectionsPage({ onBack }) {
             // currentDocText НЕ скидаємо на docText — оригінальний docXml у docStateRef
             // вже незворотно змінено попередніми правками, тож текст має й далі
             // відповідати саме йому, а не давно застарілому вихідному тексту.
-            if (step === 3) { setStep(1); setCorrectedText(""); setApplyProgress(0); setFailedTasks([]); }
+            if (step === 3) { setStep(1); setCorrectedText(""); setApplyProgress(0); setFailedTasks([]); setApplyMessages([]); }
           }}
           style={{ background: "none", border: "none", color: "#888", fontSize: 18, cursor: "pointer", lineHeight: 1, padding: 4 }}
         >←</button>
@@ -661,8 +954,8 @@ export default function FileCorrectionsPage({ onBack }) {
               </div>
             </div>
 
-            {/* Опціональний контекст: методичка / матеріали клієнта — підтягуються лише
-                до тих правок, де це дійсно доречно (формат, стиль цитування, розрахунки тощо) */}
+            {/* Опціональний контекст: методичка / матеріали клієнта / мова — підтягуються
+                лише до тих правок, де це дійсно доречно (формат, стиль цитування тощо) */}
             <div style={cardStyle}>
               <div
                 onClick={() => { setContextOpen(o => !o); if (!contextOpen) loadMyOrders(); }}
@@ -670,14 +963,25 @@ export default function FileCorrectionsPage({ onBack }) {
               >
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <div style={dot(methodInfo || clientMaterialsSummary ? "#a8e060" : "#666")} />
-                  <div style={labelStyle}>Контекст роботи (необов'язково): методичка, матеріали клієнта</div>
+                  <div style={labelStyle}>Контекст роботи (необов'язково): мова, методичка, матеріали клієнта</div>
                 </div>
                 <div style={{ color: "#888", fontSize: 12 }}>{contextOpen ? "▲" : "▼"}</div>
               </div>
               {contextOpen && (
                 <div style={cardBody}>
                   <div style={{ fontSize: 11, color: "#888", marginBottom: 10, lineHeight: 1.6 }}>
-                    Потрібно лише для правок, що стосуються оформлення за методичкою (таблиці, цитування) або даних клієнта. Для звичайних стилістичних правок можна пропустити.
+                    Мова впливає на всі виправлення (заборона змішування скриптів). Методичка/матеріали клієнта підтягуються лише для правок, де це доречно — оформлення, цитування, розрахунки.
+                  </div>
+
+                  <div style={{ marginBottom: 14 }}>
+                    <div style={{ fontSize: 11, color: "#aaa", marginBottom: 6, letterSpacing: 0.5 }}>МОВА РОБОТИ</div>
+                    <select
+                      value={lang}
+                      onChange={e => setLang(e.target.value)}
+                      style={{ width: "100%", fontSize: 13, padding: "8px 10px", borderRadius: 6, border: "1px solid #d4cfc4", background: "#f5f2ea", color: "#2a2a1e", fontFamily: "inherit" }}
+                    >
+                      {LANG_OPTIONS.map(l => <option key={l} value={l}>{l}</option>)}
+                    </select>
                   </div>
 
                   <div style={{ marginBottom: 14 }}>
@@ -697,7 +1001,7 @@ export default function FileCorrectionsPage({ onBack }) {
                       </select>
                     )}
                     {selectedOrderId && methodInfo && (
-                      <div style={{ fontSize: 11, color: "#6a9000", marginTop: 6 }}>✓ Дані методички й матеріалів підтягнуто із замовлення</div>
+                      <div style={{ fontSize: 11, color: "#6a9000", marginTop: 6 }}>✓ Дані методички, матеріалів і мови підтягнуто із замовлення</div>
                     )}
                   </div>
 
@@ -742,7 +1046,7 @@ export default function FileCorrectionsPage({ onBack }) {
                   <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                     <div style={dot("#a8e060")} />
                     <div style={labelStyle}>
-                      Знайдено правок: {tasks.length} ({annotations.highlights.length} виділень, {annotations.comments.length} коментарів{tasks.some(t => t.kind === "citation_pages") ? ", сторінки в цитатах" : ""}{tasks.some(t => t.kind === "manual") ? `, ${tasks.filter(t => t.kind === "manual").length} вручну` : ""})
+                      Знайдено правок: {tasks.length} ({annotations.highlights.length} виділень, {annotations.comments.length} коментарів{tasks.some(t => t.kind === "citation_pages") ? ", сторінки в цитатах" : ""}{tasks.some(t => t.kind === "sources_restructure") ? ", перебудова джерел" : ""}{tasks.some(t => t.kind === "manual") ? `, ${tasks.filter(t => t.kind === "manual").length} вручну` : ""})
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 8 }}>
@@ -782,7 +1086,7 @@ export default function FileCorrectionsPage({ onBack }) {
                   <textarea
                     value={correctionsText}
                     onChange={e => setCorrectionsText(e.target.value)}
-                    placeholder={"Вставте зауваження від викладача...\nНаприклад: «Висновки надто короткі. Вступ не розкриває актуальність.»"}
+                    placeholder={"Вставте зауваження від викладача...\nНаприклад: «Висновки надто короткі. Додай ще одне джерело про X. Прибери застаріле джерело Іванова.»"}
                     style={{ width: "100%", minHeight: 130, fontSize: 13, lineHeight: "1.8", color: "#2a2a1e", background: "#f5f2ea", borderRadius: 6, padding: "12px 14px", border: "1px solid #d4cfc4", fontFamily: "'Spectral',serif", resize: "vertical", boxSizing: "border-box" }}
                   />
                   <div style={{ marginTop: 10 }}>
@@ -803,7 +1107,33 @@ export default function FileCorrectionsPage({ onBack }) {
               )}
             </div>
 
-            <button onClick={resetFile} style={{ background: "none", border: "none", color: "#aaa", fontSize: 12, cursor: "pointer", fontFamily: "inherit", padding: "4px 0" }}>
+            {/* Історія правок у цій сесії */}
+            {correctionHistory.length > 0 && (
+              <div style={{ ...cardStyle, marginTop: 14 }}>
+                <div style={cardHead()}>
+                  <div style={labelStyle}>Історія правок ({correctionHistory.length})</div>
+                </div>
+                <div style={{ background: "#faf8f3" }}>
+                  {[...correctionHistory].reverse().map((entry, i) => (
+                    <div key={i} style={{ padding: "10px 16px", borderBottom: i < correctionHistory.length - 1 ? "1px solid #e8e4dc" : "none", display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 12, color: "#2a2a1e" }}>Застосовано: {entry.appliedCount}{entry.failedCount ? `, не вдалось: ${entry.failedCount}` : ""}</div>
+                        {entry.labels?.length > 0 && (
+                          <div style={{ marginTop: 4, display: "flex", flexWrap: "wrap", gap: 4 }}>
+                            {entry.labels.map((l, j) => (
+                              <span key={j} style={{ fontSize: 10, background: "#e8f4d8", color: "#3a6010", borderRadius: 4, padding: "2px 7px" }}>{l}</span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 11, color: "#aaa", whiteSpace: "nowrap" }}>{new Date(entry.clientTimestamp).toLocaleDateString("uk-UA", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <button onClick={resetFile} style={{ background: "none", border: "none", color: "#aaa", fontSize: 12, cursor: "pointer", fontFamily: "inherit", padding: "4px 0", marginTop: 8 }}>
               ← Завантажити інший файл
             </button>
           </>
@@ -823,7 +1153,7 @@ export default function FileCorrectionsPage({ onBack }) {
                 </div>
                 <div style={{ fontSize: 13, color: "#3a6010" }}>
                   {applyLoading
-                    ? `Виправляю... (${applyProgress} з ${checkedCount})`
+                    ? <>Виправляю... ({applyProgress} з {checkedCount}){currentBatchLabel ? <> — <strong>{currentBatchLabel}</strong></> : ""}</>
                     : applyProgress === 0
                       ? "Готово до виправлення"
                       : "Завершено"}
@@ -856,6 +1186,17 @@ export default function FileCorrectionsPage({ onBack }) {
               </div>
             </div>
 
+            {applyMessages.length > 0 && (
+              <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+                {applyMessages.map((msg, i) => (
+                  <div key={i} style={{ border: `1.5px solid ${msg.type === "error" ? "#c04020" : "#4a6a00"}`, borderRadius: 8, padding: "11px 16px", background: msg.type === "error" ? "#2a1410" : "#1a2a00", display: "flex", gap: 10 }}>
+                    <div style={{ width: 8, height: 8, borderRadius: "50%", marginTop: 4, background: msg.type === "error" ? "#e07050" : "#a8e060", flexShrink: 0 }} />
+                    <div style={{ fontSize: 12.5, lineHeight: 1.6, color: "#f5f2eb" }}>{msg.text}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {failedTasks.length > 0 && (
               <div style={{ ...cardStyle, border: "1.5px solid #a04a1a", marginTop: 14 }}>
                 <div style={cardHead("#3a1a0a")}>
@@ -886,7 +1227,7 @@ export default function FileCorrectionsPage({ onBack }) {
                 Завантажити виправлений .docx
               </button>
               <button
-                onClick={() => { setStep(1); setApplyProgress(0); setCorrectedText(""); setFailedTasks([]); }}
+                onClick={() => { setStep(1); setApplyProgress(0); setCorrectedText(""); setFailedTasks([]); setApplyMessages([]); }}
                 style={{ ...btnPrimary(false), background: "transparent", color: "#555", border: "1px solid #ccc" }}
               >
                 Внести ще правки

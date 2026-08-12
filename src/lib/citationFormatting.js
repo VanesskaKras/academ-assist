@@ -159,19 +159,61 @@ export function fixOutOfRangeCitationPages({ content, sections }) {
 const SOURCES_HEADING_RE = /^(СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ|СПИСОК ЛІТЕРАТУРИ|ДЖЕРЕЛА|REFERENCES|BIBLIOGRAPHY|LITERATURVERZEICHNIS|BIBLIOGRAFIA|BIBLIOGRAFÍA)\s*$/im;
 const NEXT_HEADING_AFTER_SOURCES_RE = /\n\s*(ДОДАТКИ|APPENDIX|APPENDICES|ANHANG)\b/i;
 
-export function findOutOfRangeCitationInText(text) {
+// ── Знаходить межі списку джерел у плоскому тексті (за заголовком) і парсить
+// пронумеровані записи — спільна основа для findOutOfRangeCitationInText і для
+// перебудови списку джерел ("Правки до файлу", де немає структури sections/content). ──
+export function locateSourcesZone(text) {
   const headingMatch = text.match(SOURCES_HEADING_RE);
   if (!headingMatch) return null;
   const sourcesStart = headingMatch.index + headingMatch[0].length;
   const nextMatch = text.slice(sourcesStart).match(NEXT_HEADING_AFTER_SOURCES_RE);
   const sourcesEnd = nextMatch ? sourcesStart + nextMatch.index : text.length;
-
-  const ranges = {};
+  const entries = [];
   text.slice(sourcesStart, sourcesEnd).split("\n").forEach(line => {
     const m = line.match(/^\s*(\d+)[.)]\s*(.*)$/);
-    if (!m) return;
-    const range = extractPageRange(m[2].trim(), null);
-    if (range && range.min <= range.max) ranges[Number(m[1])] = range;
+    if (m && m[2].trim()) entries.push({ number: Number(m[1]), text: m[2].trim() });
+  });
+  return { sourcesStart, sourcesEnd, entries };
+}
+
+// ── Знаходить ОДНЕ наступне цитування [N] / [N, с. X] / [N, с. X–Y] поза списком
+// джерел, чиє N є ключем у oldToNew, і повертає його заміну на новий номер (або
+// повне видалення разом із зайвим пробілом перед ним, якщо N відсутнє в мапі —
+// джерело видалено). Викликач має застосувати й повторно викликати на оновленому
+// тексті (так само як findOutOfRangeCitationInText — заміна зсуває позиції). ──
+const GENERIC_CITATION_RE = /\[\s*(\d+)\s*(?:,\s*([сc]\.?)\s*(\d+)(?:\s*[–\-—]\s*(\d+))?)?\s*\]/g;
+
+export function findNextCitationToRenumber(text, oldToNew, sourcesStart, sourcesEnd) {
+  const re = new RegExp(GENERIC_CITATION_RE.source, "g");
+  let m;
+  while ((m = re.exec(text))) {
+    if (m.index >= sourcesStart && m.index < sourcesEnd) continue; // сам список джерел
+    const n = Number(m[1]);
+    if (!(n in oldToNew)) continue;
+    const newN = oldToNew[n];
+    if (newN == null) {
+      // джерело видалено — прибираємо маркер разом із зайвим пробілом перед ним,
+      // інакше лишається "текст ," замість "текст," (саме цей артефакт і шукали раніше)
+      let start = m.index;
+      if (start > 0 && text[start - 1] === " ") start -= 1;
+      return { start, end: m.index + m[0].length, replacement: "" };
+    }
+    const abbrev = m[2] || "с.";
+    const rest = m[3] != null ? `, ${abbrev} ${m[3]}${m[4] != null ? `–${m[4]}` : ""}` : "";
+    return { start: m.index, end: m.index + m[0].length, replacement: `[${newN}${rest}]` };
+  }
+  return null;
+}
+
+export function findOutOfRangeCitationInText(text) {
+  const zone = locateSourcesZone(text);
+  if (!zone) return null;
+  const { sourcesStart, sourcesEnd, entries } = zone;
+
+  const ranges = {};
+  entries.forEach(e => {
+    const range = extractPageRange(e.text, null);
+    if (range && range.min <= range.max) ranges[e.number] = range;
   });
   if (!Object.keys(ranges).length) return null;
 
