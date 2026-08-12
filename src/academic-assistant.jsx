@@ -577,11 +577,13 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [autoError, setAutoError] = useState(null); // { step, kind: "api" | "missing", message }
   const autoModeRef = useRef(false);
   const sectionsRef = useRef(sections);
+  const infoRef = useRef(info);
   const citInputsRef = useRef(citInputs);
   const kwErrorRef = useRef("");
   const sourcesSearchLoadingRef = useRef({});
   const readyWorkImportedIdsRef = useRef(readyWorkImportedIds);
   useEffect(() => { sectionsRef.current = sections; }, [sections]);
+  useEffect(() => { infoRef.current = info; }, [info]);
   useEffect(() => { citInputsRef.current = citInputs; }, [citInputs]);
   useEffect(() => { kwErrorRef.current = kwError; }, [kwError]);
   useEffect(() => { sourcesSearchLoadingRef.current = sourcesSearchLoading; }, [sourcesSearchLoading]);
@@ -892,7 +894,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   // ── Генерація плану ──
   const doGenPlan = async () => {
     setPlanLoading(true); setSections([]); setPlanDisplay(""); setStage("plan"); setReadyWorkNeedsManualAI(false);
-    const d = info; const totalPages = parsePagesAvg(d.pages);
+    const d = infoRef.current; const totalPages = parsePagesAvg(d.pages);
     const wc = buildWorkConfig({ info: d, methodInfo, commentAnalysis });
     const introP = wc.introPages;
     const conclP = wc.conclusionsPages;
