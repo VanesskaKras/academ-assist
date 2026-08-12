@@ -149,6 +149,73 @@ export function fixOutOfRangeCitationPages({ content, sections }) {
   return { updatedContent, fixedCount, affectedSectionIds };
 }
 
+// ── Той самий принцип, але для суцільного плаского тексту одного документа без
+// структури sections/content (використовує "Правки до файлу" — там немає окремих
+// розділів, список джерел треба знайти прямо в тексті за заголовком). Повертає
+// ОДНЕ перше знайдене невалідне цитування (позиція + виправлений варіант) або
+// null — виклик має застосувати його й повторно викликати цю функцію на
+// оновленому тексті (заміна може змінити довжину рядка й зсунути позиції інших
+// збігів, тож рахувати наперед усі позиції одразу небезпечно). ──
+const SOURCES_HEADING_RE = /^(СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ|СПИСОК ЛІТЕРАТУРИ|ДЖЕРЕЛА|REFERENCES|BIBLIOGRAPHY|LITERATURVERZEICHNIS|BIBLIOGRAFIA|BIBLIOGRAFÍA)\s*$/im;
+const NEXT_HEADING_AFTER_SOURCES_RE = /\n\s*(ДОДАТКИ|APPENDIX|APPENDICES|ANHANG)\b/i;
+
+export function findOutOfRangeCitationInText(text) {
+  const headingMatch = text.match(SOURCES_HEADING_RE);
+  if (!headingMatch) return null;
+  const sourcesStart = headingMatch.index + headingMatch[0].length;
+  const nextMatch = text.slice(sourcesStart).match(NEXT_HEADING_AFTER_SOURCES_RE);
+  const sourcesEnd = nextMatch ? sourcesStart + nextMatch.index : text.length;
+
+  const ranges = {};
+  text.slice(sourcesStart, sourcesEnd).split("\n").forEach(line => {
+    const m = line.match(/^\s*(\d+)[.)]\s*(.*)$/);
+    if (!m) return;
+    const range = extractPageRange(m[2].trim(), null);
+    if (range && range.min <= range.max) ranges[Number(m[1])] = range;
+  });
+  if (!Object.keys(ranges).length) return null;
+
+  const occCount = {};
+  const re = new RegExp(CITATION_PAGE_RE.source, "g");
+  let m;
+  while ((m = re.exec(text))) {
+    if (m.index >= sourcesStart && m.index < sourcesEnd) continue; // це сам список джерел, не цитата
+    const n = Number(m[1]);
+    const range = ranges[n];
+    if (!range) continue;
+    occCount[n] = (occCount[n] || 0) + 1;
+    const x = Number(m[3]);
+    const yStr = m[4];
+    if (yStr == null) {
+      if (x >= range.min && x <= range.max) continue;
+      const newPage = pickPageInRange(range, occCount[n]);
+      return { start: m.index, end: m.index + m[0].length, replacement: `[${n}, ${m[2]} ${newPage}]` };
+    }
+    const y = Number(yStr);
+    if (x >= range.min && y <= range.max && x <= y) continue;
+    const availableWidth = range.max - range.min;
+    const width = Math.min(Math.max(0, y - x), availableWidth);
+    const newStart = pickPageInRange({ min: range.min, max: range.max - width }, occCount[n]);
+    return { start: m.index, end: m.index + m[0].length, replacement: `[${n}, ${m[2]} ${newStart}–${newStart + width}]` };
+  }
+  return null;
+}
+
+// Рахує, скільки невалідних цитувань є в тексті — для показу в UI перед
+// застосуванням. Прогонить fix-і на СКОПІЙОВАНОМУ рядку, не чіпаючи реальний
+// документ (справжнє застосування йде через docx-хірургію викликачем).
+export function countOutOfRangeCitations(text) {
+  let t = text;
+  let count = 0;
+  for (let i = 0; i < 500; i++) {
+    const fix = findOutOfRangeCitationInText(t);
+    if (!fix) break;
+    t = t.slice(0, fix.start) + fix.replacement + t.slice(fix.end);
+    count++;
+  }
+  return count;
+}
+
 // Замінює [oldN] / [oldN, с. X] / групові [oldN, oldM] та виносочні маркери %%FN<oldN>%%
 // у тексті на нові номери у фінальному форматі стилю. Групові цитати виникають при
 // локалізації посилань готової частини клієнта (localizeCitations у readyWorkExtract.js)

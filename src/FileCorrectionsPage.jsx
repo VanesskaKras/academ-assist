@@ -16,6 +16,7 @@ import { DropZone } from "./components/DropZone.jsx";
 import { ClientMaterialsZone } from "./components/ClientMaterialsZone.jsx";
 import { extractAnnotations } from "./lib/docxAnnotations.js";
 import { openDocxForEditing, refreshTextMap, applyDocxReplacement, removeDocxComment, serializeDocx } from "./lib/docxSurgicalEdit.js";
+import { findOutOfRangeCitationInText, countOutOfRangeCitations } from "./lib/citationFormatting.js";
 
 // Скільки завдань ОДНОГО типу групувати в один виклик ШІ при застосуванні правок —
 // основне джерело економії токенів: повний текст роботи надсилається раз на групу.
@@ -215,6 +216,14 @@ function TaskRow({ task, isChecked, onToggle }) {
               </div>
             )}
           </>
+        ) : task.kind === "citation_pages" ? (
+          <>
+            <div style={{ fontSize: 10, background: "#dbeafe", color: "#1e40af", display: "inline-block", borderRadius: 3, padding: "1px 7px", fontWeight: 600, marginBottom: 4 }}>
+              🔢 Автоматично, без ШІ
+            </div>
+            <div style={{ fontSize: 13, color: "#2a2a1e" }}>{task.label}</div>
+            <div style={{ fontSize: 12, color: "#888", marginTop: 2 }}>Номер сторінки підбирається кодом у межах реального обсягу джерела — без ризику вигадування.</div>
+          </>
         ) : (
           <>
             <div style={{ fontSize: 10, background: "#e8dcc8", color: "#7a5a2a", display: "inline-block", borderRadius: 3, padding: "1px 7px", fontWeight: 600, marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 }}>
@@ -372,14 +381,27 @@ export default function FileCorrectionsPage({ onBack }) {
 
   // ── Витяг анотацій — викликається одразу після завантаження файлу. Програма сама
   // визначає, чи є у файлі виділення/коментарі; якщо немає — просто відкриває форму
-  // ручного вводу замість того, щоб змушувати користувача заздалегідь обирати варіант. ──
-  async function doExtract(buffer) {
+  // ручного вводу замість того, щоб змушувати користувача заздалегідь обирати варіант.
+  // Заодно суто кодом (без ШІ) перевіряє сторінки у внутрітекстових цитатах на
+  // відповідність реальному обсягу джерела — якщо є невалідні, додає окреме
+  // завдання, що застосовується напряму, без виклику ШІ (число підбирає код). ──
+  async function doExtract(buffer, plainText) {
     setExtractLoading(true);
     setError("");
     try {
       const result = await extractAnnotations(buffer);
       setAnnotations(result);
       const newTasks = annotationsToTasks(result);
+
+      const citationIssues = countOutOfRangeCitations(plainText);
+      if (citationIssues > 0) {
+        newTasks.push({
+          id: "citation_pages",
+          kind: "citation_pages",
+          label: `Сторінки в цитатах поза межами джерела (${citationIssues})`,
+        });
+      }
+
       if (newTasks.length) {
         const defaultChecked = {};
         newTasks.forEach(t => { defaultChecked[t.id] = true; });
@@ -409,7 +431,7 @@ export default function FileCorrectionsPage({ onBack }) {
       docStateRef.current = { zip, docXml };
       setFileName(file.name);
       setDocText(plainText);
-      await doExtract(arrayBuffer);
+      await doExtract(arrayBuffer, plainText);
       setStep(1);
     } catch (e) {
       setError("Помилка читання файлу: " + e.message);
@@ -473,6 +495,27 @@ export default function FileCorrectionsPage({ onBack }) {
     let done = 0;
     try {
       for (const { kind, items: batch } of batches) {
+        // Сторінки в цитатах — суто кодова перевірка, без ШІ: номер підбирає
+        // pickPageInRange у межах реального обсягу джерела, тож ризику
+        // вигадування немає. Застосовуємо всі знайдені випадки одразу.
+        if (kind === "citation_pages") {
+          const task = batch[0];
+          let fixedCount = 0;
+          for (let guard = 0; guard < 500; guard++) {
+            const fix = findOutOfRangeCitationInText(text);
+            if (!fix) break;
+            applyDocxReplacement(map, fix.start, fix.end, fix.replacement);
+            ({ map, plainText: text } = refreshTextMap(docStateRef.current.docXml));
+            fixedCount++;
+          }
+          if (fixedCount === 0) {
+            failed.push({ task, reason: "Не вдалося повторно знайти невалідні сторінки — можливо, документ змінився з моменту завантаження." });
+          }
+          done += batch.length;
+          setApplyProgress(done);
+          continue;
+        }
+
         const tasksForPrompt = batch.map(t => ({
           ...t,
           extraContext: buildExtraContext(t, methodInfo, clientMaterialsSummary),
@@ -699,7 +742,7 @@ export default function FileCorrectionsPage({ onBack }) {
                   <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                     <div style={dot("#a8e060")} />
                     <div style={labelStyle}>
-                      Знайдено правок: {tasks.length} ({annotations.highlights.length} виділень, {annotations.comments.length} коментарів{tasks.some(t => t.kind === "manual") ? `, ${tasks.filter(t => t.kind === "manual").length} вручну` : ""})
+                      Знайдено правок: {tasks.length} ({annotations.highlights.length} виділень, {annotations.comments.length} коментарів{tasks.some(t => t.kind === "citation_pages") ? ", сторінки в цитатах" : ""}{tasks.some(t => t.kind === "manual") ? `, ${tasks.filter(t => t.kind === "manual").length} вручну` : ""})
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 8 }}>
@@ -823,7 +866,7 @@ export default function FileCorrectionsPage({ onBack }) {
                   {failedTasks.map(({ task, reason }, i) => (
                     <div key={i} style={{ padding: "12px 16px", borderBottom: i < failedTasks.length - 1 ? "1px solid #e8e4dc" : "none" }}>
                       <div style={{ fontSize: 12, color: "#c04020", fontStyle: "italic", marginBottom: 3 }}>
-                        «{(task.annotatedText || task.issue || task.location || "").slice(0, 140)}»
+                        «{(task.annotatedText || task.issue || task.location || task.label || "").slice(0, 140)}»
                       </div>
                       <div style={{ fontSize: 12, color: "#a04a1a" }}><span style={{ fontWeight: 600 }}>Причина:</span> {reason}</div>
                     </div>
