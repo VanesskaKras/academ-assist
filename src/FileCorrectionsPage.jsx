@@ -17,8 +17,8 @@ import { ClientMaterialsZone } from "./components/ClientMaterialsZone.jsx";
 import { extractAnnotations } from "./lib/docxAnnotations.js";
 import { openDocxForEditing, refreshTextMap, applyDocxReplacement, removeDocxComment, serializeDocx } from "./lib/docxSurgicalEdit.js";
 
-// Скільки завдань групувати в один виклик ШІ при застосуванні правок — основне
-// джерело економії токенів: повний текст роботи надсилається раз на групу.
+// Скільки завдань ОДНОГО типу групувати в один виклик ШІ при застосуванні правок —
+// основне джерело економії токенів: повний текст роботи надсилається раз на групу.
 const BATCH_SIZE = 5;
 
 // ─────────────────────────────────────────────
@@ -92,13 +92,16 @@ function locateFragment(text, original, context) {
 }
 
 // ─────────────────────────────────────────────
-// Конвертація анотацій → tasks
+// Конвертація анотацій (виділення/коментарі Word) → tasks. kind:"annotation" —
+// відрізняє їх від ручних зауважень (kind:"manual"), додаваних через doAnalyze,
+// щоб doApply міг батчити кожен тип окремим промптом, не змішуючи формати.
 // ─────────────────────────────────────────────
 function annotationsToTasks(annotations) {
   const tasks = [];
   annotations.highlights.forEach((h, i) => {
     tasks.push({
       id: `h_${i}`,
+      kind: "annotation",
       type: "highlight",
       colorInfo: h.colorInfo,
       label: `Виділено ${h.colorInfo?.ua || h.color}`,
@@ -110,6 +113,7 @@ function annotationsToTasks(annotations) {
   annotations.comments.forEach((c, i) => {
     tasks.push({
       id: `c_${i}`,
+      kind: "annotation",
       type: "comment",
       colorInfo: null,
       label: `Коментар: ${c.author}`,
@@ -152,10 +156,9 @@ const btnGreen = (disabled) => ({ background: disabled ? "#444" : "#1a4a1a", col
 // ─────────────────────────────────────────────
 // StepBar
 // ─────────────────────────────────────────────
-function StepBar({ current, mode }) {
-  const STEPS = mode === "A"
-    ? ["Файл", "Виділення", "Виправлення", "Готово"]
-    : ["Файл", "Зауваження", "Виправлення", "Готово"];
+const STEPS = ["Файл", "Правки", "Виправлення", "Готово"];
+
+function StepBar({ current }) {
   return (
     <div style={{ display: "flex", alignItems: "center", marginBottom: 24, gap: 0 }}>
       {STEPS.map((s, i) => {
@@ -182,13 +185,56 @@ function StepBar({ current, mode }) {
 }
 
 // ─────────────────────────────────────────────
+// Рядок одного завдання (анотація або ручне зауваження) у списку кроку 1
+// ─────────────────────────────────────────────
+function TaskRow({ task, isChecked, onToggle }) {
+  return (
+    <div style={{ padding: "12px 16px", display: "flex", gap: 12, alignItems: "flex-start", opacity: isChecked ? 1 : 0.4 }}>
+      <input type="checkbox" checked={isChecked} onChange={e => onToggle(e.target.checked)} style={{ marginTop: 3, accentColor: "#6a9000", flexShrink: 0, cursor: "pointer" }} />
+      <div style={{ flex: 1 }}>
+        {task.kind === "annotation" ? (
+          <>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+              {task.type === "highlight" && task.colorInfo && (
+                <span style={{ display: "inline-block", background: task.colorInfo.css, color: task.colorInfo.text, fontSize: 10, borderRadius: 3, padding: "1px 7px", fontWeight: 600, letterSpacing: 0.3 }}>
+                  {task.colorInfo.ua}
+                </span>
+              )}
+              {task.type === "comment" && (
+                <span style={{ display: "inline-block", background: "#dbeafe", color: "#1e40af", fontSize: 10, borderRadius: 3, padding: "1px 7px", fontWeight: 600 }}>
+                  💬 {task.label}
+                </span>
+              )}
+            </div>
+            <div style={{ fontSize: 12, color: "#c04020", marginBottom: task.type === "comment" ? 3 : 0, fontStyle: "italic" }}>
+              «{task.annotatedText.slice(0, 120)}{task.annotatedText.length > 120 ? "..." : ""}»
+            </div>
+            {task.type === "comment" && (
+              <div style={{ fontSize: 12, color: "#3a6010", marginTop: 2 }}>
+                <span style={{ fontWeight: 600 }}>Інструкція:</span> {task.instruction}
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            <div style={{ fontSize: 10, background: "#e8dcc8", color: "#7a5a2a", display: "inline-block", borderRadius: 3, padding: "1px 7px", fontWeight: 600, marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 }}>
+              ✏️ {task.location}
+            </div>
+            <div style={{ fontSize: 13, color: "#c04020", marginBottom: 3 }}><span style={{ fontWeight: 600 }}>Проблема:</span> {task.issue}</div>
+            <div style={{ fontSize: 13, color: "#3a6010" }}><span style={{ fontWeight: 600 }}>Що зробити:</span> {task.suggestion}</div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
 // Головний компонент
 // ─────────────────────────────────────────────
 export default function FileCorrectionsPage({ onBack }) {
   const { user } = useAuth();
 
-  // Режим: null = не обрано, "A" = виділення+коментарі, "B" = ручні зауваження
-  const [mode, setMode] = useState(null);
   const [step, setStep] = useState(0);
 
   // Файл
@@ -196,23 +242,25 @@ export default function FileCorrectionsPage({ onBack }) {
   const [docText, setDocText] = useState("");
   const [fileLoading, setFileLoading] = useState(false);
   const fileRef = useRef();
-  // {zip, docXml, map} — живі об'єкти для хірургічного редагування оригінального
+  // {zip, docXml} — живі об'єкти для хірургічного редагування оригінального
   // .docx; не в React-стейті, бо мутуються напряму (DOM/JSZip), а не через рендер.
   const docStateRef = useRef(null);
 
-  // Режим А
+  // Завдання: об'єднує і автоматично знайдені виділення/коментарі (kind:"annotation"),
+  // і ручно введені зауваження (kind:"manual") — програма сама розпізнає перше під
+  // час завантаження файлу, друге можна додати в будь-який момент на кроці 1.
   const [extractLoading, setExtractLoading] = useState(false);
   const [annotations, setAnnotations] = useState({ highlights: [], comments: [] });
-  const [tasksA, setTasksA] = useState([]);
+  const [tasks, setTasks] = useState([]);
+  const [checked, setChecked] = useState({});
 
-  // Режим Б
+  // Ручні зауваження — форма для доповнення списку завдань
+  const [manualOpen, setManualOpen] = useState(false);
   const [correctionsText, setCorrectionsText] = useState("");
   const [correctionPhotos, setCorrectionPhotos] = useState([]);
   const [analysisLoading, setAnalysisLoading] = useState(false);
-  const [tasksB, setTasksB] = useState([]);
 
-  // Спільне (кроки 2-3)
-  const [checked, setChecked] = useState({});
+  // Застосування (крок 2-3)
   const [applyLoading, setApplyLoading] = useState(false);
   const [applyProgress, setApplyProgress] = useState(0);
   const [correctedText, setCorrectedText] = useState("");
@@ -262,14 +310,7 @@ export default function FileCorrectionsPage({ onBack }) {
     return () => window.removeEventListener("apicost", handler);
   }, []);
 
-  const activeTasks = mode === "A" ? tasksA : tasksB;
   const checkedCount = Object.values(checked).filter(Boolean).length;
-
-  // ── Обрати режим ──
-  function selectMode(m) {
-    setMode(m);
-    setError("");
-  }
 
   // ── Список власних замовлень із уже проаналізованою методичкою (для автопідвантаження,
   // щоб не змушувати завантажувати методичку вдруге для роботи, згенерованої в цій програмі) ──
@@ -329,11 +370,38 @@ export default function FileCorrectionsPage({ onBack }) {
     setMethodLoading(false);
   }
 
+  // ── Витяг анотацій — викликається одразу після завантаження файлу. Програма сама
+  // визначає, чи є у файлі виділення/коментарі; якщо немає — просто відкриває форму
+  // ручного вводу замість того, щоб змушувати користувача заздалегідь обирати варіант. ──
+  async function doExtract(buffer) {
+    setExtractLoading(true);
+    setError("");
+    try {
+      const result = await extractAnnotations(buffer);
+      setAnnotations(result);
+      const newTasks = annotationsToTasks(result);
+      if (newTasks.length) {
+        const defaultChecked = {};
+        newTasks.forEach(t => { defaultChecked[t.id] = true; });
+        setTasks(newTasks);
+        setChecked(defaultChecked);
+      } else {
+        setManualOpen(true);
+      }
+    } catch (e) {
+      setError("Помилка читання виділень: " + e.message);
+      setManualOpen(true);
+    }
+    setExtractLoading(false);
+  }
+
   // ── Завантаження файлу ──
   async function handleFile(file) {
     if (!file) return;
     setFileLoading(true);
     setError("");
+    setTasks([]); setChecked({}); setAnnotations({ highlights: [], comments: [] });
+    setManualOpen(false); setCorrectionsText(""); setCorrectionPhotos([]);
     try {
       const arrayBuffer = await file.arrayBuffer();
       const { zip, docXml, plainText } = await openDocxForEditing(arrayBuffer);
@@ -341,50 +409,20 @@ export default function FileCorrectionsPage({ onBack }) {
       docStateRef.current = { zip, docXml };
       setFileName(file.name);
       setDocText(plainText);
-
-      if (mode === "A") {
-        // Одразу витягуємо анотації
-        await doExtract(arrayBuffer, plainText);
-      } else {
-        setStep(1);
-      }
+      await doExtract(arrayBuffer);
+      setStep(1);
     } catch (e) {
       setError("Помилка читання файлу: " + e.message);
     }
     setFileLoading(false);
   }
 
-  // ── Витяг анотацій (режим А) ──
-  async function doExtract(buffer, text) {
-    setExtractLoading(true);
-    setError("");
-    try {
-      const result = await extractAnnotations(buffer);
-      setAnnotations(result);
-      const tasks = annotationsToTasks(result);
-      if (tasks.length === 0) {
-        setError("У файлі не знайдено виділень або коментарів. Спробуйте Варіант Б — введіть зауваження вручну.");
-        setExtractLoading(false);
-        return;
-      }
-      const defaultChecked = {};
-      tasks.forEach(t => { defaultChecked[t.id] = true; });
-      setTasksA(tasks);
-      setChecked(defaultChecked);
-      setStep(1);
-    } catch (e) {
-      setError("Помилка читання виділень: " + e.message);
-    }
-    setExtractLoading(false);
-  }
-
-  // ── Аналіз зауважень (режим Б) ──
+  // ── Аналіз ручних зауважень — ДОДАЄ нові завдання до вже наявного списку
+  // (виявлені виділення/коментарі нікуди не зникають), а не замінює його. ──
   async function doAnalyze() {
     if (!correctionsText.trim() && correctionPhotos.length === 0) return;
     setAnalysisLoading(true);
     setError("");
-    setTasksB([]);
-    setChecked({});
     try {
       const prompt = buildFileCorrectionsAnalysisPrompt({ documentText: docText, correctionsText });
       const imageContent = correctionPhotos.map(p => ({ type: "image", source: { type: "base64", media_type: p.type, data: p.b64 } }));
@@ -392,11 +430,15 @@ export default function FileCorrectionsPage({ onBack }) {
       const raw = await callClaude([{ role: "user", content: userContent }], null, SYS_JSON_ARRAY, 2000, null, MODEL_FAST);
       const parsed = JSON.parse(raw.replace(/```json|```/g, "").trim());
       if (!Array.isArray(parsed)) throw new Error("Некоректна відповідь");
+      // Власний унікальний id (а не той, що повернув ШІ) — інакше повторний аналіз
+      // міг би дати ті самі "task_1" і зіштовхнутись зі стейтом checked.
+      const manualTasks = parsed.map((t, i) => ({ ...t, id: `m_${Date.now()}_${i}`, kind: "manual" }));
       const defaultChecked = {};
-      parsed.forEach(t => { defaultChecked[t.id] = true; });
-      setTasksB(parsed);
-      setChecked(defaultChecked);
-      setStep(2);
+      manualTasks.forEach(t => { defaultChecked[t.id] = true; });
+      setTasks(prev => [...prev, ...manualTasks]);
+      setChecked(prev => ({ ...prev, ...defaultChecked }));
+      setCorrectionsText("");
+      setCorrectionPhotos([]);
     } catch (e) {
       setError("Помилка аналізу: " + e.message);
     }
@@ -405,7 +447,7 @@ export default function FileCorrectionsPage({ onBack }) {
 
   // ── Застосування виправлень ──
   async function doApply() {
-    const toFix = activeTasks.filter(t => checked[t.id] !== false);
+    const toFix = tasks.filter(t => checked[t.id] !== false);
     if (!toFix.length) return;
     setApplyLoading(true);
     setApplyProgress(0);
@@ -415,20 +457,27 @@ export default function FileCorrectionsPage({ onBack }) {
     // інакше позиції наступних locateFragment з'їдуть відносно вже зміненого XML.
     let { map, plainText: text } = refreshTextMap(docStateRef.current.docXml);
     const failed = [];
-    // Групуємо по BATCH_SIZE завдань в один виклик ШІ — повний текст роботи
-    // надсилається раз на групу, а не окремо для кожної правки (основна економія).
-    // Застосування результату лишається по одному завданню з оновленням map/text
-    // після кожного — щоб наступні locateFragment у батчі бачили вже змінений текст.
+
+    // Групуємо підряд по BATCH_SIZE завдань ОДНОГО типу (annotation/manual — різні
+    // промпти) в один виклик ШІ: повний текст роботи надсилається раз на групу.
     const batches = [];
-    for (let i = 0; i < toFix.length; i += BATCH_SIZE) batches.push(toFix.slice(i, i + BATCH_SIZE));
+    for (let i = 0; i < toFix.length;) {
+      const kind = toFix[i].kind;
+      const group = [];
+      while (i < toFix.length && toFix[i].kind === kind && group.length < BATCH_SIZE) {
+        group.push(toFix[i]); i++;
+      }
+      batches.push({ kind, items: group });
+    }
+
     let done = 0;
     try {
-      for (const batch of batches) {
+      for (const { kind, items: batch } of batches) {
         const tasksForPrompt = batch.map(t => ({
           ...t,
           extraContext: buildExtraContext(t, methodInfo, clientMaterialsSummary),
         }));
-        const prompt = mode === "A"
+        const prompt = kind === "annotation"
           ? buildAnnotationCorrectionBatchPrompt({ documentText: text, tasks: tasksForPrompt })
           : buildFileApplyCorrectionBatchPrompt({ documentText: text, tasks: tasksForPrompt });
         const maxTokens = Math.min(80000, Math.max(6000, 6000 * batch.length));
@@ -491,17 +540,20 @@ export default function FileCorrectionsPage({ onBack }) {
 
   function toggleAll(val) {
     const next = {};
-    activeTasks.forEach(t => { next[t.id] = val; });
+    tasks.forEach(t => { next[t.id] = val; });
     setChecked(next);
   }
 
-  function reset() {
+  function resetFile() {
     docStateRef.current = null;
-    setMode(null); setStep(0); setFileName(""); setDocText("");
-    setAnnotations({ highlights: [], comments: [] }); setTasksA([]); setTasksB([]);
-    setChecked({}); setCorrectionsText(""); setCorrectionPhotos([]);
-    setCorrectedText(""); setError("");
-    setApplyProgress(0); setFailedTasks([]);
+    setStep(0); setFileName(""); setDocText("");
+    setAnnotations({ highlights: [], comments: [] }); setTasks([]); setChecked({});
+    setManualOpen(false); setCorrectionsText(""); setCorrectionPhotos([]);
+    setCorrectedText(""); setError(""); setApplyProgress(0); setFailedTasks([]);
+  }
+
+  function reset() {
+    resetFile();
     setContextOpen(false); setSelectedOrderId(""); setMethodInfo(null);
     setMethodFileLabel(""); setMethodError(""); setClientMaterials([]); setClientMaterialsManualText("");
   }
@@ -515,14 +567,13 @@ export default function FileCorrectionsPage({ onBack }) {
       <div style={{ background: "#1a1a14", padding: "14px 24px", display: "flex", alignItems: "center", gap: 14, position: "sticky", top: 0, zIndex: 10 }}>
         <button
           onClick={() => {
-            if (!mode) { onBack(); return; }
-            if (step === 0) { setMode(null); setError(""); return; }
-            if (step === 1) { setStep(0); setTasksA([]); setAnnotations({ highlights: [], comments: [] }); return; }
-            if (step === 2) { setStep(mode === "A" ? 1 : 1); setApplyProgress(0); return; }
+            if (step === 0) { onBack(); return; }
+            if (step === 1) { resetFile(); return; }
+            if (step === 2) { setStep(1); setApplyProgress(0); return; }
             // currentDocText НЕ скидаємо на docText — оригінальний docXml у docStateRef
-            // вже незворотно змінено попередніми правками, тож currentDocText має й
-            // далі відповідати саме йому, а не давно застарілому вихідному тексту.
-            if (step === 3) { setStep(mode === "A" ? 1 : 2); setCorrectedText(""); setApplyProgress(0); setFailedTasks([]); }
+            // вже незворотно змінено попередніми правками, тож текст має й далі
+            // відповідати саме йому, а не давно застарілому вихідному тексту.
+            if (step === 3) { setStep(1); setCorrectedText(""); setApplyProgress(0); setFailedTasks([]); }
           }}
           style={{ background: "none", border: "none", color: "#888", fontSize: 18, cursor: "pointer", lineHeight: 1, padding: 4 }}
         >←</button>
@@ -531,338 +582,192 @@ export default function FileCorrectionsPage({ onBack }) {
       </div>
 
       <div style={{ maxWidth: 720, margin: "0 auto", padding: "28px 20px 0" }}>
-        {mode && <StepBar current={step} mode={mode} />}
+        <StepBar current={step} />
 
         {error && (
           <div style={{ background: "#fff0f0", border: "1.5px solid #f00a", borderRadius: 8, padding: "10px 16px", marginBottom: 14, fontSize: 13, color: "#c00" }}>
             {error}
-            {error.includes("не знайдено виділень") && (
-              <button onClick={() => { setMode("B"); setError(""); setStep(1); }} style={{ marginLeft: 12, fontSize: 12, color: "#1a1a14", background: "#e8ff47", border: "none", borderRadius: 4, padding: "3px 10px", cursor: "pointer", fontFamily: "inherit" }}>
-                Перейти до Варіанту Б
-              </button>
-            )}
           </div>
         )}
 
-        {/* ═══ КРОК 0: Вибір режиму + завантаження ═══ */}
+        {/* ═══ КРОК 0: Завантаження файлу ═══ */}
         {step === 0 && (
           <>
-            {/* Вибір режиму */}
-            {!mode && (
-              <div style={{ marginBottom: 20 }}>
-                <div style={{ fontSize: 13, color: "#666", marginBottom: 16, textAlign: "center" }}>
-                  Оберіть як внесено правки у вашому файлі:
-                </div>
-                <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-                  {/* Варіант А */}
-                  <button
-                    onClick={() => selectMode("A")}
-                    style={{ flex: 1, minWidth: 220, background: "#1a1a14", border: "2px solid #333", borderRadius: 10, padding: "20px 18px", cursor: "pointer", textAlign: "left", fontFamily: "'Spectral',serif", transition: "border-color 0.15s" }}
-                    onMouseEnter={e => e.currentTarget.style.borderColor = "#e8ff47"}
-                    onMouseLeave={e => e.currentTarget.style.borderColor = "#333"}
-                  >
-                    <div style={{ fontSize: 24, marginBottom: 8 }}>🎨</div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: "#e8ff47", marginBottom: 6 }}>Варіант А</div>
-                    <div style={{ fontSize: 12, color: "#c8c4bc", lineHeight: 1.6 }}>
-                      Файл з кольоровими виділеннями або коментарями керівника
-                    </div>
-                    <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 4 }}>
-                      {["жовте", "червоне", "фіолетове"].map(c => (
-                        <span key={c} style={{ fontSize: 10, background: "#2a2a1e", color: "#aaa", borderRadius: 3, padding: "2px 6px" }}>{c}</span>
-                      ))}
-                      <span style={{ fontSize: 10, background: "#2a2a1e", color: "#aaa", borderRadius: 3, padding: "2px 6px" }}>💬 коментарі</span>
-                    </div>
-                  </button>
-
-                  {/* Варіант Б */}
-                  <button
-                    onClick={() => selectMode("B")}
-                    style={{ flex: 1, minWidth: 220, background: "#1a1a14", border: "2px solid #333", borderRadius: 10, padding: "20px 18px", cursor: "pointer", textAlign: "left", fontFamily: "'Spectral',serif", transition: "border-color 0.15s" }}
-                    onMouseEnter={e => e.currentTarget.style.borderColor = "#a8e060"}
-                    onMouseLeave={e => e.currentTarget.style.borderColor = "#333"}
-                  >
-                    <div style={{ fontSize: 24, marginBottom: 8 }}>✏️</div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: "#a8e060", marginBottom: 6 }}>Варіант Б</div>
-                    <div style={{ fontSize: 12, color: "#c8c4bc", lineHeight: 1.6 }}>
-                      Введу зауваження вручну або завантажу фото правок від керівника
-                    </div>
-                    <div style={{ marginTop: 10, display: "flex", gap: 4 }}>
-                      <span style={{ fontSize: 10, background: "#2a2a1e", color: "#aaa", borderRadius: 3, padding: "2px 6px" }}>текст</span>
-                      <span style={{ fontSize: 10, background: "#2a2a1e", color: "#aaa", borderRadius: 3, padding: "2px 6px" }}>📷 фото</span>
-                    </div>
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Завантаження файлу */}
-            {mode && (
-              <div style={cardStyle}>
-                <div style={cardHead()}>
-                  <div style={dot(mode === "A" ? "#e8ff47" : "#a8e060")} />
-                  <div style={labelStyle}>
-                    {mode === "A" ? "Завантажте файл з виділеннями або коментарями" : "Завантажте вашу роботу (.docx)"}
-                  </div>
-                </div>
-                <div style={cardBody}>
-                  <div
-                    onClick={() => fileRef.current.click()}
-                    onDrop={e => { e.preventDefault(); handleFile(e.dataTransfer.files[0]); }}
-                    onDragOver={e => e.preventDefault()}
-                    style={{ minHeight: 120, border: "1.5px dashed #c4bfb4", borderRadius: 6, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer", background: "#ede9e0" }}
-                  >
-                    {fileLoading || extractLoading
-                      ? <><SpinDot /><div style={{ fontSize: 12, color: "#888" }}>{fileLoading ? "Читаю файл..." : "Шукаю виділення та коментарі..."}</div></>
-                      : <>
-                        <div style={{ fontSize: 32 }}>📄</div>
-                        <div style={{ fontSize: 13, color: "#555" }}>Перетягніть або клікніть щоб вибрати .docx</div>
-                        {mode === "A" && <div style={{ fontSize: 11, color: "#aaa" }}>Файл має містити кольорові виділення або коментарі Word</div>}
-                      </>
-                    }
-                  </div>
-                  <input ref={fileRef} type="file" accept=".docx" style={{ display: "none" }} onChange={e => handleFile(e.target.files[0])} />
-                </div>
-              </div>
-            )}
-
-            {/* Опціональний контекст: методичка / матеріали клієнта — підтягуються лише
-                до тих правок, де це дійсно доречно (формат, стиль цитування, розрахунки тощо) */}
-            {mode && (
-              <div style={{ ...cardStyle, marginTop: 14 }}>
-                <div
-                  onClick={() => { setContextOpen(o => !o); if (!contextOpen) loadMyOrders(); }}
-                  style={{ ...cardHead("#2a2a1e"), cursor: "pointer", justifyContent: "space-between" }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <div style={dot(methodInfo || clientMaterialsSummary ? "#a8e060" : "#666")} />
-                    <div style={labelStyle}>Контекст роботи (необов'язково): методичка, матеріали клієнта</div>
-                  </div>
-                  <div style={{ color: "#888", fontSize: 12 }}>{contextOpen ? "▲" : "▼"}</div>
-                </div>
-                {contextOpen && (
-                  <div style={cardBody}>
-                    <div style={{ fontSize: 11, color: "#888", marginBottom: 10, lineHeight: 1.6 }}>
-                      Потрібно лише для правок, що стосуються оформлення за методичкою (таблиці, цитування) або даних клієнта. Для звичайних стилістичних правок можна пропустити.
-                    </div>
-
-                    <div style={{ marginBottom: 14 }}>
-                      <div style={{ fontSize: 11, color: "#aaa", marginBottom: 6, letterSpacing: 0.5 }}>ЦЯ РОБОТА ЗГЕНЕРОВАНА В ACADEM ASSIST?</div>
-                      {myOrdersLoading ? (
-                        <div style={{ fontSize: 12, color: "#888", display: "flex", alignItems: "center", gap: 8 }}><SpinDot />Завантажую ваші замовлення...</div>
-                      ) : (
-                        <select
-                          value={selectedOrderId}
-                          onChange={e => selectOrder(e.target.value)}
-                          style={{ width: "100%", fontSize: 13, padding: "8px 10px", borderRadius: 6, border: "1px solid #d4cfc4", background: "#f5f2ea", color: "#2a2a1e", fontFamily: "inherit" }}
-                        >
-                          <option value="">— оберіть замовлення, якщо є —</option>
-                          {(myOrders || []).map(o => (
-                            <option key={o.id} value={o.id}>{o.topic || o.info?.topic || o.id}</option>
-                          ))}
-                        </select>
-                      )}
-                      {selectedOrderId && methodInfo && (
-                        <div style={{ fontSize: 11, color: "#6a9000", marginTop: 6 }}>✓ Дані методички й матеріалів підтягнуто із замовлення</div>
-                      )}
-                    </div>
-
-                    <div style={{ marginBottom: 14 }}>
-                      <div style={{ fontSize: 11, color: "#aaa", marginBottom: 6, letterSpacing: 0.5 }}>АБО ЗАВАНТАЖТЕ МЕТОДИЧКУ САМІ (PDF)</div>
-                      <DropZone fileLabel={methodFileLabel} onFile={handleMethodFile} />
-                      {methodLoading && <div style={{ fontSize: 12, color: "#888", marginTop: 6, display: "flex", alignItems: "center", gap: 8 }}><SpinDot />Аналізую методичку...</div>}
-                      {methodError && <div style={{ fontSize: 12, color: "#c00", marginTop: 6 }}>{methodError}</div>}
-                      {methodInfo && !methodLoading && !selectedOrderId && <div style={{ fontSize: 11, color: "#6a9000", marginTop: 6 }}>✓ Методичку проаналізовано</div>}
-                    </div>
-
-                    <div>
-                      <div style={{ fontSize: 11, color: "#aaa", marginBottom: 6, letterSpacing: 0.5 }}>МАТЕРІАЛИ КЛІЄНТА (необов'язково)</div>
-                      <ClientMaterialsZone
-                        materials={clientMaterials}
-                        onAdd={m => setClientMaterials(prev => [...prev, m])}
-                        onRemove={i => setClientMaterials(prev => prev.filter((_, idx) => idx !== i))}
-                        manualText={clientMaterialsManualText}
-                        onManualText={setClientMaterialsManualText}
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {mode && (
-              <button onClick={() => { setMode(null); setError(""); }} style={{ background: "none", border: "none", color: "#aaa", fontSize: 12, cursor: "pointer", fontFamily: "inherit", padding: "4px 0" }}>
-                ← Змінити варіант
-              </button>
-            )}
-          </>
-        )}
-
-        {/* ═══ КРОК 1А: Список виділень і коментарів ═══ */}
-        {step === 1 && mode === "A" && (
-          <>
-            {/* Файл */}
-            <div style={{ ...cardStyle, marginBottom: 14 }}>
-              <div style={cardHead("#1a2a00")}>
-                <div style={dot("#a8e060")} />
-                <div style={labelStyle}>Файл завантажено</div>
-                <div style={{ marginLeft: "auto", fontSize: 11, color: "#a8e060" }}>{fileName}</div>
-              </div>
-            </div>
-
-            {/* Знайдені анотації */}
-            <div style={{ ...cardStyle, border: "1.5px solid #4a6a00" }}>
-              <div style={{ ...cardHead("#1a2a00"), justifyContent: "space-between" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <div style={dot("#a8e060")} />
-                  <div style={labelStyle}>
-                    Знайдено: {annotations.highlights.length} виділень, {annotations.comments.length} коментарів
-                  </div>
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button onClick={() => toggleAll(true)} style={{ fontSize: 10, color: "#a8e060", background: "transparent", border: "1px solid #4a6a00", borderRadius: 4, padding: "3px 8px", cursor: "pointer", fontFamily: "inherit" }}>Всі</button>
-                  <button onClick={() => toggleAll(false)} style={{ fontSize: 10, color: "#888", background: "transparent", border: "1px solid #444", borderRadius: 4, padding: "3px 8px", cursor: "pointer", fontFamily: "inherit" }}>Жоден</button>
-                </div>
-              </div>
-              <div style={{ background: "#faf8f3" }}>
-                {tasksA.map((task, i) => {
-                  const isChecked = checked[task.id] !== false;
-                  return (
-                    <div key={task.id} style={{ padding: "12px 16px", borderBottom: i < tasksA.length - 1 ? "1px solid #e8e4dc" : "none", display: "flex", gap: 12, alignItems: "flex-start", opacity: isChecked ? 1 : 0.4 }}>
-                      <input type="checkbox" checked={isChecked} onChange={e => setChecked(prev => ({ ...prev, [task.id]: e.target.checked }))} style={{ marginTop: 3, accentColor: "#6a9000", flexShrink: 0, cursor: "pointer" }} />
-                      <div style={{ flex: 1 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-                          {task.type === "highlight" && task.colorInfo && (
-                            <span style={{ display: "inline-block", background: task.colorInfo.css, color: task.colorInfo.text, fontSize: 10, borderRadius: 3, padding: "1px 7px", fontWeight: 600, letterSpacing: 0.3 }}>
-                              {task.colorInfo.ua}
-                            </span>
-                          )}
-                          {task.type === "comment" && (
-                            <span style={{ display: "inline-block", background: "#dbeafe", color: "#1e40af", fontSize: 10, borderRadius: 3, padding: "1px 7px", fontWeight: 600 }}>
-                              💬 {task.label}
-                            </span>
-                          )}
-                        </div>
-                        <div style={{ fontSize: 12, color: "#c04020", marginBottom: task.type === "comment" ? 3 : 0, fontStyle: "italic" }}>
-                          «{task.annotatedText.slice(0, 120)}{task.annotatedText.length > 120 ? "..." : ""}»
-                        </div>
-                        {task.type === "comment" && (
-                          <div style={{ fontSize: 12, color: "#3a6010", marginTop: 2 }}>
-                            <span style={{ fontWeight: 600 }}>Інструкція:</span> {task.instruction}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              <div style={{ padding: "12px 16px", background: "#1a2a00", display: "flex", gap: 10, alignItems: "center" }}>
-                <button onClick={() => { setStep(2); }} disabled={checkedCount === 0} style={btnGreen(checkedCount === 0)}>
-                  Виправити обрані ({checkedCount}) →
-                </button>
-              </div>
-            </div>
-
-            <button onClick={() => { setStep(0); setTasksA([]); setAnnotations({ highlights: [], comments: [] }); }} style={{ background: "none", border: "none", color: "#aaa", fontSize: 12, cursor: "pointer", fontFamily: "inherit", padding: "4px 0" }}>
-              ← Завантажити інший файл
-            </button>
-          </>
-        )}
-
-        {/* ═══ КРОК 1Б: Введення зауважень ═══ */}
-        {step === 1 && mode === "B" && (
-          <>
-            <div style={{ ...cardStyle, marginBottom: 14 }}>
-              <div style={cardHead("#1a2a00")}>
-                <div style={dot("#a8e060")} />
-                <div style={labelStyle}>Файл завантажено</div>
-                <div style={{ marginLeft: "auto", fontSize: 11, color: "#a8e060" }}>{fileName}</div>
-              </div>
-              <div style={{ ...cardBody, maxHeight: 140, overflowY: "auto" }}>
-                <pre style={{ fontSize: 11, color: "#555", whiteSpace: "pre-wrap", margin: 0, fontFamily: "inherit", lineHeight: 1.7 }}>
-                  {docText.slice(0, 500)}{docText.length > 500 ? "\n..." : ""}
-                </pre>
-              </div>
-            </div>
-
             <div style={cardStyle}>
               <div style={cardHead()}>
                 <div style={dot("#e8ff47")} />
-                <div style={labelStyle}>Зауваження викладача</div>
+                <div style={labelStyle}>Завантажте вашу роботу (.docx)</div>
               </div>
               <div style={cardBody}>
-                <textarea
-                  value={correctionsText}
-                  onChange={e => setCorrectionsText(e.target.value)}
-                  placeholder={"Вставте зауваження від викладача...\nНаприклад: «Висновки надто короткі. Вступ не розкриває актуальність.»"}
-                  style={{ width: "100%", minHeight: 130, fontSize: 13, lineHeight: "1.8", color: "#2a2a1e", background: "#f5f2ea", borderRadius: 6, padding: "12px 14px", border: "1px solid #d4cfc4", fontFamily: "'Spectral',serif", resize: "vertical", boxSizing: "border-box" }}
-                />
-                <div style={{ marginTop: 10 }}>
-                  <div style={{ fontSize: 11, color: "#888", marginBottom: 6, letterSpacing: 1 }}>АБО ДОДАЙТЕ ФОТО ЗАУВАЖЕНЬ:</div>
-                  <PhotoDropZone
-                    photos={correctionPhotos}
-                    onAdd={photo => setCorrectionPhotos(prev => [...prev, photo])}
-                    onRemove={i => setCorrectionPhotos(prev => prev.filter((_, idx) => idx !== i))}
-                  />
+                <div
+                  onClick={() => fileRef.current.click()}
+                  onDrop={e => { e.preventDefault(); handleFile(e.dataTransfer.files[0]); }}
+                  onDragOver={e => e.preventDefault()}
+                  style={{ minHeight: 120, border: "1.5px dashed #c4bfb4", borderRadius: 6, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer", background: "#ede9e0" }}
+                >
+                  {fileLoading || extractLoading
+                    ? <><SpinDot /><div style={{ fontSize: 12, color: "#888" }}>{fileLoading ? "Читаю файл..." : "Шукаю виділення та коментарі..."}</div></>
+                    : <>
+                      <div style={{ fontSize: 32 }}>📄</div>
+                      <div style={{ fontSize: 13, color: "#555" }}>Перетягніть або клікніть щоб вибрати .docx</div>
+                      <div style={{ fontSize: 11, color: "#aaa" }}>Кольорові виділення й коментарі Word розпізнаються автоматично — якщо їх немає, можна буде додати зауваження вручну</div>
+                    </>
+                  }
                 </div>
-                <div style={{ marginTop: 12, display: "flex", gap: 10, alignItems: "center" }}>
-                  <button onClick={doAnalyze} disabled={analysisLoading || (!correctionsText.trim() && correctionPhotos.length === 0)} style={btnPrimary(analysisLoading || (!correctionsText.trim() && correctionPhotos.length === 0))}>
-                    {analysisLoading ? <><SpinDot />Аналізую...</> : "Проаналізувати →"}
-                  </button>
-                  {analysisLoading && <span style={{ fontSize: 12, color: "#888" }}>Claude визначає що потрібно виправити</span>}
-                </div>
+                <input ref={fileRef} type="file" accept=".docx" style={{ display: "none" }} onChange={e => handleFile(e.target.files[0])} />
               </div>
             </div>
 
-            <button onClick={() => setStep(0)} style={{ background: "none", border: "none", color: "#aaa", fontSize: 12, cursor: "pointer", fontFamily: "inherit", padding: "4px 0" }}>
+            {/* Опціональний контекст: методичка / матеріали клієнта — підтягуються лише
+                до тих правок, де це дійсно доречно (формат, стиль цитування, розрахунки тощо) */}
+            <div style={cardStyle}>
+              <div
+                onClick={() => { setContextOpen(o => !o); if (!contextOpen) loadMyOrders(); }}
+                style={{ ...cardHead("#2a2a1e"), cursor: "pointer", justifyContent: "space-between" }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={dot(methodInfo || clientMaterialsSummary ? "#a8e060" : "#666")} />
+                  <div style={labelStyle}>Контекст роботи (необов'язково): методичка, матеріали клієнта</div>
+                </div>
+                <div style={{ color: "#888", fontSize: 12 }}>{contextOpen ? "▲" : "▼"}</div>
+              </div>
+              {contextOpen && (
+                <div style={cardBody}>
+                  <div style={{ fontSize: 11, color: "#888", marginBottom: 10, lineHeight: 1.6 }}>
+                    Потрібно лише для правок, що стосуються оформлення за методичкою (таблиці, цитування) або даних клієнта. Для звичайних стилістичних правок можна пропустити.
+                  </div>
+
+                  <div style={{ marginBottom: 14 }}>
+                    <div style={{ fontSize: 11, color: "#aaa", marginBottom: 6, letterSpacing: 0.5 }}>ЦЯ РОБОТА ЗГЕНЕРОВАНА В ACADEM ASSIST?</div>
+                    {myOrdersLoading ? (
+                      <div style={{ fontSize: 12, color: "#888", display: "flex", alignItems: "center", gap: 8 }}><SpinDot />Завантажую ваші замовлення...</div>
+                    ) : (
+                      <select
+                        value={selectedOrderId}
+                        onChange={e => selectOrder(e.target.value)}
+                        style={{ width: "100%", fontSize: 13, padding: "8px 10px", borderRadius: 6, border: "1px solid #d4cfc4", background: "#f5f2ea", color: "#2a2a1e", fontFamily: "inherit" }}
+                      >
+                        <option value="">— оберіть замовлення, якщо є —</option>
+                        {(myOrders || []).map(o => (
+                          <option key={o.id} value={o.id}>{o.topic || o.info?.topic || o.id}</option>
+                        ))}
+                      </select>
+                    )}
+                    {selectedOrderId && methodInfo && (
+                      <div style={{ fontSize: 11, color: "#6a9000", marginTop: 6 }}>✓ Дані методички й матеріалів підтягнуто із замовлення</div>
+                    )}
+                  </div>
+
+                  <div style={{ marginBottom: 14 }}>
+                    <div style={{ fontSize: 11, color: "#aaa", marginBottom: 6, letterSpacing: 0.5 }}>АБО ЗАВАНТАЖТЕ МЕТОДИЧКУ САМІ (PDF)</div>
+                    <DropZone fileLabel={methodFileLabel} onFile={handleMethodFile} />
+                    {methodLoading && <div style={{ fontSize: 12, color: "#888", marginTop: 6, display: "flex", alignItems: "center", gap: 8 }}><SpinDot />Аналізую методичку...</div>}
+                    {methodError && <div style={{ fontSize: 12, color: "#c00", marginTop: 6 }}>{methodError}</div>}
+                    {methodInfo && !methodLoading && !selectedOrderId && <div style={{ fontSize: 11, color: "#6a9000", marginTop: 6 }}>✓ Методичку проаналізовано</div>}
+                  </div>
+
+                  <div>
+                    <div style={{ fontSize: 11, color: "#aaa", marginBottom: 6, letterSpacing: 0.5 }}>МАТЕРІАЛИ КЛІЄНТА (необов'язково)</div>
+                    <ClientMaterialsZone
+                      materials={clientMaterials}
+                      onAdd={m => setClientMaterials(prev => [...prev, m])}
+                      onRemove={i => setClientMaterials(prev => prev.filter((_, idx) => idx !== i))}
+                      manualText={clientMaterialsManualText}
+                      onManualText={setClientMaterialsManualText}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* ═══ КРОК 1: Список правок (виявлені автоматично + додані вручну) ═══ */}
+        {step === 1 && (
+          <>
+            <div style={{ ...cardStyle, marginBottom: 14 }}>
+              <div style={cardHead("#1a2a00")}>
+                <div style={dot("#a8e060")} />
+                <div style={labelStyle}>Файл завантажено</div>
+                <div style={{ marginLeft: "auto", fontSize: 11, color: "#a8e060" }}>{fileName}</div>
+              </div>
+            </div>
+
+            {tasks.length > 0 && (
+              <div style={{ ...cardStyle, border: "1.5px solid #4a6a00" }}>
+                <div style={{ ...cardHead("#1a2a00"), justifyContent: "space-between" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <div style={dot("#a8e060")} />
+                    <div style={labelStyle}>
+                      Знайдено правок: {tasks.length} ({annotations.highlights.length} виділень, {annotations.comments.length} коментарів{tasks.some(t => t.kind === "manual") ? `, ${tasks.filter(t => t.kind === "manual").length} вручну` : ""})
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button onClick={() => toggleAll(true)} style={{ fontSize: 10, color: "#a8e060", background: "transparent", border: "1px solid #4a6a00", borderRadius: 4, padding: "3px 8px", cursor: "pointer", fontFamily: "inherit" }}>Всі</button>
+                    <button onClick={() => toggleAll(false)} style={{ fontSize: 10, color: "#888", background: "transparent", border: "1px solid #444", borderRadius: 4, padding: "3px 8px", cursor: "pointer", fontFamily: "inherit" }}>Жоден</button>
+                  </div>
+                </div>
+                <div style={{ background: "#faf8f3" }}>
+                  {tasks.map((task, i) => (
+                    <div key={task.id} style={{ borderBottom: i < tasks.length - 1 ? "1px solid #e8e4dc" : "none" }}>
+                      <TaskRow task={task} isChecked={checked[task.id] !== false} onToggle={val => setChecked(prev => ({ ...prev, [task.id]: val }))} />
+                    </div>
+                  ))}
+                </div>
+                <div style={{ padding: "12px 16px", background: "#1a2a00", display: "flex", gap: 10, alignItems: "center" }}>
+                  <button onClick={() => setStep(2)} disabled={checkedCount === 0} style={btnGreen(checkedCount === 0)}>
+                    Виправити обрані ({checkedCount}) →
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Ручні зауваження — завжди доступно як доповнення до автоматично знайденого */}
+            <div style={cardStyle}>
+              <div
+                onClick={() => setManualOpen(o => !o)}
+                style={{ ...cardHead(), cursor: "pointer", justifyContent: "space-between" }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={dot("#e8ff47")} />
+                  <div style={labelStyle}>{tasks.length ? "Додати зауваження вручну (необов'язково)" : "Зауваження викладача"}</div>
+                </div>
+                <div style={{ color: "#888", fontSize: 12 }}>{manualOpen ? "▲" : "▼"}</div>
+              </div>
+              {manualOpen && (
+                <div style={cardBody}>
+                  <textarea
+                    value={correctionsText}
+                    onChange={e => setCorrectionsText(e.target.value)}
+                    placeholder={"Вставте зауваження від викладача...\nНаприклад: «Висновки надто короткі. Вступ не розкриває актуальність.»"}
+                    style={{ width: "100%", minHeight: 130, fontSize: 13, lineHeight: "1.8", color: "#2a2a1e", background: "#f5f2ea", borderRadius: 6, padding: "12px 14px", border: "1px solid #d4cfc4", fontFamily: "'Spectral',serif", resize: "vertical", boxSizing: "border-box" }}
+                  />
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ fontSize: 11, color: "#888", marginBottom: 6, letterSpacing: 1 }}>АБО ДОДАЙТЕ ФОТО ЗАУВАЖЕНЬ:</div>
+                    <PhotoDropZone
+                      photos={correctionPhotos}
+                      onAdd={photo => setCorrectionPhotos(prev => [...prev, photo])}
+                      onRemove={i => setCorrectionPhotos(prev => prev.filter((_, idx) => idx !== i))}
+                    />
+                  </div>
+                  <div style={{ marginTop: 12, display: "flex", gap: 10, alignItems: "center" }}>
+                    <button onClick={doAnalyze} disabled={analysisLoading || (!correctionsText.trim() && correctionPhotos.length === 0)} style={btnPrimary(analysisLoading || (!correctionsText.trim() && correctionPhotos.length === 0))}>
+                      {analysisLoading ? <><SpinDot />Аналізую...</> : "Додати до списку правок →"}
+                    </button>
+                    {analysisLoading && <span style={{ fontSize: 12, color: "#888" }}>Claude визначає що потрібно виправити</span>}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <button onClick={resetFile} style={{ background: "none", border: "none", color: "#aaa", fontSize: 12, cursor: "pointer", fontFamily: "inherit", padding: "4px 0" }}>
               ← Завантажити інший файл
             </button>
           </>
         )}
 
-        {/* ═══ КРОК 2: Підтвердження та виконання (режим Б) ═══ */}
-        {step === 2 && mode === "B" && (
-          <>
-            <div style={{ ...cardStyle, border: "1.5px solid #4a6a00" }}>
-              <div style={{ ...cardHead("#1a2a00"), justifyContent: "space-between" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <div style={dot("#a8e060")} />
-                  <div style={labelStyle}>Що потрібно виправити ({tasksB.length})</div>
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button onClick={() => toggleAll(true)} style={{ fontSize: 10, color: "#a8e060", background: "transparent", border: "1px solid #4a6a00", borderRadius: 4, padding: "3px 8px", cursor: "pointer", fontFamily: "inherit" }}>Всі</button>
-                  <button onClick={() => toggleAll(false)} style={{ fontSize: 10, color: "#888", background: "transparent", border: "1px solid #444", borderRadius: 4, padding: "3px 8px", cursor: "pointer", fontFamily: "inherit" }}>Жоден</button>
-                </div>
-              </div>
-              <div style={{ background: "#faf8f3" }}>
-                {tasksB.map((task, i) => {
-                  const isChecked = checked[task.id] !== false;
-                  return (
-                    <div key={i} style={{ padding: "12px 16px", borderBottom: i < tasksB.length - 1 ? "1px solid #e8e4dc" : "none", display: "flex", gap: 12, alignItems: "flex-start", opacity: isChecked ? 1 : 0.45 }}>
-                      <input type="checkbox" checked={isChecked} onChange={e => setChecked(prev => ({ ...prev, [task.id]: e.target.checked }))} style={{ marginTop: 3, accentColor: "#6a9000", flexShrink: 0, cursor: "pointer" }} />
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 11, color: "#888", marginBottom: 3, textTransform: "uppercase", letterSpacing: 0.5 }}>{task.location}</div>
-                        <div style={{ fontSize: 13, color: "#c04020", marginBottom: 3 }}><span style={{ fontWeight: 600 }}>Проблема:</span> {task.issue}</div>
-                        <div style={{ fontSize: 13, color: "#3a6010" }}><span style={{ fontWeight: 600 }}>Що зробити:</span> {task.suggestion}</div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              <div style={{ padding: "12px 16px", background: "#1a2a00", display: "flex", gap: 10, alignItems: "center" }}>
-                <button onClick={doApply} disabled={applyLoading || checkedCount === 0} style={btnGreen(applyLoading || checkedCount === 0)}>
-                  {applyLoading ? <><SpinDot light />Виправляю ({applyProgress}/{tasksB.filter(t => checked[t.id] !== false).length})...</> : `Виконати обрані (${checkedCount}) →`}
-                </button>
-                {applyLoading && <span style={{ fontSize: 12, color: "#6a9000" }}>Claude застосовує виправлення</span>}
-              </div>
-            </div>
-            <button onClick={() => setStep(1)} style={{ background: "none", border: "none", color: "#aaa", fontSize: 12, cursor: "pointer", fontFamily: "inherit", padding: "4px 0" }}>
-              ← Змінити зауваження
-            </button>
-          </>
-        )}
-
-        {/* ═══ КРОК 2: Виправлення (режим А — ті самі tasks з кроку 1) ═══ */}
-        {step === 2 && mode === "A" && (
+        {/* ═══ КРОК 2: Виправлення ═══ */}
+        {step === 2 && (
           <>
             <div style={{ ...cardStyle, border: "1.5px solid #4a6a00" }}>
               <div style={cardHead("#1a2a00")}>
@@ -887,7 +792,7 @@ export default function FileCorrectionsPage({ onBack }) {
                 </button>
               </div>
             </div>
-            <button onClick={() => setStep(1)} style={{ background: "none", border: "none", color: "#aaa", fontSize: 12, cursor: "pointer", fontFamily: "inherit", padding: "4px 0" }}>
+            <button onClick={() => { setStep(1); setApplyProgress(0); }} style={{ background: "none", border: "none", color: "#aaa", fontSize: 12, cursor: "pointer", fontFamily: "inherit", padding: "4px 0" }}>
               ← Назад до списку
             </button>
           </>
@@ -938,7 +843,7 @@ export default function FileCorrectionsPage({ onBack }) {
                 Завантажити виправлений .docx
               </button>
               <button
-                onClick={() => { setStep(mode === "A" ? 1 : 1); setApplyProgress(0); setCorrectedText(""); setFailedTasks([]); }}
+                onClick={() => { setStep(1); setApplyProgress(0); setCorrectedText(""); setFailedTasks([]); }}
                 style={{ ...btnPrimary(false), background: "transparent", color: "#555", border: "1px solid #ccc" }}
               >
                 Внести ще правки
