@@ -6,6 +6,8 @@
 // яке губилось при старому підході mammoth.extractRawText → docx-реконструкція.
 // ─────────────────────────────────────────────
 
+import { isReddishColor } from "./docxAnnotations.js";
+
 async function loadJSZip() {
   if (window.JSZip) return window.JSZip;
   await new Promise((resolve, reject) => {
@@ -62,7 +64,8 @@ export function refreshTextMap(docXml) {
 
 // ── Замінити фрагмент [start, end) плаского тексту на replacement, лишаючи
 // решту XML (форматування, таблиці, стилі, підписи) недоторканою. Заодно
-// знімає підсвітку (w:highlight) з торкнутих ранів — фрагмент виправлено,
+// знімає підсвітку (w:highlight) і червонуватий колір шрифту (нотатка
+// керівника, вписана прямо в текст) з торкнутих ранів — фрагмент виправлено,
 // маркер "потребує уваги" більше не актуальний. ──
 export function applyDocxReplacement(map, start, end, replacement) {
   const touched = map.filter(m => m.end > start && m.start < end);
@@ -81,6 +84,8 @@ export function applyDocxReplacement(map, start, end, replacement) {
     const rPr = run && [...run.childNodes].find(n => n.tagName === "w:rPr");
     const highlight = rPr && [...rPr.childNodes].find(n => n.tagName === "w:highlight");
     if (highlight) rPr.removeChild(highlight);
+    const colorEl = rPr && [...rPr.childNodes].find(n => n.tagName === "w:color");
+    if (colorEl && isReddishColor(colorEl.getAttribute("w:val"))) rPr.removeChild(colorEl);
   });
   return true;
 }

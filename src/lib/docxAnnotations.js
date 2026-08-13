@@ -19,6 +19,20 @@ export const HIGHLIGHT_COLORS = {
 };
 
 // ─────────────────────────────────────────────
+// Червонуватий колір ШРИФТУ (на відміну від фонової підсвітки w:highlight) —
+// так керівники часто вписують власну нотатку прямо в абзац, замість реального
+// коментаря Word чи виділення. w:color задає довільний hex, тож перевіряємо
+// відтінок (домінує червоний канал), а не конкретний список значень.
+// ─────────────────────────────────────────────
+export function isReddishColor(hex) {
+  if (!hex || !/^[0-9a-fA-F]{6}$/.test(hex)) return false;
+  const r = parseInt(hex.slice(0, 2), 16);
+  const g = parseInt(hex.slice(2, 4), 16);
+  const b = parseInt(hex.slice(4, 6), 16);
+  return r >= 100 && r > g * 1.4 && r > b * 1.4;
+}
+
+// ─────────────────────────────────────────────
 // JSZip loader
 // ─────────────────────────────────────────────
 async function loadJSZip() {
@@ -41,7 +55,7 @@ export async function extractAnnotations(arrayBuffer) {
   const zip = await JSZip.loadAsync(arrayBuffer);
 
   const docXmlRaw = await zip.file("word/document.xml")?.async("string");
-  if (!docXmlRaw) return { highlights: [], comments: [] };
+  if (!docXmlRaw) return { highlights: [], comments: [], colorNotes: [] };
 
   let commentsXmlRaw = "";
   try { commentsXmlRaw = (await zip.file("word/comments.xml")?.async("string")) || ""; } catch { /**/ }
@@ -66,6 +80,9 @@ export async function extractAnnotations(arrayBuffer) {
 
   // ── Виділення (параграф за параграфом) ──
   const highlights = [];
+  // Нотатки, вписані прямо в текст червонуватим кольором шрифту (не підсвітка,
+  // не справжній коментар Word) — див. isReddishColor.
+  const colorNotes = [];
   const paragraphs = docXml.getElementsByTagName("w:p");
 
   for (const para of paragraphs) {
@@ -101,16 +118,34 @@ export async function extractAnnotations(arrayBuffer) {
       pendingGap = "";
     };
 
+    // Той самий принцип групування сусідніх ранів, що й для підсвітки вище,
+    // але за кольором ШРИФТУ (w:color), а не фону.
+    let curNoteColor = null;
+    let curNoteText = "";
+    let notePendingGap = "";
+
+    const flushNote = () => {
+      if (curNoteText && curNoteColor) {
+        colorNotes.push({ text: curNoteText.trim(), context: paraText.trim() });
+      }
+      curNoteColor = null;
+      curNoteText = "";
+      notePendingGap = "";
+    };
+
     for (const run of runs) {
       const rPr = run.getElementsByTagName("w:rPr")[0];
       const highlightEl = rPr?.getElementsByTagName("w:highlight")[0];
       const color = highlightEl?.getAttribute("w:val");
+      const colorEl = rPr?.getElementsByTagName("w:color")[0];
+      const fontColor = colorEl?.getAttribute("w:val");
 
       const tEls = run.getElementsByTagName("w:t");
       let runText = "";
       for (const t of tEls) runText += t.textContent;
 
       const isHighlighted = color && color !== "none" && color !== "white" && color !== "black";
+      const isRedNote = fontColor && isReddishColor(fontColor);
 
       if (isHighlighted) {
         if (color === curColor) {
@@ -128,8 +163,24 @@ export async function extractAnnotations(arrayBuffer) {
       } else {
         flush();
       }
+
+      if (isRedNote) {
+        if (fontColor === curNoteColor) {
+          curNoteText += notePendingGap + runText;
+          notePendingGap = "";
+        } else {
+          flushNote();
+          curNoteColor = fontColor;
+          curNoteText = runText;
+        }
+      } else if (curNoteColor && /^\s*$/.test(runText)) {
+        notePendingGap += runText;
+      } else {
+        flushNote();
+      }
     }
     flush();
+    flushNote();
   }
 
   // ── Коментарі з прив'язкою до тексту ──
@@ -185,5 +236,5 @@ export async function extractAnnotations(arrayBuffer) {
     }
   }
 
-  return { highlights, comments };
+  return { highlights, comments, colorNotes };
 }

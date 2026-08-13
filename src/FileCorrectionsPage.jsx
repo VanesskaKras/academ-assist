@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { db } from "./firebase";
 import { useAuth } from "./AuthContext";
 import { collection, addDoc, updateDoc, serverTimestamp, query, where, getDocs, doc, getDoc } from "firebase/firestore";
@@ -207,7 +207,7 @@ function annotationsToTasks(annotations) {
       label: `Виділено ${h.colorInfo?.ua || h.color}`,
       annotatedText: h.text,
       context: h.context,
-      instruction: "Виправте або перепишіть виділену частину, зберігаючи стиль і мову документу.",
+      instruction: "Виправте або перепишіть виділену частину, зберігаючи стиль і мову документу. Якщо всередині виділеного фрагмента є питання чи вимога від керівника (звернення до автора, знак питання, прохання щось уточнити чи додати) — це НЕ частина тексту роботи: розпізнай його окремо, дай на нього фактичну відповідь (якщо вона однозначно випливає з контексту — наприклад, автор перекладу цитати) і органічно встав цю відповідь у текст, а саме питання повністю прибери з фінального результату. Якщо відповідь не випливає однозначно з контексту — не вигадуй її, залиш позначку needs_review.",
     });
   });
   annotations.comments.forEach((c, i) => {
@@ -221,6 +221,23 @@ function annotationsToTasks(annotations) {
       context: null,
       instruction: c.instruction,
       commentId: c.id,
+    });
+  });
+  // Нотатки, вписані прямо в абзац червонуватим кольором шрифту (не справжній
+  // коментар Word і не підсвітка) — на відміну від highlight/comment вище,
+  // тут "фрагмент для заміни" (annotatedText) — ВЕСЬ абзац, а не сама нотатка:
+  // сам проблемний текст, на який вона вказує, лежить поруч, а не всередині неї.
+  (annotations.colorNotes || []).forEach((n, i) => {
+    tasks.push({
+      id: `cn_${i}`,
+      kind: "annotation",
+      type: "color_note",
+      colorInfo: null,
+      label: "Нотатка (колір шрифту)",
+      annotatedText: n.context,
+      context: null,
+      noteText: n.text,
+      instruction: `У цьому фрагменті вписана від руки нотатка керівника, виділена кольором шрифту: "${n.text}". Виправ фрагмент відповідно до цієї нотатки (якщо вона стосується сусіднього тексту — виправ саме його), і обов'язково повністю прибери саму нотатку з фінального тексту.`,
     });
   });
   return tasks;
@@ -288,14 +305,14 @@ function StepBar({ current }) {
 // Рядок одного завдання (анотація, ручне зауваження, сторінки в цитатах чи
 // перебудова джерел) у списку кроку 1
 // ─────────────────────────────────────────────
-function TaskRow({ task, isChecked, onToggle }) {
+function TaskRow({ task, isChecked, onToggle, hasConflict }) {
   return (
     <div style={{ padding: "12px 16px", display: "flex", gap: 12, alignItems: "flex-start", opacity: isChecked ? 1 : 0.4 }}>
       <input type="checkbox" checked={isChecked} onChange={e => onToggle(e.target.checked)} style={{ marginTop: 3, accentColor: "#6a9000", flexShrink: 0, cursor: "pointer" }} />
       <div style={{ flex: 1 }}>
         {task.kind === "annotation" ? (
           <>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4, flexWrap: "wrap" }}>
               {task.type === "highlight" && task.colorInfo && (
                 <span style={{ display: "inline-block", background: task.colorInfo.css, color: task.colorInfo.text, fontSize: 10, borderRadius: 3, padding: "1px 7px", fontWeight: 600, letterSpacing: 0.3 }}>
                   {task.colorInfo.ua}
@@ -306,9 +323,19 @@ function TaskRow({ task, isChecked, onToggle }) {
                   💬 {task.label}
                 </span>
               )}
+              {task.type === "color_note" && (
+                <span style={{ display: "inline-block", background: "#fbe0e0", color: "#a01e1e", fontSize: 10, borderRadius: 3, padding: "1px 7px", fontWeight: 600 }}>
+                  🖊 {task.label}
+                </span>
+              )}
+              {hasConflict && (
+                <span title="Ще одна правка стосується того самого фрагмента тексту" style={{ display: "inline-block", background: "#fde2b8", color: "#8a4a00", fontSize: 10, borderRadius: 3, padding: "1px 7px", fontWeight: 600 }}>
+                  ⚠ перетинається з іншою правкою
+                </span>
+              )}
             </div>
-            <div style={{ fontSize: 12, color: "#c04020", marginBottom: task.type === "comment" ? 3 : 0, fontStyle: "italic" }}>
-              «{task.annotatedText.slice(0, 120)}{task.annotatedText.length > 120 ? "..." : ""}»
+            <div style={{ fontSize: 12, color: "#c04020", marginBottom: task.type === "comment" || task.type === "color_note" ? 3 : 0, fontStyle: "italic" }}>
+              «{(task.type === "color_note" ? task.noteText : task.annotatedText).slice(0, 120)}{(task.type === "color_note" ? task.noteText : task.annotatedText).length > 120 ? "..." : ""}»
             </div>
             {task.type === "comment" && (
               <div style={{ fontSize: 12, color: "#3a6010", marginTop: 2 }}>
@@ -371,7 +398,7 @@ export default function FileCorrectionsPage({ onBack }) {
   // і ручно введені зауваження (kind:"manual") — програма сама розпізнає перше під
   // час завантаження файлу, друге можна додати в будь-який момент на кроці 1.
   const [extractLoading, setExtractLoading] = useState(false);
-  const [annotations, setAnnotations] = useState({ highlights: [], comments: [] });
+  const [annotations, setAnnotations] = useState({ highlights: [], comments: [], colorNotes: [] });
   const [tasks, setTasks] = useState([]);
   const [checked, setChecked] = useState({});
 
@@ -388,6 +415,7 @@ export default function FileCorrectionsPage({ onBack }) {
   const [correctedText, setCorrectedText] = useState("");
   const [failedTasks, setFailedTasks] = useState([]);
   const [applyMessages, setApplyMessages] = useState([]); // [{type:"success"|"error", text}]
+  const [appliedChanges, setAppliedChanges] = useState([]); // [{label, original, replacement}] — приклади "до/після"
   const [correctionHistory, setCorrectionHistory] = useState([]);
   const [error, setError] = useState("");
 
@@ -440,6 +468,32 @@ export default function FileCorrectionsPage({ onBack }) {
   }, []);
 
   const checkedCount = Object.values(checked).filter(Boolean).length;
+
+  // ── Конфлікти між завданнями: для виділень/коментарів/нотаток фрагмент для заміни
+  // відомий заздалегідь (task.annotatedText), тож можна знайти його позицію в docText
+  // ще ДО застосування і позначити пари, чиї діапазони перетинаються — інакше друга
+  // правка з тієї самої пари або не знайде вже змінений фрагмент, або мовчки
+  // перезапише результат першої. Для kind:"manual" точний фрагмент з'являється лише
+  // з відповіді ШІ під час застосування, тож наперед його не визначити (розпізнається
+  // постфактум у doApply — див. roundStartText).
+  const conflictTaskIds = useMemo(() => {
+    const ranges = [];
+    tasks.forEach(t => {
+      if (t.kind !== "annotation") return;
+      const loc = locateFragment(docText, t.annotatedText, t.context);
+      if (loc) ranges.push({ id: t.id, ...loc });
+    });
+    const conflicts = new Set();
+    for (let i = 0; i < ranges.length; i++) {
+      for (let j = i + 1; j < ranges.length; j++) {
+        if (ranges[i].start < ranges[j].end && ranges[j].start < ranges[i].end) {
+          conflicts.add(ranges[i].id);
+          conflicts.add(ranges[j].id);
+        }
+      }
+    }
+    return conflicts;
+  }, [tasks, docText]);
 
   // ── Список власних замовлень із уже проаналізованою методичкою (для автопідвантаження,
   // щоб не змушувати завантажувати методичку вдруге для роботи, згенерованої в цій програмі) ──
@@ -543,7 +597,7 @@ export default function FileCorrectionsPage({ onBack }) {
     if (!file) return;
     setFileLoading(true);
     setError("");
-    setTasks([]); setChecked({}); setAnnotations({ highlights: [], comments: [] });
+    setTasks([]); setChecked({}); setAnnotations({ highlights: [], comments: [], colorNotes: [] });
     setManualOpen(false); setCorrectionsText(""); setCorrectionPhotos([]);
     orderDocIdRef.current = null; setCorrectionHistory([]);
     try {
@@ -602,11 +656,18 @@ export default function FileCorrectionsPage({ onBack }) {
     setError("");
     setFailedTasks([]);
     setApplyMessages([]);
+    setAppliedChanges([]);
     // map/text перебудовуються після КОЖНОЇ застосованої правки (refreshTextMap) —
     // інакше позиції наступних locateFragment з'їдуть відносно вже зміненого XML.
     let { map, plainText: text } = refreshTextMap(docStateRef.current.docXml);
+    // Знімок тексту на старт раунду — якщо фрагмент завдання не знайдеться в ПОТОЧНОМУ
+    // тексті, але знайдеться тут, значить його вже переписала інша правка цього ж
+    // раунду (типовий конфлікт між двома завданнями на той самий фрагмент), а не
+    // випадок "фрагмента взагалі нема в документі".
+    const roundStartText = text;
     const failed = [];
     const messages = [];
+    const changes = [];
 
     // Групуємо підряд по BATCH_SIZE завдань ОДНОГО типу (annotation/manual — різні
     // промпти) в один виклик ШІ: повний текст роботи надсилається раз на групу.
@@ -683,10 +744,20 @@ export default function FileCorrectionsPage({ onBack }) {
               replacement = await adjustVolume({ original, replacement, lang, methodInfo, label: task.location });
             }
             applyDocxReplacement(map, loc.start, loc.end, replacement);
+            changes.push({ label: task.label || task.location || (original || "").slice(0, 60), original, replacement });
             if (task.commentId) await removeDocxComment(docStateRef.current.zip, docStateRef.current.docXml, task.commentId);
             ({ map, plainText: text } = refreshTextMap(docStateRef.current.docXml));
           } else {
-            failed.push({ task, reason: "Фрагмент не знайдено в тексті документа — заміну не застосовано." });
+            // Фрагмент відсутній у поточному тексті — перевіряємо, чи він був там на
+            // старті раунду: якщо так, це не "фрагмента нема", а інша правка вище по
+            // списку вже його змінила.
+            const wasThereAtStart = original ? !!locateFragment(roundStartText, original, task.context) : false;
+            failed.push({
+              task,
+              reason: wasThereAtStart
+                ? "Фрагмент уже змінено іншою правкою вище по списку — перевірте вручну, чи потрібна ця правка ще."
+                : "Фрагмент не знайдено в тексті документа — заміну не застосовано.",
+            });
           }
         }
         done++;
@@ -794,7 +865,9 @@ export default function FileCorrectionsPage({ onBack }) {
           for (let guard = 0; guard < 500; guard++) {
             const fix = findOutOfRangeCitationInText(text);
             if (!fix) break;
+            const before = text.slice(fix.start, fix.end);
             applyDocxReplacement(map, fix.start, fix.end, fix.replacement);
+            changes.push({ label: "Сторінка в цитаті", original: before, replacement: fix.replacement });
             ({ map, plainText: text } = refreshTextMap(docStateRef.current.docXml));
             fixedCount++;
           }
@@ -818,6 +891,7 @@ export default function FileCorrectionsPage({ onBack }) {
       setCorrectedText(text);
       setFailedTasks(failed);
       setApplyMessages(messages);
+      setAppliedChanges(changes);
 
       // Успішно застосовані завдання — знімаємо чекбокс (щоб повторний "Виправити
       // обрані" не намагався заново виправити вже виправлене — для анотацій
@@ -881,10 +955,10 @@ export default function FileCorrectionsPage({ onBack }) {
     docStateRef.current = null;
     orderDocIdRef.current = null;
     setStep(0); setFileName(""); setDocText("");
-    setAnnotations({ highlights: [], comments: [] }); setTasks([]); setChecked({});
+    setAnnotations({ highlights: [], comments: [], colorNotes: [] }); setTasks([]); setChecked({});
     setManualOpen(false); setCorrectionsText(""); setCorrectionPhotos([]);
     setCorrectedText(""); setError(""); setApplyProgress(0); setFailedTasks([]);
-    setApplyMessages([]); setCorrectionHistory([]);
+    setApplyMessages([]); setAppliedChanges([]); setCorrectionHistory([]);
   }
 
   function reset() {
@@ -909,7 +983,7 @@ export default function FileCorrectionsPage({ onBack }) {
             // currentDocText НЕ скидаємо на docText — оригінальний docXml у docStateRef
             // вже незворотно змінено попередніми правками, тож текст має й далі
             // відповідати саме йому, а не давно застарілому вихідному тексту.
-            if (step === 3) { setStep(1); setCorrectedText(""); setApplyProgress(0); setFailedTasks([]); setApplyMessages([]); }
+            if (step === 3) { setStep(1); setCorrectedText(""); setApplyProgress(0); setFailedTasks([]); setApplyMessages([]); setAppliedChanges([]); }
           }}
           style={{ background: "none", border: "none", color: "#888", fontSize: 18, cursor: "pointer", lineHeight: 1, padding: 4 }}
         >←</button>
@@ -1046,7 +1120,7 @@ export default function FileCorrectionsPage({ onBack }) {
                   <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                     <div style={dot("#a8e060")} />
                     <div style={labelStyle}>
-                      Знайдено правок: {tasks.length} ({annotations.highlights.length} виділень, {annotations.comments.length} коментарів{tasks.some(t => t.kind === "citation_pages") ? ", сторінки в цитатах" : ""}{tasks.some(t => t.kind === "sources_restructure") ? ", перебудова джерел" : ""}{tasks.some(t => t.kind === "manual") ? `, ${tasks.filter(t => t.kind === "manual").length} вручну` : ""})
+                      Знайдено правок: {tasks.length} ({annotations.highlights.length} виділень, {annotations.comments.length} коментарів{(annotations.colorNotes || []).length ? `, ${annotations.colorNotes.length} нотаток кольором шрифту` : ""}{tasks.some(t => t.kind === "citation_pages") ? ", сторінки в цитатах" : ""}{tasks.some(t => t.kind === "sources_restructure") ? ", перебудова джерел" : ""}{tasks.some(t => t.kind === "manual") ? `, ${tasks.filter(t => t.kind === "manual").length} вручну` : ""})
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 8 }}>
@@ -1057,7 +1131,7 @@ export default function FileCorrectionsPage({ onBack }) {
                 <div style={{ background: "#faf8f3" }}>
                   {tasks.map((task, i) => (
                     <div key={task.id} style={{ borderBottom: i < tasks.length - 1 ? "1px solid #e8e4dc" : "none" }}>
-                      <TaskRow task={task} isChecked={checked[task.id] !== false} onToggle={val => setChecked(prev => ({ ...prev, [task.id]: val }))} />
+                      <TaskRow task={task} isChecked={checked[task.id] !== false} onToggle={val => setChecked(prev => ({ ...prev, [task.id]: val }))} hasConflict={conflictTaskIds.has(task.id)} />
                     </div>
                   ))}
                 </div>
@@ -1197,6 +1271,28 @@ export default function FileCorrectionsPage({ onBack }) {
               </div>
             )}
 
+            {appliedChanges.length > 0 && (
+              <div style={{ ...cardStyle, border: "1.5px solid #4a6a00", marginTop: 14 }}>
+                <div style={cardHead("#1a2a00")}>
+                  <div style={dot("#a8e060")} />
+                  <div style={labelStyle}>Приклади застосованих правок ({appliedChanges.length})</div>
+                </div>
+                <div style={{ background: "#faf8f3", maxHeight: 320, overflowY: "auto" }}>
+                  {appliedChanges.map((c, i) => (
+                    <div key={i} style={{ padding: "12px 16px", borderBottom: i < appliedChanges.length - 1 ? "1px solid #e8e4dc" : "none" }}>
+                      <div style={{ fontSize: 11, color: "#7a5a2a", fontWeight: 600, marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 }}>{c.label}</div>
+                      <div style={{ fontSize: 12, color: "#c04020", marginBottom: 3 }}>
+                        <span style={{ fontWeight: 600 }}>Було:</span> «{(c.original || "").slice(0, 160)}{(c.original || "").length > 160 ? "..." : ""}»
+                      </div>
+                      <div style={{ fontSize: 12, color: "#3a6010" }}>
+                        <span style={{ fontWeight: 600 }}>Стало:</span> {c.replacement ? `«${c.replacement.slice(0, 160)}${c.replacement.length > 160 ? "..." : ""}»` : "(фрагмент видалено)"}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {failedTasks.length > 0 && (
               <div style={{ ...cardStyle, border: "1.5px solid #a04a1a", marginTop: 14 }}>
                 <div style={cardHead("#3a1a0a")}>
@@ -1227,7 +1323,7 @@ export default function FileCorrectionsPage({ onBack }) {
                 Завантажити виправлений .docx
               </button>
               <button
-                onClick={() => { setStep(1); setApplyProgress(0); setCorrectedText(""); setFailedTasks([]); setApplyMessages([]); }}
+                onClick={() => { setStep(1); setApplyProgress(0); setCorrectedText(""); setFailedTasks([]); setApplyMessages([]); setAppliedChanges([]); }}
                 style={{ ...btnPrimary(false), background: "transparent", color: "#555", border: "1px solid #ccc" }}
               >
                 Внести ще правки
