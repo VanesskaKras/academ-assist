@@ -9,6 +9,7 @@ import {
   buildFileCorrectionsAnalysisPrompt,
   buildFileApplyCorrectionBatchPrompt,
   buildAnnotationCorrectionBatchPrompt,
+  buildDocumentWideCorrectionPrompt,
   buildSourcesRestructureAnalysisPrompt,
   buildSourcePlacementInTextPrompt,
   buildMethodologyReadingPrompt,
@@ -40,6 +41,20 @@ function classifyContextNeed(task) {
     needsMethodichka: METHODICHKA_HINT_RE.test(text),
     needsClientMaterials: CLIENT_MATERIALS_HINT_RE.test(text),
   };
+}
+
+// ─────────────────────────────────────────────
+// Зауваження, що явно стосується ВСЬОГО документа ("так має бути по всій
+// роботі", "виправ скрізь" тощо), а не лише одного позначеного місця — такі
+// завдання йдуть окремим шляхом (applyDocumentWideTask): ШІ шукає й виправляє
+// ВСІ відповідні місця в тексті за один прохід, а не тільки те, де було
+// залишено саме зауваження.
+// ─────────────────────────────────────────────
+const DOCUMENT_WIDE_HINT_RE = /по\s+всій\s+робот|по\s+всьому\s+документ|у\s+всьому\s+текст|у\s+всій\s+роботі|скрізь|усюди|кожного\s+разу|весь\s+документ|усі\s+згадк|щораз/i;
+
+function isDocumentWideTask(task) {
+  const text = [task.annotatedText, task.instruction, task.noteText, task.issue, task.suggestion].filter(Boolean).join(" ");
+  return DOCUMENT_WIDE_HINT_RE.test(text);
 }
 
 // ─────────────────────────────────────────────
@@ -240,6 +255,7 @@ function annotationsToTasks(annotations) {
       instruction: `У цьому фрагменті вписана від руки нотатка керівника, виділена кольором шрифту: "${n.text}". Виправ фрагмент відповідно до цієї нотатки (якщо вона стосується сусіднього тексту — виправ саме його), і обов'язково повністю прибери саму нотатку з фінального тексту.`,
     });
   });
+  tasks.forEach(t => { t.documentWide = isDocumentWideTask(t); });
   return tasks;
 }
 
@@ -333,6 +349,11 @@ function TaskRow({ task, isChecked, onToggle, hasConflict }) {
                   ⚠ перетинається з іншою правкою
                 </span>
               )}
+              {task.documentWide && (
+                <span title="ШІ шукатиме й виправлятиме всі відповідні місця в документі, не лише це" style={{ display: "inline-block", background: "#dfe8ff", color: "#1e3a8a", fontSize: 10, borderRadius: 3, padding: "1px 7px", fontWeight: 600 }}>
+                  📌 стосується всього документа
+                </span>
+              )}
             </div>
             <div style={{ fontSize: 12, color: "#c04020", marginBottom: task.type === "comment" || task.type === "color_note" ? 3 : 0, fontStyle: "italic" }}>
               «{(task.type === "color_note" ? task.noteText : task.annotatedText).slice(0, 120)}{(task.type === "color_note" ? task.noteText : task.annotatedText).length > 120 ? "..." : ""}»
@@ -361,8 +382,15 @@ function TaskRow({ task, isChecked, onToggle, hasConflict }) {
           </>
         ) : (
           <>
-            <div style={{ fontSize: 10, background: "#e8dcc8", color: "#7a5a2a", display: "inline-block", borderRadius: 3, padding: "1px 7px", fontWeight: 600, marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 }}>
-              ✏️ {task.location}
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4, flexWrap: "wrap" }}>
+              <div style={{ fontSize: 10, background: "#e8dcc8", color: "#7a5a2a", display: "inline-block", borderRadius: 3, padding: "1px 7px", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                ✏️ {task.location}
+              </div>
+              {task.documentWide && (
+                <span title="ШІ шукатиме й виправлятиме всі відповідні місця в документі, не лише це" style={{ display: "inline-block", background: "#dfe8ff", color: "#1e3a8a", fontSize: 10, borderRadius: 3, padding: "1px 7px", fontWeight: 600 }}>
+                  📌 стосується всього документа
+                </span>
+              )}
             </div>
             <div style={{ fontSize: 13, color: "#c04020", marginBottom: 3 }}><span style={{ fontWeight: 600 }}>Проблема:</span> {task.issue}</div>
             <div style={{ fontSize: 13, color: "#3a6010" }}><span style={{ fontWeight: 600 }}>Що зробити:</span> {task.suggestion}</div>
@@ -634,6 +662,7 @@ export default function FileCorrectionsPage({ onBack }) {
         ...t,
         id: `m_${Date.now()}_${i}`,
         kind: t.sourcesAction === "restructure" ? "sources_restructure" : "manual",
+        documentWide: t.sourcesAction !== "restructure" && isDocumentWideTask(t),
       }));
       const defaultChecked = {};
       manualTasks.forEach(t => { defaultChecked[t.id] = true; });
@@ -671,13 +700,19 @@ export default function FileCorrectionsPage({ onBack }) {
 
     // Групуємо підряд по BATCH_SIZE завдань ОДНОГО типу (annotation/manual — різні
     // промпти) в один виклик ШІ: повний текст роботи надсилається раз на групу.
-    // citation_pages і sources_restructure не батчуються — кожне йде своїм окремим
-    // кодовим чи багатоетапним шляхом.
+    // citation_pages, sources_restructure і documentWide не батчуються — кожне йде
+    // своїм окремим кодовим чи багатоетапним шляхом (documentWide — бо це один
+    // виклик ШІ на ВЕСЬ документ, який сам шукає всі відповідні місця).
     const batches = [];
     for (let i = 0; i < toFix.length;) {
+      if (toFix[i].documentWide) {
+        batches.push({ kind: "document_wide", items: [toFix[i]] });
+        i++;
+        continue;
+      }
       const kind = toFix[i].kind;
       const group = [];
-      while (i < toFix.length && toFix[i].kind === kind && group.length < BATCH_SIZE && kind !== "sources_restructure") {
+      while (i < toFix.length && toFix[i].kind === kind && group.length < BATCH_SIZE && kind !== "sources_restructure" && !toFix[i].documentWide) {
         group.push(toFix[i]); i++;
       }
       if (!group.length) { group.push(toFix[i]); i++; }
@@ -769,6 +804,45 @@ export default function FileCorrectionsPage({ onBack }) {
         done++;
         setApplyProgress(done);
       }
+    }
+
+    // ── Зауваження, що стосується ВСЬОГО документа ("так має бути по всій
+    // роботі" тощо, — DOCUMENT_WIDE_HINT_RE) — один виклик ШІ на весь текст
+    // роботи, що сам знаходить і виправляє КОЖНЕ відповідне місце, а не лише
+    // те, де було залишено саме зауваження. Кожна знайдена заміна застосовується
+    // тим самим хірургічним шляхом, з оновленням text/map між замінами. ──
+    async function applyDocumentWideTask(task) {
+      setCurrentBatchLabel(`Шукаю всі місця в документі (${task.label || task.location || "зауваження"})...`);
+      try {
+        const prompt = buildDocumentWideCorrectionPrompt({ documentText: text, task });
+        const sysPrompt = buildSYS(lang, methodInfo) + sysPromptSuffix;
+        const raw = await callClaude([{ role: "user", content: prompt }], null, sysPrompt, 20000, null, MODEL, { cache: true });
+        const parsed = JSON.parse(raw.replace(/```json|```/g, "").trim());
+        if (!Array.isArray(parsed)) throw new Error("не масив");
+
+        let appliedCount = 0;
+        for (const item of parsed) {
+          if (!item?.original) continue;
+          const loc = locateFragment(text, item.original, null);
+          if (!loc) continue;
+          const replacement = item.replacement || "";
+          applyDocxReplacement(map, loc.start, loc.end, replacement);
+          changes.push({ label: task.label || task.location || "По всьому документу", original: item.original, replacement });
+          ({ map, plainText: text } = refreshTextMap(docStateRef.current.docXml));
+          appliedCount++;
+        }
+        if (task.commentId) await removeDocxComment(docStateRef.current.zip, docStateRef.current.docXml, task.commentId);
+
+        if (appliedCount > 0) {
+          messages.push({ type: "success", text: `Виправлено по всьому документу: ${appliedCount} місце(ць) (${task.label || task.location || "зауваження"}).` });
+        } else {
+          failed.push({ task, reason: "Не вдалося знайти в документі жодного місця, що підпадає під це зауваження — перевірте вручну." });
+        }
+      } catch (e) {
+        failed.push({ task, reason: "Помилка пошуку по всьому документу: " + e.message });
+      }
+      done++;
+      setApplyProgress(done);
     }
 
     // ── Перебудова списку джерел: додати/видалити конкретне джерело, перенумерувати
@@ -889,6 +963,11 @@ export default function FileCorrectionsPage({ onBack }) {
 
         if (kind === "sources_restructure") {
           await applySourcesRestructureTask(batch[0]);
+          continue;
+        }
+
+        if (kind === "document_wide") {
+          await applyDocumentWideTask(batch[0]);
           continue;
         }
 
