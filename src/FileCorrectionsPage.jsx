@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import { db } from "./firebase";
 import { useAuth } from "./AuthContext";
 import { collection, addDoc, updateDoc, serverTimestamp, query, where, getDocs, doc, getDoc } from "firebase/firestore";
-import { callClaude, callGemini, MODEL, MODEL_FAST } from "./lib/api.js";
+import { callClaude, callGemini, MODEL, MODEL_FAST, resetGenerationCost, getGenerationCost, GENERATION_COST_LIMIT } from "./lib/api.js";
 import {
   SYS_JSON, SYS_JSON_ARRAY, SYS_JSON_SHORT, STRUCTURE_READING_PROMPT,
   buildSYS,
@@ -21,6 +21,7 @@ import { ClientMaterialsZone } from "./components/ClientMaterialsZone.jsx";
 import { extractAnnotations } from "./lib/docxAnnotations.js";
 import { openDocxForEditing, refreshTextMap, applyDocxReplacement, removeDocxComment, serializeDocx } from "./lib/docxSurgicalEdit.js";
 import { findOutOfRangeCitationInText, countOutOfRangeCitations, locateSourcesZone, findNextCitationToRenumber, formatSourcesWithRetry } from "./lib/citationFormatting.js";
+import { locateFragment } from "./lib/textFragmentLocate.js";
 
 // Скільки завдань ОДНОГО типу групувати в один виклик ШІ при застосуванні правок —
 // основне джерело економії токенів: повний текст роботи надсилається раз на групу.
@@ -162,48 +163,6 @@ async function adjustVolume({ original, replacement, lang, methodInfo, label }) 
     } catch { return replacement; }
   }
   return replacement;
-}
-
-// ─────────────────────────────────────────────
-// Пошук фрагмента для заміни: дослівно → в межах абзаца-контексту (рятує, якщо
-// той самий рядок трапляється в тексті кілька разів) → гнучкий regex, що ігнорує
-// різницю в пробілах/лапках/тире (рятує, коли ШІ трохи розходиться з оригіналом
-// у пунктуації). Якщо нічого не знайдено — повертає null, і виклик має це
-// показати користувачу, а не мовчки пропустити завдання.
-// ─────────────────────────────────────────────
-function escapeRegex(s) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function buildFuzzyPattern(str) {
-  return escapeRegex(str.trim())
-    .replace(/\s+/g, "\\s+")
-    .replace(/["""«»]/g, "[\"“”«»]")
-    .replace(/['''`]/g, "['‘’`]")
-    .replace(/[-–—]/g, "[-–—]");
-}
-
-function locateFragment(text, original, context) {
-  if (!original) return null;
-  if (context && text.includes(context)) {
-    const ctxStart = text.indexOf(context);
-    const localIdx = context.indexOf(original);
-    if (localIdx !== -1) return { start: ctxStart + localIdx, end: ctxStart + localIdx + original.length };
-    try {
-      const m = context.match(new RegExp(buildFuzzyPattern(original)));
-      if (m) {
-        const idx = ctxStart + context.indexOf(m[0]);
-        return { start: idx, end: idx + m[0].length };
-      }
-    } catch { /* некоректний патерн — пробуємо далі по всьому тексту */ }
-  }
-  const exactIdx = text.indexOf(original);
-  if (exactIdx !== -1) return { start: exactIdx, end: exactIdx + original.length };
-  try {
-    const m = text.match(new RegExp(buildFuzzyPattern(original)));
-    if (m) return { start: m.index, end: m.index + m[0].length };
-  } catch { /* некоректний regex-патерн з фрагмента */ }
-  return null;
 }
 
 // ─────────────────────────────────────────────
@@ -683,6 +642,7 @@ export default function FileCorrectionsPage({ onBack }) {
     setApplyLoading(true);
     setApplyProgress(0);
     setError("");
+    resetGenerationCost();
     setFailedTasks([]);
     setApplyMessages([]);
     setAppliedChanges([]);
@@ -746,7 +706,13 @@ export default function FileCorrectionsPage({ onBack }) {
         const parsed = JSON.parse(result.replace(/```json|```/g, "").trim());
         if (!Array.isArray(parsed)) throw new Error("не масив");
         items = parsed;
-      } catch {
+      } catch (e) {
+        if (e?.isCostLimit) {
+          batch.forEach(task => failed.push({ task, reason: e.message }));
+          done += batch.length;
+          setApplyProgress(done);
+          return;
+        }
         if (batch.length === 1) {
           failed.push({ task: batch[0], reason: "Не вдалося розпізнати відповідь ШІ." });
           done++;
@@ -935,6 +901,10 @@ export default function FileCorrectionsPage({ onBack }) {
 
     try {
       for (const { kind, items: batch } of batches) {
+        if (getGenerationCost() > GENERATION_COST_LIMIT) {
+          messages.push({ type: "error", text: `⛔ Зупинено: вартість цих правок перевищила ліміт $${GENERATION_COST_LIMIT}. Уже застосовані правки збережено — решту завдань (${toFix.length - done}) перевірте вручну.` });
+          break;
+        }
         // Сторінки в цитатах — суто кодова перевірка, без ШІ: номер підбирає
         // pickPageInRange у межах реального обсягу джерела, тож ризику
         // вигадування немає. Застосовуємо всі знайдені випадки одразу.

@@ -9,16 +9,16 @@ import mammoth from "mammoth";
 import { exportPlanToDocx, exportAppendixToDocx, exportSpeechToDocx, renumberTablesAndFigures } from "./lib/exportDocx.js";
 import { exportToPptxFile } from "./lib/exportPptx.js";
 import { extractPdfPageImages } from "./lib/pdfImages.js";
-import { callClaude, callGemini, MODEL, MODEL_FAST } from "./lib/api.js";
+import { callClaude, callGemini, MODEL, MODEL_FAST, resetGenerationCost } from "./lib/api.js";
 import { playDoneSound } from "./lib/audio.js";
 import { enforceWordCount } from "./lib/wordCount.js";
-import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildIllustrationsPdfPrompt, buildDrawingsDescriptionPrompt, buildClientMaterialsAnalysisPrompt, buildCorrectionRewritePrompt, buildExtractStructurePrompt, buildContinuationPlanPrompt, buildAnnotationPrompt, buildAnnotationRegenPrompt, buildAntiPlagiarismSYS } from "./lib/prompts.js";
+import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildIllustrationsPdfPrompt, buildDrawingsDescriptionPrompt, buildClientMaterialsAnalysisPrompt, buildExtractStructurePrompt, buildContinuationPlanPrompt, buildAnnotationPrompt, buildAnnotationRegenPrompt, buildAntiPlagiarismSYS } from "./lib/prompts.js";
 import { extractReadyWorkStructure, quickParsePlanIds } from "./lib/readyWorkExtract.js";
 import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, getEmpiricalSections, getEconSections, getTechnicalSections, CODE_FILE_EXTENSIONS, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, getLangLabels, insertBeforeTail, detectRequestedChapterCount } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { getAcademicDefaults, classifyAppendixItem, detectSpecialty, normalizeWorkType } from "./lib/academicDefaults.js";
 import { searchByPhrase, filterSourcesWithGemini, getEconInstitutionalSources, generateAlternatePhrases } from "./lib/sourcesSearch.js";
-import { applyCitationRemap, buildFinalReferenceList, buildCiteFormats, createReferenceDeduper, detectSourceGrouping } from "./lib/citationFormatting.js";
+import { applyCitationRemap, buildFinalReferenceList, buildCiteFormats, createReferenceDeduper, detectSourceGrouping, insertMissingCitations } from "./lib/citationFormatting.js";
 import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
 import { StagePills } from "./components/StagePills.jsx";
 import { FieldBox, Heading, NavBtn, PrimaryBtn, GreenBtn, SaveIndicator } from "./components/Buttons.jsx";
@@ -1566,6 +1566,7 @@ Return ONLY JSON:
   };
 
   const startGen = async () => {
+    resetGenerationCost();
     const ORDER = ["theory", "analysis", "recommendations", "chapter_conclusion", "intro", "conclusions", "sources"];
     setSections(prev => [...prev].sort((a, b) => ORDER.indexOf(a.type) - ORDER.indexOf(b.type)));
     // Не стираємо текст, імпортований з готової частини роботи клієнта — лише те, що ще належить дописати
@@ -2090,7 +2091,34 @@ ${planSummary}
         text: cleaned, targetWords, label: sec.label, callClaude,
         sys: buildSYS(lang, methodInfo), signal: ctrl.signal, onProgress: setLoadMsg, clean: cleanResult,
       });
-      const newContent = { ...contentRef.current, [sec.id]: result };
+
+      // Перевірка "гарячим слідом" — які з призначених підрозділу джерел модель
+      // не процитувала (незважаючи на пряму інструкцію в промпті), і одразу
+      // довставляємо пропущені, поки контекст іще той самий. Значно дешевше й
+      // надійніше, ніж ловити ті самі промахи пізніше по всій роботі відразу
+      // (doRemapCitations, крок 7б) — там довставка йде вже без контексту генерації.
+      let finalResult = result;
+      const localSourceLines = (citInputs[sec.id] || "").split("\n").map(l => l.trim()).filter(Boolean);
+      if (localSourceLines.length && !ctrl.signal.aborted) {
+        const citedLocalNums = new Set();
+        [...finalResult.matchAll(/\[\s*(\d+(?:\s*[,;]\s*\d+)*)/g)].forEach(m => {
+          m[1].split(/[,;]/).forEach(s => citedLocalNums.add(Number(s.trim())));
+        });
+        const missingLocal = localSourceLines
+          .map((line, i) => ({ number: i + 1, marker: `[${i + 1}]`, sourceText: line }))
+          .filter(s => !citedLocalNums.has(s.number));
+        if (missingLocal.length) {
+          setLoadMsg(`Довставляю пропущені джерела: ${sec.label}...`);
+          try {
+            const { text } = await insertMissingCitations({
+              sectionText: finalResult, insertions: missingLocal, lang, callClaude, signal: ctrl.signal,
+            });
+            finalResult = cleanResult(text);
+          } catch (e) { console.error("Довставлення пропущених джерел одразу після генерації:", e); }
+        }
+      }
+
+      const newContent = { ...contentRef.current, [sec.id]: finalResult };
       setContent(newContent);
       runningRef.current = false; setRunning(false); setLoadMsg("");
       await saveToFirestore({ content: newContent, stage: "writing", status: "writing", genIdx: genIdx + 1 });
@@ -3196,6 +3224,7 @@ ${slideSpecs.join("\n\n")}
     regenAllAbortRef.current = ctrl;
     setRegenAllLoading(true);
     setApiError("");
+    resetGenerationCost();
 
     const d = info;
     const lang = d?.language || "Українська";
@@ -3870,7 +3899,9 @@ ${secBlocks}
 
   const doRemapCitations = async () => {
     setRemapLoading(true);
+    resetGenerationCost();
     const ctrl = new AbortController(); remapAbortRef.current = ctrl;
+    try {
     // callClaude, прив'язана до сигналу скасування цього запуску — щоб «⏹ Зупинити»
     // переривала й вкладені виклики (форматування списку, довставлення цитат), а не
     // лишала їх довиконуватись у фоні після того, як користувач уже пішов з екрана.
@@ -4002,10 +4033,11 @@ ${secBlocks}
       });
     });
 
-    // Групуємо за підрозділом: вставки в один і той самий підрозділ мають лишатись
-    // послідовними (кожна спирається на текст, залишений попередньою), а самі підрозділи
-    // йдуть паралельно — без цього вставка N осиротілих джерел могла тривати хвилини
-    // (послідовно, до 60с таймауту на кожен виклик Claude).
+    // Групуємо за підрозділом і вставляємо ОДНИМ пакетним викликом на весь набір
+    // осиротілих джерел підрозділу (insertMissingCitations — точкова заміна
+    // "речення → речення з позначкою", а не переписування підрозділу цілком):
+    // підрозділи йдуть паралельно між собою, а всередині підрозділу всі його
+    // джерела — за один виклик, замість послідовного по одному.
     const unresolvedOrphans = [];
     const orphansBySec = new Map();
     orphans.forEach(o => {
@@ -4013,34 +4045,23 @@ ${secBlocks}
       if (!orphansBySec.has(o.sec.id)) orphansBySec.set(o.sec.id, []);
       orphansBySec.get(o.sec.id).push(o);
     });
-    await Promise.all([...orphansBySec.values()].map(async (secOrphans) => {
-      for (const { sec, globalN } of secOrphans) {
-        if (ctrl.signal.aborted) return;
-        const citationMarker = refCiteText[globalN] || `[${globalN}]`;
-        const sourceText = allRefs[globalN - 1];
-        const existingCitationNumbers = [...new Set(
-          [...newContent[sec.id].matchAll(/\[(\d+)\]|%%FN(\d+)%%/g)].map(m => m[1] || m[2])
-        )];
-        const insertPrompt = buildCorrectionRewritePrompt({
-          section: sec,
-          originalText: newContent[sec.id],
-          issue: "Підрозділ не містить посилання на джерело зі списку літератури, яке було йому призначене під час генерації.",
-          suggestion: `Встав посилання ${citationMarker} до речення, яке найбільше стосується змісту цього джерела.`,
-          info, methodInfo, lang: _remapWorkLang,
-          existingCitationNumbers,
-          allowedNewCitation: { number: globalN, marker: citationMarker, sourceText },
+    await Promise.all([...orphansBySec.entries()].map(async ([secId, secOrphans]) => {
+      if (ctrl.signal.aborted) return;
+      const insertions = secOrphans.map(({ globalN }) => ({
+        number: globalN,
+        marker: refCiteText[globalN] || `[${globalN}]`,
+        sourceText: allRefs[globalN - 1],
+      }));
+      try {
+        const { text, unresolved } = await insertMissingCitations({
+          sectionText: newContent[secId], insertions, lang: _remapWorkLang,
+          callClaude: callClaudeAbortable, signal: ctrl.signal,
         });
-        try {
-          const insertRaw = await callClaude([{ role: "user", content: insertPrompt }], ctrl.signal, buildSYS(_remapWorkLang, methodInfo), Math.min(60000, Math.max(4000, Math.round((sec.pages || 1) * 3000))), null, MODEL, { cache: true });
-          const cleaned = typographQuotes(fixMixedScript(insertRaw, _remapWorkLang)
-            .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
-            .replace(/[ᄀ-ᇿ⺀-鿿ꀀ-꓿가-퟿豈-﫿]/g, "")
-          ).replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2").replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2").trim();
-          newContent[sec.id] = cleaned;
-        } catch (e) {
-          console.error("Помилка вставки цитати непроцитованого джерела", sec.id, globalN, e);
-          unresolvedOrphans.push(globalN);
-        }
+        newContent[secId] = text;
+        unresolvedOrphans.push(...unresolved);
+      } catch (e) {
+        console.error("Помилка вставки цитат непроцитованих джерел", secId, e);
+        unresolvedOrphans.push(...secOrphans.map(o => o.globalN));
       }
     }));
     if (ctrl.signal.aborted) { setRemapLoading(false); return; }
@@ -4120,6 +4141,14 @@ ${secBlocks}
 
     setRemapLoading(false);
     setStage("done");
+    } catch (e) {
+      if (e.name !== "AbortError" && !ctrl.signal.aborted) {
+        console.error("doRemapCitations error:", e);
+        alert("⚠ " + e.message);
+      }
+    } finally {
+      setRemapLoading(false);
+    }
   };
 
   const copyAll = () => {

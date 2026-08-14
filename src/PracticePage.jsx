@@ -3,7 +3,7 @@ import { db } from "./firebase";
 import { useAuth } from "./AuthContext";
 import { doc, getDoc, setDoc, addDoc, collection } from "firebase/firestore";
 import {
-  callClaude, callGemini, MODEL, MODEL_FAST,
+  callClaude, callGemini, MODEL, MODEL_FAST, resetGenerationCost,
 } from "./lib/api.js";
 import {
   buildSYS, buildSYSTable, SYS_JSON, SYS_JSON_SHORT, STRUCTURE_READING_PROMPT,
@@ -929,6 +929,7 @@ ${secBlock}
     const baseContent = contentOverride || content;
     const mainSecs = sections.filter(s => s.id !== "sources");
     setRunning(true); setLoadMsg("Формую список літератури...");
+    resetGenerationCost();
     try {
       // 1. Локальна карта: secId → { localN: sourceText }
       const secLocalSources = {};
@@ -998,6 +999,7 @@ ${secBlock}
     const writableSecs = sections.filter(s => s.id !== "sources");
     if (!writableSecs.length) return;
     setRunning(true); runningRef.current = true;
+    resetGenerationCost();
     const lang = language;
     const info = getPracticeInfo();
     let finalContent = { ...content };

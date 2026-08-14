@@ -2,13 +2,17 @@
 // shared.js — утиліти спільні для small-works (docx export, стилі, парсинг)
 // Логіка API, промпти, компоненти — в lib/ та components/
 // ─────────────────────────────────────────────
-import { renderPlantUmlToPng, detectTextLanguage } from "./lib/exportDocx.js";
+import { renderPlantUmlToPng, renderDataChartToPng, detectTextLanguage } from "./lib/exportDocx.js";
 
 const PLANTUML_FENCE_RE = /^\s*```\s*plantuml\s*$/i;
 const FENCE_END_RE = /^\s*```\s*$/;
+const FIG_CAPTION_RE = /^рис\.?\s+\d/i;
 
 // Замінює кожен ```plantuml``` fence-блок у тексті на маркер \x00DIAGRAM<i>\x00 і
 // рендерить відповідні PNG паралельно (та сама логіка, що й для великих робіт).
+// Таблицю з даними, за якою одразу йде підпис рисунка, замінює на ту саму
+// позначку, але з автоматично намальованою стовпчиковою діаграмою (сама таблиця
+// лишається видимою текстом — вставляється лише картинка під нею).
 async function resolvePlantUmlInSections(sections) {
   const diagramImages = [];
   const jobs = [];
@@ -32,6 +36,26 @@ async function resolvePlantUmlInSections(sections) {
         changed = true;
         continue;
       }
+      if (/^\s*\|/.test(lines[i])) {
+        const tableLines = [];
+        let j = i;
+        while (j < lines.length && /^\s*\|/.test(lines[j])) { tableLines.push(lines[j]); j++; }
+        outLines.push(...tableLines);
+        let k = j;
+        while (k < lines.length && !lines[k].trim()) k++;
+        if (k < lines.length && FIG_CAPTION_RE.test(lines[k].trim())) {
+          const img = renderDataChartToPng(tableLines);
+          const idx = diagramImages.length;
+          diagramImages.push(img);
+          outLines.push(`\x00DIAGRAM${idx}\x00`);
+          changed = true;
+        }
+        i = j;
+        continue;
+      }
+      // Застарілий рядок-підказку (з уже згенерованого раніше вмісту) більше не показуємо —
+      // тепер діаграма вставляється сама.
+      if (/^⚠/.test(lines[i].trim())) { i++; changed = true; continue; }
       outLines.push(lines[i]);
       i++;
     }
@@ -188,7 +212,6 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
   }
 
   const SOURCES_HEADER_RE = /^(список використаних джерел|список літератури|використані джерела|references?)\s*[:\.]?\s*$/i;
-  const FIG_CAPTION_RE = /^рис\.?\s+\d/i;
   const FIG_MARKER_RE = /^\[🔍 Рисунок \d+:/;
   const TABLE_CAPTION_RE = /^(таблиця|table)\s+\d/i;
   const SOURCE_CAPTION_RE = /^(джерело|source)\s*:/i;
@@ -217,9 +240,8 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
     });
   }
 
-  function makeSimpleTableDocx(tableLines, isDiagram = false) {
-    const borderColor = isDiagram ? "1A5EAB" : "000000";
-    const border = { style: BorderStyle.SINGLE, size: isDiagram ? 6 : 1, color: borderColor };
+  function makeSimpleTableDocx(tableLines) {
+    const border = { style: BorderStyle.SINGLE, size: 1, color: "000000" };
     const cellBorders = { top: border, bottom: border, left: border, right: border };
     const dataLines = tableLines.filter(l => !/^\s*\|[-:| ]+\|\s*$/.test(l));
     if (!dataLines.length) return null;
@@ -233,7 +255,7 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
           children: [new Paragraph({
             alignment: isHeader ? AlignmentType.CENTER : AlignmentType.LEFT,
             spacing: { line: 240, lineRule: "exact", before: 0, after: 0 },
-            children: [new TextRun({ text: cellText, font: FONT, size: SIZE_NUM, color: isDiagram ? "1A5EAB" : "000000", bold: isHeader && !!methodInfo?.formatting?.tableHeaderBold })],
+            children: [new TextRun({ text: cellText, font: FONT, size: SIZE_NUM, color: "000000", bold: isHeader && !!methodInfo?.formatting?.tableHeaderBold })],
           })],
         })),
       });
@@ -372,14 +394,9 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
       if (/^\s*\|/.test(trimmed)) {
         const tableLines = [];
         while (li < lines.length && /^\s*\|/.test(lines[li].trim())) { tableLines.push(lines[li]); li++; }
-        // Якщо одразу під таблицею йде підпис рисунка — це таблиця-джерело для
-        // діаграми (за системним промптом): виділяємо синім, як у великих роботах,
-        // і позначаємо підпис нижче як "вирішений" (чорний, а не помаранчевий).
         let peek = li;
         while (peek < lines.length && !lines[peek].trim()) peek++;
-        const nextIsFigCaption = peek < lines.length && FIG_CAPTION_RE.test(lines[peek].trim());
-        if (nextIsFigCaption) lastWasDiagram = true;
-        const tbl = makeSimpleTableDocx(tableLines, nextIsFigCaption);
+        const tbl = makeSimpleTableDocx(tableLines);
         if (tbl) {
           children.push(tbl);
           // Якщо одразу під таблицею йде рядок "Джерело:" — без інтервалу перед ним
@@ -390,16 +407,6 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
           }
         }
         continue;
-      }
-
-      // Підказка для вставки діаграми в Word — окремим стилем, а не як звичайний абзац.
-      if (/^⚠/.test(trimmed)) {
-        children.push(new Paragraph({
-          alignment: AlignmentType.CENTER, indent: { firstLine: 0 },
-          spacing: { line: LINE, lineRule: "auto", before: 0, after: LINE },
-          children: [new TextRun({ text: trimmedClean, font: FONT, size: SIZE_NUM, color: "1A5EAB", italics: true, bold: true })],
-        }));
-        li++; continue;
       }
 
       // Підпис джерела під таблицею: "Джерело: ..." — без відступу, дрібніший шрифт,

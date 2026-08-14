@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { db } from "./firebase";
 import { useAuth } from "./AuthContext";
 import { doc, getDoc, setDoc } from "firebase/firestore";
-import { MODEL, MODEL_FAST, callClaude, callGemini } from "./lib/api.js";
+import { MODEL, MODEL_FAST, callClaude, callGemini, resetGenerationCost } from "./lib/api.js";
 import { buildSYSSmall, buildSmallWorkFormattingPrompt } from "./lib/prompts.js";
 import { searchSourcesForSection, buildSemanticKeywords, generateSearchPhrases, lookupDoiMetadata, paperToCitation, lookupDOIByBiblio, filterSourcesWithGemini } from "./lib/sourcesSearch.js";
 import { remapAndFormatCitations, applyCitationRemap, detectSourceGrouping, createReferenceDeduper } from "./lib/citationFormatting.js";
@@ -685,6 +685,7 @@ formatting — поля сторінки в мм якщо явно вказан�
         setStage("sources");
       } else {
         await saveToFirestore({ tplText, comment, materialText, authorData, info: newInfo, ...(extractedMethodReqs ? { methodRequirements: extractedMethodReqs } : {}), ...(mergedMethodInfo ? { methodInfo: mergedMethodInfo } : {}), stage: "writing", status: "new" });
+        resetGenerationCost();
         setStage("writing");
       }
     } catch (e) {
@@ -840,6 +841,7 @@ formatting — поля сторінки в мм якщо явно вказан�
     }
     setTezyCitations(citations);
     await saveToFirestore({ tezyCitations: citations, citText, stage: "writing", status: "sources_done" });
+    resetGenerationCost();
     setStage("writing");
     if (workType === "tezy") await doGenerateTezy(citations);
     else if (workType === "prezentatsiya") { /* user picks theme first, then clicks generate manually */ }
@@ -869,6 +871,7 @@ formatting — поля сторінки в мм якщо явно вказан�
     setTezyCitations(raw);
     setSourcesFormatted(false);
     await saveToFirestore({ tezyCitations: raw, citInputs, stage: "writing", status: "sources_done", sourcesFormatted: false });
+    resetGenerationCost();
     setStage("writing");
   };
 
@@ -876,6 +879,7 @@ formatting — поля сторінки в мм якщо явно вказан�
   const doFormatAndRemapCitations = async () => {
     if (!tezyCitations.length) return;
     setRunning(true); setLoadMsg("Форматую та розставляю джерела...");
+    resetGenerationCost();
     try {
       const allStructured = Object.values(citStructured).flat();
       const _effectiveSmOrder = sourcesOrderOverride || methodInfo?.sourcesOrder;
@@ -1493,6 +1497,7 @@ ${materialContext}${methodReqBlock}${commentBlock}${sourcesBlock}${!methodReqBlo
   // ── Генерація статті/есе ──
   const doGenerateSimple = async (citationsOverride) => {
     setRunning(true); setLoadMsg("Генерую...");
+    resetGenerationCost();
     const controller = new AbortController();
     genAbortRef.current = controller;
     const lang = info?.language || "Українська";
@@ -2637,7 +2642,7 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
                   </span>
                 </div>
                 <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                  <NavBtn onClick={() => { setCitInputs({}); saveToFirestore({ citInputs: {}, stage: "writing", status: "new" }); setStage("writing"); }}>
+                  <NavBtn onClick={() => { setCitInputs({}); saveToFirestore({ citInputs: {}, stage: "writing", status: "new" }); resetGenerationCost(); setStage("writing"); }}>
                     Пропустити без джерел →
                   </NavBtn>
                   <PrimaryBtn onClick={doGenerateFromCitInputs} disabled={totalCitCount === 0} loading={running} msg={loadMsg}
@@ -2808,6 +2813,7 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
                 <NavBtn onClick={() => {
                   setCitText(""); setTezyCitations([]);
                   saveToFirestore({ citText: "", tezyCitations: [], stage: "writing", status: "new" });
+                  resetGenerationCost();
                   setStage("writing");
                   if (workType === "tezy") doGenerateTezy([]);
                   else if (workType === "prezentatsiya") { /* user picks theme first */ }

@@ -146,12 +146,218 @@ export async function renderPlantUmlToPng(source) {
   }
 }
 
+// ─────────────────────────────────────────────
+// Числові діаграми: markdown-таблиця з даними, за якою одразу йде підпис
+// рисунка, → PNG-стовпчикова діаграма (Canvas 2D, без сторонніх бібліотек).
+// ─────────────────────────────────────────────
+const CHART_SERIES_COLORS = ["#3B6EA5", "#8FB3D6", "#1F3F5C", "#B8CFE3"];
+const CHART_FONT = '"Times New Roman", Times, serif';
+
+function parseChartNumber(raw) {
+  const cleaned = String(raw ?? "").trim().replace(/\s+/g, "").replace(/%$/, "").replace(",", ".");
+  const v = parseFloat(cleaned);
+  return Number.isFinite(v) ? v : null;
+}
+
+// Перший стовпець таблиці — підписи категорій, решта — числові ряди (за назвою
+// стовпця в шапці). Повертає null, якщо в таблиці взагалі немає жодного числа —
+// тоді таблиця лишається просто текстовою, без діаграми.
+function parseChartTable(tableLines) {
+  const dataLines = tableLines.filter(l => !/^\s*\|[-:| ]+\|\s*$/.test(l));
+  if (dataLines.length < 2) return null;
+  const rows = dataLines.map(l => l.replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.trim()));
+  const header = rows[0];
+  if (header.length < 2) return null;
+  const seriesNames = header.slice(1);
+  const labels = [];
+  const series = seriesNames.map(() => []);
+  let hasValue = false;
+  for (const row of rows.slice(1)) {
+    labels.push(row[0] || "");
+    for (let s = 0; s < seriesNames.length; s++) {
+      const v = parseChartNumber(row[s + 1]);
+      if (v !== null) hasValue = true;
+      series[s].push(v ?? 0);
+    }
+  }
+  return hasValue ? { labels, seriesNames, series } : null;
+}
+
+function niceChartMax(v) {
+  if (v <= 0) return 1;
+  const mag = Math.pow(10, Math.floor(Math.log10(v)));
+  const norm = v / mag;
+  const nice = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10;
+  return nice * mag;
+}
+
+function formatChartNum(v) {
+  const r = Math.round(v * 100) / 100;
+  const s = Number.isInteger(r) ? String(r) : r.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+  return s.replace(".", ",");
+}
+
+// Малює просту стовпчикову діаграму на offscreen canvas, повертає PNG у тому ж
+// форматі, що й renderPlantUmlToPng ({ data, width, height }). Розмір шрифту
+// підписів категорій автоматично зменшується, а за потреби підписи повертаються
+// під кутом — щоб вони не накладались одне на одне; вісь значень отримує запас
+// зверху під підпис над стовпцем, а її ліве поле підганяється під ширину чисел.
+// Підписи значень над стовпцями показуються лише для одного ряду даних — при
+// кількох рядах замість них унизу малюється легенда (інакше цифри зіллються).
+function renderChartFromParsed({ labels, seriesNames, series }) {
+  const DPR = 2;
+  const W = 620, H = 380;
+  const canvas = document.createElement("canvas");
+  canvas.width = W * DPR;
+  canvas.height = H * DPR;
+  const ctx = canvas.getContext("2d");
+  ctx.scale(DPR, DPR);
+
+  const INK = "#111111", GRID = "#e3e7ec", MUTED = "#6b7280";
+  const n = labels.length;
+  const seriesCount = seriesNames.length;
+  const showValueLabels = seriesCount === 1;
+  const showLegend = seriesCount > 1;
+  const legendH = showLegend ? 26 : 0;
+
+  const maxVal = Math.max(1e-9, ...series.flat());
+  const niceMax = niceChartMax(maxVal * (showValueLabels ? 1.15 : 1.08));
+
+  ctx.font = `11px ${CHART_FONT}`;
+  const steps = 4;
+  let maxTickW = 0;
+  for (let i = 0; i <= steps; i++) {
+    const w = ctx.measureText(formatChartNum((niceMax / steps) * i)).width;
+    if (w > maxTickW) maxTickW = w;
+  }
+  const padL = Math.max(40, Math.round(maxTickW) + 16);
+  const padR = 16;
+  const padT = showValueLabels ? 32 : 18;
+  const plotWidth = W - padL - padR;
+  const slot = plotWidth / n;
+
+  let labelFont = 13;
+  const fitsHorizontal = (font) => {
+    ctx.font = `${font}px ${CHART_FONT}`;
+    return labels.every(l => ctx.measureText(l).width <= slot - 6);
+  };
+  while (labelFont > 9 && !fitsHorizontal(labelFont)) labelFont -= 1;
+  const rotate = !fitsHorizontal(labelFont);
+  if (rotate) labelFont = 12;
+
+  const padB = (rotate ? 52 : 28) + legendH;
+  const plotT = padT;
+  const plotB = H - padB;
+  const plotH = plotB - plotT;
+
+  ctx.strokeStyle = GRID;
+  ctx.lineWidth = 1;
+  ctx.fillStyle = MUTED;
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  for (let i = 0; i <= steps; i++) {
+    const val = (niceMax / steps) * i;
+    const y = plotB - (val / niceMax) * plotH;
+    ctx.font = `11px ${CHART_FONT}`;
+    ctx.beginPath();
+    ctx.moveTo(padL, y);
+    ctx.lineTo(padL + plotWidth, y);
+    ctx.stroke();
+    ctx.fillText(formatChartNum(val), padL - 8, y);
+  }
+
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = 1.3;
+  ctx.beginPath();
+  ctx.moveTo(padL, plotB);
+  ctx.lineTo(padL + plotWidth, plotB);
+  ctx.stroke();
+
+  const groupPad = 0.28;
+  const groupW = slot * (1 - groupPad);
+  const barGap = seriesCount > 1 ? 2 : 0;
+  const barW = Math.max(2, (groupW - barGap * (seriesCount - 1)) / seriesCount);
+
+  labels.forEach((label, i) => {
+    const groupX = padL + slot * i + (slot - groupW) / 2;
+    for (let s = 0; s < seriesCount; s++) {
+      const v = series[s][i];
+      const barH = (v / niceMax) * plotH;
+      const x = groupX + s * (barW + barGap);
+      const y = plotB - barH;
+      ctx.fillStyle = CHART_SERIES_COLORS[s % CHART_SERIES_COLORS.length];
+      ctx.fillRect(x, y, barW, barH);
+      if (showValueLabels && barH > 1) {
+        ctx.fillStyle = INK;
+        ctx.font = `12px ${CHART_FONT}`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "alphabetic";
+        ctx.fillText(formatChartNum(v), x + barW / 2, Math.max(12, y - 6));
+      }
+    }
+    ctx.fillStyle = INK;
+    ctx.font = `${labelFont}px ${CHART_FONT}`;
+    const cx = padL + slot * i + slot / 2;
+    if (rotate) {
+      ctx.save();
+      ctx.translate(cx, plotB + 12);
+      ctx.rotate(-Math.PI / 5);
+      ctx.textAlign = "right";
+      ctx.textBaseline = "middle";
+      ctx.fillText(label, 0, 0);
+      ctx.restore();
+    } else {
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      ctx.fillText(label, cx, plotB + 8);
+    }
+  });
+
+  if (showLegend) {
+    ctx.font = `12px ${CHART_FONT}`;
+    ctx.textBaseline = "middle";
+    const swatch = 10, gap = 18;
+    const widths = seriesNames.map(nm => swatch + 6 + ctx.measureText(nm).width);
+    const totalW = widths.reduce((a, b) => a + b, 0) + gap * (seriesNames.length - 1);
+    let lx = padL + Math.max(0, (plotWidth - totalW) / 2);
+    const ly = H - legendH / 2 - 6;
+    seriesNames.forEach((nm, s) => {
+      ctx.fillStyle = CHART_SERIES_COLORS[s % CHART_SERIES_COLORS.length];
+      ctx.fillRect(lx, ly - swatch / 2, swatch, swatch);
+      ctx.fillStyle = INK;
+      ctx.textAlign = "left";
+      ctx.fillText(nm, lx + swatch + 6, ly);
+      lx += widths[s] + gap;
+    });
+  }
+
+  const pngB64 = canvas.toDataURL("image/png").split(",")[1];
+  const { width, height } = scaleToFit(W, H, 450, 320);
+  return { data: b64ToBytes(pngB64), width, height };
+}
+
+// tableLines → PNG діаграми, або null якщо в таблиці немає жодного числа (тоді
+// таблиця лишається як є, без діаграми — так само, як невдалий рендер PlantUML).
+export function renderDataChartToPng(tableLines) {
+  try {
+    const parsed = parseChartTable(tableLines);
+    if (!parsed) return null;
+    return renderChartFromParsed(parsed);
+  } catch {
+    return null;
+  }
+}
+
 // Заміняє кожен ```plantuml``` fence-блок на маркер \x00DIAGRAM<i>\x00 і рендерить
-// відповідні PNG паралельно. Викликається один раз для всього numberedContent.
-async function resolvePlantUmlDiagrams(content) {
+// відповідні PNG паралельно; таблицю з даними, за якою одразу йде підпис рисунка
+// (${figWord} N – ...), замінює на ту саму позначку, але з автоматично намальованою
+// діаграмою (таблиця лишається видимою текстом — вставляється лише картинка під
+// нею). Викликається один раз для всього numberedContent.
+async function resolveDiagrams(content, figWord) {
   const diagramImages = [];
   const jobs = [];
   const updated = { ...content };
+  const fwRe = new RegExp("^" + figWord.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s+\\d");
   for (const key of Object.keys(updated)) {
     const txt = updated[key];
     if (!txt) continue;
@@ -170,6 +376,26 @@ async function resolvePlantUmlDiagrams(content) {
         changed = true;
         continue;
       }
+      if (/^\s*\|/.test(lines[i])) {
+        const tableLines = [];
+        let j = i;
+        while (j < lines.length && /^\s*\|/.test(lines[j])) { tableLines.push(lines[j]); j++; }
+        outLines.push(...tableLines);
+        let k = j;
+        while (k < lines.length && !lines[k].trim()) k++;
+        if (k < lines.length && fwRe.test(lines[k].trim())) {
+          const img = renderDataChartToPng(tableLines);
+          const idx = diagramImages.length;
+          diagramImages.push(img);
+          outLines.push(`\x00DIAGRAM${idx}\x00`);
+          changed = true;
+        }
+        i = j;
+        continue;
+      }
+      // Застарілий рядок-підказку (з уже згенерованого раніше вмісту) більше не показуємо —
+      // тепер діаграма вставляється сама.
+      if (/^⚠/.test(lines[i].trim())) { i++; changed = true; continue; }
       outLines.push(lines[i]);
       i++;
     }
@@ -307,7 +533,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
   Object.keys(numberedContent).forEach(k => { if (numberedContent[k]) numberedContent[k] = numberedContent[k].replace(/'/g, '\u2019'); });
   const langCode = detectTextLanguage(Object.values(numberedContent).join("\n\n"), info?.language);
   const normAppendices = appendicesText ? appendicesText.replace(/'/g, '\u2019') : appendicesText;
-  const { content: diagramResolvedContent, diagramImages } = await resolvePlantUmlDiagrams(numberedContent);
+  const { content: diagramResolvedContent, diagramImages } = await resolveDiagrams(numberedContent, lc.figWord);
   Object.assign(numberedContent, diagramResolvedContent);
   const clientImages = await resolveClientIllustrations(illustrations);
   const drawingImages = await resolveClientIllustrations(clientDrawings, 1600);
@@ -482,10 +708,8 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
       children: [new TextRun({ text, font: FONT, size: SIZE, bold: true, color: "000000" })],
     });
   }
-  function makeTableDocx(lines, isDiagram = false) {
-    const borderColor = isDiagram ? "1A5EAB" : "000000";
-    const borderSize = isDiagram ? 6 : 1;
-    const border = { style: BorderStyle.SINGLE, size: borderSize, color: borderColor };
+  function makeTableDocx(lines) {
+    const border = { style: BorderStyle.SINGLE, size: 1, color: "000000" };
     const cellBorders = { top: border, bottom: border, left: border, right: border };
     const filteredLines = lines.filter(l => !/^\s*\|[-:| ]+\|\s*$/.test(l));
     const rows = filteredLines.map((l, rowIndex) => {
@@ -499,7 +723,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
             children: [new Paragraph({
               alignment: isHeader ? AlignmentType.CENTER : AlignmentType.LEFT,
               spacing: { line: 240, lineRule: "exact", before: 0, after: 0 },
-              children: [new TextRun({ text: cellText, font: FONT, size: SIZE_NUM, color: isDiagram ? "1A5EAB" : "000000", bold: isHeader && !!methodInfo?.formatting?.tableHeaderBold })],
+              children: [new TextRun({ text: cellText, font: FONT, size: SIZE_NUM, color: "000000", bold: isHeader && !!methodInfo?.formatting?.tableHeaderBold })],
             })],
           })
         ),
@@ -586,13 +810,9 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
           tableLines.push(lines[i]);
           i++;
         }
-        let j = i;
-        while (j < lines.length && !lines[j].trim()) j++;
-        const peekLine = j < lines.length ? lines[j].trim() : "";
-        const isDiagram = fwRe.test(peekLine);
-        lastWasDiagramTable = isDiagram;
+        lastWasDiagramTable = false;
         if (tableLines.filter(l => !/^\s*\|[-:| ]+\|\s*$/.test(l)).length > 0) {
-          result.push(makeTableDocx(tableLines, isDiagram));
+          result.push(makeTableDocx(tableLines));
           result.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
         }
         continue;
@@ -642,15 +862,6 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
           alignment: AlignmentType.CENTER,
           spacing: { line: LINE, lineRule: "auto", before: 0, after: LINE },
           children: [new TextRun({ text: line.trim(), font: FONT, size: SIZE, bold: fBold, italics: fItalic, color: isResolved ? "000000" : "B85C00" })],
-        }));
-        i++;
-        continue;
-      }
-      if (/^⚠/.test(line.trim())) {
-        result.push(new Paragraph({
-          alignment: AlignmentType.CENTER,
-          spacing: { line: LINE_SINGLE, lineRule: "auto", before: 0, after: LINE },
-          children: [new TextRun({ text: line.trim(), font: FONT, size: SIZE_NUM, color: "1A5EAB", italics: true, bold: true })],
         }));
         i++;
         continue;

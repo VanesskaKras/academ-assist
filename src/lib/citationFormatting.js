@@ -19,6 +19,8 @@
 //    а не під "І", як має бути за ДСТУ.
 
 import { normalizeAuthorsScript, isCyrillicText, normalizeAuthorScriptInRawLine } from "./transliteration.js";
+import { locateFragment } from "./textFragmentLocate.js";
+import { buildCitationInsertPrompt } from "./prompts.js";
 
 // Абетка авторів має бути єдиною в межах ОДНОГО запису (і, за замовчуванням,
 // відповідати абетці назви джерела) — інакше виходить "Savchuk I., Лисецька
@@ -629,6 +631,46 @@ export async function buildFinalReferenceList({
   const indexMap = new Array(rawRefs.length);
   rawIdxOfFinal.forEach((rawIdx, finalPos) => { indexMap[rawIdx] = finalPos + 1; });
   return { finalTexts, indexMap };
+}
+
+// Вставляє в текст підрозділу позначки джерел, які були йому призначені, але не
+// потрапили в текст природним шляхом (під час першої генерації чи фінального
+// проходу doRemapCitations) — ОДНИМ пакетним викликом ШІ на весь підрозділ
+// (buildCitationInsertPrompt: ШІ лише вказує "яке речення" + "з доданою
+// позначкою"), замість окремого виклику на кожне джерело й замість переписування
+// підрозділу цілком. Якщо ШІ вказала фрагмент неточно і locateFragment його не
+// знайшов — позначка приєднується в кінець тексту (без вигаданого вручну
+// речення-містка): гірше стилістично, зате гарантовано присутня в тексті.
+export async function insertMissingCitations({ sectionText, insertions, lang, callClaude, signal }) {
+  if (!insertions.length) return { text: sectionText, unresolved: [] };
+  const maxTokens = Math.min(8000, Math.max(1500, insertions.length * 400));
+  let raw;
+  try {
+    raw = await callClaude(
+      [{ role: "user", content: buildCitationInsertPrompt({ sectionText, insertions, lang }) }],
+      signal || null, "Ти — редактор академічного тексту. Повертай лише JSON, без пояснень.", maxTokens,
+    );
+  } catch (e) { console.error("insertMissingCitations error:", e); }
+
+  let parsed = [];
+  try {
+    const jsonMatch = raw?.match(/\[[\s\S]*\]/);
+    parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
+  } catch { /* нижче — фолбек для всіх пунктів */ }
+
+  let text = sectionText;
+  const unresolved = [];
+  insertions.forEach((ins, i) => {
+    const item = parsed.find(p => p.index === i);
+    const loc = item?.original ? locateFragment(text, item.original, null) : null;
+    if (loc && item.replacement) {
+      text = text.slice(0, loc.start) + item.replacement + text.slice(loc.end);
+    } else {
+      text = `${text.trimEnd()} ${ins.marker}`;
+      unresolved.push(ins.number);
+    }
+  });
+  return { text, unresolved };
 }
 
 // Дістає з бібліографічного опису прізвище автора (+ рік для APA) і формує текст

@@ -36,7 +36,7 @@ STRICTLY FORBIDDEN: table without caption. Every table MUST have a "${tableCapEx
   const figureRules = mFigureFormat
     ? `FIGURES — mandatory rules (per methodology):
 1. Number figures within each section: ${figWord} X.Y (X = section number, Y = figure number within section).
-2. When a diagram, chart, or graph with underlying numeric data is needed: create a markdown data table with the values to be plotted (do NOT add a "${tableWord}" caption above it), then place the figure caption BELOW the table (format per methodology: ${mFigureFormat}), then add exactly this line right after the caption: ⚠ ДІАГРАМА: виділіть таблицю вище → Вставка → Діаграма у Word.
+2. When a diagram, chart, or graph with underlying numeric data is needed: create a markdown data table with the values to be plotted (do NOT add a "${tableWord}" caption above it; first column = category labels, other columns = numeric series with a clear header name), then place the figure caption BELOW the table (format per methodology: ${mFigureFormat}) — the chart image is generated and inserted automatically, no hint line needed.
 3. ${plantUmlRule}
 4. For conceptual figures that fit neither case above — insert a standalone placeholder: ${figWord} X.Y – Figure name (caption below, no data table, no hint line, no code block).
 5. The text before the figure MUST contain a sentence referencing it, e.g.: "${figRef} X.Y".
@@ -44,9 +44,8 @@ STRICTLY FORBIDDEN: show the same data as both a "${tableWord}" and a diagram. F
     : `FIGURES — mandatory rules:
 1. When a diagram, chart, or graph with underlying numeric data is needed in a section: do NOT insert a standalone placeholder. Instead:
    a. Write a sentence in the text referencing the figure, e.g.: "${figRef} X.Y demonstrates..."
-   b. Create a markdown data table with the values to be plotted (do NOT add a "${tableWord}" caption above it).
-   c. On a new line immediately after the table, place the figure caption: ${figWord} X.Y – Figure name
-   d. On the very next line after the caption, add exactly this hint: ⚠ ДІАГРАМА: виділіть таблицю вище → Вставка → Діаграма у Word.
+   b. Create a markdown data table with the values to be plotted (do NOT add a "${tableWord}" caption above it; first column = category labels, other columns = numeric series with a clear header name).
+   c. On a new line immediately after the table, place the figure caption: ${figWord} X.Y – Figure name — the chart image is generated and inserted automatically, no hint line needed.
 2. ${plantUmlRule}
 3. For conceptual figures that fit neither case above — insert a standalone placeholder: ${figWord} X.Y – Figure name (no data table, no hint line, no code block).
 4. The text before any figure MUST contain a sentence referencing it, e.g.: "${figRef} X.Y". Without this reference no figure may appear.
@@ -198,7 +197,7 @@ Researchers and scholars: do NOT cite or mention Russian or Belarusian scholars.
 Do NOT use markdown markup: no #, ##, **, *, - at line start. Write plain text.
 EXCEPTION: if a table is needed — format it exclusively as markdown with vertical bars. EXCEPTION: a UML diagram may use a fenced "plantuml" code block (see FIGURES below).
 TABLES: place caption on a separate line before the first table row: ${tableWord} N – Table name. Text before the table MUST contain a sentence referencing it, e.g.: "${tableRef} N".
-FIGURES: when a diagram or chart with underlying numeric data is needed — create a data table (no "${tableWord}" caption above), place "${figWord} N – Figure name" BELOW the table, then add "⚠ ДІАГРАМА: виділіть таблицю вище → Вставка → Діаграма у Word." on the next line. When a structural/UML diagram is needed (class, sequence, use case, simple flowchart) — output a fenced "plantuml" code block (@startuml ... @enduml), then place "${figWord} N – Figure name" immediately below it (no hint line). For figures that fit neither case — standalone placeholder: ${figWord} N – Figure name. Text before any figure MUST contain a referencing sentence, e.g.: "${figRef} N". STRICTLY FORBIDDEN to write a figure-referencing sentence ("${figRef} N", "(рис. N)", etc.) without immediately following it with the actual figure content (data table + caption, OR plantuml block + caption, OR placeholder caption line) — a bare reference sentence with no figure after it is NEVER allowed. If a process, cycle, structure, or flow is described and a diagram is not truly necessary, do NOT mention "${figWord}" at all — just describe it in prose.
+FIGURES: when a diagram or chart with underlying numeric data is needed — create a data table (no "${tableWord}" caption above; first column = category labels, other columns = numeric series with a clear header name), place "${figWord} N – Figure name" BELOW the table — the chart image is generated and inserted automatically, no hint line needed. When a structural/UML diagram is needed (class, sequence, use case, simple flowchart) — output a fenced "plantuml" code block (@startuml ... @enduml), then place "${figWord} N – Figure name" immediately below it (no hint line). For figures that fit neither case — standalone placeholder: ${figWord} N – Figure name. Text before any figure MUST contain a referencing sentence, e.g.: "${figRef} N". STRICTLY FORBIDDEN to write a figure-referencing sentence ("${figRef} N", "(рис. N)", etc.) without immediately following it with the actual figure content (data table + caption, OR plantuml block + caption, OR placeholder caption line) — a bare reference sentence with no figure after it is NEVER allowed. If a process, cycle, structure, or flow is described and a diagram is not truly necessary, do NOT mention "${figWord}" at all — just describe it in prose.
 STRICTLY FORBIDDEN: show the same data as both a "${tableWord}" and a diagram. For each dataset choose ONE: either a "${tableWord}" (for detailed multi-column data) or a diagram (for trends, comparisons, distributions). Tables and diagrams in the same section MUST show different data.
 Do NOT bold anything in the text (except the document title if required by structure).
 STRICTLY FORBIDDEN to insert any internal sub-headings, paragraph titles, or standalone label lines within the body text. Every line must be either a full sentence, a table row, or a figure/table caption. No standalone short title-like lines allowed.
@@ -734,6 +733,39 @@ ${citationGuard}
 - Збережи структуру та обсяг розділу — приблизно стільки ж слів, скільки в оригіналі
 - Виправ конкретно те про що написано в зауваженні
 - Поверни ТІЛЬКИ текст розділу без жодних пояснень`;
+}
+
+// ── Точкова вставка джерел, призначених підрозділу, але не процитованих під час
+// генерації (один виклик на весь набір для підрозділу, а не рядок за рядком і не
+// переписування підрозділу цілком — ШІ лише вказує, до якого наявного речення
+// прив'язати позначку джерела, за схемою original/replacement із
+// buildAnnotationCorrectionBatchPrompt). ──
+export function buildCitationInsertPrompt({ sectionText, insertions, lang }) {
+  const isEnglish = /англ|english/i.test(lang || "");
+  const langLine = isEnglish ? "Write ONLY in English." : `Мова відповіді: ТІЛЬКИ ${lang || "українська"}.`;
+  const itemsBlock = insertions.map((ins, i) =>
+    `${i}. Джерело: "${ins.sourceText}"\n   Позначка для вставки (перенести ДОСЛІВНО як є): ${ins.marker}`
+  ).join("\n");
+  return `${langLine}
+Нижче — текст підрозділу академічної роботи. Для кожного джерела зі списку визнач, до якого РЕЧЕННЯ підрозділу воно найбільше підходить за змістом, і встав туди його позначку.
+
+ТЕКСТ ПІДРОЗДІЛУ:
+${sectionText}
+
+ДЖЕРЕЛА ДЛЯ ВСТАВКИ:
+${itemsBlock}
+
+Поверни JSON-масив, РІВНО по одному об'єкту на кожне джерело зі списку вище, у тому самому порядку — "index" відповідає його номеру (0, 1, 2...):
+[{"index":0,"original":"дослівна цитата ОДНОГО речення з ТЕКСТУ ПІДРОЗДІЛУ вище, до якого підходить це джерело","replacement":"те саме речення з доданою позначкою джерела в кінці (перед крапкою)"}]
+
+Правила:
+- "original" — дослівна цитата рівно одного речення з тексту підрозділу, без жодних змін
+- "replacement" — це САМЕ речення з доданою позначкою джерела наприкінці; більше нічого в ньому не змінюй
+- Позначку встав ТОЧНО в тому вигляді, як вказано у "Позначка для вставки" — не переформатовуй і не скорочуй її
+- Якщо жодне речення природно не підходить — обери найближче за темою і додай до нього коротке уточнення (5-10 слів) із позначкою в кінці
+- Різні джерела мають вказувати на РІЗНІ речення, якщо в тексті є хоч трохи вибору
+- Якщо "original" чи "replacement" містять символ лапок " — обов'язково екрануй його зворотним слешем всередині JSON-рядка
+- Поверни ТІЛЬКИ JSON-масив (без markdown і пояснень), рівно ${insertions.length} об'єктів`;
 }
 
 // ── Вигадати назви розділів/підрозділів, яких БРАКУЄ в готовій частині роботи клієнта (продовження) ──
