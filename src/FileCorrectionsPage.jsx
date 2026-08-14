@@ -730,12 +730,18 @@ export default function FileCorrectionsPage({ onBack }) {
         } else if (item.status === "needs_review") {
           failed.push({ task, reason: item.note || "Потрібна ручна перевірка — ШІ не може підтвердити правильне значення." });
         } else {
-          // Для виділень/коментарів фрагмент для заміни вже точно відомий програмі
-          // (task.annotatedText, узятий напряму з XML при витягу анотацій) — не
-          // покладаємось на те, що ШІ дослівно процитує його в JSON. Саме тут раніше
-          // ламався парсинг через незекрановані лапки в довгих виділеннях.
-          const original = kind === "annotation" ? task.annotatedText : item.original;
-          const loc = original ? locateFragment(text, original, task.context) : null;
+          // Кандидат на заміну: спершу шматок, який сам вказав ШІ (item.original) —
+          // він вужчий і точніший (бачить повний текст роботи, тож для нотаток
+          // кольором шрифту вкаже конкретне речення, а не цілий абзац, як раніше).
+          // Якщо ШІ процитував неточно і цей шматок не знайшовся — для анотацій є
+          // резерв: task.annotatedText, узятий напряму з XML при витягу анотацій,
+          // на 100% присутній у документі саме таким, яким його бачив код.
+          let original = kind === "annotation" ? (item.original || task.annotatedText) : item.original;
+          let loc = original ? locateFragment(text, original, task.context) : null;
+          if (!loc && kind === "annotation" && item.original && task.annotatedText && item.original !== task.annotatedText) {
+            original = task.annotatedText;
+            loc = locateFragment(text, original, task.context);
+          }
           if (loc) {
             // Контроль обсягу — лише для суттєвих ручних завдань (кілька речень
             // і більше); для короткого виділення природно, що заміна коротша.
