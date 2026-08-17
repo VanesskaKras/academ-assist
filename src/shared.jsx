@@ -352,9 +352,12 @@ export async function exportSimpleDocx({ title, sections, info, citations, order
         li++; continue;
       }
 
-      // Якщо citations передано явно — пропускаємо вбудований блок джерел з тексту
-      if (citations !== undefined && SOURCES_HEADER_RE.test(trimmedClean)) { inSources = true; li++; continue; }
-      if (citations !== undefined && inSources) { li++; continue; }
+      // Якщо citations передано явно й непорожньо — пропускаємо вбудований блок джерел
+      // з тексту (він буде замінений явним списком нижче). Порожній масив ([]) —
+      // це "джерел ще не підібрано", а не "явний список" — тоді лишаємо вбудований
+      // блок як є, інакше він просто зникає без заміни.
+      if (citations && citations.length > 0 && SOURCES_HEADER_RE.test(trimmedClean)) { inSources = true; li++; continue; }
+      if (citations && citations.length > 0 && inSources) { li++; continue; }
 
       // Підпис таблиці: "Таблиця N – Назва" — оформлення за methodInfo.formatting.tableFormat
       // (та сама логіка, що й для великих робіт): номер окремим рядком праворуч +

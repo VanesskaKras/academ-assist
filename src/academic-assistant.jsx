@@ -4202,7 +4202,7 @@ ${secBlocks}
     setPaused(false); setPlanLoading(false); setMethodInfo(null); setCommentAnalysis(null); setSourceDist({}); setSourceTotal(0);
     setKeywords({}); setCitInputs({}); setAllCitLoading(false); setRefList([]); setCitInputsSnapshot(null); setFigureRefs({}); setFigureKeywords([]); setFigKwLoading(false);
     setSpeechText(""); setAppendicesText(""); setEconProfile("");
-    setAnnotationUk(""); setAnnotationEn(""); setAnnotationLoading(false); setAnnotationConfirmed(false);
+    setAnnotationUk(""); setAnnotationEn(""); setAnnotationLoading(false);
     setPresentationReady(false); setPresentationMsg(""); setSlideJson(null);
     runningRef.current = false; setRunning(false);
     autoModeRef.current = false; setAutoRunning(false); setAutoError(null); setAutoStepLabel("");

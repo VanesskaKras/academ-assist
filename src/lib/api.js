@@ -5,23 +5,57 @@ export const MODEL_FAST = "claude-haiku-4-5-20251001";
 
 // ── Запобіжник від "втечі" вартості однієї генерації (напр. баг у циклі, що
 // зумовлює десятки дорогих викликів поспіль). generationCost рахує суму cost
-// з усіх викликів callClaude, поки хтось явно не скине її через
+// з усіх викликів callClaude І callGemini, поки хтось явно не скине її через
 // resetGenerationCost() — кожна "одна генерація" (написання роботи, розстановка
-// джерел, пакетне застосування правок тощо) скидає її на старті. Перевірка йде
-// НА ПОЧАТКУ виклику (до мережевого запиту): щойно накопичена сума перевищує
-// ліміт, наступні виклики одразу відмовляють — уже сплачені й повернуті раніше
-// результати НЕ відкидаються, зупиняється лише продовження ланцюжка.
+// джерел, пакетне застосування правок тощо) скидає її на старті.
+//
+// Вартість РЕЗЕРВУЄТЬСЯ синхронно (до першого await), одразу після перевірки
+// ліміту — це закриває "check-then-act" гонку: коли кілька викликів стартують
+// паралельно (напр. Promise.all при розбитті джерел навпіл), кожен наступний
+// вже бачить резерв попередніх, а не стартовий generationCost. Після відповіді
+// різниця між реальною вартістю й резервом коригується (settle) — при помилці/
+// обриві резерв просто звільняється.
 export const GENERATION_COST_LIMIT = 3; // USD
 let generationCost = 0;
 export function resetGenerationCost() { generationCost = 0; }
 export function getGenerationCost() { return generationCost; }
 
-export async function callClaude(messages, signal, systemPrompt, maxTokens, onWait, model, opts) {
+function checkCostLimit() {
   if (generationCost > GENERATION_COST_LIMIT) {
     const err = new Error(`⛔ Зупинено: вартість цієї генерації вже перевищила ліміт $${GENERATION_COST_LIMIT} (витрачено $${generationCost.toFixed(2)}). Уже згенероване/виправлене лишилось як є — перевірте документ вручну.`);
     err.isCostLimit = true;
     throw err;
   }
+}
+
+// Повертає {settle} — виклич settle(actualCost) щойно реальна вартість відома;
+// якщо виклик впав/обірвався до цього — обов'язково settle(0) в finally.
+function reserveCost(estimatedCost) {
+  generationCost += estimatedCost;
+  let settled = false;
+  return {
+    settle(actualCost) {
+      if (settled) return;
+      settled = true;
+      generationCost += actualCost - estimatedCost;
+    },
+    get settled() { return settled; },
+  };
+}
+
+export async function callClaude(messages, signal, systemPrompt, maxTokens, onWait, model, opts) {
+  checkCostLimit();
+  const CLAUDE_PRICES = { [MODEL]: { in: 3, out: 15 }, [MODEL_FAST]: { in: 0.80, out: 4 } };
+  const claudeP = CLAUDE_PRICES[model || MODEL] || CLAUDE_PRICES[MODEL];
+  const reservation = reserveCost(((maxTokens || 8000) * claudeP.out) / 1_000_000);
+  try {
+    return await callClaudeInner(messages, signal, systemPrompt, maxTokens, onWait, model, opts, reservation);
+  } finally {
+    if (!reservation.settled) reservation.settle(0);
+  }
+}
+
+async function callClaudeInner(messages, signal, systemPrompt, maxTokens, onWait, model, opts, reservation) {
   const MAX_RETRIES = 5;
   let delay = 12000;
   const useStream = (maxTokens || 8000) >= 2000; // stream for large responses only
@@ -112,7 +146,7 @@ export async function callClaude(messages, signal, systemPrompt, maxTokens, onWa
           const p = PRICES[model || MODEL] || PRICES[MODEL];
           // Запис у кеш коштує 1.25х ціни input, читання з кешу — 0.1х (тарифи Anthropic prompt caching)
           const cost = (inputTokens * p.in + outputTokens * p.out + cacheCreationTokens * p.in * 1.25 + cacheReadTokens * p.in * 0.1) / 1_000_000;
-          generationCost += cost;
+          reservation.settle(cost);
           window.dispatchEvent(new CustomEvent("apicost", { detail: { cost, model: model || MODEL, inTok: inputTokens + cacheCreationTokens + cacheReadTokens, outTok: outputTokens } }));
         }
       }
@@ -132,7 +166,7 @@ export async function callClaude(messages, signal, systemPrompt, maxTokens, onWa
       const cacheReadTokens = data.usage.cache_read_input_tokens || 0;
       // Запис у кеш коштує 1.25х ціни input, читання з кешу — 0.1х (тарифи Anthropic prompt caching)
       const cost = (data.usage.input_tokens * p.in + data.usage.output_tokens * p.out + cacheCreationTokens * p.in * 1.25 + cacheReadTokens * p.in * 0.1) / 1_000_000;
-      generationCost += cost;
+      reservation.settle(cost);
       window.dispatchEvent(new CustomEvent("apicost", { detail: { cost, model: model || MODEL, inTok: data.usage.input_tokens + cacheCreationTokens + cacheReadTokens, outTok: data.usage.output_tokens } }));
     }
     return data.content.map(b => b.text || "").join("") || "";
@@ -174,7 +208,20 @@ async function uploadLargeFile(base64Data, mimeType) {
   return data.file?.uri;
 }
 
+const GEMINI_PRICES = { "gemini-2.5-flash-lite": { in: 0.10, out: 0.40 }, "gemini-2.5-flash": { in: 0.15, out: 0.60 } };
+
 export async function callGemini(messages, signal, systemPrompt, maxTokens, onWait, model, jsonMode) {
+  checkCostLimit();
+  const geminiP = GEMINI_PRICES[model || "gemini-2.5-flash-lite"] || GEMINI_PRICES["gemini-2.5-flash-lite"];
+  const reservation = reserveCost(((maxTokens || 8000) * geminiP.out) / 1_000_000);
+  try {
+    return await callGeminiInner(messages, signal, systemPrompt, maxTokens, onWait, model, jsonMode, reservation);
+  } finally {
+    if (!reservation.settled) reservation.settle(0);
+  }
+}
+
+async function callGeminiInner(messages, signal, systemPrompt, maxTokens, onWait, model, jsonMode, reservation) {
   const MAX_RETRIES = 5;
   const FALLBACK_MODEL = "gemini-2.5-flash";
   const FALLBACK_AFTER_503 = 2;
@@ -265,9 +312,9 @@ export async function callGemini(messages, signal, systemPrompt, maxTokens, onWa
       throw new Error("Gemini: порожня відповідь" + (finishReason ? ` (${finishReason})` : ""));
     }
     if (data.usageMetadata) {
-      const GEMINI_PRICES = { "gemini-2.5-flash-lite": { in: 0.10, out: 0.40 }, "gemini-2.5-flash": { in: 0.15, out: 0.60 } };
-      const gp = GEMINI_PRICES[currentModel] || { in: 0.10, out: 0.40 };
+      const gp = GEMINI_PRICES[currentModel] || GEMINI_PRICES["gemini-2.5-flash-lite"];
       const cost = (data.usageMetadata.promptTokenCount * gp.in + data.usageMetadata.candidatesTokenCount * gp.out) / 1_000_000;
+      reservation.settle(cost);
       window.dispatchEvent(new CustomEvent("apicost", { detail: { cost, model: currentModel, inTok: data.usageMetadata.promptTokenCount, outTok: data.usageMetadata.candidatesTokenCount } }));
     }
     return text;

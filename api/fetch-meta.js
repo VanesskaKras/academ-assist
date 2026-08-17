@@ -12,6 +12,33 @@ function withTimeout(promise, ms = 6000) {
   ]);
 }
 
+// ── Захист від SSRF: клієнт передає довільну URL, яку сервер сам фетчить.
+// Блокуємо не-http(s) схеми та адреси, що ведуть на локальну/внутрішню мережу
+// (loopback, link-local включно з cloud-metadata 169.254.169.254, приватні діапазони).
+function isBlockedHost(hostname) {
+  const h = hostname.toLowerCase();
+  if (h === 'localhost' || h.endsWith('.localhost') || h === '0.0.0.0' || h === '::1') return true;
+  const ipv4 = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4) {
+    const [a, b] = [parseInt(ipv4[1], 10), parseInt(ipv4[2], 10)];
+    if (a === 127) return true; // loopback
+    if (a === 169 && b === 254) return true; // link-local / cloud metadata
+    if (a === 10) return true; // private
+    if (a === 172 && b >= 16 && b <= 31) return true; // private
+    if (a === 192 && b === 168) return true; // private
+    if (a === 0) return true;
+  }
+  return false;
+}
+
+function isSafeUrl(rawUrl) {
+  let u;
+  try { u = new URL(rawUrl); } catch { return false; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+  if (isBlockedHost(u.hostname)) return false;
+  return true;
+}
+
 function extractMetaPages(html) {
   // ── citation_firstpage / citation_lastpage (OJS, більшість журналів) ──
   const first = html.match(/<meta[^>]+name=["']citation_firstpage["'][^>]+content=["'](\d+)["']/i)
@@ -105,8 +132,10 @@ export default async function handler(req, res) {
 
   const { url: rawUrl } = req.body || {};
   if (!rawUrl || typeof rawUrl !== 'string') return res.status(200).json({ pages: null });
+  if (!isSafeUrl(rawUrl)) return res.status(200).json({ pages: null });
 
   const url = resolveHtmlUrl(rawUrl);
+  if (!isSafeUrl(url)) return res.status(200).json({ pages: null });
 
   try {
     const r = await withTimeout(

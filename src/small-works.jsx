@@ -2642,7 +2642,7 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
                   </span>
                 </div>
                 <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                  <NavBtn onClick={() => { setCitInputs({}); saveToFirestore({ citInputs: {}, stage: "writing", status: "new" }); resetGenerationCost(); setStage("writing"); }}>
+                  <NavBtn disabled={running} onClick={() => { setCitInputs({}); saveToFirestore({ citInputs: {}, stage: "writing", status: "new" }); resetGenerationCost(); setStage("writing"); }}>
                     Пропустити без джерел →
                   </NavBtn>
                   <PrimaryBtn onClick={doGenerateFromCitInputs} disabled={totalCitCount === 0} loading={running} msg={loadMsg}
@@ -2810,7 +2810,7 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
 
               {/* Кнопки дій */}
               <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                <NavBtn onClick={() => {
+                <NavBtn disabled={running} onClick={() => {
                   setCitText(""); setTezyCitations([]);
                   saveToFirestore({ citText: "", tezyCitations: [], stage: "writing", status: "new" });
                   resetGenerationCost();
@@ -2853,7 +2853,7 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
               </>
             ) : (
               <div style={{ textAlign: "center", padding: "40px 0" }}>
-                <PrimaryBtn onClick={doGenerateTezy} loading={running} msg={loadMsg} label="Генерувати тези →" />
+                <PrimaryBtn onClick={() => doGenerateTezy()} loading={running} msg={loadMsg} label="Генерувати тези →" />
               </div>
             )}
           </div>
@@ -2870,7 +2870,7 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
                   Натисніть щоб розпочати генерацію.
                 </p>
                 <div style={{ display: "flex", gap: 10, justifyContent: "center", alignItems: "center" }}>
-                  <PrimaryBtn onClick={doGenerateSimple} loading={running} msg={loadMsg} label={`Генерувати ${cfg.label} →`} />
+                  <PrimaryBtn onClick={() => doGenerateSimple()} loading={running} msg={loadMsg} label={`Генерувати ${cfg.label} →`} />
                   {running && (
                     <button
                       onClick={() => genAbortRef.current?.abort()}
@@ -2935,7 +2935,7 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
                   {(materialText.trim() || materialFiles.length > 0) ? `Матеріал: ${[materialText.trim() ? "текст" : null, materialFiles.length > 0 ? `${materialFiles.length} файл(ів)` : null].filter(Boolean).join(" + ")}. ` : ""}
                   Генеруватиму структуру та текст для кожного слайду.
                 </p>
-                <PrimaryBtn onClick={doGeneratePresentation} loading={running} msg={loadMsg} label="Генерувати презентацію →" />
+                <PrimaryBtn onClick={() => doGeneratePresentation()} loading={running} msg={loadMsg} label="Генерувати презентацію →" />
               </div>
             ) : (
               <>
