@@ -350,9 +350,10 @@ export function renderDataChartToPng(tableLines) {
 
 // Заміняє кожен ```plantuml``` fence-блок на маркер \x00DIAGRAM<i>\x00 і рендерить
 // відповідні PNG паралельно; таблицю з даними, за якою одразу йде підпис рисунка
-// (${figWord} N – ...), замінює на ту саму позначку, але з автоматично намальованою
-// діаграмою (таблиця лишається видимою текстом — вставляється лише картинка під
-// нею). Викликається один раз для всього numberedContent.
+// (${figWord} N – ...), замінює на автоматично намальовану діаграму (сама таблиця
+// прибирається з тексту, щоб не дублювати ті самі дані таблицею й графіком одразу;
+// якщо рендер графіка не вдався — таблиця лишається як фолбек). Викликається один
+// раз для всього numberedContent.
 async function resolveDiagrams(content, figWord) {
   const diagramImages = [];
   const jobs = [];
@@ -380,15 +381,17 @@ async function resolveDiagrams(content, figWord) {
         const tableLines = [];
         let j = i;
         while (j < lines.length && /^\s*\|/.test(lines[j])) { tableLines.push(lines[j]); j++; }
-        outLines.push(...tableLines);
         let k = j;
         while (k < lines.length && !lines[k].trim()) k++;
-        if (k < lines.length && fwRe.test(lines[k].trim())) {
-          const img = renderDataChartToPng(tableLines);
+        const img = (k < lines.length && fwRe.test(lines[k].trim())) ? renderDataChartToPng(tableLines) : undefined;
+        if (img) {
+          // Графік вдалося намалювати — таблицю-джерело не дублюємо текстом, лишаємо тільки картинку.
           const idx = diagramImages.length;
           diagramImages.push(img);
           outLines.push(`\x00DIAGRAM${idx}\x00`);
           changed = true;
+        } else {
+          outLines.push(...tableLines);
         }
         i = j;
         continue;
@@ -1020,11 +1023,49 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     { text: "", align: "center", spaceBefore: 3840 },
     { text: currentYear, align: "center" },
   ];
-  const resolvedLines = titlePageLines?.length
+  // Компенсує найбільший (типово останній, перед "Місто – Рік") spaceBefore титулки так, щоб
+  // сума висот усіх рядків точно дорівнювала висоті сторінки — незалежно від того, скільки
+  // фізичних рядків реально займуть довга тема роботи чи довге ПІБ. Без цього нижній блок
+  // зсувається на фіксовану "оцінку на око" ШІ/дефолту й титулка або не дотягує до низу
+  // сторінки, або переливається на другу.
+  function autoFitTitlePageLines(lines) {
+    if (!Array.isArray(lines) || !lines.length) return lines;
+    let flexIdx = -1, flexValue = -1;
+    lines.forEach((item, idx) => {
+      const sb = item.spaceBefore || 0;
+      if (sb > flexValue) { flexValue = sb; flexIdx = idx; }
+    });
+    // Компенсуємо лише коли є явно виражений "великий" відступ (реальний layout зі спейсерами) —
+    // якщо його нема (напр. старий шлях з titlePage-рядком без spaceBefore), нічого не чіпаємо.
+    if (flexIdx === -1 || flexValue < 800) return lines;
+
+    const contentWidth = 11906 - L - R;
+    const pageContentHeight = 16838 - T - B;
+    const lineHeightTwips = fontSizeHalfPt => Math.round((fontSizeHalfPt / 2) * 1.15 * 20);
+    const estimateLineCount = (text, fontSizeHalfPt) => {
+      if (!text) return 1;
+      const avgCharWidth = (fontSizeHalfPt / 2) * 20 * 0.5; // приблизна середня ширина символу ~0.5em
+      const charsPerLine = Math.max(1, Math.floor(contentWidth / avgCharWidth));
+      return Math.max(1, Math.ceil(text.length / charsPerLine));
+    };
+
+    let consumed = 0;
+    lines.forEach((item, idx) => {
+      const fs = item.fontSize ? item.fontSize * 2 : SIZE;
+      if (idx !== flexIdx) consumed += item.spaceBefore || 0;
+      consumed += estimateLineCount(item.text, fs) * lineHeightTwips(fs);
+    });
+
+    const MIN_FLEX = 200;
+    const finalFlex = Math.max(MIN_FLEX, pageContentHeight - consumed);
+    return lines.map((item, idx) => idx === flexIdx ? { ...item, spaceBefore: finalFlex } : item);
+  }
+
+  const resolvedLines = autoFitTitlePageLines(titlePageLines?.length
     ? titlePageLines.map(item => ({ ...item, text: applyTopic(item.text) }))
     : (titlePage?.trim()
       ? titlePage.split("\n").map(text => ({ text: applyTopic(text), align: RIGHT_LINE_RE.test(text.trim()) ? "right" : "center" }))
-      : buildDefaultTitlePageLines());
+      : buildDefaultTitlePageLines()));
   if (resolvedLines) {
     resolvedLines.forEach((item, idx) => {
       const itemSize = item.fontSize ? item.fontSize * 2 : SIZE;

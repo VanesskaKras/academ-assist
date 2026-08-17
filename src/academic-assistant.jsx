@@ -3780,17 +3780,17 @@ ${secBlocks}
     });
     const rawRefs = deduper.canonicalRefs;
 
-    // Якщо алфавітний порядок — сортуємо і перебудовуємо індекси. Групування
-    // (закони окремо / мовні блоки) вмикається лише за явним сигналом методички
-    // (detectSourceGrouping) — інакше плаский алфавітний список, щоб прев'ю тут
-    // збігалося з фінальним результатом doRemapCitations.
+    // Якщо алфавітний порядок — сортуємо і перебудовуємо індекси. Мовні блоки
+    // (кирилиця/латиниця) — завжди; закони окремо — лише за явним сигналом методички
+    // (detectSourceGrouping), щоб прев'ю тут збігалося з фінальним результатом
+    // doRemapCitations.
     let allRefs, indexMap;
     if (isAlphabetical) {
       const _workLang = info?.language || "Українська";
-      const _latinFirst = /англ|english|польськ|polish|нім|german|франц|french|іспан|spanish|італ|italian/i.test(_workLang);
-      const { lawFirst: _lawFirst, foreignGroup: _foreignGroup } = detectSourceGrouping({
+      const { lawFirst: _lawFirst, foreignGroup: _foreignGroup, foreignFirst: _foreignFirst } = detectSourceGrouping({
         sourcesFormatRules: methodInfo?.sourcesFormatRules, sourcesGrouping: methodInfo?.sourcesGrouping,
       });
+      const _latinFirst = _foreignFirst ?? /англ|english|польськ|polish|нім|german|франц|french|іспан|spanish|італ|italian/i.test(_workLang);
       const _isLaw = s => _lawFirst && /^(закон|кодекс|конституція|постанова|указ\s|декрет\s|наказ\s|розпорядження\s)/i.test(s.trim());
       const langGroup = (s) => {
         if (!_foreignGroup) return 0;

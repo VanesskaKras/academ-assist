@@ -338,16 +338,29 @@ const dedupeNormalize = str => str.toLowerCase()
   .replace(/\s*(url\s*:|https?:\/\/\S+|\(дата звернення[^)]*\))/gi, "")
   .replace(/[.,;:&–—\-«»"'()[\]]/g, "").replace(/\s+/g, " ").trim();
 
-// Дедуплікатор сирих текстів джерел: точний збіг за нормалізованим текстом.
-// add(text) — ідемпотентний: повторний виклик із уже відомим текстом повертає
-// ІНДЕКС того самого канонічного запису, не додає новий. canonicalRefs — унікальні
-// тексти (довший/з URL варіант лишається як канонічний).
+// DOI — найнадійніший ключ дублікату: те саме джерело, додане двічі різними шляхами
+// (напр. з двох різних пошукових фраз чи структурованим і сирим записом), часто
+// відрізняється формулюванням/порядком полів настільки, що dedupeNormalize(text) дає
+// РІЗНІ рядки для того самого запису — і дублікат не ловиться (виявляється лише
+// візуально в готовому списку, вже ПІСЛЯ того, як ЛЛМ причесала обидва до однакового
+// вигляду за стилем). DOI у складі URL — стабільний ідентифікатор, не залежить від
+// форматування навколишнього тексту.
+const DOI_RE = /\b10\.\d{4,9}\/[^\s"'<>]+/i;
+const extractDoiKey = text => {
+  const m = String(text).match(DOI_RE);
+  return m ? m[0].replace(/[).,;\]]+$/, "").toLowerCase() : null;
+};
+
+// Дедуплікатор сирих текстів джерел: збіг за DOI (якщо є в обох) або, інакше, за
+// нормалізованим текстом. add(text) — ідемпотентний: повторний виклик із уже відомим
+// текстом повертає ІНДЕКС того самого канонічного запису, не додає новий.
+// canonicalRefs — унікальні тексти (довший/з URL варіант лишається як канонічний).
 export function createReferenceDeduper() {
   const canonicalRefs = [];
-  const seenKeys = new Map(); // нормалізований ключ → індекс у canonicalRefs
+  const seenKeys = new Map(); // ключ (DOI або нормалізований текст) → індекс у canonicalRefs
 
   function add(text) {
-    const key = dedupeNormalize(text);
+    const key = extractDoiKey(text) || dedupeNormalize(text);
     const hasUrl = /https?:\/\/\S+/i.test(text);
     if (seenKeys.has(key)) {
       const idx = seenKeys.get(key);
@@ -451,31 +464,57 @@ export function isElectronicResource(text, structuredPaper) {
   return hasUrl && !hasIssueOrPages;
 }
 
-// Вирішує, яке СТРУКТУРНЕ групування (крім самого алфавіту) застосувати до списку
-// джерел — і робить це ЛИШЕ за явним сигналом з методички, а не за замовчуванням.
-// "Алфавітний порядок" у методичці означає плаский єдиний список; групування
-// (закони окремо / друковані-електронні окремо / мовні блоки) вмикається, тільки
-// якщо методичка прямо про нього каже — інакше "алфавіт" в UI обіцяє одне, а
-// фактичний список (розбитий на групи) виглядає невпорядкованим для студента.
-// sourcesGrouping — окреме структуроване поле з методички саме про мовне
-// групування ("спочатку українські, потім англійські…") — його наявність і є
-// сигналом для foreignGroup.
+// Мовний порядок ("хто першим — укр чи іноземні") зі structured-поля sourcesGrouping
+// методички ("спочатку українські, потім англійські…"). Повертає true, якщо
+// методичка явно вимагає іноземні/латиницю ПЕРШИМИ, false — якщо явно вимагає
+// українські першими, null — якщо методички/поля немає, чи текст не вказує порядок
+// прямо (тоді вирішує мова самої роботи, див. виклик у buildFinalReferenceList).
+function detectForeignFirstFromGrouping(sourcesGrouping) {
+  const s = (sourcesGrouping || "").trim();
+  if (!s) return null;
+  const FOREIGN = "(іноземн\\w*|англ\\w*|латин\\w*|зарубіжн\\w*|польськ\\w*|нім\\w*|французьк\\w*)";
+  const UKR = "(укра[їі]нськ\\w*)";
+  const POS = "(спочатку|першими|на\\s+початку)";
+  const foreignFirst = new RegExp(`${FOREIGN}[^.]{0,40}${POS}`, "i").test(s) || new RegExp(`${POS}[^.]{0,40}${FOREIGN}`, "i").test(s);
+  const ukrFirst = new RegExp(`${UKR}[^.]{0,40}${POS}`, "i").test(s) || new RegExp(`${POS}[^.]{0,40}${UKR}`, "i").test(s);
+  if (foreignFirst && !ukrFirst) return true;
+  if (ukrFirst && !foreignFirst) return false;
+  return null;
+}
+
+// Вирішує, яке СТРУКТУРНЕ групування застосувати до списку джерел. Закони окремо
+// (lawFirst) і друковані/електронні окремо (typeGroup) — ЛИШЕ за явним сигналом з
+// методички (sourcesFormatRules), інакше "алфавіт" в UI обіцяє одне, а фактичний
+// список виглядає невпорядкованим для студента.
+// Мовне групування (foreignGroup: кирилиця/латиниця окремими блоками) — УВІМКНЕНЕ
+// ЗАВЖДИ: єдиного природного алфавітного порядку між кирилицею й латиницею не існує
+// (localeCompare для різних абеток непослідовний між парами рядків), тож без поділу
+// на блоки суцільний список виглядає хаотично навіть за коректно працюючого
+// сортування. Порядок блоків (укр/латиниця першими) — з detectForeignFirstFromGrouping
+// (сигнал sourcesGrouping методички), якщо методичка не каже прямо — вирішує мова
+// самої роботи (латиниця першою лише для роботи, написаної іноземною мовою).
 export function detectSourceGrouping({ sourcesFormatRules, sourcesGrouping } = {}) {
   const rules = sourcesFormatRules || "";
   const lawFirst = /(закон\w*|кодекс\w*|нормативн\w*|законодавч\w*)[^.]{0,50}(спочатку|першими|на\s+початку|окрем\w*|перед)/i.test(rules)
     || /(спочатку|першими|на\s+початку)[^.]{0,50}(закон\w*|кодекс\w*|нормативн\w*|законодавч\w*)/i.test(rules);
   const typeGroup = /(друкован\w*|книг\w*|статт\w*)[^.]{0,80}(електрон\w*\s*ресурс\w*)/i.test(rules)
     || /(електрон\w*\s*ресурс\w*)[^.]{0,80}(друкован\w*|книг\w*|статт\w*)/i.test(rules);
-  const foreignGroup = !!(sourcesGrouping && sourcesGrouping.trim());
-  return { lawFirst, typeGroup, foreignGroup };
+  const foreignFirst = detectForeignFirstFromGrouping(sourcesGrouping);
+  return { lawFirst, typeGroup, foreignGroup: true, foreignFirst };
 }
 
-// Сортує вже ВІДФОРМАТОВАНИЙ (прізвище спереду) список джерел. За замовчуванням —
-// плаский алфавітний список (усі grouping-прапорці вимкнені). Якщо методичка явно
-// вимагає групування (detectSourceGrouping) — застосовує групи ДСТУ 8302:2015:
+// Сортує вже ВІДФОРМАТОВАНИЙ (прізвище спереду) список джерел. Кирилиця й латиниця
+// завжди окремими блоками (foreignGroup — вмикається завжди у detectSourceGrouping),
+// закони/тип-ресурсу — лише якщо методичка про них явно каже. Групи ДСТУ 8302:2015:
 // закони → кирилиця книги/статті → кирилиця електронні ресурси → іноземні
 // (латиниця) для роботи українською мовою; або закони → іноземні → кирилиця
 // книги/статті → кирилиця електронні ресурси для іноземної роботи.
+// Оскільки group — детермінована функція саме від isForeignAuthorScript(item.text)
+// (жоден інший прапорець не змішує foreign=true й foreign=false в одну group), у
+// межах одного group завжди РІВНО одна мовна абетка, тож locale(a.item) нижче
+// лишається сталим для всіх пар усередині group — localeCompare порівнює послідовно
+// (не "стрибає" між "uk"/"en" залежно від того, хто з пари випадково опинився "a" —
+// саме такий стрибок і ламав сортування раніше, коли group ще не гарантував це).
 // items: [{ text, structured }]
 export function sortReferencesForDisplay(items, { latinFirst = false, grouping = {} } = {}) {
   const { lawFirst = false, typeGroup = false, foreignGroup = false } = grouping;
@@ -623,7 +662,10 @@ export async function buildFinalReferenceList({
   } else {
     const items = byInputOrder.map((text, i) => ({ text, structured: findStructured(rawRefs[i]), rawIdx: i }));
     const grouping = detectSourceGrouping({ sourcesFormatRules, sourcesGrouping });
-    const sortedItems = sortReferencesForDisplay(items, { latinFirst: isLatinWork, grouping });
+    // Порядок блоків: якщо методичка явно каже (grouping.foreignFirst) — за нею,
+    // інакше — за мовою самої роботи (isLatinWork).
+    const latinFirst = grouping.foreignFirst ?? isLatinWork;
+    const sortedItems = sortReferencesForDisplay(items, { latinFirst, grouping });
     finalTexts = sortedItems.map(it => it.text);
     rawIdxOfFinal = sortedItems.map(it => it.rawIdx);
   }
