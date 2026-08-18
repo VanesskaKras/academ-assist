@@ -17,7 +17,7 @@ import { extractReadyWorkStructure, quickParsePlanIds } from "./lib/readyWorkExt
 import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, getEmpiricalSections, getEconSections, getTechnicalSections, CODE_FILE_EXTENSIONS, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, getLangLabels, insertBeforeTail, detectRequestedChapterCount } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { getAcademicDefaults, classifyAppendixItem, detectSpecialty, normalizeWorkType } from "./lib/academicDefaults.js";
-import { searchByPhrase, filterSourcesWithGemini, getEconInstitutionalSources, generateAlternatePhrases } from "./lib/sourcesSearch.js";
+import { searchByPhrase, filterSourcesWithGemini, getEconInstitutionalSources, generateAlternatePhrases, paperToCitation } from "./lib/sourcesSearch.js";
 import { applyCitationRemap, buildFinalReferenceList, buildCiteFormats, createReferenceDeduper, detectSourceGrouping, insertMissingCitations } from "./lib/citationFormatting.js";
 import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
 import { StagePills } from "./components/StagePills.jsx";
@@ -253,6 +253,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [sourcesSearchLoading, setSourcesSearchLoading] = useState({});
   const [sourcesSearchError, setSourcesSearchError] = useState({});
   const [abstractsMap, setAbstractsMap] = useState({}); // { citationString: abstractSnippet }
+  const [sourceThesisMap, setSourceThesisMap] = useState({}); // { citationString: theza, під яку джерело шукалось }
   const [searchPageCount, setSearchPageCount] = useState({}); // лічильник натискань "оновити" на секцію
   const [seenSourceKeys, setSeenSourceKeys] = useState({}); // заголовки вже показаних джерел — не показувати повторно
   const [phraseGroups, setPhraseGroups] = useState({}); // { secId: [{phrase, papers}] }
@@ -347,6 +348,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
           if (d.citInputs) setCitInputs(d.citInputs);
           if (d.citStructured) setCitStructured(d.citStructured);
           if (d.abstractsMap) setAbstractsMap(d.abstractsMap);
+          if (d.sourceThesisMap) setSourceThesisMap(d.sourceThesisMap);
           if (d.refList) setRefList(d.refList);
           if (d.suggestedSources) {
             setSuggestedSources(d.suggestedSources);
@@ -457,7 +459,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     if (stage !== "sources") return;
     clearTimeout(citSaveTimer.current);
     citSaveTimer.current = setTimeout(() => {
-      saveToFirestore({ citInputs, citStructured, abstractsMap });
+      saveToFirestore({ citInputs, citStructured, abstractsMap, sourceThesisMap });
     }, 500);
     return () => clearTimeout(citSaveTimer.current);
   }, [citInputs]); // eslint-disable-line
@@ -532,7 +534,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     clearTimeout(citSaveTimer.current);
     clearTimeout(sourcesSaveTimer.current);
     try {
-      await saveToFirestore({ citInputs, citStructured, abstractsMap, suggestedSources, phraseGroups, keywords });
+      await saveToFirestore({ citInputs, citStructured, abstractsMap, sourceThesisMap, suggestedSources, phraseGroups, keywords });
     } catch (e) { console.error("Pre-back save error:", e); }
     onBack?.();
   };
@@ -2105,15 +2107,48 @@ ${planSummary}
           m[1].split(/[,;]/).forEach(s => citedLocalNums.add(Number(s.trim())));
         });
         const missingLocal = localSourceLines
-          .map((line, i) => ({ number: i + 1, marker: `[${i + 1}]`, sourceText: line }))
+          .map((line, i) => ({
+            number: i + 1, marker: `[${i + 1}]`, sourceText: line,
+            abstract: abstractsMap[line], thesis: sourceThesisMap[line],
+          }))
           .filter(s => !citedLocalNums.has(s.number));
         if (missingLocal.length) {
           setLoadMsg(`Довставляю пропущені джерела: ${sec.label}...`);
           try {
-            const { text } = await insertMissingCitations({
+            const { text, unresolved } = await insertMissingCitations({
               sectionText: finalResult, insertions: missingLocal, lang, callClaude, signal: ctrl.signal,
             });
             finalResult = cleanResult(text);
+
+            // Джерела, які виявились такими, що не підтверджують жодного речення
+            // (замість форсованої хибної прив'язки "за темою") — пробуємо знайти
+            // заміну під ту саму тезу, під яку початкове джерело шукалось.
+            const updatedLines = [...localSourceLines];
+            let linesChanged = false;
+            if (unresolved.length && !ctrl.signal.aborted) {
+              for (const num of unresolved) {
+                const idx = num - 1;
+                const oldLine = localSourceLines[idx];
+                const thesis = sourceThesisMap[oldLine];
+                if (!thesis) continue;
+                setLoadMsg(`Шукаю заміну джерела: ${sec.label}...`);
+                const replacement = await retryUnmatchedSource({
+                  secId: sec.id, sectionText: finalResult, marker: `[${num}]`, thesis, lang, signal: ctrl.signal,
+                });
+                if (replacement) {
+                  finalResult = cleanResult(replacement.text);
+                  updatedLines[idx] = replacement.newLine;
+                  linesChanged = true;
+                  if (replacement.paper.abstract) {
+                    setAbstractsMap(prev => ({ ...prev, [replacement.newLine]: replacement.paper.abstract }));
+                  }
+                  setSourceThesisMap(prev => ({ ...prev, [replacement.newLine]: thesis }));
+                }
+              }
+            }
+            if (linesChanged) {
+              setCitInputs(prev => ({ ...prev, [sec.id]: updatedLines.join("\n") }));
+            }
           } catch (e) { console.error("Довставлення пропущених джерел одразу після генерації:", e); }
         }
       }
@@ -3521,7 +3556,11 @@ ${secBlock}
           });
           if (!fresh.length) continue;
 
-          const top15 = await filterSourcesWithGemini(fresh.slice(0, 25), filterLabel, topicCtx, 20, thesis);
+          const top15raw = await filterSourcesWithGemini(fresh.slice(0, 25), filterLabel, topicCtx, 20, thesis);
+          // Тегуємо тезою, під яку джерело шукалось — щоб при примусовій довставці цитати
+          // (insertMissingCitations) можна було звірити зміст джерела САМЕ з цією тезою,
+          // а не тільки з назвою підрозділу в цілому, і, якщо не підійде, шукати заміну.
+          const top15 = thesis ? top15raw.map(p => ({ ...p, sourceThesis: thesis })) : top15raw;
           top15.forEach(p => globalSeen.add((p.title || '').toLowerCase().slice(0, 60)));
 
           const existingIdx = updatedGroups.findIndex(g => g.phrase === phrase);
@@ -3623,6 +3662,45 @@ ${secBlock}
       setSourcesSearchError(prev => ({ ...prev, [secId]: e.message }));
     }
     setSourcesSearchLoading(prev => ({ ...prev, [secId]: false }));
+  };
+
+  // ── Заміна джерела, яке хірургічна вставка (insertMissingCitations) чесно визнала
+  // таким, що не підтверджує жодного речення підрозділу ("match":false для всіх
+  // речень) — шукаємо нове джерело під ту саму тезу, під яку початкове шукалось,
+  // і намагаємось вставити його замість форсованої хибної прив'язки "за темою".
+  // Повертає null, якщо гідної заміни не знайшлось (тоді джерело просто лишається
+  // без цитати — чесніше за хибне посилання).
+  const retryUnmatchedSource = async ({ secId, sectionText, marker, thesis, lang, signal }) => {
+    if (!thesis) return null;
+    try {
+      const topicCtx = [info?.topic, info?.direction, info?.subject].filter(Boolean).join(' ');
+      const filterLabel = (sectionsRef.current.find(s => s.id === secId)?.label || '')
+        .replace(/^РОЗДІЛ\s+[IVXivxІVХ\d]+[.\s:]+/i, '').trim();
+      const existingTitles = new Set(
+        (citStructured[secId] || []).map(p => (p.title || '').toLowerCase().slice(0, 60))
+      );
+      const candidates = await searchByPhrase(thesis, 15, 1, true, 0, '');
+      const fresh = candidates.filter(p => {
+        const key = (p.title || '').toLowerCase().slice(0, 60);
+        return key && !existingTitles.has(key);
+      });
+      if (!fresh.length || signal?.aborted) return null;
+      const filtered = await filterSourcesWithGemini(fresh.slice(0, 25), filterLabel, topicCtx, 3, thesis);
+      const best = [...filtered].sort((a, b) => (b.geminiScore ?? 0) - (a.geminiScore ?? 0))[0];
+      if (!best || (best.geminiScore ?? 0) < 70 || signal?.aborted) return null;
+
+      const newLine = paperToCitation(best);
+      if (!newLine) return null;
+      const { text, unresolved } = await insertMissingCitations({
+        sectionText, insertions: [{ number: 1, marker, sourceText: newLine, abstract: best.abstract, thesis }],
+        lang, callClaude, signal,
+      });
+      if (unresolved.length) return null; // заміна теж не підтвердила жодного речення
+      return { text, newLine, paper: best };
+    } catch (e) {
+      console.error('retryUnmatchedSource error:', e.message);
+      return null;
+    }
   };
 
   // ── Ключові слова ──
@@ -4633,10 +4711,11 @@ ${secBlocks}
               doSearchSources={doSearchSources}
               doRegenSectionSources={doRegenSectionSources}
               onAddAbstracts={(entries) => setAbstractsMap(prev => ({ ...prev, ...entries }))}
+              onAddSourceTheses={(entries) => setSourceThesisMap(prev => ({ ...prev, ...entries }))}
               onFinish={doRemapCitations} remapLoading={remapLoading} stopRemap={stopRemap}
               onProceedToWriting={() => setStage("writing")}
               setStage={setStage}
-              onSave={() => saveToFirestore({ citInputs, citStructured, abstractsMap, suggestedSources, phraseGroups, keywords })}
+              onSave={() => saveToFirestore({ citInputs, citStructured, abstractsMap, sourceThesisMap, suggestedSources, phraseGroups, keywords })}
               saving={saving}
               hasGeneratedContent={Object.keys(content).some(id => !readyWorkImportedIds.includes(id))}
               onRegenWithNewSources={() => {

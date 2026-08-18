@@ -987,8 +987,9 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     // Узагальнені токени титулки (не лише практика) — методичка іноді наводить у Додатках
     // уже ЗАПОВНЕНИЙ приклад титулки (чуже ім'я/кафедра), і крок читання методички заміняє
     // такі конкретні значення на ці токени, щоб вони не потрапили в роботу клієнта як є.
-    // Даних для підстановки поки немає (немає окремого поля вводу для звичайної роботи) —
-    // тому лишається видимий плейсхолдер, який видно й треба вручну заповнити на кроці "Готово".
+    // Дані беруться з аналізу тексту замовлення (buildTemplateAnalysisPrompt) — якщо клієнт
+    // їх явно не вказав, лишається видимий плейсхолдер "___________", який треба вручну
+    // заповнити на кроці "Готово".
     "[ФАКУЛЬТЕТ]": info?.faculty,
     "[КАФЕДРА]": info?.department,
     "[КЕРІВНИК]": info?.supervisorUniversity,
@@ -1010,18 +1011,20 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
   const RIGHT_LINE_RE = /^(Група|Курс|ПІБ\s+студента|ПІБ\s+керівника)\s*:/i;
   const buildDefaultTitlePageLines = () => [
     { text: "МІНІСТЕРСТВО ОСВІТИ І НАУКИ УКРАЇНИ", align: "center", bold: true },
-    { text: "[Назва університету]", align: "center" },
+    { text: info?.university || "[Назва університету]", align: "center" },
+    ...(info?.faculty ? [{ text: info.faculty, align: "center" }] : []),
+    ...(info?.department ? [{ text: `Кафедра ${info.department}`, align: "center" }] : []),
     { text: "", align: "center", spaceBefore: 960 },
     { text: (info?.type || "КУРСОВА РОБОТА").toUpperCase(), align: "center", bold: true },
     ...(info?.subject ? [{ text: `з дисципліни: ${info.subject}`, align: "center" }] : []),
     { text: `на тему: «${topicStr || "[тема]"}»`, align: "center" },
     { text: "", align: "center", spaceBefore: 2880 },
-    { text: "Група: ___________", align: "right" },
-    { text: "Курс: ___________", align: "right" },
-    { text: "ПІБ студента: ___________", align: "right" },
-    { text: "ПІБ керівника: ___________", align: "right" },
+    { text: `Група: ${info?.studentGroup || "___________"}`, align: "right" },
+    { text: `Курс: ${info?.course || "___________"}`, align: "right" },
+    { text: `ПІБ студента: ${info?.studentName || "___________"}`, align: "right" },
+    { text: `ПІБ керівника: ${info?.supervisorUniversity || "___________"}`, align: "right" },
     { text: "", align: "center", spaceBefore: 3840 },
-    { text: currentYear, align: "center" },
+    { text: info?.city ? `${info.city} – ${currentYear}` : currentYear, align: "center" },
   ];
   // Компенсує найбільший (типово останній, перед "Місто – Рік") spaceBefore титулки так, щоб
   // сума висот усіх рядків точно дорівнювала висоті сторінки — незалежно від того, скільки
@@ -1030,14 +1033,20 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
   // сторінки, або переливається на другу.
   function autoFitTitlePageLines(lines) {
     if (!Array.isArray(lines) || !lines.length) return lines;
+    // Флекс-кандидат — рядок з НАЙБІЛЬШИМ ЯВНО заданим spaceBefore (навіть 0 рахується —
+    // головне, що поле присутнє). Це ознака структурованого шаблону (buildDefaultTitlePageLines
+    // чи titlePageTemplate з методички), на відміну від старого фолбек-шляху (titlePage-рядки
+    // без цього поля взагалі), де компенсувати нема що — нема визначеного "гнучкого" місця під
+    // спейсер. Порогу на "мінімальну величину" відступу (раніше — 800 twips) навмисно немає:
+    // методичка часто задає кілька ПОМІРНИХ відступів без одного явно величезного, і без
+    // компенсації такий шаблон так само переливається на другу сторінку при фактичних полях
+    // цього замовлення — тож підганяти треба завжди, коли є куди.
     let flexIdx = -1, flexValue = -1;
     lines.forEach((item, idx) => {
-      const sb = item.spaceBefore || 0;
-      if (sb > flexValue) { flexValue = sb; flexIdx = idx; }
+      if (item.spaceBefore == null) return;
+      if (item.spaceBefore > flexValue) { flexValue = item.spaceBefore; flexIdx = idx; }
     });
-    // Компенсуємо лише коли є явно виражений "великий" відступ (реальний layout зі спейсерами) —
-    // якщо його нема (напр. старий шлях з titlePage-рядком без spaceBefore), нічого не чіпаємо.
-    if (flexIdx === -1 || flexValue < 800) return lines;
+    if (flexIdx === -1) return lines;
 
     const contentWidth = 11906 - L - R;
     const pageContentHeight = 16838 - T - B;

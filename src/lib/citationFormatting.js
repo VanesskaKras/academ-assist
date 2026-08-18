@@ -680,9 +680,11 @@ export async function buildFinalReferenceList({
 // проходу doRemapCitations) — ОДНИМ пакетним викликом ШІ на весь підрозділ
 // (buildCitationInsertPrompt: ШІ лише вказує "яке речення" + "з доданою
 // позначкою"), замість окремого виклику на кожне джерело й замість переписування
-// підрозділу цілком. Якщо ШІ вказала фрагмент неточно і locateFragment його не
-// знайшов — позначка приєднується в кінець тексту (без вигаданого вручну
-// речення-містка): гірше стилістично, зате гарантовано присутня в тексті.
+// підрозділу цілком. Якщо ШІ визнала, що жодне речення джерело не підтверджує
+// ("match": false), або вказала фрагмент неточно і locateFragment його не знайшов —
+// джерело НЕ вставляється (жодної хибної прив'язки "за темою"), а лишається в
+// unresolved, щоб виклик спробував знайти заміну (retryUnmatchedSource) або, як
+// останній варіант, лишити користувачу попередження.
 export async function insertMissingCitations({ sectionText, insertions, lang, callClaude, signal }) {
   if (!insertions.length) return { text: sectionText, unresolved: [] };
   const maxTokens = Math.min(8000, Math.max(1500, insertions.length * 400));
@@ -704,11 +706,11 @@ export async function insertMissingCitations({ sectionText, insertions, lang, ca
   const unresolved = [];
   insertions.forEach((ins, i) => {
     const item = parsed.find(p => p.index === i);
-    const loc = item?.original ? locateFragment(text, item.original, null) : null;
+    const hasMatch = item && item.match !== false && item.original;
+    const loc = hasMatch ? locateFragment(text, item.original, null) : null;
     if (loc && item.replacement) {
       text = text.slice(0, loc.start) + item.replacement + text.slice(loc.end);
     } else {
-      text = `${text.trimEnd()} ${ins.marker}`;
       unresolved.push(ins.number);
     }
   });

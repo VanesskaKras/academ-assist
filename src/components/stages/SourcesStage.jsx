@@ -78,7 +78,7 @@ export function SourcesStage({
   keywords, kwLoading, kwError, setKwError, methodInfo, commentAnalysis, onStopSearch,
   allRefs, refList, showMissingSources, citInputsSnapshot, allCitLoading, info,
   suggestedSources, phraseGroups, sourcesSearchLoading, sourcesSearchError, doSearchSources, doRegenSectionSources,
-  doGenKeywords, onAddAbstracts, onFinish, remapLoading, stopRemap, onProceedToWriting, setStage,
+  doGenKeywords, onAddAbstracts, onAddSourceTheses, onFinish, remapLoading, stopRemap, onProceedToWriting, setStage,
   onRegenWithNewSources, hasGeneratedContent, onSave, saving,
   citStyleOverride, sourcesOrderOverride, onCitStyleChange, onSourcesOrderChange,
   citFootnotes, onCitFootnotesChange,
@@ -191,6 +191,16 @@ export function SourcesStage({
         if (p.abstract && newLines[i]) entries[newLines[i]] = p.abstract;
       });
       if (Object.keys(entries).length) onAddAbstracts(entries);
+    }
+
+    // Зберігаємо тезу, під яку джерело шукалось — потрібна для звірки змісту при
+    // довставці пропущеної цитати й для пошуку заміни, якщо джерело не підійде
+    if (onAddSourceTheses) {
+      const entries = {};
+      papers.forEach((p, i) => {
+        if (p.sourceThesis && newLines[i]) entries[newLines[i]] = p.sourceThesis;
+      });
+      if (Object.keys(entries).length) onAddSourceTheses(entries);
     }
 
     // Використовуємо prev щоб уникнути stale closure; фільтруємо рядки, які вже є (захист від повторного натискання)
