@@ -22,7 +22,7 @@ import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { enforceWordCount } from "./lib/wordCount.js";
 import { playDoneSound } from "./lib/audio.js";
 import {
-  filterSourcesWithGemini, searchByPhrase, getEconInstitutionalSources, generateAlternatePhrases,
+  filterSourcesWithGemini, searchByPhrase, getEconInstitutionalSources, generateAlternatePhrases, enrichSources,
 } from "./lib/sourcesSearch.js";
 import { exportToDocx, exportPracticePlanToDocx } from "./lib/exportDocx.js";
 import { remapAndFormatCitations, applyCitationRemap, createReferenceDeduper } from "./lib/citationFormatting.js";
@@ -616,7 +616,9 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
           });
           if (!fresh.length) continue;
 
-          const top15 = await filterSourcesWithGemini(fresh.slice(0, 20), filterLabel, topicCtx, 20, thesis);
+          const top15raw = await filterSourcesWithGemini(fresh.slice(0, 20), filterLabel, topicCtx, 20, thesis);
+          const top15tagged = thesis ? top15raw.map(p => ({ ...p, sourceThesis: thesis })) : top15raw;
+          const top15 = await enrichSources(top15tagged);
           top15.forEach(p => globalSeen.add((p.title || '').toLowerCase().slice(0, 60)));
 
           const existingIdx = updatedGroups.findIndex(g => g.phrase === phrase);
@@ -631,25 +633,28 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
         }
       }
 
-      // ── Добір при нестачі: якщо релевантних (score≥70) джерел менше, ніж треба, — поступово розширюємо діапазон років (+2, потім +3),
-      // а якщо й це не дало результату — пробуємо альтернативні (синонімічні) пошукові фрази ──
+      // ── Добір при нестачі: спершу закриваємо тези без жодного підтвердженого джерела,
+      // потім розширюємо діапазон років (+2, потім +3), потім — альтернативні фрази ──
       if (!stopSearchRef.current) {
         const sourceTarget = calcSourceTarget(mainSecs);
         const sourceDist = calcSourceDist(mainSecs, sourceTarget);
         const needed = sourceDist[secId] || 3;
-        // Джерело без geminiScore не пройшло перевірку filterSourcesWithGemini (яка тепер
-        // повертає лише ≥70 за трьома обов'язковими осями) — рахуємо його як 0, не як прохідне.
-        const countGood = () => updatedGroups.flatMap(g => g.papers).filter(p => (p.geminiScore ?? 0) >= 70).length;
+        // Джерело рахується "добрим" лише якщо пройшло Прохід А+Б (score≥70) І гейт повноти.
+        const isGood = (p) => (p.geminiScore ?? 0) >= 70 && p._complete !== false;
+        const countGood = () => updatedGroups.flatMap(g => g.papers).filter(isGood).length;
+        const countForThesis = (t) => updatedGroups.flatMap(g => g.papers).filter(p => p.sourceThesis === t && isGood(p)).length;
         const allTriedPhrases = normalizedTheses.flatMap(t => t.phrases || []);
 
-        const backfillPhrase = async (phrase, extraYears, enPhrase = '') => {
+        const backfillPhrase = async (phrase, extraYears, enPhrase = '', thesisText = '') => {
           const candidates = await searchByPhrase(phrase, 10, page, true, extraYears, enPhrase);
           const fresh = candidates.filter(p => {
             const key = (p.title || '').toLowerCase().slice(0, 60);
             return key && !globalSeen.has(key);
           });
           if (!fresh.length) return;
-          const filtered = await filterSourcesWithGemini(fresh.slice(0, 20), filterLabel, topicCtx, 20);
+          const filteredRaw = await filterSourcesWithGemini(fresh.slice(0, 20), filterLabel, topicCtx, 20, thesisText);
+          const filteredTagged = thesisText ? filteredRaw.map(p => ({ ...p, sourceThesis: thesisText })) : filteredRaw;
+          const filtered = await enrichSources(filteredTagged);
           filtered.forEach(p => globalSeen.add((p.title || '').toLowerCase().slice(0, 60)));
           const existingIdx = updatedGroups.findIndex(g => g.phrase === phrase);
           if (existingIdx >= 0) {
@@ -660,6 +665,16 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
           setPhraseGroups(prev => ({ ...prev, [secId]: [...updatedGroups] }));
           setSuggestedSources(prev => ({ ...prev, [secId]: updatedGroups.flatMap(g => g.papers) }));
         };
+
+        // Пріоритетний раунд: тези без жодного підтвердженого джерела — власними фразами першими.
+        const uncoveredTheses = normalizedTheses.filter(t => t.thesis && countForThesis(t.thesis) === 0);
+        for (const t of uncoveredTheses) {
+          if (stopSearchRef.current || countForThesis(t.thesis) > 0) continue;
+          for (let i = 0; i < (t.phrases || []).length; i++) {
+            if (stopSearchRef.current || countForThesis(t.thesis) > 0) break;
+            await backfillPhrase(t.phrases[i], 2, nextEnPhrase(i), t.thesis);
+          }
+        }
 
         for (const extraYears of [2, 3]) {
           if (stopSearchRef.current || countGood() >= needed) break;
@@ -727,7 +742,8 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
 
 ЗАВДАННЯ — для кожного розділу:
 
-КРОК 1. Визнач 4–5 конкретних тез — про що писатиметься у цьому розділі (3–7 слів кожна, конкретний аспект змісту, не загальні назви розділів).
+КРОК 1. Визнач 4–5 конкретних тез — повних змістовних тверджень про те, що саме доводитиметься у цьому розділі: який об'єкт/група/явище, в якому аспекті, в якому контексті (країна, період, галузь). Не назва розділу і не загальна категорія, а конкретне твердження (7–14 слів).
+Приклад: тема "Дистанційна зайнятість в ІТ" → теза "вплив дистанційної роботи на продуктивність працівників ІТ-компаній України", а НЕ просто "дистанційна робота" чи "продуктивність праці".
 
 КРОК 2. Для кожної тези склади 2–3 пошукових фрази українською.
 Кожна фраза = [1–2 ключових слова з ТЕМИ роботи] + [конкретний аспект тези].
@@ -812,7 +828,8 @@ ${secBlocks}
 
 ЗАВДАННЯ — для розділу:
 
-КРОК 1. Визнач 4–5 конкретних тез — про що писатиметься у цьому розділі (3–7 слів кожна, конкретний аспект змісту, не загальні назви).
+КРОК 1. Визнач 4–5 конкретних тез — повних змістовних тверджень про те, що саме доводитиметься у цьому розділі: який об'єкт/група/явище, в якому аспекті, в якому контексті (країна, період, галузь). Не назва розділу і не загальна категорія, а конкретне твердження (7–14 слів).
+Приклад: тема "Дистанційна зайнятість в ІТ" → теза "вплив дистанційної роботи на продуктивність працівників ІТ-компаній України", а НЕ просто "дистанційна робота" чи "продуктивність праці".
 
 КРОК 2. Для кожної тези склади 2–3 пошукових фрази українською.
 Кожна фраза = [1–2 ключових слова з ТЕМИ роботи] + [конкретний аспект тези].

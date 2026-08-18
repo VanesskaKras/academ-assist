@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { lookupDoiMetadata, fetchPagesFromUrl, paperToCitation, lookupDOIByBiblio, enrichManualLine, enrichFullSourceInfo, fetchGoogleBooksPageCount } from "../../lib/sourcesSearch.js";
+import { paperToCitation, enrichManualLine, enrichFullSourceInfo, enrichSources } from "../../lib/sourcesSearch.js";
 import { isTechnical } from "../../lib/planUtils.js";
 import { TA_WHITE } from "../../shared.jsx";
 import { Heading, NavBtn, PrimaryBtn, GreenBtn } from "../Buttons.jsx";
@@ -47,6 +47,16 @@ function SourceCard({ paper, checked, onToggle }) {
               background: '#fff5e0', color: '#8a5a00', border: '1px solid #e8c870',
               flexShrink: 0,
             }}>📚 книга</span>
+          )}
+          {paper._complete === false && paper._missingFields?.length > 0 && (
+            <span
+              title={`Не вдалось автоматично підтягнути: ${paper._missingFields.join(', ')}`}
+              style={{
+                fontSize: 10, padding: '1px 6px', borderRadius: 8,
+                background: '#fff0f0', color: '#a03030', border: '1px solid #e8b0b0',
+                flexShrink: 0,
+              }}
+            >⚠ неповні дані: {paper._missingFields.join(', ')}</span>
           )}
         </div>
         <div style={{ fontSize: 12, color: '#1a1a14', lineHeight: '1.4', marginBottom: 2 }}>
@@ -130,44 +140,11 @@ export function SourcesStage({
   const insertSources = async (secId, papersToAdd, { capForeign = true } = {}) => {
     if (!papersToAdd.length) return;
 
-    // Крок 1: збагачуємо всі записи з DOI через CrossRef/OpenAlex
-    const afterDoi = await Promise.all(papersToAdd.map(async p => {
-      if (!p.doi) return p;
-      const meta = await lookupDoiMetadata(p.doi);
-      if (!meta) return p;
-      return {
-        ...p,
-        ...(meta.authorsStructured?.length ? { authorsStructured: meta.authorsStructured } : {}),
-        ...(meta.authors?.length ? { authors: meta.authors } : {}),
-        ...(meta.pages && !p.pages ? { pages: meta.pages } : {}),
-        ...(meta.volume ? { volume: meta.volume } : {}),
-        ...(meta.issue ? { issue: meta.issue } : {}),
-        ...(meta.journal && (!p.venue || /^[\w.-]+\.[a-zA-Z]{2,}$/.test(p.venue.trim())) ? { venue: meta.journal } : {}),
-        ...(meta.publisher ? { publisher: meta.publisher } : {}),
-        ...(meta.publisherLocation ? { publisherLocation: meta.publisherLocation } : {}),
-      };
-    }));
-
-    // Крок 1.5: для паперів без doi і без url — шукаємо DOI в CrossRef за назвою+автором
-    const afterDoiBiblio = await Promise.all(afterDoi.map(p => lookupDOIByBiblio(p)));
-
-    // Крок 2: для джерел без сторінок — пробуємо витягти з HTML мета-тегів сторінки журналу
-    const afterMeta = await Promise.all(afterDoiBiblio.map(async p => {
-      if (p.pages) return p;
-      const pageUrl = p.url || (p.doi ? `https://doi.org/${p.doi}` : null);
-      if (!pageUrl) return p;
-      const pages = await fetchPagesFromUrl(pageUrl);
-      return pages ? { ...p, pages } : p;
-    }));
-
-    // Крок 3: для книг без сторінок — загальний обсяг через Google Books
-    // (конкретна сторінка цитати з книги невідома, але діапазон 1–N дає з чого обрати)
-    const enriched = await Promise.all(afterMeta.map(async p => {
-      if (p.type !== 'book' || p.pages || p.totalPages) return p;
-      const firstAuthorSurname = (Array.isArray(p.authors) ? (p.authors[0] || '') : '').split(/[\s,]+/)[0] || '';
-      const totalPages = await fetchGoogleBooksPageCount(p.title, firstAuthorSurname);
-      return totalPages ? { ...p, totalPages } : p;
-    }));
+    // Автозбагачення метаданих (DOI/сторінки/видавництво). Для джерел, що вже пройшли
+    // пошук (авто чи ручний вибір з пропозицій), це здебільшого no-op — enrichSources
+    // уже викликається раніше, в самому пошуковому циклі; тут — страховка для рядків,
+    // які потрапили сюди іншим шляхом (напр. дозбагачення вже після ручного редагування).
+    const enriched = await enrichSources(papersToAdd);
 
     // Обмежуємо зарубіжні до 30% (для технічних робіт — до 50%, бо якісних укр. джерел по вузьких IT-темах об'єктивно мало).
     // capForeign=false — свідома відмова від квоти (ручний вибір користувача або останній fallback
@@ -235,12 +212,15 @@ export function SourcesStage({
     setSelectedSugg(prev => ({ ...prev, [secId]: [] }));
   };
 
-  // ── Автовставка: щойно пошук для підрозділу завершується, вставляємо топ-N найрелевантніших джерел
+  // ── Автовставка: щойно пошук для підрозділу завершується, вставляємо підтверджені джерела
   // без очікування ручного вибору — користувач перевіряє й редагує результат у полі нижче.
   // Правила автовставки (свідомо без компромісів заради кількості):
-  //  - лише score ≥ 70 (пройшло всі три обов'язкові осі в filterSourcesWithGemini: об'єкт/аспект/контекст);
-  //  - лише якщо є анотація — без анотації судження ґрунтується тільки на назві, а назва оманлива
-  //    (виняток: institutional-джерела — це фіксовані державні/офіційні посилання, не результат пошуку);
+  //  - лише score ≥ 70 (пройшло Прохід А і Прохід Б — незалежний "адвокат диявола" — в filterSourcesWithGemini);
+  //  - лише якщо пройшло гейт повноти (_complete !== false: є рік, видання/видавництво, анотація —
+  //    виняток institutional-джерела, це фіксовані державні/офіційні посилання, не результат пошуку);
+  //  - розподіл не лише за кількістю, а за покриттям тез: спершу по одному найкращому джерелу
+  //    на кожну тезу, і лише потім — другі/треті по колу, щоб не вийшло "10 джерел на одну тезу
+  //    і жодного на іншу";
   //  - якщо навіть так не набирається потрібна кількість — НЕ послаблюємо поріг, а вставляємо
   //    скільки є підтверджених; решту користувач бачить і добирає вручну зі списку нижче (без автовставки).
   const autoInsertedRef = useRef({});
@@ -258,12 +238,43 @@ export function SourcesStage({
       const needed = sourceDist[secId] || 4;
       const foreignFraction = isTechnical(info) ? 0.5 : 0.3;
       const maxForeign = Math.max(1, Math.round(needed * foreignFraction));
-      const confirmed = suggestions
-        .filter(p => p.source === 'institutional' || (p.geminiScore ?? 0) >= 70 && !!(p.abstract && p.abstract.trim().length > 20))
-        .sort((a, b) => (b.geminiScore ?? 100) - (a.geminiScore ?? 100));
-      const ukGood = confirmed.filter(p => p.lang === 'uk');
-      const foreignGood = confirmed.filter(p => p.lang !== 'uk').slice(0, maxForeign);
-      const top = [...ukGood, ...foreignGood].slice(0, needed);
+      const confirmed = suggestions.filter(p =>
+        p.source === 'institutional' || ((p.geminiScore ?? 0) >= 70 && p._complete !== false)
+      );
+
+      // Групуємо за тезою, під яку джерело шукалось (порожній ключ — інституційні
+      // й "якірні" джерела без прив'язки до конкретної тези), сортуємо кожну групу
+      // за оцінкою, і добираємо по колу: спершу найкраще з кожної тези, потім другі
+      // й треті — щоб покриття тем було рівномірним, а не залежало від того, яка
+      // теза випадково дала більше знахідок.
+      const grouped = {};
+      for (const p of confirmed) {
+        const key = p.sourceThesis || '';
+        (grouped[key] ||= []).push(p);
+      }
+      Object.values(grouped).forEach(arr => arr.sort((a, b) => (b.geminiScore ?? 100) - (a.geminiScore ?? 100)));
+      const thesisKeys = Object.keys(grouped);
+      const nextIdx = Object.fromEntries(thesisKeys.map(k => [k, 0]));
+      const top = [];
+      let foreignCount = 0;
+      let progress = true;
+      while (top.length < needed && progress) {
+        progress = false;
+        for (const key of thesisKeys) {
+          if (top.length >= needed) break;
+          const arr = grouped[key];
+          while (nextIdx[key] < arr.length) {
+            const cand = arr[nextIdx[key]];
+            nextIdx[key]++;
+            const isForeign = cand.lang !== 'uk';
+            if (isForeign && foreignCount >= maxForeign) continue; // квота вичерпана — пробуємо наступний у цій самій тезі
+            top.push(cand);
+            if (isForeign) foreignCount++;
+            progress = true;
+            break;
+          }
+        }
+      }
       if (top.length) insertSources(secId, top, { capForeign: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -17,7 +17,7 @@ import { extractReadyWorkStructure, quickParsePlanIds } from "./lib/readyWorkExt
 import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, getEmpiricalSections, getEconSections, getTechnicalSections, CODE_FILE_EXTENSIONS, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, getLangLabels, insertBeforeTail, detectRequestedChapterCount } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { getAcademicDefaults, classifyAppendixItem, detectSpecialty, normalizeWorkType } from "./lib/academicDefaults.js";
-import { searchByPhrase, filterSourcesWithGemini, getEconInstitutionalSources, generateAlternatePhrases, paperToCitation } from "./lib/sourcesSearch.js";
+import { searchByPhrase, filterSourcesWithGemini, getEconInstitutionalSources, generateAlternatePhrases, paperToCitation, enrichSources } from "./lib/sourcesSearch.js";
 import { applyCitationRemap, buildFinalReferenceList, buildCiteFormats, createReferenceDeduper, detectSourceGrouping, insertMissingCitations } from "./lib/citationFormatting.js";
 import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
 import { StagePills } from "./components/StagePills.jsx";
@@ -3560,8 +3560,13 @@ ${secBlock}
           const top15raw = await filterSourcesWithGemini(fresh.slice(0, 25), filterLabel, topicCtx, 20, thesis);
           // Тегуємо тезою, під яку джерело шукалось — щоб при примусовій довставці цитати
           // (insertMissingCitations) можна було звірити зміст джерела САМЕ з цією тезою,
-          // а не тільки з назвою підрозділу в цілому, і, якщо не підійде, шукати заміну.
-          const top15 = thesis ? top15raw.map(p => ({ ...p, sourceThesis: thesis })) : top15raw;
+          // а не тільки з назвою підрозділу в цілому, і, якщо не підійде, шукати заміну; а
+          // також щоб автовставка (SourcesStage.jsx buildTop) могла розподілити джерела
+          // рівномірно по тезах, а не просто взяти топ-N за оцінкою.
+          const top15tagged = thesis ? top15raw.map(p => ({ ...p, sourceThesis: thesis })) : top15raw;
+          // Автозбагачення метаданих (DOI/сторінки/видавництво) + гейт повноти — до вставки
+          // в suggestedSources, щоб автовставка вже бачила, чого реально бракує.
+          const top15 = await enrichSources(top15tagged);
           top15.forEach(p => globalSeen.add((p.title || '').toLowerCase().slice(0, 60)));
 
           const existingIdx = updatedGroups.findIndex(g => g.phrase === phrase);
@@ -3580,18 +3585,21 @@ ${secBlock}
         }
       }
 
-      // ── Добір при нестачі: якщо релевантних (score≥70) джерел менше, ніж треба, — поступово розширюємо діапазон років (+2, потім +3),
-      // а якщо й це не дало результату — пробуємо альтернативні (синонімічні) пошукові фрази ──
+      // ── Добір при нестачі: спершу закриваємо тези, які лишились БЕЗ жодного підтвердженого
+      // джерела (а не просто нарощуємо загальну кількість там, де вже й так є надлишок),
+      // потім — розширюємо діапазон років (+2, потім +3), потім — альтернативні фрази ──
       if (!stopSearchRef.current) {
         const needed = sourceDist[secId] || 3;
-        // Джерело без geminiScore не пройшло перевірку filterSourcesWithGemini (яка тепер
-        // повертає лише ≥70 за трьома обов'язковими осями) — рахуємо його як 0, не як прохідне.
-        const countAtScore = (min) => updatedGroups.flatMap(g => g.papers).filter(p => (p.geminiScore ?? 0) >= min).length;
+        // Джерело рахується "добрим" лише якщо пройшло Прохід А+Б (score≥70) І гейт повноти
+        // (_complete !== false — undefined тут означає інституційне джерело, завжди добре).
+        const isGood = (p, min) => (p.geminiScore ?? 0) >= min && p._complete !== false;
+        const countAtScore = (min) => updatedGroups.flatMap(g => g.papers).filter(p => isGood(p, min)).length;
         const countGood = () => countAtScore(70);
+        const countForThesis = (t) => updatedGroups.flatMap(g => g.papers).filter(p => p.sourceThesis === t && isGood(p, 70)).length;
         const stillShort = () => !stopSearchRef.current && countGood() < needed;
         let triedPhrases = normalizedTheses.flatMap(t => t.phrases || []);
 
-        const backfillPhrase = async (phrase, extraYears, enPhrase = '') => {
+        const backfillPhrase = async (phrase, extraYears, enPhrase = '', thesisText = '') => {
           // Scholar тут (на відміну від першого проходу) увімкнено завжди: ми вже точно знаємо,
           // що інших джерел бракує, а Scholar — найкраще джерело саме для вузьких/локальних тем
           const candidates = await searchByPhrase(phrase, 15, page, true, extraYears, enPhrase);
@@ -3600,7 +3608,9 @@ ${secBlock}
             return key && !globalSeen.has(key);
           });
           if (!fresh.length) return;
-          const filtered = await filterSourcesWithGemini(fresh.slice(0, 25), filterLabel, topicCtx, 20);
+          const filteredRaw = await filterSourcesWithGemini(fresh.slice(0, 25), filterLabel, topicCtx, 20, thesisText);
+          const filteredTagged = thesisText ? filteredRaw.map(p => ({ ...p, sourceThesis: thesisText })) : filteredRaw;
+          const filtered = await enrichSources(filteredTagged);
           filtered.forEach(p => globalSeen.add((p.title || '').toLowerCase().slice(0, 60)));
           const existingIdx = updatedGroups.findIndex(g => g.phrase === phrase);
           if (existingIdx >= 0) {
@@ -3611,6 +3621,17 @@ ${secBlock}
           setPhraseGroups(prev => ({ ...prev, [secId]: [...updatedGroups] }));
           setSuggestedSources(prev => ({ ...prev, [secId]: updatedGroups.flatMap(g => g.papers) }));
         };
+
+        // Пріоритетний раунд: тези, що лишились зовсім без підтвердженого джерела,
+        // закриваємо першими — власними фразами тієї самої тези з розширеним діапазоном років.
+        const uncoveredTheses = normalizedTheses.filter(t => t.thesis && countForThesis(t.thesis) === 0);
+        for (const t of uncoveredTheses) {
+          if (stopSearchRef.current || countForThesis(t.thesis) > 0) continue;
+          for (let i = 0; i < (t.phrases || []).length; i++) {
+            if (stopSearchRef.current || countForThesis(t.thesis) > 0) break;
+            await backfillPhrase(t.phrases[i], 2, nextEnPhrase(i), t.thesis);
+          }
+        }
 
         for (const extraYears of [2, 3]) {
           if (stopSearchRef.current || countGood() >= needed) break;
@@ -3685,8 +3706,11 @@ ${secBlock}
         return key && !existingTitles.has(key);
       });
       if (!fresh.length || signal?.aborted) return null;
-      const filtered = await filterSourcesWithGemini(fresh.slice(0, 25), filterLabel, topicCtx, 3, thesis);
-      const best = [...filtered].sort((a, b) => (b.geminiScore ?? 0) - (a.geminiScore ?? 0))[0];
+      const filteredRaw = await filterSourcesWithGemini(fresh.slice(0, 25), filterLabel, topicCtx, 3, thesis);
+      const filtered = await enrichSources(filteredRaw);
+      const best = [...filtered]
+        .filter(p => p._complete !== false)
+        .sort((a, b) => (b.geminiScore ?? 0) - (a.geminiScore ?? 0))[0];
       if (!best || (best.geminiScore ?? 0) < 70 || signal?.aborted) return null;
 
       const newLine = paperToCitation(best);

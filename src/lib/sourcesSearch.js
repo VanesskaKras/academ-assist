@@ -937,9 +937,93 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
   return { flat, groups };
 }
 
-// ── Gemini-фільтрація: три обов'язкові осі (об'єкт/аспект/контекст) + оцінка релевантності ──
-// Джерело потрапляє в результат лише якщо ВСІ три осі підтверджені — немає "тихого" дефолту:
-// збій запиту чи непарситься відповідь трактуються як "нічого не підтверджено", а не як "усе підходить".
+// ── Прохід Б («адвокат диявола»): незалежна друга перевірка вже відібраних Проходом А
+// кандидатів. Не бачить оцінки/вердикту Проходу А (щоб не якорилась на чужому рішенні) —
+// отримує лише назву+анотацію і тезу, і її завдання не підтвердити вибір, а спробувати
+// його спростувати. Ловить саме те, що один прохід пропускає: загальнотеоретичний збіг
+// лексики в тезі задовольняється джерелом з іншого предмета (інший вид мистецтва/
+// діяльності, інша вікова група, країна, період чи галузь) ──
+async function devilsAdvocateCheck(shortlist, sectionTitle, topic, thesisContext) {
+  if (!shortlist.length) return shortlist;
+  const items = shortlist.map((p, i) => {
+    const abstractLine = p.abstract ? `\n   Анотація: ${p.abstract.slice(0, 220)}` : '\n   (анотації немає)';
+    return `${i}. ${p.title}${abstractLine}`;
+  }).join('\n');
+  const thesisLine = thesisContext ? `Конкретна теза: "${thesisContext}"\n` : '';
+  const prompt = `Тема наукової роботи: "${topic}"
+Підрозділ: "${sectionTitle}"
+${thesisLine}
+Кандидати, які попередньо визнані релевантними:
+${items}
+
+Твоє завдання — не підтвердити цей вибір, а спробувати його СПРОСТУВАТИ. Для кожного кандидата шукай конкретну підставу для відхилення:
+- підміна виду мистецтва/діяльності/дисципліни (інший жанр чи галузь, ніж у темі, навіть якщо термінологія схожа);
+- підміна вікової групи чи цільової аудиторії;
+- підміна країни;
+- підміна історичного періоду чи епохи;
+- підміна конкретного об'єкта дослідження (інший твір/подія/організація, навіть у тій самій галузі).
+
+Загальний збіг теоретичної лексики без збігу власного предмета статті ("про що вона насправді") — підстава відхилити.
+Якщо після ретельного пошуку не знайшов жодної з цих підмін — reject:false.
+Якщо знайшов хоч одну — reject:true, коротко вкажи яку.
+
+Поверни JSON: {"results":[{"index":0,"reject":false,"reason":"..."}]}`;
+  try {
+    const res = await fetch('/api/gemini', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        _model: 'gemini-2.5-flash-lite',
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: {
+          maxOutputTokens: 1200,
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: 'object',
+            properties: {
+              results: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    index: { type: 'integer' },
+                    reject: { type: 'boolean' },
+                    reason: { type: 'string' },
+                  },
+                  required: ['index', 'reject', 'reason'],
+                },
+              },
+            },
+            required: ['results'],
+          },
+        },
+      }),
+    });
+    // Збій запиту — не підтверджено незалежною перевіркою, відхиляємо все (fail-closed)
+    if (!res.ok) return [];
+    const data = await res.json();
+    if (data.usageMetadata) {
+      const cost = (data.usageMetadata.promptTokenCount * 0.10 + data.usageMetadata.candidatesTokenCount * 0.40) / 1_000_000;
+      window.dispatchEvent(new CustomEvent('apicost', { detail: { cost, model: 'gemini-2.5-flash-lite', inTok: data.usageMetadata.promptTokenCount, outTok: data.usageMetadata.candidatesTokenCount } }));
+    }
+    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const parsed = JSON.parse(raw);
+    const results = Array.isArray(parsed.results) ? parsed.results : [];
+    const verdictByIdx = new Map(results.filter(r => typeof r.index === 'number').map(r => [r.index, r]));
+    return shortlist.filter((_, i) => {
+      const v = verdictByIdx.get(i);
+      return !!v && v.reject === false; // немає вердикту чи reject:true — відхиляємо
+    });
+  } catch {
+    return [];
+  }
+}
+
+// ── Gemini-фільтрація: два незалежні проходи. Прохід А відбирає за трьома обов'язковими
+// осями (об'єкт/аспект/контекст), Прохід Б («адвокат диявола») незалежно намагається
+// спростувати кожного кандидата з проходу А. Джерело йде далі лише якщо погодились обидва —
+// немає "тихого" дефолту: збій запиту чи непарситься відповідь трактуються як "нічого не
+// підтверджено", а не як "усе підходить".
 export async function filterSourcesWithGemini(candidates, sectionTitle, topic, maxResults = 15, thesisContext = '') {
   if (!candidates.length) return candidates;
   const items = candidates.map((p, i) => {
@@ -1011,7 +1095,7 @@ ${items}
     const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     const parsed = JSON.parse(raw);
     const results = Array.isArray(parsed.results) ? parsed.results : [];
-    return results
+    const passA = results
       .filter(r =>
         typeof r.index === 'number' && candidates[r.index]
         && r.objectMatch === true && r.aspectMatch === true && r.contextMatch === true
@@ -1022,6 +1106,9 @@ ${items}
         geminiReason: r.reason || '',
         geminiScore: r.score,
       }));
+    if (!passA.length) return passA;
+    // Прохід Б: незалежна друга перевірка — не бачить оцінки/причини Проходу А
+    return devilsAdvocateCheck(passA, sectionTitle, topic, thesisContext);
   } catch {
     // Мережевий збій або непарситься JSON — так само "нічого не підтверджено"
     return [];
@@ -1377,4 +1464,60 @@ export async function generateSearchPhrases(sectionLabel, topic, direction = '',
   } catch {
     return [];
   }
+}
+
+// ── Автозбагачення метаданих + гейт повноти для вже релевантних (Прохід А+Б) джерел ──
+// Викликається одразу після filterSourcesWithGemini, до вставки в suggestedSources — щоб
+// автовставка (SourcesStage.jsx buildTop) оцінювала вже збагачені дані, а не сирі з
+// пошукового API, де авторів/сторінок часто бракує, хоча вони доступні через DOI.
+// Позначає кожне джерело полями _complete/_missingFields: чого не вдалось знайти
+// в жодній базі після реальної спроби — того чесно бракує, воно не автовставляється,
+// а йде в список ручного вибору з поясненням, що саме відсутнє.
+export async function enrichSources(papers) {
+  if (!papers.length) return papers;
+
+  const afterDoi = await Promise.all(papers.map(async p => {
+    if (!p.doi) return p;
+    const meta = await lookupDoiMetadata(p.doi);
+    if (!meta) return p;
+    return {
+      ...p,
+      ...(meta.authorsStructured?.length ? { authorsStructured: meta.authorsStructured } : {}),
+      ...(meta.authors?.length ? { authors: meta.authors } : {}),
+      ...(meta.pages && !p.pages ? { pages: meta.pages } : {}),
+      ...(meta.volume ? { volume: meta.volume } : {}),
+      ...(meta.issue ? { issue: meta.issue } : {}),
+      ...(meta.journal && (!p.venue || /^[\w.-]+\.[a-zA-Z]{2,}$/.test(p.venue.trim())) ? { venue: meta.journal } : {}),
+      ...(meta.publisher ? { publisher: meta.publisher } : {}),
+      ...(meta.publisherLocation ? { publisherLocation: meta.publisherLocation } : {}),
+    };
+  }));
+
+  const afterDoiBiblio = await Promise.all(afterDoi.map(p => lookupDOIByBiblio(p)));
+
+  const afterMeta = await Promise.all(afterDoiBiblio.map(async p => {
+    if (p.pages) return p;
+    const pageUrl = p.url || (p.doi ? `https://doi.org/${p.doi}` : null);
+    if (!pageUrl) return p;
+    const pages = await fetchPagesFromUrl(pageUrl);
+    return pages ? { ...p, pages } : p;
+  }));
+
+  const enriched = await Promise.all(afterMeta.map(async p => {
+    if (p.type !== 'book' || p.pages || p.totalPages) return p;
+    const firstAuthorSurname = (Array.isArray(p.authors) ? (p.authors[0] || '') : '').split(/[\s,]+/)[0] || '';
+    const totalPages = await fetchGoogleBooksPageCount(p.title, firstAuthorSurname);
+    return totalPages ? { ...p, totalPages } : p;
+  }));
+
+  // Гейт повноти: рік, видання/видавництво і анотація мають бути присутні. Авторів
+  // навмисно не вимагаємо жорстко — ДСТУ 8302 дозволяє легітимні записи без автора
+  // (інституційні звіти тощо), paperToCitation це коректно обробляє.
+  return enriched.map(p => {
+    const missing = [];
+    if (!p.year) missing.push('рік');
+    if (!p.venue && !p.publisher) missing.push('видання/видавництво');
+    if (!p.abstract) missing.push('анотація');
+    return { ...p, _complete: missing.length === 0, _missingFields: missing };
+  });
 }
