@@ -637,7 +637,9 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
         const sourceTarget = calcSourceTarget(mainSecs);
         const sourceDist = calcSourceDist(mainSecs, sourceTarget);
         const needed = sourceDist[secId] || 3;
-        const countGood = () => updatedGroups.flatMap(g => g.papers).filter(p => (p.geminiScore ?? 60) >= 70).length;
+        // Джерело без geminiScore не пройшло перевірку filterSourcesWithGemini (яка тепер
+        // повертає лише ≥70 за трьома обов'язковими осями) — рахуємо його як 0, не як прохідне.
+        const countGood = () => updatedGroups.flatMap(g => g.papers).filter(p => (p.geminiScore ?? 0) >= 70).length;
         const allTriedPhrases = normalizedTheses.flatMap(t => t.phrases || []);
 
         const backfillPhrase = async (phrase, extraYears, enPhrase = '') => {

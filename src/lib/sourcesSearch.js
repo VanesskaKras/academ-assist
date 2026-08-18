@@ -937,27 +937,36 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
   return { flat, groups };
 }
 
-// ── Gemini-фільтрація: двохрівнева з поясненням ──
-// Повертає [{...paper, geminiTier: 'exact'|'analogy', geminiReason: '...'}]
+// ── Gemini-фільтрація: три обов'язкові осі (об'єкт/аспект/контекст) + оцінка релевантності ──
+// Джерело потрапляє в результат лише якщо ВСІ три осі підтверджені — немає "тихого" дефолту:
+// збій запиту чи непарситься відповідь трактуються як "нічого не підтверджено", а не як "усе підходить".
 export async function filterSourcesWithGemini(candidates, sectionTitle, topic, maxResults = 15, thesisContext = '') {
   if (!candidates.length) return candidates;
   const items = candidates.map((p, i) => {
-    const abstractLine = p.abstract ? `\n   Анотація: ${p.abstract.slice(0, 220)}` : '';
+    const abstractLine = p.abstract
+      ? `\n   Анотація: ${p.abstract.slice(0, 220)}`
+      : '\n   (анотації немає — суди обережно лише за назвою)';
     return `${i}. ${p.title}${abstractLine}`;
   }).join('\n');
-  const thesisLine = thesisContext ? `Конкретний аспект для цих джерел: "${thesisContext}"\n` : '';
+  const thesisLine = thesisContext ? `Конкретна теза, під яку шукаємо джерела: "${thesisContext}"\n` : '';
   const prompt = `Тема наукової роботи: "${topic}"
 Підрозділ: "${sectionTitle}"
 ${thesisLine}
 Список знайдених статей (з анотацією, де є):
 ${items}
 
-Відбери ЛИШЕ статті що безпосередньо стосуються теми і підрозділу: той самий об'єкт дослідження, та сама галузь, той самий контекст. Спирайся на анотацію, якщо вона є — назва сама по собі часто оманлива.
-НЕ включай: статті де спільне лише одне загальне слово без прив'язки до теми, статті з інших галузей, загальні огляди не пов'язані з предметом.
-Якщо жодна стаття не підходить — поверни порожній масив results.
-Для кожної відібраної — оцінка релевантності 0-100 (100 = точно про цей предмет і контекст, 70 = впевнено релевантна, 50 = дотична/суміжна тема) і одне речення до 12 слів чому підходить.
+Для кожного кандидата перевір ТРИ обов'язкові умови — включай статтю в results лише якщо ВСІ три виконані:
+1. ОБ'ЄКТ — те саме явище/група/організація/предмет, що й у темі й тезі (не просто спільне слово чи суміжна назва).
+2. АСПЕКТ — стаття розглядає саме той кут проблеми, який потрібен для цієї тези/підрозділу, а не тему загалом з іншого боку.
+3. КОНТЕКСТ — країна, період, вікова група, галузь чи метод дослідження не суперечать обмеженням роботи.
 
-Поверни JSON: {"results":[{"index":0,"score":85,"reason":"Розглядає..."}]}`;
+Якщо анотації немає — суди дуже обережно: включай лише коли сама назва однозначно підтверджує всі три умови.
+Якщо хоч одна з трьох умов не виконується — НЕ включай статтю, навіть якщо назва виглядає схожою чи термінологія збігається.
+Якщо жодна стаття не підходить — поверни порожній масив results. Не підганяй кількість під ліміт — краще менше, ніж хибне.
+
+Для кожної відібраної статті постав objectMatch/aspectMatch/contextMatch (усі true), оцінку score 0-100 (100 = точний збіг за трьома умовами, нижче 70 не включай) і одне речення-причину (до 12 слів).
+
+Поверни JSON: {"results":[{"index":0,"objectMatch":true,"aspectMatch":true,"contextMatch":true,"score":85,"reason":"Розглядає..."}]}`;
   try {
     const res = await fetch('/api/gemini', {
       method: 'POST',
@@ -965,10 +974,35 @@ ${items}
       body: JSON.stringify({
         _model: 'gemini-2.5-flash-lite',
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: { maxOutputTokens: 1200, responseMimeType: 'application/json' },
+        generationConfig: {
+          maxOutputTokens: 1600,
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: 'object',
+            properties: {
+              results: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    index: { type: 'integer' },
+                    objectMatch: { type: 'boolean' },
+                    aspectMatch: { type: 'boolean' },
+                    contextMatch: { type: 'boolean' },
+                    score: { type: 'integer' },
+                    reason: { type: 'string' },
+                  },
+                  required: ['index', 'objectMatch', 'aspectMatch', 'contextMatch', 'score', 'reason'],
+                },
+              },
+            },
+            required: ['results'],
+          },
+        },
       }),
     });
-    if (!res.ok) return candidates;
+    // Збій запиту — трактуємо як "нічого не підтверджено", а не як "усе підходить"
+    if (!res.ok) return [];
     const data = await res.json();
     if (data.usageMetadata) {
       const cost = (data.usageMetadata.promptTokenCount * 0.10 + data.usageMetadata.candidatesTokenCount * 0.40) / 1_000_000;
@@ -976,17 +1010,21 @@ ${items}
     }
     const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     const parsed = JSON.parse(raw);
-    const results = parsed.results || [];
-    if (!results.length) return [];
+    const results = Array.isArray(parsed.results) ? parsed.results : [];
     return results
-      .filter(r => typeof r.index === 'number' && candidates[r.index])
+      .filter(r =>
+        typeof r.index === 'number' && candidates[r.index]
+        && r.objectMatch === true && r.aspectMatch === true && r.contextMatch === true
+        && typeof r.score === 'number' && r.score >= 70,
+      )
       .map(r => ({
         ...candidates[r.index],
         geminiReason: r.reason || '',
-        geminiScore: typeof r.score === 'number' ? r.score : 60,
+        geminiScore: r.score,
       }));
   } catch {
-    return candidates;
+    // Мережевий збій або непарситься JSON — так само "нічого не підтверджено"
+    return [];
   }
 }
 

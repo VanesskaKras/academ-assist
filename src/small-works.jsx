@@ -715,8 +715,10 @@ formatting — поля сторінки в мм якщо явно вказан�
       const displayPhrases = allPhrases.length ? allPhrases : ukKw.slice(0, 6);
 
       const { flat } = await searchSourcesForSection(ukKw, enPhrases, needed + 6, topic, topic, 1, [], [], ukPhrases);
+      // Без фолбеку на нефільтроване flat: якщо Gemini законно нічого не підтвердив
+      // (чи запит впав), користувач має побачити чесний результат, а не непровірені кандидати.
       const filtered = await filterSourcesWithGemini(flat || [], topic, topic, 10);
-      const papers = (filtered.length ? filtered : (flat || [])).slice(0, 10);
+      const papers = filtered.slice(0, 10);
       setTezyPapers(papers);
       setTezyPage(1);
       setSelectedTezyIds([]);
@@ -745,8 +747,10 @@ formatting — поля сторінки в мм якщо явно вказан�
       const enPhrases = allPhrases.slice(4, 8);
       const displayPhrases = allPhrases.length ? allPhrases : ukKw.slice(0, 6);
       const { flat } = await searchSourcesForSection(ukKw, enPhrases, needed, secLabel, topic, 1, [], [], ukPhrases);
+      // Без фолбеку на нефільтроване flat: якщо Gemini законно нічого не підтвердив
+      // (чи запит впав), користувач має побачити чесний результат, а не непровірені кандидати.
       const filtered = await filterSourcesWithGemini(flat || [], secLabel, topic, 15);
-      const papers = (filtered.length ? filtered : (flat || [])).slice(0, 15);
+      const papers = filtered.slice(0, 15);
       setRefSecPapers(prev => {
         const next = { ...prev, [secId]: papers };
         saveToFirestore({ refSecPapers: next });

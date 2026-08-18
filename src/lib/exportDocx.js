@@ -1065,8 +1065,13 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
       consumed += estimateLineCount(item.text, fs) * lineHeightTwips(fs);
     });
 
+    // estimateLineCount — груба оцінка (середня ширина символу ~0.5em), тому може трохи
+    // недооцінити реальний обгорнутий рядок (напр. довгу тему в лапках) — SAFETY_BUFFER
+    // залишає запас ~одного рядка висоти, щоб точність оцінки не зіштовхувала останній
+    // рядок (рік) на другу сторінку.
     const MIN_FLEX = 200;
-    const finalFlex = Math.max(MIN_FLEX, pageContentHeight - consumed);
+    const SAFETY_BUFFER = 300;
+    const finalFlex = Math.max(MIN_FLEX, pageContentHeight - consumed - SAFETY_BUFFER);
     return lines.map((item, idx) => idx === flexIdx ? { ...item, spaceBefore: finalFlex } : item);
   }
 

@@ -235,8 +235,14 @@ export function SourcesStage({
     setSelectedSugg(prev => ({ ...prev, [secId]: [] }));
   };
 
-  // ── Автовставка: щойно пошук для підрозділу завершується, вставляємо топ-N найрелевантніших (score ≥ 70) джерел
-  // без очікування ручного вибору — користувач перевіряє й редагує результат у полі нижче ──
+  // ── Автовставка: щойно пошук для підрозділу завершується, вставляємо топ-N найрелевантніших джерел
+  // без очікування ручного вибору — користувач перевіряє й редагує результат у полі нижче.
+  // Правила автовставки (свідомо без компромісів заради кількості):
+  //  - лише score ≥ 70 (пройшло всі три обов'язкові осі в filterSourcesWithGemini: об'єкт/аспект/контекст);
+  //  - лише якщо є анотація — без анотації судження ґрунтується тільки на назві, а назва оманлива
+  //    (виняток: institutional-джерела — це фіксовані державні/офіційні посилання, не результат пошуку);
+  //  - якщо навіть так не набирається потрібна кількість — НЕ послаблюємо поріг, а вставляємо
+  //    скільки є підтверджених; решту користувач бачить і добирає вручну зі списку нижче (без автовставки).
   const autoInsertedRef = useRef({});
   useEffect(() => {
     for (const sec of mainSections) {
@@ -252,23 +258,13 @@ export function SourcesStage({
       const needed = sourceDist[secId] || 4;
       const foreignFraction = isTechnical(info) ? 0.5 : 0.3;
       const maxForeign = Math.max(1, Math.round(needed * foreignFraction));
-      const buildTop = (minScore, { capForeign = true } = {}) => {
-        const good = suggestions
-          .filter(p => (p.geminiScore ?? 60) >= minScore)
-          .sort((a, b) => (b.geminiScore ?? 0) - (a.geminiScore ?? 0));
-        const ukGood = good.filter(p => p.lang === 'uk');
-        const foreignGood = good.filter(p => p.lang !== 'uk');
-        const foreignSlice = capForeign ? foreignGood.slice(0, maxForeign) : foreignGood;
-        return [...ukGood, ...foreignSlice].slice(0, needed);
-      };
-      // Якщо строгий поріг (70) не дав достатньо джерел — другий прохід з пом'якшеним порогом (60);
-      // якщо навіть це не набирає потрібної кількості — третій прохід знімає мовну квоту (60,
-      // без капу на іноземні), щоб не відкидати вже знайдені релевантні джерела лише через мовний мікс
-      let top = buildTop(70);
-      let capForeign = true;
-      if (top.length < needed) top = buildTop(60);
-      if (top.length < needed) { top = buildTop(60, { capForeign: false }); capForeign = false; }
-      if (top.length) insertSources(secId, top, { capForeign });
+      const confirmed = suggestions
+        .filter(p => p.source === 'institutional' || (p.geminiScore ?? 0) >= 70 && !!(p.abstract && p.abstract.trim().length > 20))
+        .sort((a, b) => (b.geminiScore ?? 100) - (a.geminiScore ?? 100));
+      const ukGood = confirmed.filter(p => p.lang === 'uk');
+      const foreignGood = confirmed.filter(p => p.lang !== 'uk').slice(0, maxForeign);
+      const top = [...ukGood, ...foreignGood].slice(0, needed);
+      if (top.length) insertSources(secId, top, { capForeign: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourcesSearchLoading, suggestedSources]);
@@ -507,7 +503,7 @@ export function SourcesStage({
                 ) : isSearching ? (
                   <div style={{ fontSize: 12, color: "#8a6010", background: "#fff5e0", padding: "2px 10px", borderRadius: 10 }}>додаю {secRefs.length}/{needed}…</div>
                 ) : (
-                  <div style={{ fontSize: 12, color: "#8a5a00", background: "#fff5e0", padding: "2px 10px", borderRadius: 10 }}>⚠ {secRefs.length} з {needed} — перевірте</div>
+                  <div style={{ fontSize: 12, color: "#8a5a00", background: "#fff5e0", padding: "2px 10px", borderRadius: 10 }}>⚠ підтверджено {secRefs.length} з {needed} — без зниження релевантності решту не знайдено, оберіть вручну нижче</div>
                 )}
               </div>
             </div>
