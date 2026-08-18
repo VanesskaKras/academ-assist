@@ -130,12 +130,15 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Methods', 'POST');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
+  // urlOk: чи справді відкрилась сторінка (для перевірки існування джерела без DOI) —
+  // окремо від pages, бо багато легітимних сторінок просто не мають citation-мета-тегів,
+  // і це не означає, що посилання нежиттєздатне.
   const { url: rawUrl } = req.body || {};
-  if (!rawUrl || typeof rawUrl !== 'string') return res.status(200).json({ pages: null });
-  if (!isSafeUrl(rawUrl)) return res.status(200).json({ pages: null });
+  if (!rawUrl || typeof rawUrl !== 'string') return res.status(200).json({ pages: null, urlOk: false });
+  if (!isSafeUrl(rawUrl)) return res.status(200).json({ pages: null, urlOk: false });
 
   const url = resolveHtmlUrl(rawUrl);
-  if (!isSafeUrl(url)) return res.status(200).json({ pages: null });
+  if (!isSafeUrl(url)) return res.status(200).json({ pages: null, urlOk: false });
 
   try {
     const r = await withTimeout(
@@ -147,7 +150,7 @@ export default async function handler(req, res) {
       }),
       7000,
     );
-    if (!r.ok) return res.status(200).json({ pages: null });
+    if (!r.ok) return res.status(200).json({ pages: null, urlOk: false });
 
     // Читаємо тільки перші 30 КБ — мета-теги завжди в <head>
     const reader = r.body.getReader();
@@ -161,7 +164,7 @@ export default async function handler(req, res) {
     reader.cancel();
 
     const pages = extractMetaPages(html);
-    if (pages) return res.status(200).json({ pages });
+    if (pages) return res.status(200).json({ pages, urlOk: true });
 
     // Мета-теги сторінок відсутні — пробуємо CrossRef по DOI зі сторінки
     const doi = extractMetaDoi(html);
@@ -177,14 +180,14 @@ export default async function handler(req, res) {
           const crData = await cr.json();
           const p = crData?.message;
           if (p?.page) {
-            return res.status(200).json({ pages: p.page.replace(/-/g, '–') });
+            return res.status(200).json({ pages: p.page.replace(/-/g, '–'), urlOk: true });
           }
         }
-      } catch { /* CrossRef недоступний — повертаємо null */ }
+      } catch { /* CrossRef недоступний — сторінка все одно відкрилась */ }
     }
 
-    return res.status(200).json({ pages: null });
+    return res.status(200).json({ pages: null, urlOk: true });
   } catch {
-    return res.status(200).json({ pages: null });
+    return res.status(200).json({ pages: null, urlOk: false });
   }
 }

@@ -250,6 +250,28 @@ export async function fetchPagesFromUrl(url) {
   }
 }
 
+/**
+ * Перевіряє, що URL справді відкривається (для джерел без DOI — єдиний спосіб
+ * підтвердити, що запис реально існує, а не лише має правдоподібну назву).
+ * Використовує той самий проксі, що й fetchPagesFromUrl, але зчитує прапорець
+ * urlOk окремо від pages — сторінка може відкриватись і не мати citation-мета-тегів.
+ */
+export async function verifyUrlOpens(url) {
+  if (!url) return false;
+  try {
+    const res = await fetch('/api/fetch-meta', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return data.urlOk === true;
+  } catch {
+    return false;
+  }
+}
+
 // ── Декодування abstract_inverted_index OpenAlex → plain text ──
 function decodeAbstract(inv) {
   if (!inv || typeof inv !== 'object') return '';
@@ -751,8 +773,15 @@ export const ECON_INSTITUTIONAL_SOURCES = [
   },
 ];
 
+// Це завжди посилання на головну сторінку розділу статистики, а не на конкретний
+// звіт/таблицю — автоматично знайти саме потрібний розділ для довільної теми
+// неможливо без окремого пошукового механізму по кожній установі, тому позначаємо
+// явно: виконавець має уточнити конкретне джерело перед фінальним оформленням.
 export function getEconInstitutionalSources() {
-  return ECON_INSTITUTIONAL_SOURCES.map(s => ({ ...s }));
+  return ECON_INSTITUTIONAL_SOURCES.map(s => ({
+    ...s,
+    _missingFields: ['конкретний звіт/розділ (зараз — головна сторінка установи)'],
+  }));
 }
 
 // ── Головна функція пошуку ──
@@ -1476,12 +1505,15 @@ export async function generateSearchPhrases(sectionLabel, topic, direction = '',
 export async function enrichSources(papers) {
   if (!papers.length) return papers;
 
+  // _doiResolved: чи справді підтвердився DOI через живий запит до CrossRef/OpenAlex —
+  // null, якщо DOI взагалі немає (перевіряти нема чим цим шляхом).
   const afterDoi = await Promise.all(papers.map(async p => {
-    if (!p.doi) return p;
+    if (!p.doi) return { ...p, _doiResolved: null };
     const meta = await lookupDoiMetadata(p.doi);
-    if (!meta) return p;
+    if (!meta) return { ...p, _doiResolved: false };
     return {
       ...p,
+      _doiResolved: true,
       ...(meta.authorsStructured?.length ? { authorsStructured: meta.authorsStructured } : {}),
       ...(meta.authors?.length ? { authors: meta.authors } : {}),
       ...(meta.pages && !p.pages ? { pages: meta.pages } : {}),
@@ -1493,7 +1525,13 @@ export async function enrichSources(papers) {
     };
   }));
 
-  const afterDoiBiblio = await Promise.all(afterDoi.map(p => lookupDOIByBiblio(p)));
+  // lookupDOIByBiblio сам перевіряє збіг назви+року перед тим, як прикріпити DOI —
+  // якщо DOI щойно знайдено цим шляхом, вважаємо його підтвердженим так само.
+  const afterDoiBiblio = await Promise.all(afterDoi.map(async p => {
+    const result = await lookupDOIByBiblio(p);
+    if (result.doi && p._doiResolved === null) return { ...result, _doiResolved: true };
+    return result;
+  }));
 
   const afterMeta = await Promise.all(afterDoiBiblio.map(async p => {
     if (p.pages) return p;
@@ -1510,14 +1548,35 @@ export async function enrichSources(papers) {
     return totalPages ? { ...p, totalPages } : p;
   }));
 
-  // Гейт повноти: рік, видання/видавництво і анотація мають бути присутні. Авторів
-  // навмисно не вимагаємо жорстко — ДСТУ 8302 дозволяє легітимні записи без автора
-  // (інституційні звіти тощо), paperToCitation це коректно обробляє.
-  return enriched.map(p => {
+  // Перевірка існування: DOI резолвиться живим запитом, АБО (коли DOI немає) URL
+  // справді відкривається. Без жодного з двох — джерело не можна вважати підтвердженим,
+  // хай навіть назва виглядає правдоподібно.
+  const verified = await Promise.all(enriched.map(async p => {
+    if (p._doiResolved === true) return p;
+    if (p._doiResolved === false) return { ...p, _unverified: true }; // DOI є, але не резолвиться
+    if (p.url) {
+      const ok = await verifyUrlOpens(p.url);
+      return ok ? p : { ...p, _unverified: true };
+    }
+    return { ...p, _unverified: true }; // ні DOI, ні URL — нічим підтвердити
+  }));
+
+  // Гейт повноти: рік, видання/видавництво і анотація мають бути присутні, а існування —
+  // підтверджене. Для книг вимагаємо саме видавця (не будь-яке "видання") і обсяг сторінок —
+  // ISBN/каталог послідовно недоступні з наявних API, тому видавець+обсяг — реалістичний
+  // мінімум. Авторів навмисно не вимагаємо жорстко — ДСТУ 8302 дозволяє легітимні записи
+  // без автора (інституційні звіти тощо), paperToCitation це коректно обробляє.
+  return verified.map(p => {
     const missing = [];
     if (!p.year) missing.push('рік');
-    if (!p.venue && !p.publisher) missing.push('видання/видавництво');
+    if (p.type === 'book') {
+      if (!p.publisher) missing.push('видавець');
+      if (!p.pages && !p.totalPages) missing.push('обсяг сторінок');
+    } else if (!p.venue && !p.publisher) {
+      missing.push('видання/видавництво');
+    }
     if (!p.abstract) missing.push('анотація');
+    if (p._unverified) missing.push('не підтверджено існування джерела (DOI/посилання)');
     return { ...p, _complete: missing.length === 0, _missingFields: missing };
   });
 }

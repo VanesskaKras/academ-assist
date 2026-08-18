@@ -811,6 +811,47 @@ ${secBlocks}
 
   const doStopSearch = () => { stopSearchRef.current = true; };
 
+  // ── Явне розширення пошуку за роками — на прохання користувача, коли автоматичного
+  // каскаду (+2/+3 роки) у doSearchSources не вистачило. Не знижує поріг релевантності —
+  // лише пошукову глибину. Знайдені підтверджені джерела не вставляються автоматично
+  // (у секції вже є частковий вміст) — потрапляють у список пропозицій, користувач
+  // сам добирає, що додати.
+  const doExpandYearsSection = async (sec) => {
+    const secId = sec.id;
+    setSourcesSearchLoading(prev => ({ ...prev, [secId]: true }));
+    setSourcesSearchError(prev => ({ ...prev, [secId]: null }));
+    try {
+      const info = getPracticeInfo();
+      const topicCtx = [info?.topic, info?.direction, info?.subject].filter(Boolean).join(' ');
+      const filterLabel = (sec.label || '').replace(/^РОЗДІЛ\s+[IVXivxІVХ\d]+[.\s:]+/i, '').trim();
+      const phrases = keywords[secId] || [];
+      const enPhrasesArr = enKeywords[secId] || [];
+      const globalSeen = new Set(seenSourceKeys[secId] || []);
+      const updatedGroups = [...(phraseGroups[secId] || [])];
+      for (let i = 0; i < phrases.length; i++) {
+        if (stopSearchRef.current) break;
+        const enPhrase = enPhrasesArr.length ? enPhrasesArr[i % enPhrasesArr.length] : '';
+        const candidates = await searchByPhrase(phrases[i], 10, 1, true, 8, enPhrase);
+        const fresh = candidates.filter(p => {
+          const key = (p.title || '').toLowerCase().slice(0, 60);
+          return key && !globalSeen.has(key);
+        });
+        if (!fresh.length) continue;
+        const filteredRaw = await filterSourcesWithGemini(fresh.slice(0, 20), filterLabel, topicCtx, 20);
+        const filtered = await enrichSources(filteredRaw);
+        filtered.forEach(p => globalSeen.add((p.title || '').toLowerCase().slice(0, 60)));
+        updatedGroups.push({ phrase: `${phrases[i]} (ширший період)`, papers: filtered });
+        setPhraseGroups(prev => ({ ...prev, [secId]: [...updatedGroups] }));
+        setSuggestedSources(prev => ({ ...prev, [secId]: updatedGroups.flatMap(g => g.papers) }));
+      }
+      setSeenSourceKeys(prev => ({ ...prev, [secId]: globalSeen }));
+    } catch (e) {
+      console.error('doExpandYearsSection error:', e.message);
+      setSourcesSearchError(prev => ({ ...prev, [secId]: e.message }));
+    }
+    setSourcesSearchLoading(prev => ({ ...prev, [secId]: false }));
+  };
+
   // ── Оновлення ключових слів + пошук для одного розділу ──────────────────────
   const doRegenSectionSources = async (sec) => {
     setSourcesSearchLoading(prev => ({ ...prev, [sec.id]: true }));
@@ -1761,6 +1802,7 @@ ${secBlock}
           sourcesSearchError={sourcesSearchError}
           doSearchSources={doSearchSources}
           doRegenSectionSources={doRegenSectionSources}
+          doExpandYearsSection={doExpandYearsSection}
           onAddAbstracts={onAddAbstracts}
           onFinish={async () => { await doFinalizeSources(); goToStage("writing"); }}
           remapLoading={running}

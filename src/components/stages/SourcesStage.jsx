@@ -48,7 +48,7 @@ function SourceCard({ paper, checked, onToggle }) {
               flexShrink: 0,
             }}>📚 книга</span>
           )}
-          {paper._complete === false && paper._missingFields?.length > 0 && (
+          {paper._missingFields?.length > 0 && (
             <span
               title={`Не вдалось автоматично підтягнути: ${paper._missingFields.join(', ')}`}
               style={{
@@ -88,6 +88,7 @@ export function SourcesStage({
   keywords, kwLoading, kwError, setKwError, methodInfo, commentAnalysis, onStopSearch,
   allRefs, refList, showMissingSources, citInputsSnapshot, allCitLoading, info,
   suggestedSources, phraseGroups, sourcesSearchLoading, sourcesSearchError, doSearchSources, doRegenSectionSources,
+  doExpandYearsSection,
   doGenKeywords, onAddAbstracts, onAddSourceTheses, onFinish, remapLoading, stopRemap, onProceedToWriting, setStage,
   onRegenWithNewSources, hasGeneratedContent, onSave, saving,
   citStyleOverride, sourcesOrderOverride, onCitStyleChange, onSourcesOrderChange,
@@ -514,7 +515,16 @@ export function SourcesStage({
                 ) : isSearching ? (
                   <div style={{ fontSize: 12, color: "#8a6010", background: "#fff5e0", padding: "2px 10px", borderRadius: 10 }}>додаю {secRefs.length}/{needed}…</div>
                 ) : (
-                  <div style={{ fontSize: 12, color: "#8a5a00", background: "#fff5e0", padding: "2px 10px", borderRadius: 10 }}>⚠ підтверджено {secRefs.length} з {needed} — без зниження релевантності решту не знайдено, оберіть вручну нижче</div>
+                  <>
+                    <div style={{ fontSize: 12, color: "#8a5a00", background: "#fff5e0", padding: "2px 10px", borderRadius: 10 }}>⚠ підтверджено {secRefs.length} з {needed} — без зниження релевантності решту не знайдено, оберіть вручну нижче</div>
+                    {doExpandYearsSection && (
+                      <button
+                        onClick={e => { e.stopPropagation(); doExpandYearsSection(sec); }}
+                        title="Пошук ще ширшого діапазону років (додатково +8 років понад стандартний автоматичний каскад) — не знижує поріг релевантності, лише глибину пошуку"
+                        style={{ fontSize: 10, background: "transparent", border: "1px solid #e8a050", color: "#c07020", borderRadius: 5, padding: "2px 8px", cursor: "pointer" }}
+                      >ширший період</button>
+                    )}
+                  </>
                 )}
               </div>
             </div>
