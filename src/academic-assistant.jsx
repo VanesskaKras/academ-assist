@@ -11,10 +11,10 @@ import { exportToPptxFile } from "./lib/exportPptx.js";
 import { extractPdfPageImages } from "./lib/pdfImages.js";
 import { callClaude, callGemini, MODEL, MODEL_FAST, resetGenerationCost } from "./lib/api.js";
 import { playDoneSound } from "./lib/audio.js";
-import { enforceWordCount } from "./lib/wordCount.js";
+import { enforceWordCount, trimToPageTarget } from "./lib/wordCount.js";
 import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildIllustrationsPdfPrompt, buildDrawingsDescriptionPrompt, buildClientMaterialsAnalysisPrompt, buildExtractStructurePrompt, buildContinuationPlanPrompt, buildAnnotationPrompt, buildAnnotationRegenPrompt, buildAntiPlagiarismSYS } from "./lib/prompts.js";
 import { extractReadyWorkStructure, quickParsePlanIds } from "./lib/readyWorkExtract.js";
-import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, getEmpiricalSections, getEconSections, getTechnicalSections, CODE_FILE_EXTENSIONS, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, getLangLabels, insertBeforeTail, detectRequestedChapterCount } from "./lib/planUtils.js";
+import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, getEmpiricalSections, getEconSections, getTechnicalSections, CODE_FILE_EXTENSIONS, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parsePagesMax, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, getLangLabels, insertBeforeTail, detectRequestedChapterCount } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { getAcademicDefaults, classifyAppendixItem, detectSpecialty, normalizeWorkType } from "./lib/academicDefaults.js";
 import { searchByPhrase, filterSourcesWithGemini, getEconInstitutionalSources, generateAlternatePhrases, paperToCitation, enrichSources } from "./lib/sourcesSearch.js";
@@ -1660,28 +1660,44 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
     if (genIdx >= sections.length) {
       if (!writingDoneRef.current) {
         writingDoneRef.current = true;
+        autoRemapDoneRef.current = true; // ремап цитат запускаємо лише після завершення обрізки/підстановки нижче
         playDoneSound();
 
-        // Підставляємо у "Структура роботи" фактичну (пораховану з готового тексту) к-сть сторінок
-        // замість запланованої — токен __TOTAL_PAGES__ ставить AI під час написання вступу.
-        let finalContent = contentRef.current;
-        const introSec = sections.find(s => s.type === "intro");
-        if (introSec && finalContent[introSec.id]?.includes("__TOTAL_PAGES__")) {
-          const totalWords = sections
-            .filter(s => s.type !== "sources")
-            .reduce((sum, s) => sum + (finalContent[s.id] || "").trim().split(/\s+/).filter(Boolean).length, 0);
-          const actualPages = Math.max(1, Math.round(totalWords / 270));
-          finalContent = { ...finalContent, [introSec.id]: finalContent[introSec.id].replaceAll("__TOTAL_PAGES__", String(actualPages)) };
-          contentRef.current = finalContent;
-          setContent(finalContent);
-        }
+        (async () => {
+          // Фінальна перевірка сумарного обсягу: enforceWordCount тримає в межах кожен
+          // підрозділ окремо (з допуском), але ці допуски на десятках підрозділів можуть
+          // у сумі дати перевищення верхньої межі заданого діапазону сторінок — обрізаємо
+          // найбільші основні підрозділи, якщо фактичний обсяг вийшов за межу.
+          let finalContent = contentRef.current;
+          const maxTargetPages = parsePagesMax(info?.pages);
+          if (maxTargetPages) {
+            const lang = info?.language || "Українська";
+            const cleanTrim = (raw) => typographQuotes(fixMixedScript(raw, lang));
+            finalContent = await trimToPageTarget({
+              sections, content: finalContent, maxPages: maxTargetPages, callClaude,
+              sys: buildSYS(lang, methodInfo), clean: cleanTrim, onProgress: setLoadMsg,
+            });
+            contentRef.current = finalContent;
+            setContent(finalContent);
+          }
 
-        const allUnlocked = activeStageKeys.length - 1;
-        saveToFirestore({ stage: "writing", status: "writing", content: finalContent, citInputs, maxStageIdx: allUnlocked });
-      }
-      if (!autoRemapDoneRef.current) {
-        autoRemapDoneRef.current = true;
-        doRemapCitations();
+          // Підставляємо у "Структура роботи" фактичну (пораховану з готового тексту) к-сть сторінок
+          // замість запланованої — токен __TOTAL_PAGES__ ставить AI під час написання вступу.
+          const introSec = sections.find(s => s.type === "intro");
+          if (introSec && finalContent[introSec.id]?.includes("__TOTAL_PAGES__")) {
+            const totalWords = sections
+              .filter(s => s.type !== "sources")
+              .reduce((sum, s) => sum + (finalContent[s.id] || "").trim().split(/\s+/).filter(Boolean).length, 0);
+            const actualPages = Math.max(1, Math.round(totalWords / 270));
+            finalContent = { ...finalContent, [introSec.id]: finalContent[introSec.id].replaceAll("__TOTAL_PAGES__", String(actualPages)) };
+            contentRef.current = finalContent;
+            setContent(finalContent);
+          }
+
+          const allUnlocked = activeStageKeys.length - 1;
+          saveToFirestore({ stage: "writing", status: "writing", content: finalContent, citInputs, maxStageIdx: allUnlocked });
+          doRemapCitations();
+        })();
       }
       return;
     }
@@ -1716,13 +1732,18 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
       if (!prevEntries.length) return [{ role: "user", content: instruction }];
       const isLargeWork = totalPages > 50;
       const currentChapter = sec.id.split(".")[0];
+      const empSecsForConclusions = sec.type === "conclusions"
+        ? getEmpiricalSections(sections, d, commentAnalysis, methodInfo)
+        : null;
       const contextText = prevEntries.map(([k, v]) => {
         const s = sections.find(x => x.id === k);
         const label = s?.label || k;
         if (!isLargeWork) return `=== ${label} ===\n${v}`;
         const sameChapter = k.split(".")[0] === currentChapter;
         const isIntroForConclusions = sec.type === "conclusions" && s?.type === "intro";
-        if (sameChapter || isIntroForConclusions) return `=== ${label} ===\n${v}`;
+        const isEmpiricalForConclusions = sec.type === "conclusions" && empSecsForConclusions &&
+          (empSecsForConclusions.chapterSectionIds.includes(k) || k === empSecsForConclusions.anchorId);
+        if (sameChapter || isIntroForConclusions || isEmpiricalForConclusions) return `=== ${label} ===\n${v}`;
         // Інші розділи: лише перший змістовний абзац
         const firstPara = v.split("\n").find(p => p.trim().length > 60) || v.slice(0, 400);
         return `=== ${label} [перший абзац] ===\n${firstPara}`;

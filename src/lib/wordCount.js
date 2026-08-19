@@ -29,3 +29,50 @@ export async function enforceWordCount({ text, targetWords, label, callClaude, s
   }
   return text;
 }
+
+// ── Фінальна перевірка сумарного обсягу готової роботи ──
+// enforceWordCount тримає в межах кожен підрозділ окремо (з допуском ±10-20%),
+// але через ці допуски, помножені на десятки підрозділів, сумарний обсяг усієї
+// роботи може вийти за верхню межу заданого діапазону сторінок навіть якщо
+// кожен підрозділ формально пройшов перевірку. trimToPageTarget рахує фактичний
+// обсяг усієї роботи і, якщо він перевищує maxPages, скорочує найбільші основні
+// підрозділи (теорія/аналіз/рекомендації) по черзі, поки сумарний обсяг не
+// впишеться в межу — не займаючись вступом/висновками/додатками, де формат
+// суворо фіксований.
+export async function trimToPageTarget({ sections, content, maxPages, callClaude, sys, clean, onProgress }) {
+  const WORDS_PER_PAGE = 270;
+  const eligibleTypes = new Set(["theory", "analysis", "recommendations"]);
+
+  const wordsOf = (id) => countWords(content[id] || "");
+  const totalWords = sections
+    .filter(s => s.type !== "sources")
+    .reduce((sum, s) => sum + wordsOf(s.id), 0);
+  let excess = totalWords - maxPages * WORDS_PER_PAGE;
+  if (excess <= 0) return content;
+
+  const updated = { ...content };
+  const bySize = sections
+    .filter(s => eligibleTypes.has(s.type) && updated[s.id])
+    .sort((a, b) => wordsOf(b.id) - wordsOf(a.id));
+
+  for (const sec of bySize) {
+    if (excess <= 0) break;
+    const words = countWords(updated[sec.id]);
+    const maxCut = Math.floor(words * 0.25); // не більше 25% від підрозділу за один прохід
+    const cut = Math.min(maxCut, excess);
+    if (cut < 50) continue; // дрібне скорочення не варте окремого виклику
+    const target = words - cut;
+    onProgress?.(`Перевіряю обсяг: скорочую "${sec.label}"...`);
+    try {
+      const prompt = `Ось текст підрозділу "${sec.label}" (${words} слів):\n\n${updated[sec.id]}\n\nСкороти його до приблизно ${target} слів: прибери повтори, другорядні деталі й надлишкові приклади, збережи головні тези, структуру абзаців, усі цитати та посилання на джерела [N]. Поверни лише скорочений текст, без коментарів.`;
+      const raw = await callClaude([{ role: "user", content: prompt }], null, sys, Math.min(30000, Math.max(4000, Math.round(target * 3))));
+      const newText = (clean ? clean(raw) : raw).trim();
+      const newWords = countWords(newText);
+      updated[sec.id] = newText;
+      excess -= (words - newWords);
+    } catch {
+      // якщо скорочення конкретного підрозділу не вдалось - лишаємо його як є й пробуємо наступний
+    }
+  }
+  return updated;
+}

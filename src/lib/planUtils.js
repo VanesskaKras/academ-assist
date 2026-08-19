@@ -143,6 +143,18 @@ export function parsePagesAvg(str) {
   return avg;
 }
 
+// Верхня межа діапазону сторінок ("65-85" → 85). Використовується як стеля
+// для фінальної перевірки фактичного обсягу згенерованої роботи.
+export function parsePagesMax(str) {
+  if (!str) return null;
+  const s = String(str);
+  const nums = s.match(/\d+/g);
+  if (!nums) return null;
+  const max = Math.max(...nums.map(n => parseInt(n, 10)));
+  if (/слів|слова|слово|words?\b/i.test(s)) return Math.max(1, Math.round(max / 270));
+  return max;
+}
+
 export function parseTemplate(text) {
   const g = (re, fb = "") => { const m = text.match(re); return m ? m[1].trim() : fb; };
   return {
