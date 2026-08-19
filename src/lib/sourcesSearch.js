@@ -615,7 +615,7 @@ async function fetchCrossRefBooks(query, limit) {
 }
 
 // ── Google Books через Serper.dev (проксі /api/search-books) ──
-async function fetchBooksSerper(query, limit) {
+async function fetchBooksGoogle(query, limit) {
   try {
     const res = await fetch('/api/search-books', {
       method: 'POST',
@@ -624,10 +624,7 @@ async function fetchBooksSerper(query, limit) {
     });
     if (!res.ok) return [];
     const data = await res.json();
-    const sources = (data.sources || []).filter(p => p.title && !isBlocked(p));
-    if (sources.length > 0)
-      window.dispatchEvent(new CustomEvent('apicost', { detail: { cost: 0.001, model: 'serper', inTok: 1, outTok: 0 } }));
-    return sources;
+    return (data.sources || []).filter(p => p.title && !isBlocked(p));
   } catch { return []; }
 }
 
@@ -833,7 +830,7 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
     openAlexTitleSearch(plQ, ['language:pl', yr], fetchLimit, oaPage),       // r9: польські title
     fetchOpenAlexBooks(p0, fetchLimit),                                       // r10: книги OpenAlex
     fetchCrossRefBooks(p0, fetchLimit),                                       // r11: монографії CrossRef
-    fetchBooksSerper(p0, 8),                                                  // r12: Google Books Serper
+    fetchBooksGoogle(p0, 8),                                                  // r12: Google Books (books.googleapis.com)
   ]);
 
   const mapOA = (r, lang) => r.status === 'fulfilled'

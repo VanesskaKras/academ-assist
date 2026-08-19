@@ -1,4 +1,6 @@
-// Проксі для Google Books через Serper.dev (немає CORS у браузері)
+// Проксі для Google Books — напряму через офіційний Books API (books.googleapis.com),
+// не через Serper: серпер такого ендпоінту офіційно не документує (books там немає
+// в списку продуктів), і він стабільно повертав порожньо незалежно від ключа.
 export const config = { maxDuration: 15 };
 
 const BLOCKED = [
@@ -30,17 +32,13 @@ function hasCyrillic(text = '') {
 }
 
 async function searchBooks(query, limit, apiKey) {
-  const res = await fetch('https://google.serper.dev/books', {
-    method: 'POST',
-    headers: {
-      'X-API-KEY': apiKey,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ q: query, num: limit }),
-  });
+  const url = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=${Math.min(limit, 40)}&key=${apiKey}`;
+  const res = await fetch(url);
   if (!res.ok) return [];
   const data = await res.json();
-  return (data.books || data.organic || []).filter(p => p.title && !isBlocked(p));
+  return (data.items || [])
+    .map(item => item.volumeInfo || {})
+    .filter(vi => vi.title && !isBlocked(vi));
 }
 
 export default async function handler(req, res) {
@@ -56,41 +54,33 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Methods', 'POST');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-  const apiKey = process.env.SERPER_API_KEY || '';
+  const apiKey = process.env.GOOGLE_BOOKS_API_KEY || '';
   if (!apiKey) return res.status(200).json({ sources: [] });
 
   try {
     const { query = '', limit = 8 } = req.body || {};
     if (!query.trim()) return res.status(200).json({ sources: [] });
 
-    const raw = await withTimeout(searchBooks(query, Math.min(limit, 10), apiKey));
+    const raw = await withTimeout(searchBooks(query, limit, apiKey));
 
-    const sources = raw.map(item => {
-      const authorRaw = item.author || item.authors || '';
-      const authors = typeof authorRaw === 'string'
-        ? authorRaw.split(',').map(a => a.trim()).filter(Boolean).slice(0, 3)
-        : (Array.isArray(authorRaw) ? authorRaw.slice(0, 3) : []);
-
-      // Рік: з поля або з snippet/publicationInfo
-      const yearMatch = (item.publishedDate || item.year || item.publicationInfo || item.snippet || '').match(/\b(19|20)\d{2}\b/);
-      const year = yearMatch ? yearMatch[0] : '';
-
-      const publisher = item.publisher || item.publicationInfo || '';
-      const lang = hasCyrillic(item.title) ? 'uk' : 'en';
+    const sources = raw.map(vi => {
+      const authors = Array.isArray(vi.authors) ? vi.authors.slice(0, 3) : [];
+      const year = (vi.publishedDate || '').match(/\b(19|20)\d{2}\b/)?.[0] || '';
+      const lang = hasCyrillic(vi.title) ? 'uk' : 'en';
 
       return {
-        id: item.link || String(Math.random()),
-        title: item.title || '',
+        id: vi.industryIdentifiers?.[0]?.identifier || vi.previewLink || String(Math.random()),
+        title: vi.title || '',
         authors,
         year,
-        venue: publisher,
+        venue: vi.publisher || '',
         doi: '',
-        pages: '',
+        pages: vi.pageCount ? String(vi.pageCount) : '',
         lang,
-        source: 'books-serper',
+        source: 'books',
         type: 'book',
-        abstract: item.snippet || '',
-        url: item.link || '',
+        abstract: (vi.description || '').slice(0, 400),
+        url: vi.infoLink || vi.previewLink || '',
       };
     });
 
