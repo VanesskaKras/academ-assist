@@ -206,12 +206,13 @@ function formatChartNum(v) {
 // кількох рядах замість них унизу малюється легенда (інакше цифри зіллються).
 function renderChartFromParsed({ labels, seriesNames, series }) {
   const DPR = 2;
-  const W = 620, H = 380;
-  const canvas = document.createElement("canvas");
-  canvas.width = W * DPR;
-  canvas.height = H * DPR;
-  const ctx = canvas.getContext("2d");
-  ctx.scale(DPR, DPR);
+  const W = 620;
+  // Виміри шрифтів не залежать від розміру canvas, тож спершу рахуємо їх на
+  // тимчасовому canvas, щоб визначити фактичну висоту зображення (H) — і лише
+  // потім створюємо canvas потрібного розміру. Це потрібно, бо повернуті під
+  // кутом підписи категорій можуть займати різну висоту залежно від довжини
+  // тексту, а фіксована висота призводила до накладання підписів на легенду.
+  const measureCtx = document.createElement("canvas").getContext("2d");
 
   const INK = "#111111", GRID = "#e3e7ec", MUTED = "#6b7280";
   const n = labels.length;
@@ -223,11 +224,11 @@ function renderChartFromParsed({ labels, seriesNames, series }) {
   const maxVal = Math.max(1e-9, ...series.flat());
   const niceMax = niceChartMax(maxVal * (showValueLabels ? 1.15 : 1.08));
 
-  ctx.font = `11px ${CHART_FONT}`;
+  measureCtx.font = `11px ${CHART_FONT}`;
   const steps = 4;
   let maxTickW = 0;
   for (let i = 0; i <= steps; i++) {
-    const w = ctx.measureText(formatChartNum((niceMax / steps) * i)).width;
+    const w = measureCtx.measureText(formatChartNum((niceMax / steps) * i)).width;
     if (w > maxTickW) maxTickW = w;
   }
   const padL = Math.max(40, Math.round(maxTickW) + 16);
@@ -238,17 +239,46 @@ function renderChartFromParsed({ labels, seriesNames, series }) {
 
   let labelFont = 13;
   const fitsHorizontal = (font) => {
-    ctx.font = `${font}px ${CHART_FONT}`;
-    return labels.every(l => ctx.measureText(l).width <= slot - 6);
+    measureCtx.font = `${font}px ${CHART_FONT}`;
+    return labels.every(l => measureCtx.measureText(l).width <= slot - 6);
   };
   while (labelFont > 9 && !fitsHorizontal(labelFont)) labelFont -= 1;
   const rotate = !fitsHorizontal(labelFont);
   if (rotate) labelFont = 12;
 
-  const padB = (rotate ? 52 : 28) + legendH;
+  // Кут повороту підписів — 36°; довгі підписи обрізаються з "…", щоб верти-
+  // кальний відступ під них не ріс необмежено (інакше зображення виходило б
+  // занадто витягнутим по висоті).
+  const ROTATE_ANGLE = Math.PI / 5;
+  let plotLabels = labels;
+  let rotatedDrop = 0;
+  if (rotate) {
+    measureCtx.font = `${labelFont}px ${CHART_FONT}`;
+    const maxDrop = 130;
+    const maxLabelW = maxDrop / Math.sin(ROTATE_ANGLE);
+    plotLabels = labels.map(l => {
+      if (measureCtx.measureText(l).width <= maxLabelW) return l;
+      let s = l;
+      while (s.length > 1 && measureCtx.measureText(s + "…").width > maxLabelW) {
+        s = s.slice(0, -1);
+      }
+      return s + "…";
+    });
+    rotatedDrop = Math.max(...plotLabels.map(l => measureCtx.measureText(l).width)) * Math.sin(ROTATE_ANGLE);
+  }
+
+  const padB = (rotate ? Math.ceil(rotatedDrop) + 20 : 28) + legendH;
   const plotT = padT;
+  const minPlotH = 270;
+  const H = plotT + minPlotH + padB;
   const plotB = H - padB;
   const plotH = plotB - plotT;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = W * DPR;
+  canvas.height = H * DPR;
+  const ctx = canvas.getContext("2d");
+  ctx.scale(DPR, DPR);
 
   ctx.strokeStyle = GRID;
   ctx.lineWidth = 1;
@@ -301,10 +331,10 @@ function renderChartFromParsed({ labels, seriesNames, series }) {
     if (rotate) {
       ctx.save();
       ctx.translate(cx, plotB + 12);
-      ctx.rotate(-Math.PI / 5);
+      ctx.rotate(-ROTATE_ANGLE);
       ctx.textAlign = "right";
       ctx.textBaseline = "middle";
-      ctx.fillText(label, 0, 0);
+      ctx.fillText(plotLabels[i], 0, 0);
       ctx.restore();
     } else {
       ctx.textAlign = "center";
@@ -715,8 +745,21 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     const border = { style: BorderStyle.SINGLE, size: 1, color: "000000" };
     const cellBorders = { top: border, bottom: border, left: border, right: border };
     const filteredLines = lines.filter(l => !/^\s*\|[-:| ]+\|\s*$/.test(l));
-    const rows = filteredLines.map((l, rowIndex) => {
-      const cells = l.replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.trim());
+    const rawRows = filteredLines.map(l => l.replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.trim()));
+    const headerCount = rawRows[0]?.length || 0;
+    // Якщо джерело розбило один рядок таблиці на кілька фізичних "|"-рядків
+    // (клітинок менше, ніж у шапці), доклеюємо продовження до попереднього
+    // рядка замість того, щоб рендерити його як окремий кривий рядок.
+    const mergedRows = [];
+    for (const cells of rawRows) {
+      const prev = mergedRows[mergedRows.length - 1];
+      if (prev && headerCount > 0 && cells.length < headerCount && prev.length < headerCount) {
+        prev.push(...cells);
+      } else {
+        mergedRows.push(cells);
+      }
+    }
+    const rows = mergedRows.map((cells, rowIndex) => {
       const isHeader = rowIndex === 0;
       return new TableRow({
         children: cells.map(cellText =>
@@ -1033,20 +1076,15 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
   // сторінки, або переливається на другу.
   function autoFitTitlePageLines(lines) {
     if (!Array.isArray(lines) || !lines.length) return lines;
-    // Флекс-кандидат — рядок з НАЙБІЛЬШИМ ЯВНО заданим spaceBefore (навіть 0 рахується —
-    // головне, що поле присутнє). Це ознака структурованого шаблону (buildDefaultTitlePageLines
-    // чи titlePageTemplate з методички), на відміну від старого фолбек-шляху (titlePage-рядки
-    // без цього поля взагалі), де компенсувати нема що — нема визначеного "гнучкого" місця під
-    // спейсер. Порогу на "мінімальну величину" відступу (раніше — 800 twips) навмисно немає:
-    // методичка часто задає кілька ПОМІРНИХ відступів без одного явно величезного, і без
-    // компенсації такий шаблон так само переливається на другу сторінку при фактичних полях
-    // цього замовлення — тож підганяти треба завжди, коли є куди.
-    let flexIdx = -1, flexValue = -1;
-    lines.forEach((item, idx) => {
-      if (item.spaceBefore == null) return;
-      if (item.spaceBefore > flexValue) { flexValue = item.spaceBefore; flexIdx = idx; }
-    });
-    if (flexIdx === -1) return lines;
+    // Замість підганяння ОДНОГО "гнучкого" рядка (AI все одно вгадує абсолютні twips
+    // на око, дивлячись на зразок, і легко помиляється) масштабуємо ВСІ задані відступи
+    // одним спільним коефіцієнтом. Це зберігає їхні відносні пропорції зі зразка методички
+    // (який проміжок був більшим/меншим за інший — той самий ритм лишається), і водночас
+    // гарантує, що сума точно влізе на сторінку — незалежно від того, наскільки AI
+    // помилився з абсолютними числами чи наскільки тема/ПІБ студента довші/коротші за
+    // приклад у методичці.
+    const gapSum = lines.reduce((sum, item) => sum + (item.spaceBefore || 0), 0);
+    if (gapSum <= 0) return lines;
 
     const contentWidth = 11906 - L - R;
     const pageContentHeight = 16838 - T - B;
@@ -1058,21 +1096,20 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
       return Math.max(1, Math.ceil(text.length / charsPerLine));
     };
 
-    let consumed = 0;
-    lines.forEach((item, idx) => {
+    const textHeight = lines.reduce((sum, item) => {
       const fs = item.fontSize ? item.fontSize * 2 : SIZE;
-      if (idx !== flexIdx) consumed += item.spaceBefore || 0;
-      consumed += estimateLineCount(item.text, fs) * lineHeightTwips(fs);
-    });
+      return sum + estimateLineCount(item.text, fs) * lineHeightTwips(fs);
+    }, 0);
 
     // estimateLineCount — груба оцінка (середня ширина символу ~0.5em), тому може трохи
     // недооцінити реальний обгорнутий рядок (напр. довгу тему в лапках) — SAFETY_BUFFER
-    // залишає запас ~одного рядка висоти, щоб точність оцінки не зіштовхувала останній
-    // рядок (рік) на другу сторінку.
-    const MIN_FLEX = 200;
+    // залишає запас ~одного рядка висоти, щоб неточність оцінки не зіштовхувала останній
+    // рядок (місто — рік) на другу сторінку.
     const SAFETY_BUFFER = 300;
-    const finalFlex = Math.max(MIN_FLEX, pageContentHeight - consumed - SAFETY_BUFFER);
-    return lines.map((item, idx) => idx === flexIdx ? { ...item, spaceBefore: finalFlex } : item);
+    const availableGapBudget = Math.max(0, pageContentHeight - textHeight - SAFETY_BUFFER);
+    const scale = availableGapBudget / gapSum;
+    return lines.map(item =>
+      item.spaceBefore ? { ...item, spaceBefore: Math.round(item.spaceBefore * scale) } : item);
   }
 
   const resolvedLines = autoFitTitlePageLines(titlePageLines?.length
@@ -1568,8 +1605,21 @@ export async function exportAppendixToDocx(text, info, methodInfo, orderId) {
     const border = { style: BorderStyle.SINGLE, size: 1, color: "000000" };
     const cellBorders = { top: border, bottom: border, left: border, right: border };
     const filteredLines = lines.filter(l => !/^\s*\|[-:| ]+\|\s*$/.test(l));
-    const rows = filteredLines.map((l, rowIndex) => {
-      const cells = l.replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.trim());
+    const rawRows = filteredLines.map(l => l.replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.trim()));
+    const headerCount = rawRows[0]?.length || 0;
+    // Якщо джерело розбило один рядок таблиці на кілька фізичних "|"-рядків
+    // (клітинок менше, ніж у шапці), доклеюємо продовження до попереднього
+    // рядка замість того, щоб рендерити його як окремий кривий рядок.
+    const mergedRows = [];
+    for (const cells of rawRows) {
+      const prev = mergedRows[mergedRows.length - 1];
+      if (prev && headerCount > 0 && cells.length < headerCount && prev.length < headerCount) {
+        prev.push(...cells);
+      } else {
+        mergedRows.push(cells);
+      }
+    }
+    const rows = mergedRows.map((cells, rowIndex) => {
       const isHeader = rowIndex === 0;
       return new TableRow({
         children: cells.map(cellText =>
