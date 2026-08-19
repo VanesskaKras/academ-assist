@@ -410,64 +410,6 @@ function mapOpenAlex(p, forceLang) {
   };
 }
 
-// ── BASE (Bielefeld Academic Search Engine) — індексує укр. репозиторії ──
-// Немає CORS у браузері — проксимо через /api/search-base (Vercel)
-async function fetchBASE(query, limit) {
-  try {
-    const q = `${query} dclanguage:uk`;
-    const res = await fetch('/api/search-base', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: q, limit }),
-    });
-    if (!res.ok) return [];
-    const d = await res.json();
-    return (d.docs || []).filter(p => {
-      const title = Array.isArray(p.dctitle) ? p.dctitle[0] : p.dctitle;
-      return title && !isBlocked(p);
-    });
-  } catch { return []; }
-}
-
-// Витягує чистий DOI з рядка різних форматів: "doi:10.x/y", "https://doi.org/10.x/y", "10.x/y"
-function extractDoiFromString(s = '') {
-  const clean = s.replace(/^https?:\/\/doi\.org\//i, '').replace(/^doi:/i, '').trim();
-  return /^10\.\d{4,}\/.+/.test(clean) ? clean : '';
-}
-
-function mapBASE(doc) {
-  const title = Array.isArray(doc.dctitle) ? doc.dctitle[0] : (doc.dctitle || '');
-  const rawDoi = Array.isArray(doc.dcdoi) ? doc.dcdoi[0] : (doc.dcdoi || '');
-  // dcidentifier може містити DOI або URL (деякі репозиторії кладуть DOI саме сюди)
-  const rawId = Array.isArray(doc.dcidentifier) ? doc.dcidentifier[0] : (doc.dcidentifier || '');
-  const doiFromId = extractDoiFromString(rawId);
-  const doi = extractDoiFromString(rawDoi) || doiFromId;
-  const rawLink = Array.isArray(doc.dclink) ? doc.dclink[0] : (doc.dclink || '');
-  // dcidentifier як URL-фолбек (деякі repos зберігають handle/URL саме тут)
-  const idAsUrl = (rawId.startsWith('http') && !rawId.includes('doi.org')) ? rawId : '';
-  const url = rawLink || (doi ? `https://doi.org/${doi}` : '') || idAsUrl;
-  const abstract = Array.isArray(doc.dcdescription) ? doc.dcdescription[0] : (doc.dcdescription || '');
-  const rawSource = Array.isArray(doc.dcsource) ? doc.dcsource[0] : (doc.dcsource || '');
-  const volumeMatch = rawSource.match(/[Вв]ип\.?\s*(\d+)|[Vv]ol\.?\s*(\d+)/);
-  const issueMatch = rawSource.match(/[№#]\s*(\d+)|[Nn]o\.?\s*(\d+)/);
-  const lang = hasCyrillic(title) ? 'uk' : 'pl';
-  return {
-    id: rawId || url || String(Math.random()),
-    title,
-    authors: normalizeAuthorsScript((doc.dcauthor || []).slice(0, 3).map(String), lang === 'uk'),
-    year: doc.dcyear || '',
-    venue: Array.isArray(doc.dcpublisher) ? doc.dcpublisher[0] : (doc.dcpublisher || ''),
-    doi,
-    volume: volumeMatch ? (volumeMatch[1] || volumeMatch[2] || '') : '',
-    issue: issueMatch ? (issueMatch[1] || issueMatch[2] || '') : '',
-    pages: extractPagesFromDoi(doi),
-    lang,
-    source: 'base',
-    abstract: snippetAbstract(abstract),
-    url,
-  };
-}
-
 // ── Google Scholar через Serper.dev (проксі /api/search-scholar) ──
 async function fetchScholar(query, limit) {
   try {
@@ -680,8 +622,9 @@ async function fetchEnglishViaBackend(enKeywords, limit) {
 export async function searchByPhrase(phrase, limit = 10, page = 1, useScholar = false, extraYears = 0, enPhrase = '') {
   const yr = `publication_year:>${YEAR_LOOSE - extraYears - 1}`;
   const enQuery = enPhrase || phrase;
-  const [r1, r2, r3, r4, r5, r6, r7, r8, r9] = await Promise.allSettled([
-    fetchBASE(phrase, limit),
+  // BASE вимкнено: api.base-search.net вимагає окремої реєстрації IP/ключа
+  // (звичайні запити повертають "Access denied"), яку свідомо вирішили не підключати.
+  const [r2, r3, r4, r5, r6, r7, r8, r9] = await Promise.allSettled([
     useScholar ? fetchScholar(phrase, limit) : Promise.resolve([]),
     fetchCORE(phrase, limit),
     openAlexSearch(phrase, `language:uk,${yr}`, limit, page),
@@ -692,7 +635,6 @@ export async function searchByPhrase(phrase, limit = 10, page = 1, useScholar = 
     fetchDOAJ(phrase, limit),
   ]);
 
-  const baseRaw    = r1.status === 'fulfilled' ? r1.value.map(mapBASE) : [];
   const scholarRaw = r2.status === 'fulfilled' ? r2.value : [];
   const coreRaw    = r3.status === 'fulfilled' ? r3.value.map(mapCORE) : [];
   const ukRaw      = r4.status === 'fulfilled' ? r4.value.map(p => mapOpenAlex(p, 'uk')) : [];
@@ -704,7 +646,7 @@ export async function searchByPhrase(phrase, limit = 10, page = 1, useScholar = 
 
   const seen = new Set();
   const raw = [];
-  for (const p of [...baseRaw, ...scholarRaw, ...coreRaw, ...ukRaw, ...crRaw, ...plRaw, ...enRaw, ...ssRaw, ...doajRaw]) {
+  for (const p of [...scholarRaw, ...coreRaw, ...ukRaw, ...crRaw, ...plRaw, ...enRaw, ...ssRaw, ...doajRaw]) {
     const key = (p.title || '').toLowerCase().slice(0, 60);
     if (!key || seen.has(key)) continue;
     seen.add(key);
