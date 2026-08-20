@@ -1671,11 +1671,8 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
           let finalContent = contentRef.current;
           const maxTargetPages = parsePagesMax(info?.pages);
           if (maxTargetPages) {
-            const lang = info?.language || "Українська";
-            const cleanTrim = (raw) => typographQuotes(fixMixedScript(raw, lang));
-            finalContent = await trimToPageTarget({
-              sections, content: finalContent, maxPages: maxTargetPages, callClaude,
-              sys: buildSYS(lang, methodInfo), clean: cleanTrim, onProgress: setLoadMsg,
+            finalContent = trimToPageTarget({
+              sections, content: finalContent, maxPages: maxTargetPages, onProgress: setLoadMsg,
             });
             contentRef.current = finalContent;
             setContent(finalContent);

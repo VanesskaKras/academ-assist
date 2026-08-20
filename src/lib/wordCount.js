@@ -6,6 +6,52 @@ export function countWords(text) {
   return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
+// Кінець речення: крапка/!/?/… (можливо перед закриваючою лапкою/дужкою),
+// після якого йде пробіл або кінець тексту.
+const SENTENCE_END_RE = /[.!?…]+[»"'）)\]]*(?=\s|$)/g;
+
+// Відрізає незавершений "хвіст" в кінці тексту (обрив ШІ посеред речення
+// через ліміт токенів) — повертає текст по останню знайдену межу речення.
+// Якщо в тексті взагалі немає завершеного речення - повертає як є (нема куди різати).
+export function cutToLastSentence(text) {
+  const trimmed = (text || "").replace(/\s+$/, "");
+  let lastEnd = -1;
+  SENTENCE_END_RE.lastIndex = 0;
+  let m;
+  while ((m = SENTENCE_END_RE.exec(trimmed))) {
+    lastEnd = m.index + m[0].length;
+  }
+  if (lastEnd === -1 || lastEnd === trimmed.length) return trimmed;
+  return trimmed.slice(0, lastEnd).trim();
+}
+
+function endsWithSentence(text) {
+  const trimmed = (text || "").replace(/\s+$/, "");
+  if (!trimmed) return true;
+  let lastEnd = -1;
+  SENTENCE_END_RE.lastIndex = 0;
+  let m;
+  while ((m = SENTENCE_END_RE.exec(trimmed))) lastEnd = m.index + m[0].length;
+  return lastEnd === trimmed.length;
+}
+
+// Детерміновано скорочує текст до приблизно targetWords слів, набираючи цілі
+// речення по порядку і зупиняючись, щойно ціль досягнута - завжди по межі
+// речення, ніколи посеред слова.
+export function trimToWordTarget(text, targetWords) {
+  const sentences = text.match(/[\s\S]+?[.!?…]+[»"'）)\]]*(?:\s+|$)|[\s\S]+$/g) || [text];
+  let result = "";
+  let count = 0;
+  for (const sentence of sentences) {
+    const w = countWords(sentence);
+    if (count > 0 && count + w > targetWords) break;
+    result += sentence;
+    count += w;
+    if (count >= targetWords) break;
+  }
+  return (result.trim() || text.trim());
+}
+
 export async function enforceWordCount({ text, targetWords, label, callClaude, sys, signal, onProgress, clean }) {
   const n = countWords(text);
   try {
@@ -14,15 +60,17 @@ export async function enforceWordCount({ text, targetWords, label, callClaude, s
       onProgress?.(`Дописую: ${label}...`);
       const contPrompt = `Ось поточний текст "${label}" (${n} слів):\n\n${text}\n\nДопиши ще приблизно ${missing} слів, органічно продовжуючи виклад далі. Не повторюй вже написане. Не додавай вступних фраз на кшталт "Продовжимо" чи "Отже". Просто продовжуй текст з того місця де він закінчився, без заголовків і міток.`;
       const contRaw = await callClaude([{ role: "user", content: contPrompt }], signal, sys, Math.min(20000, Math.max(2000, Math.round(missing * 3))));
-      const contClean = clean ? clean(contRaw) : contRaw;
-      return text + "\n\n" + contClean.trim();
+      let contClean = (clean ? clean(contRaw) : contRaw).trim();
+      if (!endsWithSentence(contClean)) contClean = cutToLastSentence(contClean);
+      return text + "\n\n" + contClean;
     }
     if (n > targetWords * 1.2) {
       onProgress?.(`Скорочую: ${label}...`);
       const shortenPrompt = `Ось поточний текст "${label}" (${n} слів):\n\n${text}\n\nСкороти його до приблизно ${targetWords} слів: прибери повтори та другорядні деталі, збережи головні тези і структуру абзаців. Поверни лише скорочений текст, без коментарів.`;
       const shortRaw = await callClaude([{ role: "user", content: shortenPrompt }], signal, sys, Math.min(30000, Math.max(4000, Math.round(targetWords * 3))));
-      const shortClean = clean ? clean(shortRaw) : shortRaw;
-      return shortClean.trim();
+      let shortClean = (clean ? clean(shortRaw) : shortRaw).trim();
+      if (!endsWithSentence(shortClean)) shortClean = cutToLastSentence(shortClean);
+      return shortClean;
     }
   } catch {
     // Якщо допис/скорочення не вдалось - лишаємо початковий текст як є
@@ -39,7 +87,13 @@ export async function enforceWordCount({ text, targetWords, label, callClaude, s
 // підрозділи (теорія/аналіз/рекомендації) по черзі, поки сумарний обсяг не
 // впишеться в межу — не займаючись вступом/висновками/додатками, де формат
 // суворо фіксований.
-export async function trimToPageTarget({ sections, content, maxPages, callClaude, sys, clean, onProgress }) {
+//
+// Скорочення тут робиться детерміновано кодом (по межі речення), а не викликом
+// ШІ: скорочувальний виклик ШІ для великих текстів схильний перевищувати
+// закладений бюджет токенів і обриватись посеред слова (саме так одного разу
+// обірвався кінець підрозділу в готовій роботі) - різання по реченнях кодом
+// такого ризику не має.
+export function trimToPageTarget({ sections, content, maxPages, onProgress }) {
   const WORDS_PER_PAGE = 270;
   const eligibleTypes = new Set(["theory", "analysis", "recommendations"]);
 
@@ -60,19 +114,13 @@ export async function trimToPageTarget({ sections, content, maxPages, callClaude
     const words = countWords(updated[sec.id]);
     const maxCut = Math.floor(words * 0.25); // не більше 25% від підрозділу за один прохід
     const cut = Math.min(maxCut, excess);
-    if (cut < 50) continue; // дрібне скорочення не варте окремого виклику
+    if (cut < 50) continue; // дрібне скорочення не варте окремого проходу
     const target = words - cut;
     onProgress?.(`Перевіряю обсяг: скорочую "${sec.label}"...`);
-    try {
-      const prompt = `Ось текст підрозділу "${sec.label}" (${words} слів):\n\n${updated[sec.id]}\n\nСкороти його до приблизно ${target} слів: прибери повтори, другорядні деталі й надлишкові приклади, збережи головні тези, структуру абзаців, усі цитати та посилання на джерела [N]. Поверни лише скорочений текст, без коментарів.`;
-      const raw = await callClaude([{ role: "user", content: prompt }], null, sys, Math.min(30000, Math.max(4000, Math.round(target * 3))));
-      const newText = (clean ? clean(raw) : raw).trim();
-      const newWords = countWords(newText);
-      updated[sec.id] = newText;
-      excess -= (words - newWords);
-    } catch {
-      // якщо скорочення конкретного підрозділу не вдалось - лишаємо його як є й пробуємо наступний
-    }
+    const newText = trimToWordTarget(updated[sec.id], target);
+    const newWords = countWords(newText);
+    updated[sec.id] = newText;
+    excess -= (words - newWords);
   }
   return updated;
 }
