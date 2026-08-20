@@ -361,11 +361,26 @@ const OA_KEY_PARAM = OA_KEY ? `&api_key=${OA_KEY}` : '';
 const OA_BASE = 'https://api.openalex.org/works';
 const OA_FIELDS = 'title,authorships,publication_year,primary_location,doi,language,id,biblio,abstract_inverted_index,type';
 
+const OA_MAILTO = '&mailto=support@academ-assist.vercel.app';
+
+// api_key — платний рівень OpenAlex з передоплаченим бюджетом; коли бюджет вичерпано,
+// OpenAlex повертає 429 на КОЖЕН запит із цим ключем, незалежно від навантаження.
+// Тому: спершу пробуємо з ключем (якщо є), а при невдачі — одразу той самий запит
+// без ключа (безкоштовний "polite pool" через mailto — там немає такого підводного каменя).
+async function fetchOpenAlexJson(baseUrl) {
+  if (OA_KEY_PARAM) {
+    const withKey = await fetch(`${baseUrl}${OA_KEY_PARAM}`, { cache: 'no-store' });
+    if (withKey.ok) return withKey.json();
+  }
+  const r = await fetch(baseUrl, { cache: 'no-store' });
+  if (!r.ok) return null;
+  return r.json();
+}
+
 async function openAlexSearch(query, filterStr, limit, page = 1) {
-  const url = `${OA_BASE}?search=${encodeURIComponent(query)}&filter=${filterStr}&per_page=${limit}&page=${page}&select=${OA_FIELDS}${OA_KEY_PARAM}`;
-  const r = await fetch(url, { cache: 'no-store' });
-  if (!r.ok) return [];
-  const d = await r.json();
+  const url = `${OA_BASE}?search=${encodeURIComponent(query)}&filter=${filterStr}&per_page=${limit}&page=${page}&select=${OA_FIELDS}${OA_MAILTO}`;
+  const d = await fetchOpenAlexJson(url);
+  if (!d) return [];
   return (d.results || []).filter(p => p.title && !isBlocked(p));
 }
 
@@ -374,10 +389,9 @@ async function openAlexSearch(query, filterStr, limit, page = 1) {
 // усі умови мають бути об'єднані комою в ОДНОМУ filter= (AND), як і в openAlexSearch
 async function openAlexTitleSearch(query, filters, limit, page = 1) {
   const filterStr = [`title.search:${encodeURIComponent(query)}`, ...filters].join(',');
-  const url = `${OA_BASE}?filter=${filterStr}&per_page=${limit}&page=${page}&select=${OA_FIELDS}${OA_KEY_PARAM}`;
-  const r = await fetch(url, { cache: 'no-store' });
-  if (!r.ok) return [];
-  const d = await r.json();
+  const url = `${OA_BASE}?filter=${filterStr}&per_page=${limit}&page=${page}&select=${OA_FIELDS}${OA_MAILTO}`;
+  const d = await fetchOpenAlexJson(url);
+  if (!d) return [];
   return (d.results || []).filter(p => p.title && !isBlocked(p));
 }
 
@@ -518,10 +532,9 @@ function mapDOAJ(result) {
 async function fetchOpenAlexBooks(query, limit) {
   try {
     const yr = `publication_year:>${YEAR_LOOSE - 1}`;
-    const url = `${OA_BASE}?search=${encodeURIComponent(query)}&filter=type:book,language:uk,${yr}&per_page=${limit}&select=${OA_FIELDS}${OA_KEY_PARAM}`;
-    const r = await fetch(url, { cache: 'no-store' });
-    if (!r.ok) return [];
-    const d = await r.json();
+    const url = `${OA_BASE}?search=${encodeURIComponent(query)}&filter=type:book,language:uk,${yr}&per_page=${limit}&select=${OA_FIELDS}${OA_MAILTO}`;
+    const d = await fetchOpenAlexJson(url);
+    if (!d) return [];
     return (d.results || [])
       .filter(p => p.title && !isBlocked(p))
       .map(p => ({ ...mapOpenAlex(p, 'uk'), type: 'book' }));
