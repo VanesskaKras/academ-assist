@@ -3643,7 +3643,8 @@ ${secBlock}
 
       // ── Добір при нестачі: спершу закриваємо тези, які лишились БЕЗ жодного підтвердженого
       // джерела (а не просто нарощуємо загальну кількість там, де вже й так є надлишок),
-      // потім — розширюємо діапазон років (+2, потім +3), потім — альтернативні фрази ──
+      // потім — розширюємо діапазон років (+2, потім +3, потім +8 — як «ширший період»),
+      // потім — альтернативні фрази ──
       if (!stopSearchRef.current) {
         const needed = sourceDist[secId] || 3;
         // Джерело рахується "добрим" лише якщо пройшло Прохід А+Б (score≥70) І гейт повноти
@@ -3689,7 +3690,7 @@ ${secBlock}
           }
         }
 
-        for (const extraYears of [2, 3]) {
+        for (const extraYears of [2, 3, 8]) {
           if (stopSearchRef.current || countGood() >= needed) break;
           for (let i = 0; i < triedPhrases.length; i++) {
             if (stopSearchRef.current || countGood() >= needed) break;
