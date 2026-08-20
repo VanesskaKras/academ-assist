@@ -90,7 +90,6 @@ Write short, clear sentences. Use active voice.
 Replace jargon and complex terms with accessible language. Use minimal abbreviations.
 Avoid overly long sentences. Break long sentences into smaller parts.
 Vary sentence length for natural reading rhythm.
-SENTENCE LENGTH POLARIZATION: every paragraph must contain at least one sentence under 8 words AND at least one sentence over 20 words with a subordinate clause (causal, conditional, or comparative). Do not let sentences cluster around a uniform medium length.
 Vary paragraph length: short paragraphs (3-4 sentences) should alternate with longer ones (5-7 sentences). Avoid consecutive same-size paragraphs. FORBIDDEN to write single- or two-sentence paragraphs.
 Add short, clear examples to explain theoretical points.
 Use natural connectors appropriate for ${lang} academic writing.
@@ -103,7 +102,7 @@ STRICTLY FORBIDDEN to list exactly three parallel examples, items, or clauses wi
 STRICTLY FORBIDDEN to use the balanced hedge constructions "не лише X, а й Y" / "not only X but also Y" or "з одного боку... з іншого боку" / "on the one hand... on the other hand" more than once per subsection. State the point directly instead.
 Vary paragraph macrostructure: do NOT make every paragraph follow the same claim-then-elaboration-then-summary shape. Some paragraphs should open with a concrete example or fact, others with a direct claim, others as a mid-thought continuation of the previous paragraph's idea.
 Do NOT repeat the same synonym or phrase for the same recurring concept more than twice within one subsection. Vary word choice for recurring concepts.
-SENTENCE BURSTINESS: naturally scatter clusters of 2-3 consecutive very short sentences (under 10 words each) at least once per 120 words — this is the strongest signal of human writing and breaks the uniform rhythm that AI detectors flag.
+SENTENCE BURSTINESS: naturally scatter clusters of 2-3 consecutive very short sentences (under 10 words each) at least once per 200 words — this is the strongest signal of human writing and breaks the uniform rhythm that AI detectors flag.
 Insert simple metaphors for clarity where appropriate.
 Soften categorical statements into gentle propositions. Add short transitions between paragraphs.
 Reduce dramatic urgency and pathos. Keep all key facts intact.
@@ -221,7 +220,6 @@ Vary how each section opens. Do NOT default to the same opening style every time
 Write short, clear sentences. Use active voice.
 Replace jargon with accessible language. Use minimal abbreviations.
 Vary sentence and paragraph length for natural reading rhythm.
-SENTENCE LENGTH POLARIZATION: every paragraph must contain at least one sentence under 8 words AND at least one sentence over 20 words with a subordinate clause (causal, conditional, or comparative). Do not let sentences cluster around a uniform medium length.
 Short paragraphs (3-4 sentences) must alternate with longer ones (5-7). FORBIDDEN to write single- or two-sentence paragraphs.
 Add short, clear examples to explain theoretical points. Use natural connectors appropriate for ${lang} academic writing.
 STRICTLY FORBIDDEN to use sequential enumerators ("по-перше", "по-друге", "по-третє", "по-четверте", "firstly", "secondly", "thirdly", and any similar constructions in any language). Express each point as a separate sentence or paragraph with a natural transition instead.
@@ -233,7 +231,7 @@ STRICTLY FORBIDDEN to list exactly three parallel examples, items, or clauses wi
 STRICTLY FORBIDDEN to use the balanced hedge constructions "не лише X, а й Y" / "not only X but also Y" or "з одного боку... з іншого боку" / "on the one hand... on the other hand" more than once per subsection. State the point directly instead.
 Vary paragraph macrostructure: do NOT make every paragraph follow the same claim-then-elaboration-then-summary shape. Some paragraphs should open with a concrete example or fact, others with a direct claim, others as a mid-thought continuation of the previous paragraph's idea.
 Do NOT repeat the same synonym or phrase for the same recurring concept more than twice within one subsection. Vary word choice for recurring concepts.
-SENTENCE BURSTINESS: naturally scatter clusters of 2-3 consecutive very short sentences (under 10 words each) at least once per 120 words — this is the strongest signal of human writing and breaks the uniform rhythm that AI detectors flag.
+SENTENCE BURSTINESS: naturally scatter clusters of 2-3 consecutive very short sentences (under 10 words each) at least once per 200 words — this is the strongest signal of human writing and breaks the uniform rhythm that AI detectors flag.
 Insert simple metaphors for clarity where appropriate. Soften categorical statements. Add short transitions between paragraphs.
 Keep all key facts intact. Adopt a simple, conversational yet academic tone.
 End the work logically with a complete sentence and concluding thought. Do not cut off the text.`;
