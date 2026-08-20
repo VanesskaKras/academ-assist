@@ -1500,13 +1500,17 @@ export async function enrichSources(papers) {
     return { ...p, _unverified: true }; // ні DOI, ні URL — нічим підтвердити
   }));
 
-  // Гейт повноти: рік, видання/видавництво і анотація мають бути присутні, а існування —
-  // підтверджене. Для книг вимагаємо саме видавця (не будь-яке "видання") і обсяг сторінок —
+  // Гейт повноти: рік, видання/видавництво мають бути присутні, а існування — підтверджене.
+  // Для книг вимагаємо саме видавця (не будь-яке "видання") і обсяг сторінок —
   // ISBN/каталог послідовно недоступні з наявних API, тому видавець+обсяг — реалістичний
   // мінімум. Авторів навмисно не вимагаємо жорстко — ДСТУ 8302 дозволяє легітимні записи
   // без автора (інституційні звіти тощо), paperToCitation це коректно обробляє.
+  // Анотація — не блокує _complete: для вузьких/спеціальних тем вона часто недоступна
+  // через API навіть у справді релевантних і підтверджених (DOI/URL) джерел. Лишається
+  // видимою в _missingFields як інформаційний бейдж, щоб користувач бачив прогалину.
   return verified.map(p => {
     const missing = [];
+    const missingSoft = [];
     if (!p.year) missing.push('рік');
     if (p.type === 'book') {
       if (!p.publisher) missing.push('видавець');
@@ -1514,8 +1518,8 @@ export async function enrichSources(papers) {
     } else if (!p.venue && !p.publisher) {
       missing.push('видання/видавництво');
     }
-    if (!p.abstract) missing.push('анотація');
+    if (!p.abstract) missingSoft.push('анотація');
     if (p._unverified) missing.push('не підтверджено існування джерела (DOI/посилання)');
-    return { ...p, _complete: missing.length === 0, _missingFields: missing };
+    return { ...p, _complete: missing.length === 0, _missingFields: [...missing, ...missingSoft] };
   });
 }
