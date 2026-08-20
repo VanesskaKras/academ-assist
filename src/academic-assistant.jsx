@@ -43,11 +43,12 @@ function fixMixedScript(text, lang) {
     'a':'а','c':'с','e':'е','i':'і','o':'о','p':'р','x':'х','y':'у','g':'г','r':'р',
     'A':'А','B':'В','C':'С','E':'Е','H':'Н','I':'І','K':'К','M':'М','O':'О','P':'Р','T':'Т','X':'Х',
   };
-  return text.replace(/\S+/g, w =>
-    /[Ѐ-ӿ]/.test(w) && /[a-zA-Z]/.test(w)
-      ? w.replace(/[a-zA-Z]/g, ch => map[ch] ?? ch)
-      : w
-  );
+  return text.replace(/\S+/g, w => {
+    if (!/[Ѐ-ӿ]/.test(w) || !/[a-zA-Z]/.test(w)) return w;
+    const latinChars = w.match(/[a-zA-Z]/g) || [];
+    if (!latinChars.every(ch => ch in map)) return w; // не всі латинські літери мають кириличний двійник — це, найімовірніше, справжнє неперекладене слово, а не одруківка-гомогліф; чіпати не варто
+    return w.replace(/[a-zA-Z]/g, ch => map[ch]);
+  });
 }
 
 function typographQuotes(text) {
