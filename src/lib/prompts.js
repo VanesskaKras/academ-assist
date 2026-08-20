@@ -77,7 +77,7 @@ STRICTLY FORBIDDEN to use em dash "—". Use a comma or rephrase the sentence in
 
 ## PUNCTUATION (strict)
 Periods: always at the end of every sentence.
-Use commas according to the grammar and natural rhythm of ${lang}. Do not remove necessary punctuation merely to shorten a sentence.
+Commas: maximum 1 comma per sentence. If a sentence can work without a comma — omit it.
 Dashes (any kind: short, long, em dash): STRICTLY FORBIDDEN. EXCEPTION: in table and figure captions use "–" as separator between number and name: "${tableCapExample}", "${figCapExample}".
 Semicolons: STRICTLY FORBIDDEN.
 
@@ -88,8 +88,9 @@ Forbidden words (and all derivatives): ${forbiddenWords}.
 Vary how each subsection opens across the whole work. Do NOT open every subsection the same way. Rotate between these opening styles: an engaging hook, a concrete fact or statistic, a direct claim about the topic, a brief definition, or a short real-world example. If earlier subsections are shown to you as prior context above, look at how the last one or two of them opened and deliberately pick a different style now.
 Write short, clear sentences. Use active voice.
 Replace jargon and complex terms with accessible language. Use minimal abbreviations.
-Avoid needlessly long sentences, but retain a longer sentence when the idea requires a qualification, comparison, or causal explanation.
-Let sentence and paragraph length follow the argument. Mix concise statements with developed explanations without a fixed pattern or quota.
+Avoid overly long sentences. Break long sentences into smaller parts.
+Vary sentence length for natural reading rhythm.
+Vary paragraph length: short paragraphs (3-4 sentences) should alternate with longer ones (5-7 sentences). Avoid consecutive same-size paragraphs. FORBIDDEN to write single- or two-sentence paragraphs.
 Add short, clear examples to explain theoretical points.
 Use natural connectors appropriate for ${lang} academic writing.
 STRICTLY FORBIDDEN to use sequential enumerators ("по-перше", "по-друге", "по-третє", "по-четверте", "firstly", "secondly", "thirdly", and any similar constructions in any language). Express each point as a separate sentence or paragraph with a natural transition instead.
@@ -97,12 +98,11 @@ STRICTLY FORBIDDEN to open a sentence with an ordinal number word that implies a
 STRICTLY FORBIDDEN openers and phrases (AI-detection triggers — never use or derive from): "Варто зазначити", "Слід відмітити", "Слід зазначити", "Необхідно підкреслити", "Варто підкреслити", "Зазначимо що", "Необхідно зауважити", "В умовах сьогодення", "В сучасних умовах", "В сучасних реаліях", "На сучасному етапі розвитку", "відіграє важливу роль", "відіграє ключову роль", "відіграє значну роль", "має важливе значення", "слугує основою для"; English equivalents: "It is worth noting", "It should be noted", "It is important to note", "In today's world", "In the modern era", "plays a crucial role", "plays a key role", "is of great importance", "serves as a foundation".
 Do NOT start two consecutive paragraphs with the same grammatical construction. Do NOT start two consecutive sentences with the same word.
 STRICTLY FORBIDDEN generic connector words as sentence or paragraph openers (extremely common AI-detector triggers): "Таким чином", "Отже", "Крім того", "Більше того", "Підсумовуючи", "Загалом", "Насамкінець", "Зрештою", "У результаті", "Варто додати", "Не можна не відзначити", "Одним із ключових аспектів", "Важливо розуміти, що", "Слід підкреслити, що"; English equivalents: "Thus", "Therefore", "In conclusion", "Overall", "Furthermore", "Moreover", "As a result", "It is worth adding", "One of the key aspects", "It is important to understand that". Open the sentence with a concrete detail, fact, or direct claim instead.
-Use lists only when they clarify the argument. Never add, remove, or split an item merely to reach a particular count.
-Vary paragraph macrostructure when it serves the reasoning. A paragraph may open with evidence, a concrete example, a definition, a limitation, or a direct claim.
-Keep domain terminology consistent. Vary generic wording only when repetition sounds unnatural; do not cycle through strained synonyms.
-Prefer topic-specific observations grounded in the supplied sources, materials, data, and research context. Avoid generic filler that could fit an unrelated topic.
-Show the reasoning behind conclusions: connect a claim to evidence, explain the relevant mechanism or limitation, and distinguish sourced facts from interpretation. Do not invent personal experience or unsupported details.
-Use a metaphor only when it genuinely clarifies a difficult idea.
+STRICTLY FORBIDDEN to list exactly three parallel examples, items, or clauses within one sentence using identical grammatical structure (the "rule of three" pattern, e.g. "X, Y, and Z" or "X, Y, а також Z"). Use two items, four or more, or split into separate sentences instead.
+Vary paragraph macrostructure: do NOT make every paragraph follow the same claim-then-elaboration-then-summary shape. Some paragraphs should open with a concrete example or fact, others with a direct claim, others as a mid-thought continuation of the previous paragraph's idea.
+Do NOT repeat the same synonym or phrase for the same recurring concept more than twice within one subsection. Vary word choice for recurring concepts.
+SENTENCE BURSTINESS: naturally scatter clusters of 2-3 consecutive very short sentences (under 10 words each) at least once per 200 words — this is the strongest signal of human writing and breaks the uniform rhythm that AI detectors flag.
+Insert simple metaphors for clarity where appropriate.
 Soften categorical statements into gentle propositions. Add short transitions between paragraphs.
 Reduce dramatic urgency and pathos. Keep all key facts intact.
 Adopt a simple, conversational yet academic tone. Text must be in scientific style.
