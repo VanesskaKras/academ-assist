@@ -1775,9 +1775,16 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
       const lc = getLangLabels(lang);
       const il = lc.introLabels || {};
       const defaultComponents = lc.defaultIntroComponents || ["актуальність теми", "мета дослідження", "завдання дослідження", "об'єкт дослідження", "предмет дослідження", "методи дослідження", "практичне значення дослідження", "структура роботи"];
-      const allComponents = methodInfo?.introComponents?.length
-        ? methodInfo.introComponents
-        : defaultComponents;
+      const hasMethodIntroComponents = !!methodInfo?.introComponents?.length;
+      const allComponents = hasMethodIntroComponents
+        ? [...methodInfo.introComponents]
+        : [...defaultComponents];
+      // "Структура роботи" завжди йде останньою, незалежно від позиції в методичці
+      const structureRe = /структура|structure|struktura|štruktúra|aufbau/i;
+      const structureIdx = allComponents.findIndex(c => structureRe.test(c));
+      if (structureIdx !== -1 && structureIdx !== allComponents.length - 1) {
+        allComponents.push(allComponents.splice(structureIdx, 1)[0]);
+      }
 
       // Формуємо рядки структури з урахуванням мови роботи
       const componentLines = allComponents.map((comp, i) => {
@@ -1823,9 +1830,12 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
           const phrase = il.approbation || "Апробація результатів дослідження –";
           return `${label}: write in format "${phrase} [conferences, publications, seminars where results were presented]".`;
         }
-        if (/структура|structure|struktura|štruktúra/i.test(comp)) {
+        if (structureRe.test(comp)) {
           const phrase = il.structure || "Структура роботи:";
-          return `${label}: write in format "${phrase} the work consists of introduction," — number of chapters, conclusions, sources list. For the total page count write the exact literal token __TOTAL_PAGES__ in place of the number (no digits) — it will be replaced automatically with the real page count once the whole work is generated.`;
+          const detailLine = hasMethodIntroComponents
+            ? " After the counts, add one short sentence per chapter briefly describing what it covers."
+            : " Do NOT describe the content of individual chapters — state only how many parts the work consists of, nothing more.";
+          return `${label}: write in format "${phrase} the work consists of introduction," — number of chapters, conclusions, sources list.${detailLine} For the total page count write the exact literal token __TOTAL_PAGES__ in place of the number (no digits) — it will be replaced automatically with the real page count once the whole work is generated.`;
         }
         return `${label}: write in format "${label} – [content relevant to topic "${d.topic}"]".`;
       });
@@ -2230,7 +2240,13 @@ ${planSummary}
       const lc = getLangLabels(lang);
       const il = lc.introLabels || {};
       const defaultComponents = lc.defaultIntroComponents || ["актуальність теми", "мета дослідження", "завдання дослідження", "об'єкт дослідження", "предмет дослідження", "методи дослідження", "практичне значення дослідження", "структура роботи"];
-      const allComponents = methodInfo?.introComponents?.length ? methodInfo.introComponents : defaultComponents;
+      const hasMethodIntroComponents = !!methodInfo?.introComponents?.length;
+      const allComponents = hasMethodIntroComponents ? [...methodInfo.introComponents] : [...defaultComponents];
+      const structureRe = /структура|structure|struktura|štruktúra|aufbau/i;
+      const structureIdx = allComponents.findIndex(c => structureRe.test(c));
+      if (structureIdx !== -1 && structureIdx !== allComponents.length - 1) {
+        allComponents.push(allComponents.splice(structureIdx, 1)[0]);
+      }
       const componentLines = allComponents.map((comp) => {
         const label = comp.charAt(0).toUpperCase() + comp.slice(1);
         if (/актуальн|actuality|aktual|relevance|relevanz|pertine/i.test(comp)) {
@@ -2274,9 +2290,12 @@ ${planSummary}
           const phrase = il.approbation || "Апробація результатів дослідження –";
           return `${label}: write as "${phrase} [where presented: conferences, articles, seminars]".`;
         }
-        if (/структура|structure|struktura|aufbau/i.test(comp)) {
+        if (structureRe.test(comp)) {
           const phrase = il.structure || "Структура роботи:";
-          return `${label}: write as "${phrase} the work consists of introduction," — number of chapters, conclusions, bibliography.`;
+          const detailLine = hasMethodIntroComponents
+            ? " After the counts, add one short sentence per chapter briefly describing what it covers."
+            : " Do NOT describe the content of individual chapters — state only how many parts the work consists of, nothing more.";
+          return `${label}: write as "${phrase} the work consists of introduction," — number of chapters, conclusions, bibliography.${detailLine}`;
         }
         return `${label}: write in format "${label} – [content relevant to the topic]".`;
       });
@@ -3319,7 +3338,13 @@ ${slideSpecs.join("\n\n")}
         const lc = getLangLabels(lang);
         const il = lc.introLabels || {};
         const defaultComponents = lc.defaultIntroComponents || ["актуальність теми", "мета дослідження", "завдання дослідження", "об'єкт дослідження", "предмет дослідження", "методи дослідження", "структура роботи"];
-        const allComponents = methodInfo?.introComponents?.length ? methodInfo.introComponents : defaultComponents;
+        const hasMethodIntroComponents = !!methodInfo?.introComponents?.length;
+        const allComponents = hasMethodIntroComponents ? [...methodInfo.introComponents] : [...defaultComponents];
+        const structureRe = /структура|structure|struktura|štruktúra|aufbau/i;
+        const structureIdx = allComponents.findIndex(c => structureRe.test(c));
+        if (structureIdx !== -1 && structureIdx !== allComponents.length - 1) {
+          allComponents.push(allComponents.splice(structureIdx, 1)[0]);
+        }
         const componentLines = allComponents.map((comp) => {
           const label = comp.charAt(0).toUpperCase() + comp.slice(1);
           if (/актуальн|actuality|aktual|relevance|relevanz|pertine/i.test(comp)) {
@@ -3363,9 +3388,12 @@ ${slideSpecs.join("\n\n")}
             const phrase = il.approbation || "Апробація результатів дослідження здійснювалась";
             return `${label}: starts with "${phrase}"`;
           }
-          if (/структура|structure|struktura|aufbau/i.test(comp)) {
+          if (structureRe.test(comp)) {
             const phrase = il.structure || "Робота складається з вступу,";
-            return `${label}: starts with "${phrase}"`;
+            const detailLine = hasMethodIntroComponents
+              ? " After the counts, add one short sentence per chapter briefly describing what it covers."
+              : " Do NOT describe the content of individual chapters — state only how many parts the work consists of, nothing more.";
+            return `${label}: starts with "${phrase}".${detailLine}`;
           }
           return `${label}`;
         });
@@ -3522,7 +3550,10 @@ ${secBlock}
   };
 
   // ── Автоматичний пошук джерел ──
-  const doSearchSources = async (secId, thesesData, sectionLabel = '', resetPage = false, anchors = [], enPhrases = []) => {
+  // crossSectionSeen — спільний Set назв (title-key), що переноситься між послідовними
+  // викликами для різних підрозділів (напр. з doGenKeywords), щоб те саме джерело не
+  // пропонувалось і не забиралось у два підрозділи одразу.
+  const doSearchSources = async (secId, thesesData, sectionLabel = '', resetPage = false, anchors = [], enPhrases = [], crossSectionSeen = null) => {
     stopSearchRef.current = false;
     const isFirstSearch = resetPage || (searchPageCount[secId] || 0) === 0;
     // Для econ-аналітичних підрозділів додаємо офіційну статистику (Держстат/НБУ/Мінфін/World Bank)
@@ -3545,6 +3576,7 @@ ${secBlock}
     try {
       const topicCtx = [info?.topic, info?.direction, info?.subject].filter(Boolean).join(' ');
       const globalSeen = new Set(isFirstSearch ? [] : (seenSourceKeys[secId] || []));
+      if (crossSectionSeen) crossSectionSeen.forEach(k => globalSeen.add(k));
       const updatedGroups = isFirstSearch ? [...institutionalGroup] : [...(phraseGroups[secId] || [])];
 
       // Для розділів без підрозділів label містить "РОЗДІЛ N. НАЗВА РОЗДІЛУ" —
@@ -3587,7 +3619,11 @@ ${secBlock}
           // Автозбагачення метаданих (DOI/сторінки/видавництво) + гейт повноти — до вставки
           // в suggestedSources, щоб автовставка вже бачила, чого реально бракує.
           const top15 = await enrichSources(top15tagged);
-          top15.forEach(p => globalSeen.add((p.title || '').toLowerCase().slice(0, 60)));
+          top15.forEach(p => {
+            const key = (p.title || '').toLowerCase().slice(0, 60);
+            globalSeen.add(key);
+            crossSectionSeen?.add(key);
+          });
 
           const existingIdx = updatedGroups.findIndex(g => g.phrase === phrase);
           if (existingIdx >= 0) {
@@ -3718,7 +3754,7 @@ ${secBlock}
       const filterLabel = (sectionsRef.current.find(s => s.id === secId)?.label || '')
         .replace(/^РОЗДІЛ\s+[IVXivxІVХ\d]+[.\s:]+/i, '').trim();
       const existingTitles = new Set(
-        (citStructured[secId] || []).map(p => (p.title || '').toLowerCase().slice(0, 60))
+        Object.values(citStructured).flat().map(p => (p.title || '').toLowerCase().slice(0, 60))
       );
       const candidates = await searchByPhrase(thesis, 15, 1, true, 0, '');
       const fresh = candidates.filter(p => {
@@ -3851,6 +3887,9 @@ ${secBlocks}
       setKeywords(kwNorm);
 
       const econSecIdsForSources = getEconSections(sectionsRef.current, info);
+      // Спільний для всіх підрозділів набір уже забраних назв джерел — щоб те саме
+      // джерело не потрапило одразу в кілька підрозділів під час цього пакетного пошуку.
+      const crossSectionSeen = new Set();
       for (const s of mainSecs) {
         if (stopSearchRef.current) break;
         const normalKey = normalizeKey(s.id);
@@ -3858,7 +3897,7 @@ ${secBlocks}
         // Навіть якщо Gemini не повернув тез для econ-підрозділу (обрізаний батч, збій парсингу),
         // офіційна статистика (Держстат/НБУ/Мінфін/World Bank) все одно має з'явитись
         if (thesesData.length || econSecIdsForSources.includes(s.id)) {
-          await doSearchSources(s.id, thesesData, s.label || '', false, allAnchorsNorm[normalKey] || [], allEnNorm[normalKey] || []);
+          await doSearchSources(s.id, thesesData, s.label || '', false, allAnchorsNorm[normalKey] || [], allEnNorm[normalKey] || [], crossSectionSeen);
         }
       }
     } catch (e) { console.error(e); setKwError(e.message); }
@@ -3882,6 +3921,11 @@ ${secBlocks}
       const phrases = keywords[secId] || [];
       const enPhrasesArr = enKeywords[secId] || [];
       const globalSeen = new Set(seenSourceKeys[secId] || []);
+      // Не пропонувати повторно джерела, вже забрані іншими підрозділами
+      Object.entries(suggestedSources).forEach(([sid, papers]) => {
+        if (sid === secId) return;
+        (papers || []).forEach(p => { const k = (p.title || '').toLowerCase().slice(0, 60); if (k) globalSeen.add(k); });
+      });
       const updatedGroups = [...(phraseGroups[secId] || [])];
       for (let i = 0; i < phrases.length; i++) {
         if (stopSearchRef.current) break;
@@ -3916,7 +3960,13 @@ ${secBlocks}
       if (newTheses.length) {
         setKeywords(prev => ({ ...prev, [sec.id]: newTheses.flatMap(t => t.phrases) }));
         setEnKeywords(prev => ({ ...prev, [sec.id]: newEnPhrases }));
-        await doSearchSources(sec.id, newTheses, sec.label || '', true, searchAnchors[sec.id] || [], newEnPhrases);
+        // Не пропонувати повторно джерела, вже забрані іншими підрозділами
+        const crossSectionSeen = new Set();
+        Object.entries(suggestedSources).forEach(([sid, papers]) => {
+          if (sid === sec.id) return;
+          (papers || []).forEach(p => { const k = (p.title || '').toLowerCase().slice(0, 60); if (k) crossSectionSeen.add(k); });
+        });
+        await doSearchSources(sec.id, newTheses, sec.label || '', true, searchAnchors[sec.id] || [], newEnPhrases, crossSectionSeen);
       } else {
         setSourcesSearchLoading(prev => ({ ...prev, [sec.id]: false }));
       }
