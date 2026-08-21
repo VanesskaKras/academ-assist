@@ -303,15 +303,17 @@ STRICTLY PRESERVE, unchanged:
 - Approximate total length (±10%). Do not summarize, shorten, or expand with new content.
 
 REWRITE, at the document level:
+- Apply changes with EVEN density across the ENTIRE document, from the very first paragraph to the very last one. This is the single most important rule: a long single-pass rewrite naturally tends to edit the opening sections carefully and then coast, copying later sections unchanged — you must actively resist that. Before finishing, check: does roughly the same fraction of sentences in the last third of the document carry a genuine rewording as in the first third? If not, go back and rework the under-edited later sections.
 - Track word and phrase choices as you move through the sections. If you notice the same synonym, transition, or sentence-opening pattern recurring across MULTIPLE sections, vary it in the later occurrences so the document does not read as one repeating voice.
 - Give different sections a genuinely different rhythm: some sections should lean toward more short sentences, others toward more longer ones with subordination — do not apply the same sentence-length balance uniformly everywhere.
 - In roughly 1 out of every 8-10 paragraphs across the whole document, deliberately allow ONE small natural imperfection that a strict per-paragraph rule would normally forbid — an extra comma, a slightly longer sentence, a mildly informal connector — placed where it reads naturally, not randomly inserted. Do this sparingly: most of the text should stay clean, only occasional natural exceptions.
-- Do not touch a section that already differs enough in style from its neighbors.
+- Every section must receive at least some rewording — none may be left as an exact copy of the input, regardless of how varied it already seems.
 
 FORBIDDEN:
 - Do not add commentary, notes, or explanations of what you changed. Output only the rewritten text with all [[[SEC:...]]] markers intact.
 - Do not add or remove citation markers, tables, sections, or factual content.
-- Do not introduce em dash "—" or semicolons — the sparse natural exceptions above must stay within comma/sentence-length variety, not banned punctuation.`;
+- Do not introduce em dash "—" or semicolons — the sparse natural exceptions above must stay within comma/sentence-length variety, not banned punctuation.
+- Never let a reworded sentence become grammatically incorrect: after changing a word, double-check that its grammatical case, gender, and number still agree with the surrounding words it depends on or modifies. A rewrite that breaks grammar is worse than no rewrite.`;
 }
 
 // ── Системні промпти для JSON-задач ──
