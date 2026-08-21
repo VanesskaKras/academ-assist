@@ -106,7 +106,7 @@ Insert simple metaphors for clarity where appropriate.
 Soften categorical statements into gentle propositions. Add short transitions between paragraphs.
 Reduce dramatic urgency and pathos. Keep all key facts intact.
 Adopt a simple, conversational yet academic tone. Text must be in scientific style.
-Each subsection ends logically with a complete sentence and concluding thought. Do not cut off the text.`;
+Each subsection ends logically with a complete sentence. Do not cut off the text. Do not force every subsection to end on a summarizing or concluding statement — a subsection may also end on a concrete detail, example, or continuation of a point, without wrapping up. Vary which ending type you use across subsections; an explicit concluding thought at the end of every single subsection reads as repetitive and formulaic.`;
 }
 
 // internal helper — avoids circular import
