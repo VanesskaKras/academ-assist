@@ -12,7 +12,7 @@ import { extractPdfPageImages } from "./lib/pdfImages.js";
 import { callClaude, callGemini, MODEL, MODEL_FAST, resetGenerationCost } from "./lib/api.js";
 import { playDoneSound } from "./lib/audio.js";
 import { enforceWordCount, trimToPageTarget } from "./lib/wordCount.js";
-import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildIllustrationsPdfPrompt, buildDrawingsDescriptionPrompt, buildClientMaterialsAnalysisPrompt, buildExtractStructurePrompt, buildContinuationPlanPrompt, buildAnnotationPrompt, buildAnnotationRegenPrompt, buildAntiPlagiarismSYS } from "./lib/prompts.js";
+import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildIllustrationsPdfPrompt, buildDrawingsDescriptionPrompt, buildClientMaterialsAnalysisPrompt, buildExtractStructurePrompt, buildContinuationPlanPrompt, buildAnnotationPrompt, buildAnnotationRegenPrompt, buildAntiPlagiarismSYS, buildAntiDetectionSYS } from "./lib/prompts.js";
 import { extractReadyWorkStructure, quickParsePlanIds } from "./lib/readyWorkExtract.js";
 import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, getEmpiricalSections, getEconSections, getTechnicalSections, CODE_FILE_EXTENSIONS, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parsePagesMax, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, getLangLabels, insertBeforeTail, detectRequestedChapterCount } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
@@ -227,6 +227,9 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [plagAllLoading, setPlagAllLoading] = useState(false);
   const [plagAllMsg, setPlagAllMsg] = useState("");
   const plagAllAbortRef = useRef(null);
+  const [aiDetectAllLoading, setAiDetectAllLoading] = useState(false);
+  const [aiDetectAllMsg, setAiDetectAllMsg] = useState("");
+  const aiDetectAllAbortRef = useRef(null);
   const writingDoneRef = useRef(false);
   const autoRemapDoneRef = useRef(false);
   const appendixFillDoneRef = useRef(false);
@@ -2546,6 +2549,57 @@ ${clientReqsRegen ? `ВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО вико
 
     setPlagAllMsg("");
     setPlagAllLoading(false);
+  };
+
+  // ── Зменшити ШІ-детекцію по всій роботі одним викликом (документ бачить
+  // себе цілком, на відміну від "Зменшити плагіат", що йде по секціях окремо) ──
+  const doReduceAiDetectionAll = async () => {
+    if (!window.confirm("Переписати весь текст одним проходом для зниження ШІ-детекції? Поточний текст буде замінено.")) return;
+    const ctrl = new AbortController();
+    aiDetectAllAbortRef.current = ctrl;
+    setAiDetectAllLoading(true);
+    setApiError("");
+    resetGenerationCost();
+
+    try {
+      const lang = info?.language || "Українська";
+      const secsToProcess = sections.filter(s => s.type !== "sources" && contentRef.current[s.id]);
+      if (!secsToProcess.length) { setAiDetectAllLoading(false); return; }
+
+      const combined = secsToProcess.map(s => `[[[SEC:${s.id}]]]\n${contentRef.current[s.id]}`).join("\n\n");
+      const totalPages = secsToProcess.reduce((sum, s) => sum + (s.pages || 1), 0);
+      const maxTokens = Math.min(60000, Math.max(8000, Math.round(totalPages * 3000)));
+
+      setAiDetectAllMsg("Переписую весь текст для зниження ШІ-детекції...");
+      const raw = await callClaude(
+        [{ role: "user", content: combined }],
+        ctrl.signal,
+        buildAntiDetectionSYS(lang),
+        maxTokens
+      );
+
+      const parts = raw.split(/\[\[\[SEC:([^\]]+)\]\]\]/);
+      const resultById = {};
+      for (let i = 1; i < parts.length; i += 2) {
+        resultById[parts[i]] = parts[i + 1]?.trim() || "";
+      }
+      const missing = secsToProcess.filter(s => !resultById[s.id]);
+      if (missing.length) throw new Error(`Модель не повернула частину секцій (${missing.map(s => s.label).join(", ")}) — текст не змінено.`);
+
+      const newContent = { ...contentRef.current };
+      for (const sec of secsToProcess) {
+        newContent[sec.id] = typographQuotes(fixMixedScript(resultById[sec.id], lang)
+          .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, ""))
+          .replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2")
+          .replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2");
+      }
+      setContent(newContent);
+      await saveToFirestore({ content: newContent });
+    } catch (e) {
+      if (e.name !== "AbortError") { console.error(e); setApiError(e.message); }
+    }
+    setAiDetectAllMsg("");
+    setAiDetectAllLoading(false);
   };
 
   // ── Текст доповіді (без міток слайдів) — джерело істини для змісту презентації ──
@@ -4905,6 +4959,8 @@ ${secBlocks}
               doReducePlagiarism={doReducePlagiarism}
               plagAllLoading={plagAllLoading} plagAllMsg={plagAllMsg}
               doReducePlagiarismAll={doReducePlagiarismAll} plagAllAbortRef={plagAllAbortRef}
+              aiDetectAllLoading={aiDetectAllLoading} aiDetectAllMsg={aiDetectAllMsg}
+              doReduceAiDetectionAll={doReduceAiDetectionAll} aiDetectAllAbortRef={aiDetectAllAbortRef}
               doGenAppendices={doGenAppendices} saveToFirestore={saveToFirestore}
               copyAll={copyAll} resetAll={resetAll}
               generatePresentation={generatePresentation} generateSpeech={generateSpeech}

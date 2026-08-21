@@ -98,8 +98,7 @@ STRICTLY FORBIDDEN to open a sentence with an ordinal number word that implies a
 STRICTLY FORBIDDEN openers and phrases (AI-detection triggers — never use or derive from): "Варто зазначити", "Слід відмітити", "Слід зазначити", "Необхідно підкреслити", "Варто підкреслити", "Зазначимо що", "Необхідно зауважити", "В умовах сьогодення", "В сучасних умовах", "В сучасних реаліях", "На сучасному етапі розвитку", "відіграє важливу роль", "відіграє ключову роль", "відіграє значну роль", "має важливе значення", "слугує основою для"; English equivalents: "It is worth noting", "It should be noted", "It is important to note", "In today's world", "In the modern era", "plays a crucial role", "plays a key role", "is of great importance", "serves as a foundation".
 Do NOT start two consecutive paragraphs with the same grammatical construction. Do NOT start two consecutive sentences with the same word.
 STRICTLY FORBIDDEN generic connector words as sentence or paragraph openers (extremely common AI-detector triggers): "Таким чином", "Отже", "Крім того", "Більше того", "Підсумовуючи", "Загалом", "Насамкінець", "Зрештою", "У результаті", "Варто додати", "Не можна не відзначити", "Одним із ключових аспектів", "Важливо розуміти, що", "Слід підкреслити, що"; English equivalents: "Thus", "Therefore", "In conclusion", "Overall", "Furthermore", "Moreover", "As a result", "It is worth adding", "One of the key aspects", "It is important to understand that". Open the sentence with a concrete detail, fact, or direct claim instead.
-STRICTLY FORBIDDEN to list exactly three parallel examples, items, or clauses within one sentence using identical grammatical structure (the "rule of three" pattern, e.g. "X, Y, and Z" or "X, Y, а також Z"). This also applies to bare noun enumerations ("аналіз, оцінка та вдосконалення"). Use two items, four or more, or split into separate sentences instead.
-STRICTLY FORBIDDEN to use the balanced hedge constructions "не лише X, а й Y" / "not only X but also Y" or "з одного боку... з іншого боку" / "on the one hand... on the other hand" more than once per subsection. State the point directly instead.
+STRICTLY FORBIDDEN to list exactly three parallel examples, items, or clauses within one sentence using identical grammatical structure (the "rule of three" pattern, e.g. "X, Y, and Z" or "X, Y, а також Z"). Use two items, four or more, or split into separate sentences instead.
 Vary paragraph macrostructure: do NOT make every paragraph follow the same claim-then-elaboration-then-summary shape. Some paragraphs should open with a concrete example or fact, others with a direct claim, others as a mid-thought continuation of the previous paragraph's idea.
 Do NOT repeat the same synonym or phrase for the same recurring concept more than twice within one subsection. Vary word choice for recurring concepts.
 SENTENCE BURSTINESS: naturally scatter clusters of 2-3 consecutive very short sentences (under 10 words each) at least once per 200 words — this is the strongest signal of human writing and breaks the uniform rhythm that AI detectors flag.
@@ -113,14 +112,14 @@ Each subsection ends logically with a complete sentence and concluding thought. 
 // internal helper — avoids circular import
 function _lc(lang) {
   const l = (lang || "").toLowerCase();
-  if (/англ|english/.test(l))      return { tableWord: "Table",    figWord: "Fig.",   tableRef: "shown in Table",         figRef: "shown in Fig.",           forbiddenWords: "aspect, important, special, significant, key, critical, fundamental, multifaceted, integral, holistic, comprehensive, paradigm",   latinScript: true,  sources: "References" };
+  if (/англ|english/.test(l))      return { tableWord: "Table",    figWord: "Fig.",   tableRef: "shown in Table",         figRef: "shown in Fig.",           forbiddenWords: "aspect, important, special, significant, key, critical, fundamental",   latinScript: true,  sources: "References" };
   if (/польськ|polish/.test(l))    return { tableWord: "Tabela",   figWord: "Rys.",   tableRef: "przedstawiono w Tabeli", figRef: "pokazano na Rys.",         forbiddenWords: "aspekt, ważny, szczególny, znaczący, kluczowy, krytyczny, fundamentalny", latinScript: true,  sources: "Bibliografia" };
   if (/іспан|spanish|español|espanol/.test(l)) return { tableWord: "Tabla", figWord: "Fig.", tableRef: "se muestra en la Tabla", figRef: "se muestra en la Fig.", forbiddenWords: "aspecto, importante, especial, significativo, clave, crítico, fundamental", latinScript: true, sources: "Bibliografía" };
   if (/нім|german|deutsch/.test(l)) return { tableWord: "Tabelle", figWord: "Abb.",   tableRef: "in Tabelle dargestellt", figRef: "in Abb. gezeigt",          forbiddenWords: "Aspekt, wichtig, besonders, bedeutend, entscheidend, kritisch, grundlegend", latinScript: true, sources: "Literaturverzeichnis" };
   if (/чеськ|czech/.test(l))       return { tableWord: "Tabulka",  figWord: "Obr.",   tableRef: "uvedeno v Tabulce",      figRef: "znázorněno na Obr.",       forbiddenWords: "aspekt, důležitý, zvláštní, významný, klíčový, kritický, základní",      latinScript: true,  sources: "Seznam použité literatury" };
   if (/словацьк|slovak/.test(l))   return { tableWord: "Tabuľka",  figWord: "Obr.",   tableRef: "uvedené v Tabuľke",      figRef: "znázornené na Obr.",       forbiddenWords: "aspekt, dôležitý, špeciálny, významný, kľúčový, kritický, základný",     latinScript: true,  sources: "Zoznam použitej literatúry" };
   if (/китайськ|chinese|中文/.test(l)) return { tableWord: "表",   figWord: "图",     tableRef: "如表所示",               figRef: "如图所示",                 forbiddenWords: "方面, 重要, 特殊, 显著, 关键, 批判, 基本",                               latinScript: false, sources: "参考文献" };
-  return { tableWord: "Таблиця", figWord: "Рис.", tableRef: "наведено в Таблиці", figRef: "показано на Рис.", forbiddenWords: "аспект, важливий, особливий, значущий, ключовий, критичний, фундаментальний, багатогранний, невід'ємний, цілісний, комплексний, парадигма", latinScript: false, sources: "Список використаних джерел" };
+  return { tableWord: "Таблиця", figWord: "Рис.", tableRef: "наведено в Таблиці", figRef: "показано на Рис.", forbiddenWords: "аспект, важливий, особливий, значущий, ключовий, критичний, фундаментальний", latinScript: false, sources: "Список використаних джерел" };
 }
 
 // Полегшений системний промпт для звітів-анкет (методичка вимагає подати весь звіт
@@ -227,8 +226,7 @@ STRICTLY FORBIDDEN to open a sentence with an ordinal number word that implies a
 STRICTLY FORBIDDEN openers and phrases (AI-detection triggers — never use or derive from): "Варто зазначити", "Слід відмітити", "Слід зазначити", "Необхідно підкреслити", "Варто підкреслити", "Зазначимо що", "Необхідно зауважити", "В умовах сьогодення", "В сучасних умовах", "В сучасних реаліях", "На сучасному етапі розвитку", "відіграє важливу роль", "відіграє ключову роль", "відіграє значну роль", "має важливе значення", "слугує основою для"; English equivalents: "It is worth noting", "It should be noted", "It is important to note", "In today's world", "In the modern era", "plays a crucial role", "plays a key role", "is of great importance", "serves as a foundation".
 Do NOT start two consecutive paragraphs with the same grammatical construction. Do NOT start two consecutive sentences with the same word.
 STRICTLY FORBIDDEN generic connector words as sentence or paragraph openers (extremely common AI-detector triggers): "Таким чином", "Отже", "Крім того", "Більше того", "Підсумовуючи", "Загалом", "Насамкінець", "Зрештою", "У результаті", "Варто додати", "Не можна не відзначити", "Одним із ключових аспектів", "Важливо розуміти, що", "Слід підкреслити, що"; English equivalents: "Thus", "Therefore", "In conclusion", "Overall", "Furthermore", "Moreover", "As a result", "It is worth adding", "One of the key aspects", "It is important to understand that". Open the sentence with a concrete detail, fact, or direct claim instead.
-STRICTLY FORBIDDEN to list exactly three parallel examples, items, or clauses within one sentence using identical grammatical structure (the "rule of three" pattern, e.g. "X, Y, and Z" or "X, Y, а також Z"). This also applies to bare noun enumerations ("аналіз, оцінка та вдосконалення"). Use two items, four or more, or split into separate sentences instead.
-STRICTLY FORBIDDEN to use the balanced hedge constructions "не лише X, а й Y" / "not only X but also Y" or "з одного боку... з іншого боку" / "on the one hand... on the other hand" more than once per subsection. State the point directly instead.
+STRICTLY FORBIDDEN to list exactly three parallel examples, items, or clauses within one sentence using identical grammatical structure (the "rule of three" pattern, e.g. "X, Y, and Z" or "X, Y, а також Z"). Use two items, four or more, or split into separate sentences instead.
 Vary paragraph macrostructure: do NOT make every paragraph follow the same claim-then-elaboration-then-summary shape. Some paragraphs should open with a concrete example or fact, others with a direct claim, others as a mid-thought continuation of the previous paragraph's idea.
 Do NOT repeat the same synonym or phrase for the same recurring concept more than twice within one subsection. Vary word choice for recurring concepts.
 SENTENCE BURSTINESS: naturally scatter clusters of 2-3 consecutive very short sentences (under 10 words each) at least once per 200 words — this is the strongest signal of human writing and breaks the uniform rhythm that AI detectors flag.
@@ -269,6 +267,51 @@ FORBIDDEN:
 - Do not add commentary, notes, or explanations of what you changed. Output only the rewritten text.
 - Do not add or remove citation markers, tables, or factual content.
 - Do not use em dash "—" or semicolons, consistent with the rest of this document's style.`;
+}
+
+// ── Постобробка ЦІЛОГО документа за один виклик, щоб знизити ШІ-детекцію
+// на рівні всього тексту, а не одного підрозділу. Кожен підрозділ окремо вже
+// пише природно (перевірено на Plag.ua: 9-22% на шматках), але весь документ
+// разом дає набагато вищий показник (34-41%) — бо кожен підрозділ писався
+// окремим викликом ШІ, і всі вони незалежно один від одного бездоганно
+// виконують ОДНАКОВІ жорсткі стильові правила (без тире, без "варто
+// зазначити" тощо). Ідеальна стовідсоткова дисципліна за весь обсяг —
+// сама по собі неприродна: жодна людина не витримує заборонене слово чи
+// пунктуацію без жодного винятку на 10+ сторінках. Тому цей прохід бачить
+// ВЕСЬ текст одразу (на відміну від buildAntiPlagiarismSYS, що працює по
+// одному підрозділу) і свідомо вносить різноманітність МІЖ розділами:
+// різні розділи повинні звучати трохи по-різному, а не як один голос.
+export function buildAntiDetectionSYS(lang = "Українська") {
+  const isEnglish = /англ|english/i.test(lang || "");
+  const langLine = isEnglish
+    ? `Write ONLY in English.`
+    : `Write ONLY in ${lang}. Do not switch language.`;
+
+  return `You are editing an already-finished academic work to reduce the score given by AI-content detectors, which flag text as machine-generated based on statistical uniformity across the WHOLE document (perplexity and burstiness measured over the full text, not per paragraph).
+
+TASK: You are given the ENTIRE work at once, split into sections marked with lines like [[[SEC:id]]]. Each section individually already reads naturally, but across the whole document the sections sound too alike: the same rhythm, the same avoided words, the same sentence-length pattern repeated with perfect consistency section after section. That perfect, unbroken consistency is itself the signal detectors flag — no human writer maintains one rule without a single exception across 10+ pages. Your job is to break the DOCUMENT-LEVEL uniformity while keeping each section's own quality.
+
+${langLine}
+
+STRICTLY PRESERVE, unchanged:
+- Every line matching [[[SEC:...]]] — copy it verbatim, unchanged, in the same position, same count. Never merge, remove, translate, or add one.
+- All facts, claims, numbers, statistics, dates, names of people and organizations.
+- All terminology and domain-specific terms.
+- All citation markers exactly as given, e.g. [N] or [2, с. 54; 3, с. 101] — never move, merge, split, add, or remove them.
+- Table rows, table/figure captions, markdown table structure, plantuml blocks — copy them verbatim.
+- The overall meaning, argument order, and number of distinct points in every section.
+- Approximate total length (±10%). Do not summarize, shorten, or expand with new content.
+
+REWRITE, at the document level:
+- Track word and phrase choices as you move through the sections. If you notice the same synonym, transition, or sentence-opening pattern recurring across MULTIPLE sections, vary it in the later occurrences so the document does not read as one repeating voice.
+- Give different sections a genuinely different rhythm: some sections should lean toward more short sentences, others toward more longer ones with subordination — do not apply the same sentence-length balance uniformly everywhere.
+- In roughly 1 out of every 8-10 paragraphs across the whole document, deliberately allow ONE small natural imperfection that a strict per-paragraph rule would normally forbid — an extra comma, a slightly longer sentence, a mildly informal connector — placed where it reads naturally, not randomly inserted. Do this sparingly: most of the text should stay clean, only occasional natural exceptions.
+- Do not touch a section that already differs enough in style from its neighbors.
+
+FORBIDDEN:
+- Do not add commentary, notes, or explanations of what you changed. Output only the rewritten text with all [[[SEC:...]]] markers intact.
+- Do not add or remove citation markers, tables, sections, or factual content.
+- Do not introduce em dash "—" or semicolons — the sparse natural exceptions above must stay within comma/sentence-length variety, not banned punctuation.`;
 }
 
 // ── Системні промпти для JSON-задач ──

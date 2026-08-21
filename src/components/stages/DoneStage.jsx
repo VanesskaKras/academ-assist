@@ -11,6 +11,7 @@ export function DoneStage({
   loadMsg, appendicesText, setAppendicesText, appendicesLoading, setAppendicesLoading,
   plagId, setPlagId, plagLoading, doReducePlagiarism,
   plagAllLoading, plagAllMsg, doReducePlagiarismAll, plagAllAbortRef,
+  aiDetectAllLoading, aiDetectAllMsg, doReduceAiDetectionAll, aiDetectAllAbortRef,
   appendicesCustomPrompt, setAppendicesCustomPrompt, speechText, setSpeechText,
   speechLoading, setSpeechLoading, presentationLoading, presentationMsg, presentationReady,
   docxLoading, setDocxLoading, figureRefs, figureKeywords, figKwLoading,
@@ -29,8 +30,10 @@ export function DoneStage({
         <Heading style={{ margin: 0 }}>✓ Роботу завершено!</Heading>
         {/* ↺ "Переписати всю роботу" тимчасово приховано на прохання користувача */}
         {regenAllLoading && <><span style={{ fontSize: 12, color: "#888", display: "inline-flex", alignItems: "center", gap: 6 }}><SpinDot />{loadMsg}</span><button onClick={() => regenAllAbortRef.current?.abort()} style={{ background: "#7a1010", color: "#fff", border: "none", borderRadius: 6, padding: "6px 14px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>⏹ Зупинити</button></>}
-        {!plagAllLoading && <button onClick={doReducePlagiarismAll} disabled={regenAllLoading} style={{ background: "transparent", border: "1px solid #6a9a6a", color: "#2a7a2a", borderRadius: 6, padding: "6px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: regenAllLoading ? "default" : "pointer" }}>🛡 Зменшити плагіат по всій роботі</button>}
+        {!plagAllLoading && <button onClick={doReducePlagiarismAll} disabled={regenAllLoading || aiDetectAllLoading} style={{ background: "transparent", border: "1px solid #6a9a6a", color: "#2a7a2a", borderRadius: 6, padding: "6px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: (regenAllLoading || aiDetectAllLoading) ? "default" : "pointer" }}>🛡 Зменшити плагіат по всій роботі</button>}
         {plagAllLoading && <><span style={{ fontSize: 12, color: "#888", display: "inline-flex", alignItems: "center", gap: 6 }}><SpinDot />{plagAllMsg}</span><button onClick={() => plagAllAbortRef.current?.abort()} style={{ background: "#7a1010", color: "#fff", border: "none", borderRadius: 6, padding: "6px 14px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>⏹ Зупинити</button></>}
+        {!aiDetectAllLoading && <button onClick={doReduceAiDetectionAll} disabled={regenAllLoading || plagAllLoading} style={{ background: "transparent", border: "1px solid #6a7a9a", color: "#2a4a7a", borderRadius: 6, padding: "6px 18px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: (regenAllLoading || plagAllLoading) ? "default" : "pointer" }}>🧬 Зменшити ШІ-детекцію (весь текст)</button>}
+        {aiDetectAllLoading && <><span style={{ fontSize: 12, color: "#888", display: "inline-flex", alignItems: "center", gap: 6 }}><SpinDot />{aiDetectAllMsg}</span><button onClick={() => aiDetectAllAbortRef.current?.abort()} style={{ background: "#7a1010", color: "#fff", border: "none", borderRadius: 6, padding: "6px 14px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>⏹ Зупинити</button></>}
       </div>
       <p style={{ fontSize: 13, color: "#888", marginBottom: 24 }}>Текст згенеровано. Скопіюйте або завантажте Word-файл.</p>
 
