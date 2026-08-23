@@ -13,7 +13,7 @@ import {
   buildTemplateAnalysisPrompt, buildPracticeDetailsPrompt,
 } from "./lib/prompts.js";
 import { parseTemplate, isEcon, isTechnical, getEconSections } from "./lib/planUtils.js";
-import { detectSpecialty } from "./lib/academicDefaults.js";
+import { detectSpecialtyPrioritized } from "./lib/academicDefaults.js";
 import {
   CATEGORY_LABELS, PRACTICE_TYPES, getPracticeGuidance, detectPracticeType,
   parsePracticeDetails, buildPracticeTitlePageLines, buildPracticeDiaryTitlePageLines,
@@ -334,7 +334,7 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
           if (i.practiceCategory) {
             const cat = CATEGORY_LABELS[i.practiceCategory]
               ? i.practiceCategory
-              : (detectSpecialty(`${i.direction || ""} ${i.subject || ""} ${i.practiceText || ""}`) || "other");
+              : (detectSpecialtyPrioritized(`${i.direction || ""} ${i.subject || ""} ${i.topic || ""}`, i.practiceText || "") || "other");
             setPracticeCategory(cat);
           }
           if (i.practiceType) setPracticeType(i.practiceType);
@@ -479,7 +479,10 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
 
     // Напрям практики: автовизначення з напряму/тематики/тексту (+ матеріали клієнта), якщо не обрано вручну
     if (!categoryManualRef.current) {
-      const detected = detectSpecialty(`${tpl.direction || ""} ${tpl.subject || ""} ${practiceText} ${combinedText}`);
+      const detected = detectSpecialtyPrioritized(
+        `${tpl.direction || ""} ${tpl.subject || ""} ${tpl.topic || ""}`,
+        `${practiceText} ${combinedText}`
+      );
       if (detected && CATEGORY_LABELS[detected]) { setPracticeCategory(detected); info.practiceCategory = detected; }
     }
     // Вид практики: автопідказка з курсу/типу, якщо користувач не обрав вручну

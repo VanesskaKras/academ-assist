@@ -47,7 +47,7 @@ const SPECIALTY_MAP = [
   { cat: "banking",         kw: /банківськ/i },
   { cat: "finance",         kw: /фінанс|облік|оподаткуванн|бухгалт|аудит/i },
   { cat: "marketing",       kw: /маркетинг|реклам|\bpr\b/i },
-  { cat: "economics",       kw: /економік/i },
+  { cat: "economics",       kw: /економ/i },
   { cat: "tourism",         kw: /туризм|готельн|ресторанн/i },
   { cat: "cybersecurity",   kw: /кібербезпек|захист.*інформ/i },
   { cat: "it",              kw: /інформатик|комп.ютерн|програмуванн|\bit\b|штучн.*інтел|машинн.*навч/i },
@@ -1991,6 +1991,14 @@ export function detectSpecialty(text) {
     if (kw.test(t)) return cat;
   }
   return null;
+}
+
+// Пріоритетне визначення: спершу структуровані поля (напрям/тематика/тема), і лише якщо
+// там нічого не знайдено — сирий текст замовлення/матеріалів клієнта. Без цього випадкова
+// згадка ключового слова десь у вільному тексті (наприклад, назва ЗВО) могла перекрити
+// явний сигнал зі структурованого поля просто через порядок категорій у SPECIALTY_MAP.
+export function detectSpecialtyPrioritized(structuredText, fallbackText) {
+  return detectSpecialty(structuredText) || detectSpecialty(fallbackText);
 }
 
 export function normalizeWorkType(type, course) {
