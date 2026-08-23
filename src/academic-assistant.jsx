@@ -12,9 +12,9 @@ import { extractPdfPageImages } from "./lib/pdfImages.js";
 import { callClaude, callGemini, MODEL, MODEL_FAST, resetGenerationCost } from "./lib/api.js";
 import { playDoneSound } from "./lib/audio.js";
 import { enforceWordCount, trimToPageTarget } from "./lib/wordCount.js";
-import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildIllustrationsPdfPrompt, buildDrawingsDescriptionPrompt, buildClientMaterialsAnalysisPrompt, buildExtractStructurePrompt, buildContinuationPlanPrompt, buildAnnotationPrompt, buildAnnotationRegenPrompt, buildAntiPlagiarismSYS, buildAntiDetectionSYS } from "./lib/prompts.js";
+import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildExampleWorkReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildIllustrationsPdfPrompt, buildDrawingsDescriptionPrompt, buildClientMaterialsAnalysisPrompt, buildExtractStructurePrompt, buildContinuationPlanPrompt, buildAnnotationPrompt, buildAnnotationRegenPrompt, buildAntiPlagiarismSYS, buildAntiDetectionSYS } from "./lib/prompts.js";
 import { extractReadyWorkStructure, quickParsePlanIds } from "./lib/readyWorkExtract.js";
-import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, getEmpiricalSections, getEconSections, getTechnicalSections, CODE_FILE_EXTENSIONS, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parsePagesMax, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, getLangLabels, insertBeforeTail, detectRequestedChapterCount } from "./lib/planUtils.js";
+import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, getEmpiricalSections, getEconSections, getTechnicalSections, CODE_FILE_EXTENSIONS, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parsePagesMax, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, deriveStructureFromExampleTOC, mergeExampleWorkIntoMethodInfo, getLangLabels, insertBeforeTail, detectRequestedChapterCount } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { getAcademicDefaults, classifyAppendixItem, detectSpecialty, normalizeWorkType } from "./lib/academicDefaults.js";
 import { searchByPhrase, filterSourcesWithGemini, getEconInstitutionalSources, generateAlternatePhrases, paperToCitation, enrichSources } from "./lib/sourcesSearch.js";
@@ -160,6 +160,9 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [fileLabel, setFileLabel] = useState("");
   const [fileB64, setFileB64] = useState(null);
   const [fileType, setFileType] = useState(null);
+  const [exampleWorkFileName, setExampleWorkFileName] = useState(""); // приклад роботи — зразок структури й оформлення (PDF)
+  const [exampleWorkFileB64, setExampleWorkFileB64] = useState(null);
+  const [exampleWorkFileType, setExampleWorkFileType] = useState(null);
   const [methodInfo, setMethodInfo] = useState(null); // структурна інфо з методички
   const [commentAnalysis, setCommentAnalysis] = useState(null); // {planHints, writingHints}
   const [photos, setPhotos] = useState([]); // [{name, b64, type}] — додаткові фото
@@ -332,6 +335,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
           }
           if (d.methodInfo) setMethodInfo(d.methodInfo);
           if (d.fileLabel) setFileLabel(d.fileLabel);
+          if (d.exampleWorkFileName) setExampleWorkFileName(d.exampleWorkFileName);
           if (d.commentAnalysis) {
             const ca = d.commentAnalysis;
             if (Array.isArray(ca.sourcesHints)) ca.sourcesHints = ca.sourcesHints.join('; ');
@@ -441,10 +445,10 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     if (!tplText.trim() && !comment.trim() && !clientPlan.trim() && !appendicesText.trim() && !clientMaterialsText.trim() && !readyWorkText.trim()) return;
     clearTimeout(inputSaveTimer.current);
     inputSaveTimer.current = setTimeout(() => {
-      saveToFirestore({ tplText, comment, clientPlan, appendicesText, clientMaterialsText, readyWorkFileName, readyWorkText, fileLabel, stage: "input", status: "new" });
+      saveToFirestore({ tplText, comment, clientPlan, appendicesText, clientMaterialsText, readyWorkFileName, readyWorkText, fileLabel, exampleWorkFileName, stage: "input", status: "new" });
     }, 1500);
     return () => clearTimeout(inputSaveTimer.current);
-  }, [tplText, comment, clientPlan, appendicesText, clientMaterialsText, readyWorkFileName, readyWorkText, stage]); // eslint-disable-line
+  }, [tplText, comment, clientPlan, appendicesText, clientMaterialsText, readyWorkFileName, readyWorkText, exampleWorkFileName, stage]); // eslint-disable-line
 
   // ── Авто-збереження sections при ручному редагуванні плану ──
   const planSaveTimer = useRef(null);
@@ -544,6 +548,7 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   };
 
   const handleFile = useCallback((name, b64, type) => { setFileLabel(name); setFileB64(b64); setFileType(type); }, []);
+  const handleExampleWorkFile = useCallback((name, b64, type) => { setExampleWorkFileName(name); setExampleWorkFileB64(b64); setExampleWorkFileType(type); }, []);
 
   // ── Готова частина роботи від клієнта: витягуємо сирий текст (розбивка по розділах — після генерації плану) ──
   const handleReadyWorkFile = useCallback((arrayBuffer, fileName) => {
@@ -622,8 +627,9 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     setStage("parsed");
 
     // КРОК 2: Якщо є методичка — пауза між запитами щоб не перевищити rate limit
+    setApiError("");
+    let methodParsed = methodInfo || null; // якщо PDF не завантажено — лишаємо попередній результат
     if (fileB64) {
-      setApiError("");
       setLoadMsg("Читаю методичку...");
       await new Promise(r => setTimeout(r, 2000)); // пауза між двома API-викликами
       const docPart = { type: "document", source: { type: "base64", media_type: fileType || "application/pdf", data: fileB64 } };
@@ -659,57 +665,85 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
         if (Array.isArray(parsed.sourcesStyle)) parsed.sourcesStyle = parsed.sourcesStyle.join(', ');
         if (Array.isArray(parsed.citationStyle)) parsed.citationStyle = parsed.citationStyle.join('; ');
         if (typeof parsed.sourcesMinCount === 'string') parsed.sourcesMinCount = parseInt(parsed.sourcesMinCount) || null;
-        setMethodInfo(parsed);
-        if (parsed.titlePageTemplate) {
-          const currentYear = new Date().getFullYear().toString();
-          const topic = newInfo?.topic || "";
-          const fillText = (t) => {
-            let s = t;
-            if (topic) {
-              s = s.replace(/\[ТЕМА\]/g, topic);
-              s = s.replace(/\(найменування\s+теми\)/gi, topic);
-              s = s.replace(/\(назва\s+теми\)/gi, topic);
-            }
-            s = s.replace(/\[РІК\]/g, currentYear).replace(/\[ДАТА\]/g, currentYear);
-            s = s.replace(/\b20\d\d\b/g, currentYear);
-            s = s.replace(/\b20\d?\s*[_]+/g, currentYear);
-            return s;
-          };
-          let filledLines = null;
-          let filledText = "";
-          if (Array.isArray(parsed.titlePageTemplate)) {
-            filledLines = parsed.titlePageTemplate.map(item => ({ ...item, text: fillText(item.text) }));
-            // Merge split-year lines: "Місто – 202" + "6" → "Місто – 2026"
-            filledLines = filledLines.reduce((acc, item) => {
-              const prev = acc[acc.length - 1];
-              if (prev && /–\s*\d{1,3}$/.test(prev.text) && /^\d{1,2}$/.test(item.text.trim())) {
-                acc[acc.length - 1] = { ...prev, text: prev.text + item.text.trim() };
-              } else {
-                acc.push(item);
-              }
-              return acc;
-            }, []);
-            filledText = filledLines.map(item => item.text).join("\n");
-          } else {
-            filledText = fillText(parsed.titlePageTemplate);
-          }
-          setTitlePage(filledText);
-          setTitlePageLines(filledLines);
-          await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, methodInfo: parsed, fileLabel, titlePage: filledText, titlePageLines: filledLines, ...(appendicesText?.trim() ? { appendicesText } : {}), stage: "parsed", status: "new" });
-        } else {
-          await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, methodInfo: parsed, fileLabel, ...(appendicesText?.trim() ? { appendicesText } : {}), stage: "parsed", status: "new" });
-        }
+        methodParsed = parsed;
       } catch (e) {
         console.warn("methodInfo extract failed:", e.message);
         setApiError(e.message);
-        if (!methodInfo) setMethodInfo(null);
-        await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, ...(methodInfo ? { methodInfo } : {}), ...(appendicesText?.trim() ? { appendicesText } : {}), stage: "parsed", status: "new" });
       }
-    } else {
-      // Якщо PDF не завантажено але methodInfo вже є (з попереднього аналізу) — залишаємо його
-      if (!methodInfo) setMethodInfo(null);
-      await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, ...(methodInfo ? { methodInfo } : {}), ...(appendicesText?.trim() ? { appendicesText } : {}), stage: "parsed", status: "new" });
     }
+
+    // КРОК 2b: Якщо є приклад роботи (зразок) — витягуємо структуру й оформлення з готового документа
+    let exampleParsed = null, exampleStructure = null;
+    if (exampleWorkFileB64) {
+      setLoadMsg("Читаю приклад роботи...");
+      await new Promise(r => setTimeout(r, 1500));
+      const exampleDocPart = { type: "document", source: { type: "base64", media_type: exampleWorkFileType || "application/pdf", data: exampleWorkFileB64 } };
+      try {
+        const exampleMsgs = [exampleDocPart, { type: "text", text: buildExampleWorkReadingPrompt() }];
+        const exampleRaw = await callGemini([{ role: "user", content: exampleMsgs }], null, SYS_JSON_SHORT, 6000, (s) => setLoadMsg(`Читаю приклад роботи... зачекайте ${s}с`), "gemini-2.5-flash", true);
+        const exampleMatch = exampleRaw.match(/\{[\s\S]*\}/);
+        exampleParsed = JSON.parse(exampleMatch?.[0] || exampleRaw.replace(/```json|```/g, "").trim());
+        if (Array.isArray(exampleParsed.sourcesStyle)) exampleParsed.sourcesStyle = exampleParsed.sourcesStyle.join(', ');
+        if (Array.isArray(exampleParsed.citationStyle)) exampleParsed.citationStyle = exampleParsed.citationStyle.join('; ');
+        exampleStructure = deriveStructureFromExampleTOC(exampleParsed.exampleTOC, newInfo?.language);
+      } catch (e) {
+        console.warn("exampleWork extract failed:", e.message);
+        setApiError(prev => prev || e.message);
+      }
+    }
+
+    // Об'єднуємо: явні поля методички мають пріоритет, приклад роботи заповнює те, чого в методичці нема
+    const finalMethodInfo = (exampleParsed || exampleStructure)
+      ? mergeExampleWorkIntoMethodInfo(methodParsed, exampleParsed, exampleStructure)
+      : methodParsed;
+
+    // Генералізація титульної сторінки (з методички або з прикладу роботи) — один раз, для фінального результату
+    let filledTitleText = null, filledTitleLines = null;
+    if (finalMethodInfo?.titlePageTemplate) {
+      const currentYear = new Date().getFullYear().toString();
+      const topic = newInfo?.topic || "";
+      const fillText = (t) => {
+        let s = t;
+        if (topic) {
+          s = s.replace(/\[ТЕМА\]/g, topic);
+          s = s.replace(/\(найменування\s+теми\)/gi, topic);
+          s = s.replace(/\(назва\s+теми\)/gi, topic);
+        }
+        s = s.replace(/\[РІК\]/g, currentYear).replace(/\[ДАТА\]/g, currentYear);
+        s = s.replace(/\b20\d\d\b/g, currentYear);
+        s = s.replace(/\b20\d?\s*[_]+/g, currentYear);
+        return s;
+      };
+      if (Array.isArray(finalMethodInfo.titlePageTemplate)) {
+        let filledLines = finalMethodInfo.titlePageTemplate.map(item => ({ ...item, text: fillText(item.text) }));
+        // Merge split-year lines: "Місто – 202" + "6" → "Місто – 2026"
+        filledLines = filledLines.reduce((acc, item) => {
+          const prev = acc[acc.length - 1];
+          if (prev && /–\s*\d{1,3}$/.test(prev.text) && /^\d{1,2}$/.test(item.text.trim())) {
+            acc[acc.length - 1] = { ...prev, text: prev.text + item.text.trim() };
+          } else {
+            acc.push(item);
+          }
+          return acc;
+        }, []);
+        filledTitleLines = filledLines;
+        filledTitleText = filledLines.map(item => item.text).join("\n");
+      } else {
+        filledTitleText = fillText(finalMethodInfo.titlePageTemplate);
+      }
+      setTitlePage(filledTitleText);
+      setTitlePageLines(filledTitleLines);
+    }
+
+    setMethodInfo(finalMethodInfo || null);
+    await saveToFirestore({
+      tplText, comment, clientPlan, info: newInfo,
+      ...(finalMethodInfo ? { methodInfo: finalMethodInfo } : {}),
+      fileLabel, exampleWorkFileName,
+      ...(filledTitleText ? { titlePage: filledTitleText, titlePageLines: filledTitleLines } : {}),
+      ...(appendicesText?.trim() ? { appendicesText } : {}),
+      stage: "parsed", status: "new",
+    });
 
     // КРОК 3: Аналіз коментаря клієнта (+ фото якщо є)
     if (comment?.trim() || photos.length > 0) {
@@ -4817,6 +4851,7 @@ ${secBlocks}
               comment={comment} setComment={setComment}
               appendicesText={appendicesText} setAppendicesText={setAppendicesText}
               fileLabel={fileLabel} fileB64={fileB64} methodInfo={methodInfo}
+              exampleWorkFileName={exampleWorkFileName} exampleWorkFileB64={exampleWorkFileB64} handleExampleWorkFile={handleExampleWorkFile}
               photos={photos} setPhotos={setPhotos}
               illustrations={illustrations} setIllustrations={setIllustrations}
               illustrationsPdf={illustrationsPdf} setIllustrationsPdf={setIllustrationsPdf}

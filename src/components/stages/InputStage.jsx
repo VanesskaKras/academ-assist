@@ -18,12 +18,14 @@ const COLORS = {
   drawings: "#8060c0",
   materials: "#4090c0",
   readyWork: "#3a9a6a",
+  example: "#a07830",
 };
 
 export function InputStage({
   tplText, setTplText, clientPlan, setClientPlan, comment, setComment,
   appendicesText, setAppendicesText,
   fileLabel, fileB64, methodInfo, photos, setPhotos,
+  exampleWorkFileName, exampleWorkFileB64, handleExampleWorkFile,
   illustrations, setIllustrations,
   illustrationsPdf, setIllustrationsPdf,
   clientDrawings, setClientDrawings,
@@ -73,6 +75,19 @@ export function InputStage({
           </FieldBox>
         </div>
       </div>
+
+      {handleExampleWorkFile && (
+        <div style={S(COLORS.example)}>
+          <FieldBox label="Приклад роботи — зразок (тільки PDF, необов'язково)" labelColor={COLORS.example} tooltip={"Завантажте ЧУЖУ готову роботу як зразок оформлення. Скопіюються структура (к-сть розділів/підрозділів), титулка, оформлення таблиць/рисунків, стиль списку джерел. Зміст буде повністю новий, під вашу тему — текст зразка НЕ копіюється.\nЯкщо є й методичка з вимогами вище — вона має пріоритет, приклад лише доповнює те, чого в методичці нема.\nНе плутайте з полем 'Готова частина роботи від клієнта' нижче — те поле вставляє СПРАВЖНІЙ текст клієнта як є."}>
+            <DropZone fileLabel={exampleWorkFileName} onFile={handleExampleWorkFile} accept=".pdf" />
+            {exampleWorkFileName && !exampleWorkFileB64 && (
+              <div style={{ fontSize: 11, color: "#7a8a5a", marginTop: 5 }}>
+                ✓ Приклад роботи вже проаналізовано. Завантажте PDF знову лише якщо потрібно перепроаналізувати.
+              </div>
+            )}
+          </FieldBox>
+        </div>
+      )}
 
       <div style={S(COLORS.materials)}>
         <FieldBox label="Матеріали клієнта — PDF, TXT або текст (необов'язково, до 10 файлів)" labelColor={COLORS.materials} tooltip={"PDF або TXT файли аналізуються і резюмуються.\nРезультат використовується при написанні тексту як додатковий контекст.\nПідходить для: статей, розділів підручника, власних матеріалів клієнта."}>

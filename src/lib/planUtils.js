@@ -259,6 +259,65 @@ export function parseClientPlan(text, totalPages, lang = "Українська")
   return sections;
 }
 
+// Рахує chaptersCount/subsectionsPerChapter/hasChapterConclusions з реального
+// змісту "приклада роботи" (exampleTOC), детерміновано кодом — без AI-виклику.
+// Перевикористовує parseClientPlan лише як парсер тексту в розділи/підрозділи;
+// самі назви розділів з нього НЕ беруться, тільки кількості.
+export function deriveStructureFromExampleTOC(exampleTOC, lang = "Українська") {
+  if (!exampleTOC?.trim()) return null;
+  const sections = parseClientPlan(exampleTOC.trim(), 30, lang);
+  if (!sections?.length) return null;
+
+  const subsPerChap = {}; // "1" -> к-сть підрозділів
+  let hasChapterConclusions = false;
+  for (const s of sections) {
+    const subMatch = s.id.match(/^(\d+)\.(\d+)$/);
+    if (subMatch) {
+      const chapNum = subMatch[1];
+      subsPerChap[chapNum] = (subsPerChap[chapNum] || 0) + 1;
+      continue;
+    }
+    if (/^\d+\.conclusions$/.test(s.id)) hasChapterConclusions = true;
+  }
+  const chapNums = Object.keys(subsPerChap);
+  if (!chapNums.length) return null;
+
+  const counts = chapNums.map(n => subsPerChap[n]);
+  // Найчастіше значення — базове; розділи що відрізняються — в overrides
+  const freq = {};
+  counts.forEach(c => { freq[c] = (freq[c] || 0) + 1; });
+  const subsectionsPerChapter = Number(Object.entries(freq).sort((a, b) => b[1] - a[1])[0][0]);
+  const subsectionsPerChapterOverrides = {};
+  for (const n of chapNums) {
+    if (subsPerChap[n] !== subsectionsPerChapter) subsectionsPerChapterOverrides[n] = subsPerChap[n];
+  }
+
+  return {
+    chaptersCount: chapNums.length,
+    subsectionsPerChapter,
+    subsectionsPerChapterOverrides: Object.keys(subsectionsPerChapterOverrides).length ? subsectionsPerChapterOverrides : null,
+    hasChapterConclusions,
+  };
+}
+
+// Зливає дані, витягнуті з "приклада роботи" (exampleInfo/exampleStructure), у
+// methodInfo — ЛИШЕ для полів, які methodInfo лишив порожніми. Явні вимоги з
+// методички завжди мають пріоритет над зразком.
+const EXAMPLE_WORK_FIELDS = [
+  "chaptersCount", "subsectionsPerChapter", "subsectionsPerChapterOverrides",
+  "hasChapterConclusions", "titlePageTemplate", "formatting", "sourcesStyle",
+  "sourcesOrder", "sourcesGrouping", "citationStyle", "sourcesFormatRules",
+  "introComponents", "exampleTOC",
+];
+export function mergeExampleWorkIntoMethodInfo(methodInfo, exampleInfo, exampleStructure) {
+  const source = { ...(exampleStructure || {}), ...(exampleInfo || {}) };
+  const result = { ...(methodInfo || {}) };
+  for (const key of EXAMPLE_WORK_FIELDS) {
+    if (result[key] == null && source[key] != null) result[key] = source[key];
+  }
+  return result;
+}
+
 const CARDINAL_CHAPTER_WORDS = [
   [/\bодн[а-яії]*\s+розділ/i, 1],
   [/\bдв[аі][а-яії]*\s+розділ/i, 2],
