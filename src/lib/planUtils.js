@@ -306,7 +306,7 @@ export function deriveStructureFromExampleTOC(exampleTOC, lang = "Українс
 const EXAMPLE_WORK_FIELDS = [
   "chaptersCount", "subsectionsPerChapter", "subsectionsPerChapterOverrides",
   "hasChapterConclusions", "titlePageTemplate", "taskSheetTemplate", "calendarPlanTable",
-  "formatting", "sourcesStyle",
+  "hasFigures", "formatting", "sourcesStyle",
   "sourcesOrder", "sourcesGrouping", "citationStyle", "sourcesFormatRules",
   "introComponents", "exampleTOC",
 ];
@@ -404,11 +404,15 @@ export function buildPreviewStructure(totalPages) {
   ];
 }
 
-export function calcSourceDist(secs, overallPages) {
+export function calcSourceDist(secs) {
   const mainSecs = secs.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
   const secPagesSum = mainSecs.reduce((sum, s) => sum + (s.pages || 0), 0);
   if (!secPagesSum) return { dist: {}, total: 0 };
-  const total = Math.max(mainSecs.length * 2, overallPages || secPagesSum);
+  // 1 джерело на 1 сторінку ОСНОВНОГО тексту — усе від Розділу 1 до Висновків (не
+  // включно): підрозділи розділів + "Висновки до розділу N", БЕЗ Вступу, Висновків
+  // і Списку джерел (їх обсяг з кількістю використаної літератури не пов'язаний).
+  const total = secs.reduce((sum, s) =>
+    ["intro", "conclusions", "sources"].includes(s.type) ? sum : sum + (s.pages || 0), 0);
   const minPerSec = Math.max(1, Math.floor(total / mainSecs.length / 2));
   // Пропорційна частка (дробова) кожного підрозділу за обсягом сторінок, не нижче minPerSec
   const raw = mainSecs.map(s => Math.max(minPerSec, (s.pages / secPagesSum) * total));

@@ -33,7 +33,14 @@ STRICTLY FORBIDDEN: table without caption. Every table MUST have a "${tableCapEx
 
   const plantUmlRule = `When a structural/UML diagram is needed (class diagram, sequence diagram, use case diagram, or a simple process/activity flowchart — anything describing structure, relationships, or flow rather than numeric data): output a fenced code block labeled "plantuml" containing valid PlantUML syntax (starting with @startuml, ending with @enduml), then place the figure caption immediately below the closing fence (no hint line — this diagram is rendered automatically).`;
 
-  const figureRules = mFigureFormat
+  // Приклад роботи, наданий клієнтом, реально містив рисунки/схеми (buildExampleWorkReadingPrompt →
+  // hasFigures) — без цього AI регулярно вирішує, що "рисунок не потрібен", і робота лишається зовсім
+  // без ілюстрацій, хоча зразок для цієї ж теми/спеціальності їх явно очікує.
+  const mandatoryFigureNote = methodInfo?.hasFigures
+    ? `MANDATORY: the reference example provided for this topic contains figures/diagrams — this work MUST include comparable figures too, it is NOT optional here. Each of the main chapters (1, 2, 3...) must include at least one figure (a data chart, a plantuml diagram, or — only if neither fits — a placeholder for a manually sourced illustration), placed where it naturally fits the content, per the rules below.\n`
+    : "";
+
+  const figureRules = mandatoryFigureNote + (mFigureFormat
     ? `FIGURES — mandatory rules (per methodology):
 1. Number figures within each section: ${figWord} X.Y (X = section number, Y = figure number within section).
 2. When a diagram, chart, or graph with underlying numeric data is needed: create a markdown data table with the values to be plotted (do NOT add a "${tableWord}" caption above it; first column = category labels, other columns = numeric series with a clear header name), then place the figure caption BELOW the table (format per methodology: ${mFigureFormat}) — the chart image is generated and inserted automatically, no hint line needed.
@@ -49,7 +56,7 @@ STRICTLY FORBIDDEN: show the same data as both a "${tableWord}" and a diagram. F
 2. ${plantUmlRule}
 3. For conceptual figures that fit neither case above — insert a standalone placeholder: ${figWord} X.Y – Figure name (no data table, no hint line, no code block).
 4. The text before any figure MUST contain a sentence referencing it, e.g.: "${figRef} X.Y". Without this reference no figure may appear.
-STRICTLY FORBIDDEN: show the same data as both a "${tableWord}" and a diagram. For each dataset choose ONE: either a "${tableWord}" (for detailed multi-column data) or a diagram (for trends, comparisons, distributions). Tables and diagrams in the same section MUST show different data.`;
+STRICTLY FORBIDDEN: show the same data as both a "${tableWord}" and a diagram. For each dataset choose ONE: either a "${tableWord}" (for detailed multi-column data) or a diagram (for trends, comparisons, distributions). Tables and diagrams in the same section MUST show different data.`);
 
   return `You are an expert academic writer.
 
@@ -543,6 +550,7 @@ export function buildExampleWorkReadingPrompt() {
   "titlePageTemplate": null,
   "taskSheetTemplate": null,
   "calendarPlanTable": null,
+  "hasFigures": false,
   "formatting": {
     "font": "Times New Roman",
     "fontSize": 14,
@@ -576,6 +584,7 @@ export function buildExampleWorkReadingPrompt() {
 - titlePageTemplate: відтвори титульну сторінку РЕАЛЬНОГО зразка як масив JSON-об'єктів з полями "text","align"("center"|"left"|"right"),"bold","fontSize"(лише якщо явно більший/менший за 14pt, інакше null),"spaceBefore"(twips: 0 для щільних блоків, 200-240 між блоками, 400-800 для помітного відступу, і ВИНЯТКОВО 2400-3200 лише для ОДНОГО найбільшого відступу перед рядком "Місто – рік", щоб цей рядок був прибитий до низу сторінки). КРИТИЧНО ВАЖЛИВО: це РЕАЛЬНА заповнена титулка з конкретним ПІБ студента, конкретною темою, конкретним факультетом/кафедрою, конкретним керівником — це чужі дані, їх НІКОЛИ не можна копіювати дослівно. Обов'язково заміни: ПІБ студента → [ПІБ], тему роботи → [ТЕМА], рік → [РІК] (одним рядком, не розбивай), назву факультету/інституту → [ФАКУЛЬТЕТ], назву кафедри → [КАФЕДРА], ПІБ і посаду наукового керівника → [КЕРІВНИК]. Назву міністерства й університету НЕ чіпай (вони спільні, не персональні дані). Якщо на титулці немає реальних персональних даних (порожній бланк із рисками) — просто постав ті самі токени на місце рисок. Якщо титульної сторінки в документі немає — поверни null
 - taskSheetTemplate: шукай одразу ПІСЛЯ титульної сторінки окрему сторінку "ЗАВДАННЯ на курсову роботу" / "ЗАВДАННЯ на кваліфікаційну роботу" / "ЗАВДАННЯ на дипломну роботу" тощо (типово містить: тему, вихідні дані, зміст розрахунково-пояснювальної записки чи перелік питань що розробити, дату видачі завдання, підписи студента й керівника). Якщо знайшов — відтвори ЇЇ структуру ТОЧНО ЯК titlePageTemplate вище: масив JSON-об'єктів з тими самими полями "text","align","bold","fontSize","spaceBefore". Це теж РЕАЛЬНА сторінка чужої роботи — застосуй ТІ Ж заміни персональних даних, що й для titlePageTemplate: ПІБ студента → [ПІБ], тему → [ТЕМА], факультет/інститут → [ФАКУЛЬТЕТ], кафедру → [КАФЕДРА], ПІБ і посаду керівника → [КЕРІВНИК], рік → [РІК], номер групи → [ГРУПА], курс → [КУРС]. Конкретні дати (видачі завдання, подання роботи) і номери наказів чужої роботи — заміни на порожні риски "______", НЕ копіюй їх. Якщо на цій сторінці є перелік конкретних пунктів плану/розділів чужої роботи (напр. "зміст розрахунково-пояснювальної записки") — заміни цей перелік на узагальнений рядок "[ЗМІСТ РОБОТИ]" замість дослівного копіювання чужих формулювань. Якщо такої сторінки в роботі немає — поверни null
 - calendarPlanTable: шукай сторінку/таблицю "КАЛЕНДАРНИЙ ПЛАН" виконання роботи (зазвичай колонки на кшталт "№ з/п", "Назва етапів курсової/кваліфікаційної роботи", "Строк виконання етапів", "Примітка"). Якщо знайшов — відтвори колонки й типові ЗАГАЛЬНОАКАДЕМІЧНІ етапи виконання роботи (вибір і затвердження теми, складання плану, опрацювання літературних джерел, написання розділів, оформлення роботи, захист тощо — це загальний процес виконання, а не зміст чужого дослідження, тому відтворювати можна) як markdown-таблицю ОДНИМ рядком з переносами \n: заголовок колонок, розділювач "|---|---|...", далі рядки етапів. Конкретні дати чи строки чужої роботи в колонці строків заміни на "______". Якщо такої таблиці немає — поверни null
+- hasFigures: true ЯКЩО в роботі реально присутні змістовні ілюстрації — блок-схеми, діаграми, графіки з даними, скріншоти інтерфейсу, креслення тощо (підписані "Рис. N" або аналогічно). false якщо рисунків у роботі немає взагалі, або є лише декоративні елементи без стосунку до змісту (логотип, орнамент на титулці тощо)
 - formatting: визнач ЗА ФАКТИЧНИМ ВИГЛЯДОМ сторінок роботи — шрифт, розмір, поля, міжрядковий інтервал, відступ абзацу, як оформлені заголовки розділів/підрозділів. tableNumberRight/tableTitleBold/tableTitleCenter/tableHeaderBold — визнач за фактичним виглядом РЕАЛЬНИХ таблиць у роботі (є вони чи ні, як оформлений підпис і шапка). Якщо в роботі взагалі немає таблиць — постав всі чотири false. figureFormat — за фактичним виглядом підписів під реальними рисунками, якщо вони є
 - sourcesStyle: визнач за фактичним оформленням записів у "СПИСКУ ВИКОРИСТАНИХ ДЖЕРЕЛ" — "ДСТУ 8302:2015", "APA", "MLA" або інший, наскільки можна визначити з вигляду записів. null якщо список джерел відсутній або стиль визначити неможливо
 - sourcesOrder: "alphabetical" якщо джерела йдуть за алфавітом прізвищ, "citation_order" якщо в порядку появи посилань у тексті (нумерація [1],[2]...)
