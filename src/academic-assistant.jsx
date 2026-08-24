@@ -1363,14 +1363,15 @@ Order: subsections grouped by chapter, then intro, conclusions, sources.`;
       return sum;
     }, 0);
     const pagesForMain = Math.max(mainIdxs.length, wc.totalPages - fixedTotal);
-    const pagesPerSub = Math.max(1, Math.floor(pagesForMain / Math.max(mainIdxs.length, 1)));
+    const n = Math.max(mainIdxs.length, 1);
+    const basePages = Math.floor(pagesForMain / n);
+    const remainder = pagesForMain - basePages * n;
     const result = [...secs];
-    let assigned = 0;
+    // Залишок від ділення розкидаємо по одній сторінці на перші `remainder` підрозділів,
+    // а не скидаємо його весь на останній — інакше останній підрозділ роздувається
     mainIdxs.forEach((idx, j) => {
-      const isLast = j === mainIdxs.length - 1;
-      const p = isLast ? Math.max(1, pagesForMain - assigned) : pagesPerSub;
+      const p = Math.max(1, basePages + (j < remainder ? 1 : 0));
       result[idx] = { ...result[idx], pages: p, prompts: Math.max(1, Math.ceil(p / 3)) };
-      if (!isLast) assigned += p;
     });
     return result.map(s => {
       if (s.type === "intro") return { ...s, pages: wc.introPages };
