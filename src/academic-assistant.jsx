@@ -612,6 +612,8 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
       console.warn("doAnalyze fallback:", e.message);
       newInfo = parseTemplate(tplText);
     }
+    // Магістерська робота завжди на 6 курсі — підставляємо, якщо курс не вказано явно
+    if (!newInfo.course && /магістерськ/i.test(newInfo.type || "")) newInfo.course = "6";
     // Автодетект категорії напряму якщо не задано вручну
     if (!newInfo.workCategory) {
       const dir = ((newInfo.direction || "") + " " + (newInfo.subject || "")).toLowerCase();
@@ -1166,7 +1168,7 @@ PAGE DISTRIBUTION (total must equal ${totalPages}):
 - Each subsection: ~${pagesPerSub} p. (total subsections: ${totalSubsPhoto})
 
 Return ONLY JSON without markdown:
-{"sections":[{"id":"1.1","label":"1.1 Title","sectionTitle":"${L.chapterWord} 1. TITLE","pages":8,"type":"theory"},{"id":"intro","label":"${L.intro}","pages":2,"type":"intro"},{"id":"conclusions","label":"${L.conclusions}","pages":3,"type":"conclusions"},{"id":"sources","label":"${L.sources}","pages":2,"type":"sources"}]}`;
+{"sections":[{"id":"1.1","label":"1.1 Title","sectionTitle":"${L.chapterWord} 1. TITLE","pages":8,"type":"theory"},{"id":"intro","label":"${L.intro}","pages":${introP},"type":"intro"},{"id":"conclusions","label":"${L.conclusions}","pages":${conclP},"type":"conclusions"},{"id":"sources","label":"${L.sources}","pages":2,"type":"sources"}]}`;
         const raw = await callGemini([{ role: "user", content: photoTplPrompt }], null, SYS_JSON_SHORT, 3000);
         const jsonMatch = raw.match(/\{[\s\S]*\}/);
         const parsed = JSON.parse(jsonMatch?.[0] || raw.replace(/```json|```/g, "").trim());
@@ -1223,8 +1225,8 @@ Return ONLY JSON without markdown:
   ${chapConclCount > 0 ? `{"id":"1.conclusions","label":"${L.chapConclLabel(1)}","sectionTitle":"${L.chapterWord} 1. CHAPTER TITLE","pages":1,"type":"chapter_conclusion"},` : ""}
   {"id":"2.1","label":"2.1 Section title","sectionTitle":"${L.chapterWord} 2. CHAPTER TITLE","pages":8,"type":"analysis"},
   ${chapConclCount > 0 ? `{"id":"2.conclusions","label":"${L.chapConclLabel(2)}","sectionTitle":"${L.chapterWord} 2. CHAPTER TITLE","pages":1,"type":"chapter_conclusion"},` : ""}
-  {"id":"intro","label":"${L.intro}","pages":3,"type":"intro"},
-  {"id":"conclusions","label":"${L.conclusions}","pages":3,"type":"conclusions"},
+  {"id":"intro","label":"${L.intro}","pages":${introP},"type":"intro"},
+  {"id":"conclusions","label":"${L.conclusions}","pages":${conclP},"type":"conclusions"},
   {"id":"sources","label":"${L.sources}","pages":2,"type":"sources"}
 ]}`;
         await new Promise(r => setTimeout(r, 1000));
@@ -1292,8 +1294,8 @@ Return ONLY JSON without markdown:
   {"id":"2.1","label":"2.1 Section title","sectionTitle":"${L.chapterWord} 2. CHAPTER TITLE","pages":8,"type":"analysis"},
   {"id":"2.2","label":"2.2 Section title","sectionTitle":"${L.chapterWord} 2. CHAPTER TITLE","pages":7,"type":"analysis"},${hasConcl ? `
   {"id":"2.conclusions","label":"${L.chapConclLabel(2)}","sectionTitle":"${L.chapterWord} 2. CHAPTER TITLE","pages":1,"type":"chapter_conclusion"},` : ""}
-  {"id":"intro","label":"${L.intro}","pages":3,"type":"intro"},
-  {"id":"conclusions","label":"${L.conclusions}","pages":3,"type":"conclusions"},
+  {"id":"intro","label":"${L.intro}","pages":${introP},"type":"intro"},
+  {"id":"conclusions","label":"${L.conclusions}","pages":${conclP},"type":"conclusions"},
   {"id":"sources","label":"${L.sources}","pages":2,"type":"sources"}
 ]}
 Order: subsections grouped by chapter, then intro, conclusions, sources.`;
@@ -1360,7 +1362,7 @@ Order: subsections grouped by chapter, then intro, conclusions, sources.`;
       if (s.type === "sources") return sum + (s.pages || 1);
       return sum;
     }, 0);
-    const pagesForMain = Math.max(mainIdxs.length * 3, wc.totalPages - fixedTotal);
+    const pagesForMain = Math.max(mainIdxs.length, wc.totalPages - fixedTotal);
     const pagesPerSub = Math.max(1, Math.floor(pagesForMain / Math.max(mainIdxs.length, 1)));
     const result = [...secs];
     let assigned = 0;
@@ -1721,7 +1723,6 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
           const introSec = sections.find(s => s.type === "intro");
           if (introSec && finalContent[introSec.id]?.includes("__TOTAL_PAGES__")) {
             const totalWords = sections
-              .filter(s => s.type !== "sources")
               .reduce((sum, s) => sum + (finalContent[s.id] || "").trim().split(/\s+/).filter(Boolean).length, 0);
             const actualPages = Math.max(1, Math.round(totalWords / 270));
             finalContent = { ...finalContent, [introSec.id]: finalContent[introSec.id].replaceAll("__TOTAL_PAGES__", String(actualPages)) };

@@ -1132,6 +1132,36 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     children.push(new Paragraph({ spacing: { before: 0, after: 0, line: LINE, lineRule: "auto" }, children: [] }));
   }
 
+  // ── Завдання на курсову/кваліфікаційну роботу (якщо знайдено у зразку/методичці), окрема сторінка ──
+  const hasTaskSheet = Array.isArray(methodInfo?.taskSheetTemplate) && methodInfo.taskSheetTemplate.length > 0;
+  if (hasTaskSheet) {
+    methodInfo.taskSheetTemplate.forEach((item, idx) => {
+      const itemSize = item.fontSize ? item.fontSize * 2 : SIZE;
+      children.push(new Paragraph({
+        pageBreakBefore: idx === 0,
+        alignment: alignMap[item.align] || AlignmentType.CENTER,
+        spacing: { line: LINE_SINGLE, lineRule: "auto", before: item.spaceBefore || 0, after: 0 },
+        indent: { firstLine: 0 },
+        children: [new TextRun({ text: applyTopic(item.text), font: FONT, size: itemSize, bold: !!item.bold, color: "000000" })],
+      }));
+    });
+  }
+
+  // ── Календарний план виконання роботи (якщо знайдено) — продовжує сторінку завдання, або власна сторінка ──
+  const calendarPlanLines = methodInfo?.calendarPlanTable?.trim()
+    ? methodInfo.calendarPlanTable.split("\n").map(applyTopic).filter(l => /^\s*\|/.test(l))
+    : [];
+  if (calendarPlanLines.length) {
+    children.push(new Paragraph({
+      pageBreakBefore: !hasTaskSheet,
+      alignment: AlignmentType.CENTER,
+      spacing: { line: LINE_SINGLE, lineRule: "auto", before: 240, after: 120 },
+      children: [new TextRun({ text: "КАЛЕНДАРНИЙ ПЛАН", font: FONT, size: SIZE, bold: true, color: "000000" })],
+    }));
+    children.push(makeTableDocx(calendarPlanLines));
+    children.push(new Paragraph({ spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 }, children: [] }));
+  }
+
   // ── Анотація (укр + англ), кожна мова — окрема сторінка, перед змістом ──
   [annotationUk, annotationEn].filter(a => a?.trim()).forEach(annotationText => {
     let isFirstLine = true;

@@ -564,31 +564,31 @@ email — email автора, якщо є в тексті. Порожній ря
       const isSimpleWithSources = ["stattia", "ese"].includes(workType);
       const isStattia = workType === "stattia";
       const isReferat = workType === "referat";
-      const tezyFields = isTezy ? `,"needsSources":true,"sourceCount":3,"authorFormat":"center","bodyStructure":"linear","needsEmail":false,"needsUDK":false,"needsFigures":false,"figureCount":0` : "";
-      const simpleFields = isSimpleWithSources ? `,"sourceCount":${workType === "stattia" ? 5 : 3},"citStyle":"ДСТУ","needsFigures":false,"figureCount":0,"sortAlpha":false` : "";
+      const tezyFields = isTezy ? `,"needsSources":true,"sourceCount":null,"authorFormat":"center","bodyStructure":"linear","needsEmail":false,"needsUDK":false,"needsFigures":false,"figureCount":null` : "";
+      const simpleFields = isSimpleWithSources ? `,"sourceCount":null,"citStyle":"ДСТУ","needsFigures":false,"figureCount":null,"sortAlpha":false` : "";
       const stattiaFields = isStattia ? `,"authorFormat":"center","needsEmail":false,"needsUDK":true` : "";
-      const referatFields = isReferat ? `,"sourceCount":10,"sortAlpha":true,"citStyle":"ДСТУ","titlePageInfo":null,"introStructure":null` : "";
+      const referatFields = isReferat ? `,"sourceCount":null,"sortAlpha":true,"citStyle":"ДСТУ","titlePageInfo":null,"introStructure":null` : "";
       const tezyHints = isTezy ? `
 needsSources — чи конференція вимагає список джерел (true/false).
-sourceCount — скільки джерел (число, зазвичай 3-5).
+sourceCount — скільки джерел, ТІЛЬКИ якщо методичка/шаблон явно вказують число. null якщо не вказано явно (типове значення підставить система).
 authorFormat — вирівнювання блоку автора: "center" або "right".
 bodyStructure — "linear" (Актуальність→Мета→Результати→Висновки) або "structured" (Преамбула→Тези→Аргументація→Демонстрація→Результати).
 needsEmail — чи треба email автора (true/false).
 needsUDK — чи треба УДК (true/false).
 needsFigures — чи потрібні рисунки/схеми у тезах за методичкою або матеріалом (true/false).
-figureCount — скільки рисунків (зазвичай 1-2).` : "";
+figureCount — скільки рисунків, ТІЛЬКИ якщо явно вказано. null якщо не вказано явно.` : "";
       const simpleHints = isSimpleWithSources ? `
-sourceCount — скільки джерел потрібно (число, зазвичай 5-10 для статті, 3-5 для есе).
+sourceCount — скільки джерел потрібно, ТІЛЬКИ якщо методичка/шаблон явно вказують число. null якщо не вказано явно (типове значення підставить система).
 citStyle — стиль цитування: "ДСТУ" або "APA" або інший зазначений у вимогах.
 needsFigures — чи потрібні рисунки/схеми (true/false).
-figureCount — скільки рисунків (зазвичай 1-3).
+figureCount — скільки рисунків, ТІЛЬКИ якщо явно вказано. null якщо не вказано явно.
 sortAlpha — чи сортувати список літератури за алфавітом (true/false).` : "";
       const stattiaHints = isStattia ? `
 authorFormat — вирівнювання блоку автора під назвою статті: "center" або "right".
 needsEmail — чи вказати email автора у статті (true/false).
 needsUDK — чи потрібен код УДК першим рядком статті (true/false, за замовчуванням true для наукової статті, якщо у вимогах явно не сказано інше).` : "";
       const referatHints = isReferat ? `
-sourceCount — мінімальна кількість джерел (зазвичай = кількість сторінок; якщо вказано у методичці — бери звідти).
+sourceCount — мінімальна кількість джерел, ТІЛЬКИ якщо методичка явно вказує число. null якщо не вказано явно (система сама підставить кількість = обсягу сторінок).
 sortAlpha — чи сортувати список літератури за алфавітом (true/false).
 citStyle — стиль цитування: "ДСТУ" або "APA" або інший зазначений у вимогах. Якщо не вказано — "ДСТУ".
 titlePageInfo — якщо у файлах (фото або PDF) знайдено титульну сторінку — витягни дані у вигляді JSON-обʼєкта: {"university":"...","faculty":"...","discipline":"...","student":"...","supervisor":"...","year":"...","city":""}. Якщо університет, студент або керівник не вказані — залиш поле порожнім рядком. Якщо титульної сторінки немає — null.
@@ -621,6 +621,17 @@ formatting — поля сторінки в мм якщо явно вказан�
       if (!parsed.orderNumber) {
         const m = tplText.match(/№\s*замовлення\s*[-–—:]\s*(\S+)/i);
         if (m) parsed.orderNumber = m[1].trim();
+      }
+      // Дефолти кількості джерел/рисунків — застосовуються ЛИШЕ якщо AI не знайшла явної
+      // вказівки в методичці/шаблоні (повернула null). Так дефолт ніколи не підмінить
+      // реальну вимогу методички, навіть якщо вона відрізняється від типового значення.
+      if (parsed.sourceCount == null || parsed.sourceCount === "") {
+        if (isReferat) parsed.sourceCount = Number(parsed.pages) || 10;
+        else if (isStattia) parsed.sourceCount = 5;
+        else if (isTezy || workType === "ese") parsed.sourceCount = 3;
+      }
+      if ((isTezy || isSimpleWithSources) && (parsed.figureCount == null || parsed.figureCount === "")) {
+        parsed.figureCount = parsed.needsFigures ? (isTezy ? 1 : 2) : 0;
       }
       const newInfo = { ...parsed, workType };
       setInfo(newInfo);

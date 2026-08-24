@@ -25,7 +25,7 @@ import {
   filterSourcesWithGemini, searchByPhrase, getEconInstitutionalSources, generateAlternatePhrases, enrichSources,
 } from "./lib/sourcesSearch.js";
 import { exportToDocx, exportPracticePlanToDocx } from "./lib/exportDocx.js";
-import { remapAndFormatCitations, applyCitationRemap, createReferenceDeduper } from "./lib/citationFormatting.js";
+import { remapAndFormatCitations, applyCitationRemap, createReferenceDeduper, insertMissingCitations } from "./lib/citationFormatting.js";
 import { SourcesStage } from "./components/stages/SourcesStage.jsx";
 import { SpinDot } from "./components/SpinDot.jsx";
 import { DropZone } from "./components/DropZone.jsx";
@@ -485,9 +485,15 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
       );
       if (detected && CATEGORY_LABELS[detected]) { setPracticeCategory(detected); info.practiceCategory = detected; }
     }
-    // Вид практики: автопідказка з курсу/типу, якщо користувач не обрав вручну
+    // Вид практики: автопідказка, якщо користувач не обрав вручну.
+    // Пріоритет: 1) practiceType з LLM-аналізу шаблону (бачить весь контекст замовлення) →
+    // 2) регулярка по типу/темі/тематиці (вид часто згаданий лише в темі, не в полі "Тип") →
+    // 3) курс як останній фолбек (усередині detectPracticeType).
     if (!typeManualRef.current) {
-      const suggestedType = detectPracticeType(tpl.course, tpl.type);
+      const validPracticeTypes = PRACTICE_TYPES.map(t => t.key);
+      const suggestedType = validPracticeTypes.includes(tpl.practiceType)
+        ? tpl.practiceType
+        : detectPracticeType(tpl.course, tpl.type, tpl.topic, tpl.subject);
       if (suggestedType) { setPracticeType(suggestedType); info.practiceType = suggestedType; }
     }
     info.practiceGuidance = getPracticeGuidance(info.practiceCategory, info.practiceType);
@@ -1051,12 +1057,99 @@ ${secBlock}
         nextContent[sec.id] = applyCitationRemap(text, mapping, refCiteText, { pageRanges, pageAbbrev });
       });
 
+      // 5б. Довставлення цитат для джерел, призначених розділу на етапі "Джерела", але які
+      // модель під час написання не процитувала жодного разу (типово — коли розділу
+      // призначено кілька джерел, а частину просто ігноровано). Без цього такі джерела
+      // тихо лишаються в списку літератури без жодної згадки в тексті — та сама перевірка,
+      // що й крок 7б в doRemapCitations великих робіт (academic-assistant.jsx).
+      const effStyle = getEffectiveCitStyle();
+      const isAPA = /APA/i.test(effStyle);
+      const isMLA = /MLA/i.test(effStyle);
+      const citedGlobalNums = new Set();
+      mainSecs.forEach(sec => {
+        const text = nextContent[sec.id];
+        if (!text) return;
+        if (isAPA || isMLA) {
+          Object.entries(refCiteText).forEach(([n, cite]) => { if (text.includes(cite)) citedGlobalNums.add(Number(n)); });
+        } else {
+          [...text.matchAll(/\[\s*(\d+(?:\s*[,;]\s*\d+)*)/g)].forEach(m => {
+            m[1].split(/[,;]/).forEach(s => citedGlobalNums.add(Number(s.trim())));
+          });
+        }
+      });
+      const orphans = [];
+      const seenOrphanGlobalNums = new Set();
+      mainSecs.forEach(sec => {
+        Object.entries(secLocalToGlobal[sec.id] || {}).forEach(([, globalN]) => {
+          if (!globalN || citedGlobalNums.has(globalN) || seenOrphanGlobalNums.has(globalN)) return;
+          seenOrphanGlobalNums.add(globalN);
+          orphans.push({ secId: sec.id, globalN });
+        });
+      });
+      if (orphans.length) {
+        setLoadMsg("Довставляю пропущені джерела у список літератури...");
+        const unresolvedOrphans = [];
+        const orphansBySec = new Map();
+        orphans.forEach(o => {
+          if (!nextContent[o.secId]) return;
+          if (!orphansBySec.has(o.secId)) orphansBySec.set(o.secId, []);
+          orphansBySec.get(o.secId).push(o);
+        });
+        await Promise.all([...orphansBySec.entries()].map(async ([secId, secOrphans]) => {
+          const insertions = secOrphans.map(({ globalN }) => ({
+            number: globalN,
+            marker: refCiteText[globalN] || `[${globalN}]`,
+            sourceText: fmtList[globalN - 1],
+          }));
+          try {
+            const { text, unresolved } = await insertMissingCitations({
+              sectionText: nextContent[secId], insertions, lang: info.language, callClaude,
+            });
+            nextContent[secId] = text;
+            unresolvedOrphans.push(...unresolved);
+          } catch (e) {
+            console.error("Помилка вставки цитат непроцитованих джерел", secId, e);
+            unresolvedOrphans.push(...secOrphans.map(o => o.globalN));
+          }
+        }));
+        if (unresolvedOrphans.length) {
+          alert(`Не вдалося автоматично процитувати ${unresolvedOrphans.length} джерел${unresolvedOrphans.length === 1 ? "о" : ""} зі списку літератури (№${unresolvedOrphans.join(", ")}) — перевірте вручну.`);
+        }
+      }
+
       const formattedText = fmtList.map((c, i) => `${i + 1}. ${c}`).join("\n");
       setContent(nextContent);
       setRefList(formattedText);
       await saveToFirestore({ content: nextContent, citInputs, citStructured, citStyle, sourcesOrder, citFootnotes, refList: formattedText });
     } catch (e) { setError(e.message); }
     setRunning(false); setLoadMsg("");
+  };
+
+  // ── Гаряча перевірка одразу після написання розділу: які з призначених
+  // розділу джерел LLM не процитувала (попри пряму інструкцію в промпті), і
+  // хірургічна довставка пропущених позначок [N], поки контекст генерації ще
+  // актуальний. Той самий підхід, що й у великих роботах (academic-assistant.jsx) —
+  // дешевше й надійніше, ніж ловити ці ж промахи пізніше єдиним глобальним
+  // проходом (тут це крок 5б в doFinalizeSources, як підстраховка на випадок,
+  // якщо ця локальна перевірка щось не вирішила).
+  const insertMissingSectionCitations = async (secId, text, lang) => {
+    const localSourceLines = (citInputs[secId] || "").split("\n").map(l => l.trim()).filter(Boolean);
+    if (!localSourceLines.length) return text;
+    const citedLocalNums = new Set();
+    [...text.matchAll(/\[\s*(\d+(?:\s*[,;]\s*\d+)*)/g)].forEach(m => {
+      m[1].split(/[,;]/).forEach(s => citedLocalNums.add(Number(s.trim())));
+    });
+    const missingLocal = localSourceLines
+      .map((line, i) => ({ number: i + 1, marker: `[${i + 1}]`, sourceText: line, abstract: abstractsMap[line] }))
+      .filter(s => !citedLocalNums.has(s.number));
+    if (!missingLocal.length) return text;
+    try {
+      const { text: fixed } = await insertMissingCitations({ sectionText: text, insertions: missingLocal, lang, callClaude });
+      return fixed;
+    } catch (e) {
+      console.error("insertMissingSectionCitations error:", e.message);
+      return text;
+    }
   };
 
   // ── Написання: генерація всіх секцій ───────────────────────────────────────
@@ -1085,10 +1178,11 @@ ${secBlock}
           sysPrompt,
           maxTok,
         );
-        const text = isTableSec ? raw : await enforceWordCount({
+        let text = isTableSec ? raw : await enforceWordCount({
           text: raw, targetWords: Math.round((sec.pages || 1) * 270), label: sec.label,
           callClaude, sys: sysPrompt, onProgress: setLoadMsg,
         });
+        text = await insertMissingSectionCitations(sec.id, text, lang);
         finalContent = { ...finalContent, [sec.id]: text };
         setContent(prev => {
           const next = { ...prev, [sec.id]: text };
@@ -1125,10 +1219,11 @@ ${secBlock}
     try {
       const maxTok = Math.min(30000, Math.max(6000, Math.round(sec.pages * 1800)));
       const raw = await callClaude([{ role: "user", content: instruction }], null, sysPrompt, maxTok);
-      const text = isTableSec ? raw : await enforceWordCount({
+      let text = isTableSec ? raw : await enforceWordCount({
         text: raw, targetWords: Math.round((sec.pages || 1) * 270), label: sec.label,
         callClaude, sys: sysPrompt, onProgress: setLoadMsg,
       });
+      text = await insertMissingSectionCitations(secId, text, language);
       setContent(prev => {
         const next = { ...prev, [secId]: text };
         saveToFirestore({ content: next });

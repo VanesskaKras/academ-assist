@@ -88,9 +88,11 @@ export function getPracticeGuidance(cat, type) {
   return PRACTICE_TABLE?.[cat]?.[type] || null;
 }
 
-// Визначає вид практики з номера курсу та/або тексту типу роботи ("Тип" з шаблону замовлення)
-export function detectPracticeType(course, typeText) {
-  const t = (typeText || "").toLowerCase();
+// Визначає вид практики з номера курсу та/або будь-якої кількості текстових джерел
+// (тип роботи, тема, тематика/предмет тощо — вид практики нерідко згаданий лише в темі,
+// а не в полі "Тип"). Регулярка — фолбек, якщо окреме LLM-поле practiceType не визначилось.
+export function detectPracticeType(course, ...texts) {
+  const t = texts.filter(Boolean).join(" ").toLowerCase();
   if (/передипломн|переддипломн/.test(t)) return "perededyplomna";
   if (/навчальн|ознайомч/.test(t)) return "navchalna";
   if (/виробнич/.test(t)) return "vyrobnycha";

@@ -98,9 +98,7 @@ export function trimToPageTarget({ sections, content, maxPages, onProgress }) {
   const eligibleTypes = new Set(["theory", "analysis", "recommendations"]);
 
   const wordsOf = (id) => countWords(content[id] || "");
-  const totalWords = sections
-    .filter(s => s.type !== "sources")
-    .reduce((sum, s) => sum + wordsOf(s.id), 0);
+  const totalWords = sections.reduce((sum, s) => sum + wordsOf(s.id), 0);
   let excess = totalWords - maxPages * WORDS_PER_PAGE;
   if (excess <= 0) return content;
 

@@ -24,6 +24,9 @@ function getMethodItems(methodInfo) {
     items.push(`Вступ містить усі елементи: ${methodInfo.introComponents.join(", ")}`);
   }
 
+  if (methodInfo.taskSheetTemplate?.length) items.push("Додано сторінку «Завдання на роботу»");
+  if (methodInfo.calendarPlanTable) items.push("Додано «Календарний план» виконання роботи");
+
   const srcParts = [];
   if (methodInfo.sourcesMinCount) srcParts.push(`мінімум ${methodInfo.sourcesMinCount}`);
   if (methodInfo.sourcesStyle) srcParts.push(`стиль ${methodInfo.sourcesStyle}`);

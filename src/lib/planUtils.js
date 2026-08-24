@@ -305,7 +305,8 @@ export function deriveStructureFromExampleTOC(exampleTOC, lang = "Українс
 // методички завжди мають пріоритет над зразком.
 const EXAMPLE_WORK_FIELDS = [
   "chaptersCount", "subsectionsPerChapter", "subsectionsPerChapterOverrides",
-  "hasChapterConclusions", "titlePageTemplate", "formatting", "sourcesStyle",
+  "hasChapterConclusions", "titlePageTemplate", "taskSheetTemplate", "calendarPlanTable",
+  "formatting", "sourcesStyle",
   "sourcesOrder", "sourcesGrouping", "citationStyle", "sourcesFormatRules",
   "introComponents", "exampleTOC",
 ];
