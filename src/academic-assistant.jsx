@@ -3643,6 +3643,20 @@ ${secBlock}
     return { theses, enPhrases };
   };
 
+  // Виконує async-задачі з обмеженим паралелізмом (пул), а не одну за одною —
+  // використовується для пошуку джерел по фразах підрозділу.
+  const runWithConcurrency = async (items, limit, worker, stopRef = null) => {
+    let cursor = 0;
+    const runNext = async () => {
+      while (cursor < items.length) {
+        if (stopRef?.current) return;
+        const item = items[cursor++];
+        await worker(item);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, runNext));
+  };
+
   // ── Автоматичний пошук джерел ──
   // crossSectionSeen — спільний Set назв (title-key), що переноситься між послідовними
   // викликами для різних підрозділів (напр. з doGenKeywords), щоб те саме джерело не
@@ -3690,50 +3704,64 @@ ${secBlock}
       }
       const nextEnPhrase = (i) => enPhrases.length ? enPhrases[i % enPhrases.length] : '';
 
-      outer:
+      // Фрази (з усіх тез підрозділу разом) обробляються пулом із обмеженим паралелізмом,
+      // а не одна за одною — це основний виграш у швидкості пошуку джерел. Дедуп за globalSeen
+      // робиться ДВІЧІ: до фільтрації Gemini (щоб не витрачати виклик на явний дубль) і ще раз
+      // синхронно прямо перед мерджем у updatedGroups (та точка не переривається await, тож
+      // безпечна навіть коли кілька фраз завершуються "одночасно" і могли знайти те саме джерело).
+      const phraseTasks = [];
       for (const { thesis, phrases } of normalizedTheses) {
-        for (let pi = 0; pi < (phrases || []).length; pi++) {
-          if (stopSearchRef.current) break outer;
-          const phrase = phrases[pi];
-          const useScholar = pi === 0 || isTechnicalWork; // Scholar тільки для першої фрази тези; для технічних робіт — на кожній
-          const candidates = await searchByPhrase(phrase, 15, page, useScholar, 0, nextEnPhrase(pi));
-          const fresh = candidates.filter(p => {
-            const key = (p.title || '').toLowerCase().slice(0, 60);
-            return key && !globalSeen.has(key);
-          });
-          if (!fresh.length) continue;
-
-          const top15raw = await filterSourcesWithGemini(fresh.slice(0, 25), filterLabel, topicCtx, 20, thesis);
-          // Тегуємо тезою, під яку джерело шукалось — щоб при примусовій довставці цитати
-          // (insertMissingCitations) можна було звірити зміст джерела САМЕ з цією тезою,
-          // а не тільки з назвою підрозділу в цілому, і, якщо не підійде, шукати заміну; а
-          // також щоб автовставка (SourcesStage.jsx buildTop) могла розподілити джерела
-          // рівномірно по тезах, а не просто взяти топ-N за оцінкою.
-          const top15tagged = thesis ? top15raw.map(p => ({ ...p, sourceThesis: thesis })) : top15raw;
-          // Автозбагачення метаданих (DOI/сторінки/видавництво) + гейт повноти — до вставки
-          // в suggestedSources, щоб автовставка вже бачила, чого реально бракує.
-          const top15 = await enrichSources(top15tagged);
-          top15.forEach(p => {
-            const key = (p.title || '').toLowerCase().slice(0, 60);
-            globalSeen.add(key);
-            crossSectionSeen?.add(key);
-          });
-
-          const existingIdx = updatedGroups.findIndex(g => g.phrase === phrase);
-          if (existingIdx >= 0) {
-            updatedGroups[existingIdx] = {
-              phrase,
-              papers: [...updatedGroups[existingIdx].papers, ...top15],
-            };
-          } else {
-            updatedGroups.push({ phrase, papers: top15 });
-          }
-
-          // Прогресивне оновлення — кожна фраза відображається одразу
-          setPhraseGroups(prev => ({ ...prev, [secId]: [...updatedGroups] }));
-          setSuggestedSources(prev => ({ ...prev, [secId]: updatedGroups.flatMap(g => g.papers) }));
-        }
+        (phrases || []).forEach((phrase, pi) => phraseTasks.push({ thesis, phrase, pi }));
       }
+      const processPhrase = async ({ thesis, phrase, pi }) => {
+        if (stopSearchRef.current) return;
+        const useScholar = pi === 0 || isTechnicalWork; // Scholar тільки для першої фрази тези; для технічних робіт — на кожній
+        const candidates = await searchByPhrase(phrase, 15, page, useScholar, 0, nextEnPhrase(pi));
+        if (stopSearchRef.current) return;
+        const fresh = candidates.filter(p => {
+          const key = (p.title || '').toLowerCase().slice(0, 60);
+          return key && !globalSeen.has(key);
+        });
+        if (!fresh.length) return;
+
+        const top15raw = await filterSourcesWithGemini(fresh.slice(0, 25), filterLabel, topicCtx, 20, thesis);
+        if (stopSearchRef.current) return;
+        // Тегуємо тезою, під яку джерело шукалось — щоб при примусовій довставці цитати
+        // (insertMissingCitations) можна було звірити зміст джерела САМЕ з цією тезою,
+        // а не тільки з назвою підрозділу в цілому, і, якщо не підійде, шукати заміну; а
+        // також щоб автовставка (SourcesStage.jsx buildTop) могла розподілити джерела
+        // рівномірно по тезах, а не просто взяти топ-N за оцінкою.
+        const top15tagged = thesis ? top15raw.map(p => ({ ...p, sourceThesis: thesis })) : top15raw;
+        // Автозбагачення метаданих (DOI/сторінки/видавництво) + гейт повноти — до вставки
+        // в suggestedSources, щоб автовставка вже бачила, чого реально бракує.
+        const top15enriched = await enrichSources(top15tagged);
+
+        const top15 = top15enriched.filter(p => {
+          const key = (p.title || '').toLowerCase().slice(0, 60);
+          return key && !globalSeen.has(key);
+        });
+        if (!top15.length) return;
+        top15.forEach(p => {
+          const key = (p.title || '').toLowerCase().slice(0, 60);
+          globalSeen.add(key);
+          crossSectionSeen?.add(key);
+        });
+
+        const existingIdx = updatedGroups.findIndex(g => g.phrase === phrase);
+        if (existingIdx >= 0) {
+          updatedGroups[existingIdx] = {
+            phrase,
+            papers: [...updatedGroups[existingIdx].papers, ...top15],
+          };
+        } else {
+          updatedGroups.push({ phrase, papers: top15 });
+        }
+
+        // Прогресивне оновлення — щойно готова фраза відображається одразу
+        setPhraseGroups(prev => ({ ...prev, [secId]: [...updatedGroups] }));
+        setSuggestedSources(prev => ({ ...prev, [secId]: updatedGroups.flatMap(g => g.papers) }));
+      };
+      await runWithConcurrency(phraseTasks, 4, processPhrase, stopSearchRef);
 
       // ── Добір при нестачі: спершу закриваємо тези, які лишились БЕЗ жодного підтвердженого
       // джерела (а не просто нарощуємо загальну кількість там, де вже й так є надлишок),
