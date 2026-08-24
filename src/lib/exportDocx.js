@@ -1076,15 +1076,6 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
   // сторінки, або переливається на другу.
   function autoFitTitlePageLines(lines) {
     if (!Array.isArray(lines) || !lines.length) return lines;
-    // Замість підганяння ОДНОГО "гнучкого" рядка (AI все одно вгадує абсолютні twips
-    // на око, дивлячись на зразок, і легко помиляється) масштабуємо ВСІ задані відступи
-    // одним спільним коефіцієнтом. Це зберігає їхні відносні пропорції зі зразка методички
-    // (який проміжок був більшим/меншим за інший — той самий ритм лишається), і водночас
-    // гарантує, що сума точно влізе на сторінку — незалежно від того, наскільки AI
-    // помилився з абсолютними числами чи наскільки тема/ПІБ студента довші/коротші за
-    // приклад у методичці.
-    const gapSum = lines.reduce((sum, item) => sum + (item.spaceBefore || 0), 0);
-    if (gapSum <= 0) return lines;
 
     const contentWidth = 11906 - L - R;
     const pageContentHeight = 16838 - T - B;
@@ -1096,7 +1087,39 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
       return Math.max(1, Math.ceil(text.length / charsPerLine));
     };
 
-    const textHeight = lines.reduce((sum, item) => {
+    // Порожні рядки-заповнювачі (без тексту) — це так само вертикальний проміжок, як і
+    // spaceBefore, просто закодований AI по-іншому (кілька порожніх абзаців підряд замість
+    // одного числа-відступу). Якщо їх не звести до spaceBefore тут, масштабування нижче їх
+    // не бачить — вони лишаються "незгортними" рядками фіксованої висоти і можуть самі по
+    // собі виштовхнути титулку на другу сторінку. Тому зливаємо кожен прогін порожніх рядків
+    // у spaceBefore наступного змістовного рядка — весь "повітряний" простір потрапляє під
+    // однакове подальше масштабування, незалежно від того, як саме AI його закодував.
+    const normalized = [];
+    let pendingGap = 0;
+    for (const item of lines) {
+      if (!item.text || !item.text.trim()) {
+        pendingGap += (item.spaceBefore || 0) + lineHeightTwips(item.fontSize ? item.fontSize * 2 : SIZE);
+        continue;
+      }
+      normalized.push({ ...item, spaceBefore: (item.spaceBefore || 0) + pendingGap });
+      pendingGap = 0;
+    }
+    if (pendingGap && normalized.length) {
+      normalized.push({ text: "", align: "center", spaceBefore: pendingGap });
+    }
+    if (!normalized.length) return lines;
+
+    // Замість підганяння ОДНОГО "гнучкого" рядка (AI все одно вгадує абсолютні twips
+    // на око, дивлячись на зразок, і легко помиляється) масштабуємо ВСІ задані відступи
+    // одним спільним коефіцієнтом. Це зберігає їхні відносні пропорції зі зразка методички
+    // (який проміжок був більшим/меншим за інший — той самий ритм лишається), і водночас
+    // гарантує, що сума точно влізе на сторінку — незалежно від того, наскільки AI
+    // помилився з абсолютними числами чи наскільки тема/ПІБ студента довші/коротші за
+    // приклад у методичці.
+    const gapSum = normalized.reduce((sum, item) => sum + (item.spaceBefore || 0), 0);
+    if (gapSum <= 0) return normalized;
+
+    const textHeight = normalized.reduce((sum, item) => {
       const fs = item.fontSize ? item.fontSize * 2 : SIZE;
       return sum + estimateLineCount(item.text, fs) * lineHeightTwips(fs);
     }, 0);
@@ -1108,7 +1131,7 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     const SAFETY_BUFFER = 300;
     const availableGapBudget = Math.max(0, pageContentHeight - textHeight - SAFETY_BUFFER);
     const scale = availableGapBudget / gapSum;
-    return lines.map(item =>
+    return normalized.map(item =>
       item.spaceBefore ? { ...item, spaceBefore: Math.round(item.spaceBefore * scale) } : item);
   }
 
