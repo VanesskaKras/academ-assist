@@ -1872,10 +1872,11 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
         }
         if (structureRe.test(comp)) {
           const phrase = il.structure || "Структура роботи:";
+          const chapCount = new Set(mainSecs.map(s => s.id.split(".")[0])).size || mainSecs.length;
           const detailLine = hasMethodIntroComponents
-            ? " After the counts, add one short sentence per chapter briefly describing what it covers."
-            : " Do NOT describe the content of individual chapters — state only how many parts the work consists of, nothing more.";
-          return `${label}: write in format "${phrase} the work consists of introduction," — number of chapters, conclusions, sources list.${detailLine} For the total page count write the exact literal token __TOTAL_PAGES__ in place of the number (no digits) — it will be replaced automatically with the real page count once the whole work is generated.`;
+            ? ` After that, add exactly one short sentence per chapter briefly describing what it covers — nothing more.`
+            : ``;
+          return `${label}: write EXACTLY one sentence following this template (translate it into the language of the work, keep the same structure), with NOTHING else added${hasMethodIntroComponents ? "" : " — no chapter-by-chapter description"}: "${phrase} the work consists of an introduction, ${chapCount} chapters, conclusions, and a list of sources. The total volume of the work is __TOTAL_PAGES__ pages." Keep the literal token __TOTAL_PAGES__ unchanged exactly as written (no digits) — it will be replaced automatically with the real page count once the whole work is generated.${detailLine}`;
         }
         return `${label}: write in format "${label} – [content relevant to topic "${d.topic}"]".`;
       });
@@ -2333,10 +2334,11 @@ ${planSummary}
         }
         if (structureRe.test(comp)) {
           const phrase = il.structure || "Структура роботи:";
+          const chapCount = new Set(mainSecs.map(s => s.id.split(".")[0])).size || mainSecs.length;
           const detailLine = hasMethodIntroComponents
-            ? " After the counts, add one short sentence per chapter briefly describing what it covers."
-            : " Do NOT describe the content of individual chapters — state only how many parts the work consists of, nothing more.";
-          return `${label}: write as "${phrase} the work consists of introduction," — number of chapters, conclusions, bibliography.${detailLine}`;
+            ? ` After that, add exactly one short sentence per chapter briefly describing what it covers — nothing more.`
+            : ``;
+          return `${label}: write EXACTLY one sentence following this template (translate it into the language of the work, keep the same structure), with NOTHING else added${hasMethodIntroComponents ? "" : " — no chapter-by-chapter description"}: "${phrase} the work consists of an introduction, ${chapCount} chapters, conclusions, and a bibliography."${detailLine}`;
         }
         return `${label}: write in format "${label} – [content relevant to the topic]".`;
       });
@@ -3483,10 +3485,11 @@ ${slideSpecs.join("\n\n")}
           }
           if (structureRe.test(comp)) {
             const phrase = il.structure || "Робота складається з вступу,";
+            const chapCount = new Set(mainSecs.map(s => s.id.split(".")[0])).size || mainSecs.length;
             const detailLine = hasMethodIntroComponents
-              ? " After the counts, add one short sentence per chapter briefly describing what it covers."
-              : " Do NOT describe the content of individual chapters — state only how many parts the work consists of, nothing more.";
-            return `${label}: starts with "${phrase}".${detailLine}`;
+              ? ` After that, add exactly one short sentence per chapter briefly describing what it covers — nothing more.`
+              : ``;
+            return `${label}: write EXACTLY one sentence following this template (translate it into the language of the work, keep the same structure), with NOTHING else added${hasMethodIntroComponents ? "" : " — no chapter-by-chapter description"}: "${phrase} ${chapCount} chapters, conclusions, and a list of used sources."${detailLine}`;
           }
           return `${label}`;
         });
