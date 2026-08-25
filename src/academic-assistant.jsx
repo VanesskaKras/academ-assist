@@ -2104,6 +2104,24 @@ ${planSummary}
 Не обривай текст. Завершуй підсумковим абзацом. ${citNote} Без жирного.
 ЗАБОРОНЕНО вставляти будь-які внутрішні підназви, заголовки абзаців або окремі рядки-мітки ("Загальна картина", "Результати аналізу" тощо). Кожен рядок тексту — повне речення, рядок таблиці або підпис до таблиці/рисунка.
 Абзаци мають різнитись за довжиною: чергуй короткі (2-3 речення) з довшими (5-7 речень).`;
+
+      // Вимога "мінімум 1 рисунок на розділ" (mandatoryFigureNote у buildSYS) — лише
+      // текстова інструкція в system-промпті, однакова для КОЖНОГО підрозділу окремо:
+      // жоден підрозділ "не знає", чи вже з'явився рисунок в іншому підрозділі того ж
+      // розділу, тож усі можуть покластись один на одного і розділ лишиться без рисунка
+      // взагалі (саме так сталось із розділом 1 у тестовій роботі). Перевіряємо кодом:
+      // якщо це ОСТАННІЙ підрозділ розділу і в жодному з попередніх ще немає рисунка —
+      // вимагаємо його прямо тут.
+      if (methodInfo?.hasFigures) {
+        const chapterMainTypes = ["theory", "analysis", "recommendations"];
+        const currentChapNum = sec.id.split(".")[0];
+        const chapterSecs = sections.filter(s => chapterMainTypes.includes(s.type) && s.id.split(".")[0] === currentChapNum);
+        const isLastInChapter = chapterSecs[chapterSecs.length - 1]?.id === sec.id;
+        const hasFigureAlready = chapterSecs.some(s => s.id !== sec.id && scanFigures(contentRef.current[s.id] || "").length > 0);
+        if (isLastInChapter && !hasFigureAlready) {
+          instruction += `\n\nОБОВ'ЯЗКОВО: жоден інший підрозділ цього розділу ще не містить рисунка — цей підрозділ МАЄ містити хоча б один рисунок (графік із таблиці даних або PlantUML-схема за правилами FIGURES вище), інакше вимога методички "щонайменше один рисунок на розділ" буде порушена.`;
+        }
+      }
     }
     const clientWritingReqs = [
       commentAnalysis?.writingHints,
