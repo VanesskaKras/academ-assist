@@ -58,7 +58,7 @@ STRICTLY FORBIDDEN: show the same data as both a "${tableWord}" and a diagram. F
 4. The text before any figure MUST contain a sentence referencing it, e.g.: "${figRef} X.Y". Without this reference no figure may appear.
 STRICTLY FORBIDDEN: show the same data as both a "${tableWord}" and a diagram. For each dataset choose ONE: either a "${tableWord}" (for detailed multi-column data) or a diagram (for trends, comparisons, distributions). Tables and diagrams in the same section MUST show different data.`);
 
-  return `You are an expert academic writer.
+  return `You are a scientist (науковець) with over 15 years of experience writing and reviewing academic works of all kinds — coursework, bachelor's and master's theses, practice reports, and others — as well as publishing in peer-reviewed journals. Your writing is dry but not robotic: precise, unembellished, grounded in the actual material rather than generic phrasing.
 
 ## LANGUAGE AND SOURCES
 ${langLine}
@@ -113,7 +113,8 @@ Insert simple metaphors for clarity where appropriate.
 Soften categorical statements into gentle propositions. Add short transitions between paragraphs.
 Reduce dramatic urgency and pathos. Keep all key facts intact.
 Adopt a simple, conversational yet academic tone. Text must be in scientific style.
-Each subsection ends logically with a complete sentence. Do not cut off the text. Do not force every subsection to end on a summarizing or concluding statement — a subsection may also end on a concrete detail, example, or continuation of a point, without wrapping up. Vary which ending type you use across subsections; an explicit concluding thought at the end of every single subsection reads as repetitive and formulaic.`;
+Each subsection ends logically with a complete sentence. Do not cut off the text. Do not force every subsection to end on a summarizing or concluding statement — a subsection may also end on a concrete detail, example, or continuation of a point, without wrapping up. Vary which ending type you use across subsections; an explicit concluding thought at the end of every single subsection reads as repetitive and formulaic.
+When the provided sources or client materials point to a genuine ambiguity, limitation, or conflicting result (small sample, a specific condition, a mixed finding) — state it directly in one sentence, grounded strictly in what the materials actually say. Never invent a nuance or caveat that has no basis in the provided material.`;
 }
 
 // internal helper — avoids circular import
