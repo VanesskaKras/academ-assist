@@ -52,28 +52,27 @@ export function trimToWordTarget(text, targetWords) {
   return (result.trim() || text.trim());
 }
 
-export async function enforceWordCount({ text, targetWords, label, callClaude, sys, signal, onProgress, clean }) {
+export async function enforceWordCount({ text, targetWords, label, callClaude, sys, signal, onProgress, clean, cacheOpts }) {
   const n = countWords(text);
   try {
     if (n < targetWords * 0.85) {
       const missing = targetWords - n;
       onProgress?.(`Дописую: ${label}...`);
       const contPrompt = `Ось поточний текст "${label}" (${n} слів):\n\n${text}\n\nДопиши ще приблизно ${missing} слів, органічно продовжуючи виклад далі. Не повторюй вже написане. Не додавай вступних фраз на кшталт "Продовжимо" чи "Отже". Просто продовжуй текст з того місця де він закінчився, без заголовків і міток.`;
-      const contRaw = await callClaude([{ role: "user", content: contPrompt }], signal, sys, Math.min(20000, Math.max(2000, Math.round(missing * 3))));
+      const contRaw = await callClaude([{ role: "user", content: contPrompt }], signal, sys, Math.min(20000, Math.max(2000, Math.round(missing * 3))), null, undefined, cacheOpts);
       let contClean = (clean ? clean(contRaw) : contRaw).trim();
       if (!endsWithSentence(contClean)) contClean = cutToLastSentence(contClean);
       return text + "\n\n" + contClean;
     }
     if (n > targetWords * 1.2) {
+      // Скорочуємо детерміновано кодом (по межі речення), а не ще одним викликом ШІ:
+      // це прибирає і зайвий виклик, і повторну пересилку вже написаного тексту як
+      // input — той самий підхід, що вже давно й надійно працює в trimToPageTarget.
       onProgress?.(`Скорочую: ${label}...`);
-      const shortenPrompt = `Ось поточний текст "${label}" (${n} слів):\n\n${text}\n\nСкороти його до приблизно ${targetWords} слів: прибери повтори та другорядні деталі, збережи головні тези і структуру абзаців. Поверни лише скорочений текст, без коментарів.`;
-      const shortRaw = await callClaude([{ role: "user", content: shortenPrompt }], signal, sys, Math.min(30000, Math.max(4000, Math.round(targetWords * 3))));
-      let shortClean = (clean ? clean(shortRaw) : shortRaw).trim();
-      if (!endsWithSentence(shortClean)) shortClean = cutToLastSentence(shortClean);
-      return shortClean;
+      return trimToWordTarget(text, targetWords);
     }
   } catch {
-    // Якщо допис/скорочення не вдалось - лишаємо початковий текст як є
+    // Якщо допис не вдався - лишаємо початковий текст як є
   }
   return text;
 }

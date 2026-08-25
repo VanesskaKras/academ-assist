@@ -2139,13 +2139,16 @@ ${planSummary}
       instruction += `\n\nІЛЮСТРАЦІЇ КЛІЄНТА ДО ЦЬОГО ПІДРОЗДІЛУ (вже надані, треба вставити в текст):\n${illLines}\nОБОВ'ЯЗКОВО для кожної ілюстрації: 1) додай посилання на неї в тексті (напр. "як показано на Рис. X.Y..."), використовуючи нумерацію X.Y відповідно до номера підрозділу;${hasIndex ? " 2) безпосередньо ПЕРЕД стандартним підписом рисунка (Рис. X.Y – Назва) додай окремим рядком точно вказаний вище маркер вставки у форматі [КЛІЄНТ-ІЛЮСТРАЦІЯ:N] — без жодних змін, більше нічого на цьому рядку." : ""}`;
     }
     const isTechnicalSecFinal = getTechnicalSections(sections, d).includes(sec.id);
-    if (clientMaterialsSummary?.rawText) {
-      instruction += `\n\nМАТЕРІАЛИ КЛІЄНТА (використовуй ці дані — не вигадуй, не замінюй):\n${clientMaterialsSummary.rawText.slice(0, 80000)}`;
-      if (isTechnicalSecFinal) instruction += `\n\n${CODE_GROUNDING_RULE}`;
-    } else if (clientMaterialsText?.trim()) {
-      instruction += `\n\nМАТЕРІАЛИ КЛІЄНТА (використовуй ці дані — не вигадуй, не замінюй):\n${clientMaterialsText.slice(0, 80000)}`;
-      if (isTechnicalSecFinal) instruction += `\n\n${CODE_GROUNDING_RULE}`;
-    }
+    // Матеріали клієнта — той самий великий (до 80к символів) блок повторюється в
+    // КОЖНОМУ підрозділі роботи без змін. Виносимо його з user-повідомлення в окремий
+    // кешований system-блок (opts.extraCached): перший підрозділ записує кеш, решта
+    // читають той самий блок в рази дешевше, замість пересилки по повній ціні щоразу.
+    const materialsRaw = clientMaterialsSummary?.rawText || clientMaterialsText?.trim() || "";
+    const materialsBlock = materialsRaw
+      ? `МАТЕРІАЛИ КЛІЄНТА (використовуй ці дані - не вигадуй, не замінюй):\n${materialsRaw.slice(0, 80000)}${isTechnicalSecFinal ? `\n\n${CODE_GROUNDING_RULE}` : ""}`
+      : "";
+    if (materialsBlock) instruction += `\n\nДив. МАТЕРІАЛИ КЛІЄНТА нижче в системному промпті - використовуй ці дані, не вигадуй і не замінюй їх.`;
+    const genOpts = { cache: true, ...(materialsBlock ? { extraCached: [materialsBlock] } : {}) };
     const sectionMaxTokens = Math.min(60000, Math.max(8000, Math.round((sec.pages || 1) * 3000)));
     const cleanResult = (raw) => typographQuotes(fixMixedScript(raw, lang)
       .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
@@ -2156,12 +2159,13 @@ ${planSummary}
     // Ціль в словах для перевірки фактичного обсягу після генерації (окремо від тексту промпту)
     const targetWords = sec.type === "chapter_conclusion" ? 135 : Math.round((sec.pages || 1) * 270);
     try {
-      const raw = await callClaude(buildMessages(instruction), ctrl.signal, buildSYS(lang, methodInfo), sectionMaxTokens, (s) => setLoadMsg(`Генерую: ${sec.label}... зачекайте ${s}с`));
+      const raw = await callClaude(buildMessages(instruction), ctrl.signal, buildSYS(lang, methodInfo), sectionMaxTokens, (s) => setLoadMsg(`Генерую: ${sec.label}... зачекайте ${s}с`), undefined, genOpts);
       // Видаляємо довге тире на всякий випадок (модель іноді ігнорує заборону)
       const cleaned = cleanResult(raw);
       const result = sec.type === "sources" ? cleaned : await enforceWordCount({
         text: cleaned, targetWords, label: sec.label, callClaude,
         sys: buildSYS(lang, methodInfo), signal: ctrl.signal, onProgress: setLoadMsg, clean: cleanResult,
+        cacheOpts: genOpts,
       });
 
       // Перевірка "гарячим слідом" — які з призначених підрозділу джерел модель

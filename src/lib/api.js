@@ -62,9 +62,17 @@ async function callClaudeInner(messages, signal, systemPrompt, maxTokens, onWait
   // Кешування системного промпту (opts.cache) — вигідно коли той самий system
   // повторюється в кількох послідовних викликах (напр. цикл правок по розділах):
   // перший виклик пише кеш, наступні читають його в рази дешевше.
-  const systemField = opts?.cache
-    ? [{ type: "text", text: systemPrompt || buildSYS(), cache_control: { type: "ephemeral" } }]
-    : (systemPrompt || buildSYS());
+  // opts.extraCached — додаткові статичні блоки (напр. матеріали клієнта), що
+  // повторюються в кожному виклику циклу генерації підрозділів так само незмінно,
+  // як system — виносимо їх окремим кешованим блоком замість user-повідомлення,
+  // щоб не пересилати їх по повній ціні на кожен підрозділ.
+  const baseSystemText = systemPrompt || buildSYS();
+  const systemField = (opts?.cache || opts?.extraCached?.length)
+    ? [
+        { type: "text", text: baseSystemText, ...(opts?.cache ? { cache_control: { type: "ephemeral" } } : {}) },
+        ...(opts?.extraCached || []).map(t => ({ type: "text", text: t, cache_control: { type: "ephemeral" } })),
+      ]
+    : baseSystemText;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     const res = await fetch("/api/claude", {
