@@ -308,7 +308,7 @@ const EXAMPLE_WORK_FIELDS = [
   "hasChapterConclusions", "titlePageTemplate", "taskSheetTemplate", "calendarPlanTable",
   "hasFigures", "formatting", "sourcesStyle",
   "sourcesOrder", "sourcesGrouping", "citationStyle", "sourcesFormatRules",
-  "introComponents", "exampleTOC",
+  "introComponents", "introStructureHasChapterDetail", "exampleTOC",
 ];
 export function mergeExampleWorkIntoMethodInfo(methodInfo, exampleInfo, exampleStructure) {
   const source = { ...(exampleStructure || {}), ...(exampleInfo || {}) };

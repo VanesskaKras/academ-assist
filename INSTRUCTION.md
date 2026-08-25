@@ -133,7 +133,7 @@ input → parsed → plan → sources → writing → done
    - Технічне: техн, інформ, програм, IT тощо
    - Гуманітарне: всі інші
 4. Якщо завантажено PDF-методичку: викликає `callGemini` з `METHODOLOGY_READING_PROMPT` → отримує `methodInfo`
-5. `methodInfo` містить: `totalPages, introPages, conclusionsPages, chaptersCount, subsectionsPerChapter, hasChapterConclusions, chapterTypes, exampleTOC, introComponents, theoryRequirements, analysisRequirements, conclusionsRequirements, chapterConclusionRequirements, otherRequirements, requiredFormulas, requiredTables, formatting.tableFormat, formatting.figureFormat, titlePageTemplate`
+5. `methodInfo` містить: `totalPages, introPages, conclusionsPages, chaptersCount, subsectionsPerChapter, hasChapterConclusions, chapterTypes, exampleTOC, introComponents, introStructureHasChapterDetail, theoryRequirements, analysisRequirements, conclusionsRequirements, chapterConclusionRequirements, otherRequirements, requiredFormulas, requiredTables, formatting.tableFormat, formatting.figureFormat, titlePageTemplate`
 6. Якщо є `titlePageTemplate` у методичці — підставляє тему і рік в шаблон титульної сторінки
 7. Якщо є коментар або фото — викликає `callClaude` з `buildCommentAnalysisPrompt()` → `commentAnalysis`
 8. Зберігає в Firestore. Переходить до `stage = "parsed"`

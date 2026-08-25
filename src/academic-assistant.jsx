@@ -18,7 +18,7 @@ import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, g
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { getAcademicDefaults, classifyAppendixItem, detectSpecialty, normalizeWorkType } from "./lib/academicDefaults.js";
 import { searchByPhrase, filterSourcesWithGemini, getEconInstitutionalSources, generateAlternatePhrases, paperToCitation, enrichSources } from "./lib/sourcesSearch.js";
-import { applyCitationRemap, buildFinalReferenceList, buildCiteFormats, createReferenceDeduper, detectSourceGrouping, insertMissingCitations } from "./lib/citationFormatting.js";
+import { applyCitationRemap, buildFinalReferenceList, buildCiteFormats, createReferenceDeduper, detectSourceGrouping, insertMissingCitations, capCitationRepeats } from "./lib/citationFormatting.js";
 import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
 import { StagePills } from "./components/StagePills.jsx";
 import { FieldBox, Heading, NavBtn, PrimaryBtn, GreenBtn, SaveIndicator } from "./components/Buttons.jsx";
@@ -1705,32 +1705,11 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
         playDoneSound();
 
         (async () => {
-          // Фінальна перевірка сумарного обсягу: enforceWordCount тримає в межах кожен
-          // підрозділ окремо (з допуском), але ці допуски на десятках підрозділів можуть
-          // у сумі дати перевищення верхньої межі заданого діапазону сторінок — обрізаємо
-          // найбільші основні підрозділи, якщо фактичний обсяг вийшов за межу.
-          let finalContent = contentRef.current;
-          const maxTargetPages = parsePagesMax(info?.pages);
-          if (maxTargetPages) {
-            finalContent = trimToPageTarget({
-              sections, content: finalContent, maxPages: maxTargetPages, onProgress: setLoadMsg,
-            });
-            contentRef.current = finalContent;
-            setContent(finalContent);
-          }
-
-          // Підставляємо у "Структура роботи" фактичну (пораховану з готового тексту) к-сть сторінок
-          // замість запланованої — токен __TOTAL_PAGES__ ставить AI під час написання вступу.
-          const introSec = sections.find(s => s.type === "intro");
-          if (introSec && finalContent[introSec.id]?.includes("__TOTAL_PAGES__")) {
-            const totalWords = sections
-              .reduce((sum, s) => sum + (finalContent[s.id] || "").trim().split(/\s+/).filter(Boolean).length, 0);
-            const actualPages = Math.max(1, Math.round(totalWords / 270));
-            finalContent = { ...finalContent, [introSec.id]: finalContent[introSec.id].replaceAll("__TOTAL_PAGES__", String(actualPages)) };
-            contentRef.current = finalContent;
-            setContent(finalContent);
-          }
-
+          // Перевірка сумарного обсягу й підстановка фактичної к-сті сторінок у
+          // "Структура роботи" переїхали в кінець doRemapCitations — там текст
+          // уже остаточний (з довставленими цитатами для осиротілих джерел),
+          // тож обрізка й підрахунок сторінок рахують правдиву, а не проміжну цифру.
+          const finalContent = contentRef.current;
           const allUnlocked = activeStageKeys.length - 1;
           saveToFirestore({ stage: "writing", status: "writing", content: finalContent, citInputs, maxStageIdx: allUnlocked });
           doRemapCitations();
@@ -1873,10 +1852,11 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
         if (structureRe.test(comp)) {
           const phrase = il.structure || "Структура роботи:";
           const chapCount = new Set(mainSecs.map(s => s.id.split(".")[0])).size || mainSecs.length;
-          const detailLine = hasMethodIntroComponents
+          const hasChapterDetail = !!methodInfo?.introStructureHasChapterDetail;
+          const detailLine = hasChapterDetail
             ? ` After that, add exactly one short sentence per chapter briefly describing what it covers — nothing more.`
             : ``;
-          return `${label}: write EXACTLY one sentence following this template (translate it into the language of the work, keep the same structure), with NOTHING else added${hasMethodIntroComponents ? "" : " — no chapter-by-chapter description"}: "${phrase} the work consists of an introduction, ${chapCount} chapters, conclusions, and a list of sources. The total volume of the work is __TOTAL_PAGES__ pages." Keep the literal token __TOTAL_PAGES__ unchanged exactly as written (no digits) — it will be replaced automatically with the real page count once the whole work is generated.${detailLine}`;
+          return `${label}: write EXACTLY one sentence following this template (translate it into the language of the work, keep the same structure), with NOTHING else added${hasChapterDetail ? "" : " — no chapter-by-chapter description"}: "${phrase} the work consists of an introduction, ${chapCount} chapters, conclusions, and a list of sources. The total volume of the work is __TOTAL_PAGES__ pages." Keep the literal token __TOTAL_PAGES__ unchanged exactly as written (no digits) — it will be replaced automatically with the real page count once the whole work is generated.${detailLine}`;
         }
         return `${label}: write in format "${label} – [content relevant to topic "${d.topic}"]".`;
       });
@@ -2227,6 +2207,8 @@ ${planSummary}
         }
       }
 
+      finalResult = capCitationRepeats(finalResult);
+
       const newContent = { ...contentRef.current, [sec.id]: finalResult };
       setContent(newContent);
       runningRef.current = false; setRunning(false); setLoadMsg("");
@@ -2339,10 +2321,11 @@ ${planSummary}
         if (structureRe.test(comp)) {
           const phrase = il.structure || "Структура роботи:";
           const chapCount = new Set(mainSecs.map(s => s.id.split(".")[0])).size || mainSecs.length;
-          const detailLine = hasMethodIntroComponents
+          const hasChapterDetail = !!methodInfo?.introStructureHasChapterDetail;
+          const detailLine = hasChapterDetail
             ? ` After that, add exactly one short sentence per chapter briefly describing what it covers — nothing more.`
             : ``;
-          return `${label}: write EXACTLY one sentence following this template (translate it into the language of the work, keep the same structure), with NOTHING else added${hasMethodIntroComponents ? "" : " — no chapter-by-chapter description"}: "${phrase} the work consists of an introduction, ${chapCount} chapters, conclusions, and a bibliography."${detailLine}`;
+          return `${label}: write EXACTLY one sentence following this template (translate it into the language of the work, keep the same structure), with NOTHING else added${hasChapterDetail ? "" : " — no chapter-by-chapter description"}: "${phrase} the work consists of an introduction, ${chapCount} chapters, conclusions, and a bibliography."${detailLine}`;
         }
         return `${label}: write in format "${label} – [content relevant to the topic]".`;
       });
@@ -2517,7 +2500,8 @@ ${clientReqsRegen ? `ВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО вико
 )
         .replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2")
         .replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2");
-      const newContent = { ...contentRef.current, [sec.id]: result };
+      const cappedResult = capCitationRepeats(result);
+      const newContent = { ...contentRef.current, [sec.id]: cappedResult };
       setContent(newContent);
       setRegenId(null); setRegenPrompt("");
       await saveToFirestore({ content: newContent });
@@ -3490,10 +3474,11 @@ ${slideSpecs.join("\n\n")}
           if (structureRe.test(comp)) {
             const phrase = il.structure || "Робота складається з вступу,";
             const chapCount = new Set(mainSecs.map(s => s.id.split(".")[0])).size || mainSecs.length;
-            const detailLine = hasMethodIntroComponents
+            const hasChapterDetail = !!methodInfo?.introStructureHasChapterDetail;
+            const detailLine = hasChapterDetail
               ? ` After that, add exactly one short sentence per chapter briefly describing what it covers — nothing more.`
               : ``;
-            return `${label}: write EXACTLY one sentence following this template (translate it into the language of the work, keep the same structure), with NOTHING else added${hasMethodIntroComponents ? "" : " — no chapter-by-chapter description"}: "${phrase} ${chapCount} chapters, conclusions, and a list of used sources."${detailLine}`;
+            return `${label}: write EXACTLY one sentence following this template (translate it into the language of the work, keep the same structure), with NOTHING else added${hasChapterDetail ? "" : " — no chapter-by-chapter description"}: "${phrase} ${chapCount} chapters, conclusions, and a list of used sources."${detailLine}`;
           }
           return `${label}`;
         });
@@ -3553,7 +3538,8 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
           .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
           .replace(/[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF]/g, "")
 );
-        const newContent = { ...contentRef.current, [sec.id]: result };
+        const cappedResult = capCitationRepeats(result);
+        const newContent = { ...contentRef.current, [sec.id]: cappedResult };
         setContent(newContent);
         await saveToFirestore({ content: newContent });
         await new Promise(r => setTimeout(r, 2000));
@@ -4473,6 +4459,31 @@ ${secBlocks}
     if (srcSec) newContent[srcSec.id] = fmtResult || allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n");
     const newRefList = (fmtResult || allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n"))
       .split("\n").filter(Boolean);
+
+    // ── 10. Фінальна перевірка сумарного обсягу — ТІЛЬКИ ТУТ, коли текст уже
+    // остаточний (довставлені цитати осиротілих джерел і сформований список
+    // джерел вище вже враховані). enforceWordCount тримає в межах кожен
+    // підрозділ окремо (з допуском), але ці допуски на десятках підрозділів, а
+    // ще й довставлені цитати з кроку 7б, можуть у сумі дати перевищення межі —
+    // обрізаємо найбільші основні підрозділи, якщо фактичний обсяг вийшов за неї.
+    if (!ctrl.signal.aborted) {
+      const maxTargetPages = parsePagesMax(info?.pages);
+      if (maxTargetPages) {
+        const trimmed = trimToPageTarget({
+          sections, content: newContent, maxPages: maxTargetPages, onProgress: setLoadMsg,
+        });
+        Object.assign(newContent, trimmed);
+      }
+      // Підставляємо у "Структура роботи" фактичну (пораховану з готового тексту) к-сть
+      // сторінок замість запланованої — токен __TOTAL_PAGES__ ставить AI під час написання вступу.
+      const introSec = sections.find(s => s.type === "intro");
+      if (introSec && newContent[introSec.id]?.includes("__TOTAL_PAGES__")) {
+        const totalWords = sections
+          .reduce((sum, s) => sum + (newContent[s.id] || "").trim().split(/\s+/).filter(Boolean).length, 0);
+        const actualPages = Math.max(1, Math.round(totalWords / 270));
+        newContent[introSec.id] = newContent[introSec.id].replaceAll("__TOTAL_PAGES__", String(actualPages));
+      }
+    }
 
     setRefList(newRefList);
     setContent(newContent);
