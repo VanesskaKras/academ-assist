@@ -25,7 +25,7 @@ import {
   filterSourcesWithGemini, searchByPhrase, getEconInstitutionalSources, generateAlternatePhrases, enrichSources,
 } from "./lib/sourcesSearch.js";
 import { exportToDocx, exportPracticePlanToDocx } from "./lib/exportDocx.js";
-import { remapAndFormatCitations, applyCitationRemap, createReferenceDeduper, insertMissingCitations } from "./lib/citationFormatting.js";
+import { remapAndFormatCitations, applyCitationRemap, createReferenceDeduper, insertMissingCitations, capCitationRepeats } from "./lib/citationFormatting.js";
 import { SourcesStage } from "./components/stages/SourcesStage.jsx";
 import { SpinDot } from "./components/SpinDot.jsx";
 import { DropZone } from "./components/DropZone.jsx";
@@ -1183,6 +1183,7 @@ ${secBlock}
           callClaude, sys: sysPrompt, onProgress: setLoadMsg,
         });
         text = await insertMissingSectionCitations(sec.id, text, lang);
+        text = capCitationRepeats(text);
         finalContent = { ...finalContent, [sec.id]: text };
         setContent(prev => {
           const next = { ...prev, [sec.id]: text };
@@ -1224,6 +1225,7 @@ ${secBlock}
         callClaude, sys: sysPrompt, onProgress: setLoadMsg,
       });
       text = await insertMissingSectionCitations(secId, text, language);
+      text = capCitationRepeats(text);
       setContent(prev => {
         const next = { ...prev, [secId]: text };
         saveToFirestore({ content: next });

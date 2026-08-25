@@ -323,6 +323,29 @@ export function applyCitationRemap(text, oldToNew, refCiteText, { pageRanges = {
   return out;
 }
 
+// ── Обмежує кількість повторних цитувань одного джерела в тексті (локальна
+// нумерація [N], до фінального ремапу стилю) — модель не завжди дотримується
+// ліміту "не більше N разів", заданого лише текстом промпту, тож рахунок і
+// обрізання зайвих повторів примусово виконує код. Групові цитати [N, M]
+// лишає як є, прибираючи з групи лише номери, що вже вичерпали ліміт — весь
+// маркер видаляється лише якщо вичерпані всі номери в ньому. ──
+export function capCitationRepeats(text, maxRepeats = 2) {
+  if (!text) return text;
+  const counts = {};
+  let out = text.replace(/\[\s*(\d+(?:\s*[,;]\s*\d+)*)\s*(?:,\s*[сc]\.?\s*\d+[^\]]*)?\s*\]/g, (match, numsStr) => {
+    const nums = numsStr.split(/[,;]/).map(s => Number(s.trim()));
+    const kept = nums.filter(n => {
+      counts[n] = (counts[n] || 0) + 1;
+      return counts[n] <= maxRepeats;
+    });
+    if (!kept.length) return "";
+    if (kept.length === nums.length) return match;
+    return `[${kept.join(", ")}]`;
+  });
+  out = out.replace(/ +([.,;:!?])/g, "$1");
+  return out;
+}
+
 // ── Звірка змісту відформатованої відповіді ЛЛМ із вхідним списком ──
 
 // Витягує "ідентифікаційні" токени (4+ символів) з рядка джерела для звірки змісту.
