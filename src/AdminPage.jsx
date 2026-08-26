@@ -544,7 +544,7 @@ function CostsTab({ users }) {
                                     <th rowSpan={2} style={{ textAlign: "left", padding: "8px 8px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", verticalAlign: "bottom" }}>Менеджер</th>
                                     <th rowSpan={2} style={{ textAlign: "left", padding: "8px 8px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", whiteSpace: "nowrap", verticalAlign: "bottom" }}>№</th>
                                     <th rowSpan={2} style={{ textAlign: "left", padding: "8px 8px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", verticalAlign: "bottom" }}>Тема</th>
-                                    <th rowSpan={2} style={{ textAlign: "left", padding: "8px 8px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", verticalAlign: "bottom" }}>Тип</th>
+                                    <th rowSpan={2} style={{ textAlign: "left", padding: "8px 8px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", verticalAlign: "bottom", width: 100, maxWidth: 100 }}>Тип</th>
                                     <th rowSpan={2} style={{ textAlign: "center", padding: "8px 6px", color: "#888", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", whiteSpace: "nowrap", verticalAlign: "bottom" }}>Стор.</th>
                                     <th colSpan={1} style={{ textAlign: "center", padding: "4px 8px", color: "#5a6a5a", fontWeight: 700, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", borderBottom: "1px solid #e0ece0", background: "#f5faf5" }}>Claude</th>
                                     <th colSpan={1} style={{ textAlign: "center", padding: "4px 8px", color: "#5a5a6a", fontWeight: 700, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", borderBottom: "1px solid #e0e0ec", background: "#f5f5fa" }}>Gemini</th>
@@ -569,7 +569,7 @@ function CostsTab({ users }) {
                                             </td>
                                             <td style={{ padding: "9px 8px", color: "#555", fontSize: 11, fontFamily: "monospace", whiteSpace: "nowrap" }}>{o.info?.orderNumber || "—"}</td>
                                             <td style={{ padding: "9px 8px", color: "#1a1a14", fontSize: 11, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={o.info?.topic || o.topic || ""}>{o.info?.topic || o.topic || "—"}</td>
-                                            <td style={{ padding: "9px 8px", color: "#1a1a14", whiteSpace: "nowrap" }}>{o.type || o.workType || "—"}</td>
+                                            <td style={{ padding: "9px 8px", color: "#1a1a14", maxWidth: 100, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={o.type || o.workType || ""}>{o.type || o.workType || "—"}</td>
                                             <td style={{ textAlign: "center", padding: "9px 6px", color: "#555" }}>{o.pages || "—"}</td>
                                             <td style={{ textAlign: "center", padding: "9px 6px", fontWeight: 600, color: "#1a6a1a" }}>{fmtCost(o.claudeCostUsd)}</td>
                                             <td style={{ textAlign: "center", padding: "9px 6px", fontWeight: 600, color: "#1a6a1a" }}>{fmtCost(o.geminiCostUsd)}</td>

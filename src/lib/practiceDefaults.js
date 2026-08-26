@@ -176,7 +176,7 @@ export function buildPracticeTitlePageLines(info) {
 // Дефолт, якщо в методичці НЕ знайдено власного зразка титулки щоденника — підставляє реальні
 // дані де вони відомі, інакше залишає загальний підпис-плейсхолдер (без вигаданого закладу).
 export function buildPracticeDiaryTitlePageLines(info) {
-  const { faculty, studentName, supervisorCompany, direction, practiceType } = info || {};
+  const { faculty, department, specialty, degreeLevel, knowledgeField, studentName, supervisorCompany, practiceType } = info || {};
   const practiceLabel = PRACTICE_TYPE_GENITIVE[practiceType]
     ? `${PRACTICE_TYPE_GENITIVE[practiceType]} практики`
     : "практики";
@@ -202,9 +202,10 @@ export function buildPracticeDiaryTitlePageLines(info) {
   lines.push({ text: "", align: "center", spaceBefore: 240 });
 
   lines.push({ text: `інститут (факультет) ${faculty || "___________________"}`, align: "left", bold: false, spaceBefore: 0 });
-  lines.push({ text: "освітньо-кваліфікаційний рівень ___________________", align: "left", bold: false, spaceBefore: 0 });
-  lines.push({ text: `спеціальність ${direction || "___________________"}`, align: "left", bold: false, spaceBefore: 0 });
-  lines.push({ text: "галузь знань ___________________", align: "left", bold: false, spaceBefore: 0 });
+  lines.push({ text: `кафедра ${department || "___________________"}`, align: "left", bold: false, spaceBefore: 0 });
+  lines.push({ text: `освітньо-кваліфікаційний рівень ${degreeLevel || "___________________"}`, align: "left", bold: false, spaceBefore: 0 });
+  lines.push({ text: `спеціальність ${specialty || "___________________"}`, align: "left", bold: false, spaceBefore: 0 });
+  lines.push({ text: `галузь знань ${knowledgeField || "___________________"}`, align: "left", bold: false, spaceBefore: 0 });
   lines.push({ text: "ОПП ___________________", align: "left", bold: false, spaceBefore: 0 });
 
   return lines;

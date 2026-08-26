@@ -14,7 +14,7 @@ import { playDoneSound } from "./lib/audio.js";
 import { enforceWordCount, trimToPageTarget } from "./lib/wordCount.js";
 import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildExampleWorkReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildIllustrationsPdfPrompt, buildDrawingsDescriptionPrompt, buildClientMaterialsAnalysisPrompt, buildExtractStructurePrompt, buildContinuationPlanPrompt, buildAnnotationPrompt, buildAnnotationRegenPrompt, buildAntiPlagiarismSYS, buildAntiDetectionSYS } from "./lib/prompts.js";
 import { extractReadyWorkStructure, quickParsePlanIds } from "./lib/readyWorkExtract.js";
-import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, getEmpiricalSections, getEconSections, getTechnicalSections, CODE_FILE_EXTENSIONS, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parsePagesMax, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, deriveStructureFromExampleTOC, mergeExampleWorkIntoMethodInfo, getLangLabels, insertBeforeTail, detectRequestedChapterCount } from "./lib/planUtils.js";
+import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, getEmpiricalSections, getEconSections, getTechnicalSections, CODE_FILE_EXTENSIONS, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parsePagesMax, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, deriveStructureFromExampleTOC, mergeExampleWorkIntoMethodInfo, getLangLabels, insertBeforeTail, detectRequestedChapterCount, scanFigures } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { getAcademicDefaults, classifyAppendixItem, detectSpecialty, normalizeWorkType } from "./lib/academicDefaults.js";
 import { searchByPhrase, filterSourcesWithGemini, getEconInstitutionalSources, generateAlternatePhrases, paperToCitation, enrichSources } from "./lib/sourcesSearch.js";
@@ -1635,22 +1635,6 @@ Return ONLY JSON:
     saveToFirestore({ workflowMode: "sources-first", stage: "sources", status: "writing", generationStartedAt: new Date().toISOString() });
   };
 
-  // ── Виявлення рисунків у тексті ──
-  const scanFigures = (text) => {
-    const FIG_RE = /(?:рис(?:унок)?\.?\s*\d+(?:\.\d+)*|fig(?:ure)?\.?\s*\d+(?:\.\d+)*)/gi;
-    const results = [];
-    const lines = text.split("\n");
-    lines.forEach(line => {
-      const matches = line.match(FIG_RE);
-      if (matches) {
-        const ctx = line.replace(/\s+/g, " ").trim().substring(0, 120);
-        matches.forEach(m => results.push({ label: m, context: ctx }));
-      }
-    });
-    // дедуплікація по label
-    const seen = new Set();
-    return results.filter(r => { if (seen.has(r.label.toLowerCase())) return false; seen.add(r.label.toLowerCase()); return true; });
-  };
 
   const doScanAndGenFigures = async () => {
     setFigKwLoading(true);
@@ -1852,11 +1836,7 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
         if (structureRe.test(comp)) {
           const phrase = il.structure || "Структура роботи:";
           const chapCount = new Set(mainSecs.map(s => s.id.split(".")[0])).size || mainSecs.length;
-          const hasChapterDetail = !!methodInfo?.introStructureHasChapterDetail;
-          const detailLine = hasChapterDetail
-            ? ` After that, add exactly one short sentence per chapter briefly describing what it covers — nothing more.`
-            : ``;
-          return `${label}: write EXACTLY one sentence following this template (translate it into the language of the work, keep the same structure), with NOTHING else added${hasChapterDetail ? "" : " — no chapter-by-chapter description"}: "${phrase} the work consists of an introduction, ${chapCount} chapters, conclusions, and a list of sources. The total volume of the work is __TOTAL_PAGES__ pages." Keep the literal token __TOTAL_PAGES__ unchanged exactly as written (no digits) — it will be replaced automatically with the real page count once the whole work is generated.${detailLine}`;
+          return `${label}: write EXACTLY one sentence following this template (translate it into the language of the work, keep the same structure), with NOTHING else added — no chapter-by-chapter description: "${phrase} the work consists of an introduction, ${chapCount} chapters, conclusions, and a list of sources. The total volume of the work is __TOTAL_PAGES__ pages." Keep the literal token __TOTAL_PAGES__ unchanged exactly as written (no digits) — it will be replaced automatically with the real page count once the whole work is generated.`;
         }
         return `${label}: write in format "${label} – [content relevant to topic "${d.topic}"]".`;
       });
@@ -2339,11 +2319,7 @@ ${planSummary}
         if (structureRe.test(comp)) {
           const phrase = il.structure || "Структура роботи:";
           const chapCount = new Set(mainSecs.map(s => s.id.split(".")[0])).size || mainSecs.length;
-          const hasChapterDetail = !!methodInfo?.introStructureHasChapterDetail;
-          const detailLine = hasChapterDetail
-            ? ` After that, add exactly one short sentence per chapter briefly describing what it covers — nothing more.`
-            : ``;
-          return `${label}: write EXACTLY one sentence following this template (translate it into the language of the work, keep the same structure), with NOTHING else added${hasChapterDetail ? "" : " — no chapter-by-chapter description"}: "${phrase} the work consists of an introduction, ${chapCount} chapters, conclusions, and a bibliography."${detailLine}`;
+          return `${label}: write EXACTLY one sentence following this template (translate it into the language of the work, keep the same structure), with NOTHING else added — no chapter-by-chapter description: "${phrase} the work consists of an introduction, ${chapCount} chapters, conclusions, and a bibliography."`;
         }
         return `${label}: write in format "${label} – [content relevant to the topic]".`;
       });
@@ -3492,11 +3468,7 @@ ${slideSpecs.join("\n\n")}
           if (structureRe.test(comp)) {
             const phrase = il.structure || "Робота складається з вступу,";
             const chapCount = new Set(mainSecs.map(s => s.id.split(".")[0])).size || mainSecs.length;
-            const hasChapterDetail = !!methodInfo?.introStructureHasChapterDetail;
-            const detailLine = hasChapterDetail
-              ? ` After that, add exactly one short sentence per chapter briefly describing what it covers — nothing more.`
-              : ``;
-            return `${label}: write EXACTLY one sentence following this template (translate it into the language of the work, keep the same structure), with NOTHING else added${hasChapterDetail ? "" : " — no chapter-by-chapter description"}: "${phrase} ${chapCount} chapters, conclusions, and a list of used sources."${detailLine}`;
+            return `${label}: write EXACTLY one sentence following this template (translate it into the language of the work, keep the same structure), with NOTHING else added — no chapter-by-chapter description: "${phrase} ${chapCount} chapters, conclusions, and a list of used sources."`;
           }
           return `${label}`;
         });
@@ -4488,7 +4460,8 @@ ${secBlocks}
       const maxTargetPages = parsePagesMax(info?.pages);
       if (maxTargetPages) {
         const trimmed = trimToPageTarget({
-          sections, content: newContent, maxPages: maxTargetPages, onProgress: setLoadMsg,
+          sections, content: newContent, maxPages: maxTargetPages,
+          formatting: methodInfo?.formatting, lang: info?.language, onProgress: setLoadMsg,
         });
         Object.assign(newContent, trimmed);
       }

@@ -2,6 +2,8 @@
 // ШІ інколи недописує (чи навпаки перегинає) заданий обсяг. countWords рахує
 // реальну кількість слів, enforceWordCount звіряє її з ціллю і за потреби
 // робить ще один виклик — "допиши ще N слів" або "скороти до N слів".
+import { estimateRealPages } from "./pageLayout.js";
+
 export function countWords(text) {
   return text.trim().split(/\s+/).filter(Boolean).length;
 }
@@ -92,32 +94,73 @@ export async function enforceWordCount({ text, targetWords, label, callClaude, s
 // закладений бюджет токенів і обриватись посеред слова (саме так одного разу
 // обірвався кінець підрозділу в готовій роботі) - різання по реченнях кодом
 // такого ризику не має.
-export function trimToPageTarget({ sections, content, maxPages, onProgress }) {
-  const WORDS_PER_PAGE = 270;
+export function trimToPageTarget({ sections, content, maxPages, formatting, lang, onProgress }) {
   const eligibleTypes = new Set(["theory", "analysis", "recommendations"]);
-
-  const wordsOf = (id) => countWords(content[id] || "");
-  const totalWords = sections.reduce((sum, s) => sum + wordsOf(s.id), 0);
-  let excess = totalWords - maxPages * WORDS_PER_PAGE;
-  if (excess <= 0) return content;
+  const fixedIds = new Set(["intro", "conclusions", "sources"]);
+  // Курсові/дипломні проставляють sec.type ("theory"/"analysis"/"recommendations") на етапі
+  // побудови структури — для них фільтруємо саме за типом. Звіти з практики (PracticePage.jsx)
+  // такого поля взагалі не мають (буде sec.type undefined на кожній секції), тож без фолбека
+  // eligibleTypes.has(undefined) завжди false і скорочення тихо не спрацьовує НІКОЛИ — саме
+  // так і сталось: обсяг усе одно вийшов за межу навіть після підключення цієї функції.
+  // Якщо type відсутній — придатність визначаємо за id (усе, крім фіксованих службових секцій).
+  const isEligible = (s) => (s.type ? eligibleTypes.has(s.type) : !fixedIds.has(s.id));
 
   const updated = { ...content };
-  const bySize = sections
-    .filter(s => eligibleTypes.has(s.type) && updated[s.id])
-    .sort((a, b) => wordsOf(b.id) - wordsOf(a.id));
+  // Рахуємо не приблизно "слова/270", а через реальну розкладку сторінки (pageLayout.js) —
+  // враховує ширину сторінки, шрифт, таблиці, рисунки/схеми й посторінкові виноски, які
+  // "слова/270" бачить як кілька слів, хоча реально вони займають значно більше місця.
+  const pagesOf = (id) => estimateRealPages(updated[id] || "", formatting, lang);
 
-  for (const sec of bySize) {
-    if (excess <= 0) break;
-    const words = countWords(updated[sec.id]);
-    const maxCut = Math.floor(words * 0.25); // не більше 25% від підрозділу за один прохід
-    const cut = Math.min(maxCut, excess);
-    if (cut < 50) continue; // дрібне скорочення не варте окремого проходу
-    const target = words - cut;
-    onProgress?.(`Перевіряю обсяг: скорочую "${sec.label}"...`);
-    const newText = trimToWordTarget(updated[sec.id], target);
-    const newWords = countWords(newText);
-    updated[sec.id] = newText;
-    excess -= (words - newWords);
+  const totalPages = sections.reduce((sum, s) => sum + pagesOf(s.id), 0);
+  let excessPages = totalPages - maxPages;
+  if (excessPages <= 0) return content;
+
+  // Один прохід ріже щонайбільше 25% від підрозділу — так свідомо, щоб текст не
+  // спотворювався за одну ітерацію. Але якщо перевищення велике (напр. 50 стор.
+  // замість 35 — це ~30% зайвого), 25% з ОДНОГО проходу по кожному підрозділу може
+  // не вистачити: сума можливих 25%-скорочень по всіх придатних підрозділах менша за
+  // excessPages, і без повторних проходів функція раніше просто зупинялась недорізаною.
+  // Тому повторюємо проходи (кожен наступний рахує 25% від уже скороченого розміру),
+  // поки excessPages не закриється або поки чергова ітерація нічого більше не змогла
+  // зрізати. Межа ітерацій — не нескінченний цикл, а страховка: 0.75^6 ≈ 18% від
+  // початкового обсягу придатних підрозділів лишиться незайманим у гіршому разі.
+  for (let round = 0; round < 6 && excessPages > 0; round++) {
+    const bySize = sections
+      .filter(s => isEligible(s) && updated[s.id])
+      .sort((a, b) => pagesOf(b.id) - pagesOf(a.id));
+    if (!bySize.length) break;
+
+    let cutThisRound = 0;
+    for (const sec of bySize) {
+      if (excessPages <= 0) break;
+      const currentPages = pagesOf(sec.id);
+      if (currentPages < 0.3) continue; // майже порожньо, нема сенсу різати
+
+      // trimToWordTarget ріже по словах, а excessPages рахується в сторінках — переводимо
+      // через локальну щільність "слів на реальну сторінку" САМЕ цього підрозділу (у ньому
+      // може бути багато таблиць/рисунків, і глобальна константа тут спотворить оцінку).
+      const currentWords = countWords(updated[sec.id]);
+      const wordsPerPage = currentWords / currentPages;
+      if (wordsPerPage < 1) continue; // секція — суцільні таблиці/рисунки, прозу різати нема чим
+
+      const maxCutPages = currentPages * 0.25; // не більше 25% від підрозділу за один прохід
+      const cutPages = Math.min(maxCutPages, excessPages);
+      const wordsToCut = Math.round(cutPages * wordsPerPage);
+      if (wordsToCut < 50) continue; // дрібне скорочення не варте окремого проходу
+
+      const target = currentWords - wordsToCut;
+      onProgress?.(`Перевіряю обсяг: скорочую "${sec.label}"...`);
+      updated[sec.id] = trimToWordTarget(updated[sec.id], target);
+
+      // Перевимірюємо ФАКТИЧНИЙ результат (текст могло зрізати не рівно по слову, а по
+      // межі речення) — це самокоригується на наступних проходах, тож наближеної
+      // конвертації слова↔сторінки вище достатньо.
+      const newPages = pagesOf(sec.id);
+      const actualCutPages = currentPages - newPages;
+      excessPages -= actualCutPages;
+      cutThisRound += actualCutPages;
+    }
+    if (cutThisRound < 0.05) break; // нема куди більше різати (усі підрозділи вже занадто малі)
   }
   return updated;
 }

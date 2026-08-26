@@ -35,9 +35,15 @@ STRICTLY FORBIDDEN: table without caption. Every table MUST have a "${tableCapEx
 
   // Приклад роботи, наданий клієнтом, реально містив рисунки/схеми (buildExampleWorkReadingPrompt →
   // hasFigures) — без цього AI регулярно вирішує, що "рисунок не потрібен", і робота лишається зовсім
-  // без ілюстрацій, хоча зразок для цієї ж теми/спеціальності їх явно очікує.
+  // без ілюстрацій, хоча зразок для цієї ж теми/спеціальності їх явно очікує. Те саме для звітів з
+  // практики, де сама методичка прямим текстом називає конкретні обов'язкові схеми (requiredFigures,
+  // buildMethodologyReadingPrompt) — напр. "структура управління (схема)", "технологічна схема
+  // виробництва".
+  const requiredFiguresList = Array.isArray(methodInfo?.requiredFigures) ? methodInfo.requiredFigures.filter(Boolean) : [];
   const mandatoryFigureNote = methodInfo?.hasFigures
     ? `MANDATORY: the reference example provided for this topic contains figures/diagrams — this work MUST include comparable figures too, it is NOT optional here. Each of the main chapters (1, 2, 3...) must include at least one figure (a data chart, a plantuml diagram, or — only if neither fits — a placeholder for a manually sourced illustration), placed where it naturally fits the content, per the rules below.\n`
+    : requiredFiguresList.length
+    ? `MANDATORY: the methodology explicitly requires these specific diagrams/schemes to appear in the report — do NOT skip them: ${requiredFiguresList.join("; ")}. Place each where it fits the corresponding content, per the rules below.\n`
     : "";
 
   const figureRules = mandatoryFigureNote + (mFigureFormat
@@ -385,13 +391,18 @@ export function buildMethodologyReadingPrompt(structureInfo, practiceMode, pract
   "practiceSupervisorUniversity": null,
   "practiceUniversity": null,
   "practiceFaculty": null,
+  "practiceDepartment": null,
+  "practiceSpecialty": null,
+  "practiceDegreeLevel": null,
+  "practiceKnowledgeField": null,
   "practiceCity": null,
   "diaryTitlePageTemplate": null,
   "diaryTableFormat": null,
   "diaryTableColumns": null,
   "hasArrivalDepartureBlock": false,
   "hasBlankNotesPages": false,
-  "contentPlans": null` : "";
+  "contentPlans": null,
+  "requiredFigures": null` : "";
 
   const contentPlanSelectionRule = practiceContextHint
     ? `ВАЖЛИВО: якщо знайшов КІЛЬКА альтернативних блоків — визнач за даними практики нижче, який з них стосується цього конкретного випадку, і поверни В МАСИВІ ТІЛЬКИ ЙОГО ОДНОГО (не решту альтернатив, щоб не роздувати відповідь). Якщо жоден явно не підходить або сумніваєшся — поверни всі знайдені.
@@ -406,7 +417,11 @@ export function buildMethodologyReadingPrompt(structureInfo, practiceMode, pract
 - practiceSupervisorCompany: ПІБ та посада відповідальної особи/керівника від бази практики (напр. керівник(-ця) служби/відділу). null якщо не вказано.
 - practiceSupervisorUniversity: ПІБ та посада керівника від університету/кафедри, ТІЛЬКИ якщо вона явно відрізняється від керівника бази практики. null якщо не вказано або це та сама особа.
 - practiceUniversity: повна назва університету/закладу вищої освіти, який проводить практику. null якщо не вказано.
-- practiceFaculty: назва факультету/кафедри/структурного підрозділу здобувачів. null якщо не вказано.
+- practiceFaculty: назва факультету/інституту здобувачів (без кафедри — вона окремим полем нижче). null якщо не вказано.
+- practiceDepartment: назва кафедри, яка курує практику (шукай на титульній сторінці методички чи у вступі, напр. "Кафедра переробки продукції тваринництва та харчових технологій"). null якщо не вказано.
+- practiceSpecialty: спеціальність здобувачів так, як вона названа в методичці — номер і назва разом (напр. "181 Харчові технології", "053 Психологія"). Шукай формулювання на кшталт "освітньої спеціальності NNN – «Назва»". НЕ плутай з галуззю знань чи темою практики. null якщо не вказано явно.
+- practiceDegreeLevel: освітньо-кваліфікаційний рівень/ступінь (напр. "Бакалавр", "Магістр" — часто як "СВО «Бакалавр»"). null якщо не вказано.
+- practiceKnowledgeField: галузь знань, ЯКЩО вона названа окремо від спеціальності (напр. "18 Виробництво та технології"). null якщо не вказано.
 - practiceCity: місто, де розташована база практики/університет. null якщо не вказано.
 - diaryTitlePageTemplate: ЦЕ ІНША сторінка, ніж titlePageTemplate вище — не плутай і не копіюй туди те саме. Шукай в Додатках ОКРЕМУ титульну сторінку САМЕ ЩОДЕННИКА практики (заголовок "ЩОДЕННИК ПРАКТИКИ", часто з блоком погодження "ЗАТВЕРДЖУЮ" / "Керівник підприємства (організації, установи)" зверху, і полями студента/інституту/спеціальності знизу). Якщо знайшов — відтвори її стрічка за стрічкою в ТОМУ Ж форматі масиву об'єктів, що й titlePageTemplate (поля "text","align","bold","fontSize","spaceBefore"). Для полів студента/дат/бази практики застосуй ТІ Ж плейсхолдери, що описані нижче в пункті "ДЛЯ titlePageTemplate ТА diaryTitlePageTemplate". Якщо такої окремої титулки щоденника в методичці немає — поверни null.
 - ДЛЯ titlePageTemplate ТА diaryTitlePageTemplate (стосується ЛИШЕ практики): якщо в зразку є місце, куди студент має вписати СВОЇ конкретні дані (а не назву закладу освіти) — заміни ЛИШЕ це місце на відповідний плейсхолдер нижче, зберігаючи навколишній текст-підпис як є (напр. "Виконав(ла): [ПІБ], [КУРС] курс, група [ГРУПА]"). Назву закладу освіти, інституту, кафедри, спеціальності — НЕ чіпай, вони вже частина зразка:
@@ -418,10 +433,11 @@ export function buildMethodologyReadingPrompt(structureInfo, practiceMode, pract
   * ПІБ/посада керівника від університету/кафедри → [КЕРІВНИК_КАФЕДРИ]
   * перша дата в "Термін практики з ... по ..." → [ДАТА_ПОЧАТКУ]
   * друга дата в "Термін практики з ... по ..." → [ДАТА_КІНЦЯ]
-- diaryTableFormat: тип таблиці щоденника практики, ЯКЩО в методичці (зазвичай у Додатках) є зразок такої таблиці: "daily" — рядок = один робочий день з датою і змістом роботи; "topics" — рядок = тема/завдання за індивідуальним планом з термінами виконання (як "Приклад індивідуального плану проходження практики"); "weekly" — рядок = тиждень практики з відміткою виконання (як "Календарний графік проходження практики"). null якщо в методичці немає явного зразка такої таблиці (тоді використовується типовий формат по днях).
+- diaryTableFormat: тип таблиці щоденника практики, ЯКЩО в методичці (зазвичай у Додатках) є зразок САМЕ таблиці щоденника — тобто такої, де студент день за днем чи етап за етапом записує ЩО ВІН РОБИВ: "daily" — рядок = один робочий день з датою і змістом роботи; "topics" — рядок = тема/завдання за індивідуальним планом з термінами виконання (як "Приклад індивідуального плану проходження практики"); "weekly" — рядок = тиждень практики з відміткою виконання (як "Календарний графік проходження практики"). КРИТИЧНО ВАЖЛИВО — НЕ ПЛУТАЙ з "Додатком" на кшталт "Зведена відомість про роботу, виконану здобувачем" — це проста ВІДОМІСТЬ-ЛІЧИЛЬНИК (список видів робіт з порожнім місцем під кількість: "Заповнення накладних ___ шт.", "Визначення показників якості ___ проб" тощо, без колонок дати/терміну виконання і без опису змісту роботи) — вона НЕ є зразком таблиці щоденника і НЕ дає підстави для "topics" чи будь-якого іншого значення тут. null якщо в методичці немає явного зразка САМЕ такої таблиці (тоді використовується типовий формат по днях).
 - diaryTableColumns: масив заголовків колонок ТОЧНО як у знайденому зразку таблиці щоденника (по порядку зліва направо, як у джерелі). null якщо diaryTableFormat null.
 - hasArrivalDepartureBlock: true ТІЛЬКИ якщо в Додатках методички явно є сторінка/блок з текстом на кшталт "прибув на підприємство ... практику закінчено з оцінкою ... вибув з підприємства" (з місцем під печатку "МП"). Інакше false.
-- hasBlankNotesPages: true ТІЛЬКИ якщо в Додатках методички явно є сторінка(и) із заголовком на кшталт "Робочі записи під час практики" з порожніми лінованими рядками для нотаток. Інакше false.` : "";
+- hasBlankNotesPages: true ТІЛЬКИ якщо в Додатках методички явно є сторінка(и) із заголовком на кшталт "Робочі записи під час практики" з порожніми лінованими рядками для нотаток. Інакше false.
+- requiredFigures: масив коротких описів конкретних схем/рисунків, які методичка ЯВНО називає як обов'язкову частину звіту (напр. текст на кшталт "структура та управління підприємством (схема)", "схема підготовки сировини до виробництва", "основу звіту складають технологічні схеми виробництва"). Кожен елемент — короткий опис українською, що саме за схему потрібно (напр. "схема організаційної структури підприємства", "технологічна схема виробництва продукції", "схема підготовки сировини"). null якщо методичка ніде прямо не вимагає схем/рисунків у звіті.` : "";
 
   const structureLock = structureInfo
     ? `СТРУКТУРА РОБОТИ ВИЗНАЧЕНА НА ПОПЕРЕДНЬОМУ КРОЦІ — ВИКОРИСТАЙ ЦІ ЗНАЧЕННЯ ТОЧНО, НЕ ЗМІНЮЙ:
@@ -1087,7 +1103,7 @@ function contentPlanToToc(plan) {
   }).join("\n");
 }
 
-export function buildPracticePlanPrompt(info, methodInfo, structureExampleText) {
+export function buildPracticePlanPrompt(info, methodInfo, structureExampleText, deptGuidanceText) {
   const { practiceText = "", practiceCategory = "economy", pages = 30, practiceGuidance } = info;
   const total = parseInt(pages) || 30;
   const main = total - 5;
@@ -1160,6 +1176,10 @@ export function buildPracticePlanPrompt(info, methodInfo, structureExampleText) 
 Особливість: ${practiceGuidance.feature}`
     : "";
 
+  const deptGuidanceBlock = deptGuidanceText?.trim()
+    ? `\n\nДОДАТКОВІ ВИМОГИ КАФЕДРИ до структури й обсягу звіту (враховуй лише вимоги до змісту/структури/обсягу; ігноруй дедлайни, критерії оцінювання та інші процедурні деталі):\n${deptGuidanceText.trim().slice(0, 9000)}`
+    : "";
+
   // Якщо в методичці є власний зразок змісту з підрозділами (1.1, 1.2 ...) —
   // будуємо структуру за ним замість плоского шаблону по категорії.
   // Зразок готового звіту від клієнта (якщо завантажений) має пріоритет над зразком з методички.
@@ -1182,7 +1202,7 @@ export function buildPracticePlanPrompt(info, methodInfo, structureExampleText) 
 
 ДАНІ ПРАКТИКИ:
 ${practiceText}
-${guidanceBlock}
+${guidanceBlock}${deptGuidanceBlock}
 
 ${sampleBlock}
 
@@ -1213,7 +1233,7 @@ ${sampleBlock}
 
 ДАНІ ПРАКТИКИ:
 ${practiceText}
-${guidanceBlock}
+${guidanceBlock}${deptGuidanceBlock}
 
 Поверни ТІЛЬКИ JSON (без markdown):
 {"sections":[
@@ -1223,7 +1243,7 @@ ${sectionsJson}
 Адаптуй назви розділів до конкретного підприємства/установи та типу практики. id залишати незмінними.`;
 }
 
-export function buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterialsSummary, citInputs, abstractsMap) {
+export function buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterialsSummary, citInputs, abstractsMap, establishedFacts, deptGuidanceText) {
   const {
     practiceText = "", language = "Українська", practiceGuidance,
     companyName, supervisorCompany, supervisorUniversity, individualTask,
@@ -1258,6 +1278,10 @@ export function buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterial
     ? `\nОРІЄНТИР ЗА НАПРЯМОМ ПРАКТИКИ: ${practiceGuidance.reportContent}${practiceGuidance.feature ? ` (${practiceGuidance.feature})` : ""}`
     : "";
 
+  const deptGuidanceLine = deptGuidanceText?.trim()
+    ? `\nДОДАТКОВІ ВИМОГИ КАФЕДРИ до змісту цього розділу (враховуй лише вимоги до змісту/структури; ігноруй дедлайни, критерії оцінювання та інші процедурні деталі): ${deptGuidanceText.trim().slice(0, 9000)}`
+    : "";
+
   const detailsLine = [
     companyName && `Місце практики: ${companyName}`,
     supervisorCompany && `Керівник від підприємства: ${supervisorCompany}`,
@@ -1287,7 +1311,7 @@ export function buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterial
 ДАНІ ПРАКТИКИ:
 ${practiceText}
 ${detailsLine ? `\n${detailsLine}` : ""}${individualTaskLine}
-${methodReq ? `\nВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${tablesHint}${sourcesBlock}${guidanceLine}
+${methodReq ? `\nВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${deptGuidanceLine}${tablesHint}${sourcesBlock}${guidanceLine}
 
 ФОРМАТ: ця методичка вимагає звіт-анкету — основний зміст пункту подай як одну або кілька markdown-таблиць (вертикальні риски). Якщо для розкриття пункту природно потрібно кілька таблиць (напр. окремо по рокам, або окремо структура/показники) — став їх послідовно.
 Короткий пояснювальний текст (1-3 речення) до або після таблиці дозволений, якщо він допомагає ввести чи прокоментувати дані (напр. коротко пояснити методику розрахунку чи узагальнити висновок з таблиці) — але це не має перетворюватись на суцільний опис: таблиці лишаються основним способом подачі інформації, текст — лише короткий супровід.
@@ -1301,7 +1325,7 @@ ${methodReq ? `\nВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${tablesHin
 ${practiceText}
 ${detailsLine ? `\n${detailsLine}` : ""}${individualTaskLine}
 ${hint ? `\nОСОБЛИВОСТІ РОЗДІЛУ: ${hint}` : ""}
-${methodReq ? `\nВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${sourcesBlock}${guidanceLine}
+${methodReq ? `\nВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${deptGuidanceLine}${sourcesBlock}${guidanceLine}
 
 Обсяг: приблизно ${sec.pages * 225} слів, ±10% (~${sec.pages} стор.). ${citNote}
 Без markdown заголовків (#, ##). Не повторюй назву розділу на початку тексту.`;
@@ -1310,10 +1334,16 @@ ${methodReq ? `\nВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${sourcesBl
   if (clientMaterialsSummary?.rawText) {
     instruction += `\n\nМАТЕРІАЛИ КЛІЄНТА (використовуй ці дані — не вигадуй, не замінюй):\n${clientMaterialsSummary.rawText.slice(0, 80000)}`;
   }
+  // Числові факти (%, °C тощо), вже зафіксовані в інших написаних розділах цього ж звіту —
+  // без цього кожен розділ вигадує свої власні значення для того самого показника
+  // (напр. концентрація сухих речовин: 25% в одному розділі, 28% в іншому).
+  if (establishedFacts?.length) {
+    instruction += `\n\nВЖЕ ЗАФІКСОВАНІ ЦИФРИ В ІНШИХ РОЗДІЛАХ ЦЬОГО Ж ЗВІТУ — якщо згадуєш той самий показник, використовуй ТІ Ж САМІ значення, не вигадуй нові:\n${establishedFacts.slice(0, 30).map(f => `— ${f}`).join("\n")}`;
+  }
   return instruction;
 }
 
-export function buildPracticeDiaryPrompt(info, diaryExampleText, methodInfo) {
+export function buildPracticeDiaryPrompt(info, diaryExampleText, methodInfo, deptGuidanceText) {
   const {
     practiceText = "", language = "Українська", practiceGuidance,
     companyName, individualTask, dateStart, dateEnd,
@@ -1330,6 +1360,9 @@ export function buildPracticeDiaryPrompt(info, diaryExampleText, methodInfo) {
   ].filter(Boolean).join("; ");
   const sampleBlock = diaryExampleText
     ? `\n\nЗРАЗОК ЩОДЕННИКА (орієнтуйся на цей формат записів, структуру таблиці і рівень деталізації, адаптувавши зміст під дані практики нижче):\n${diaryExampleText}`
+    : "";
+  const deptGuidanceLine = deptGuidanceText?.trim()
+    ? `\nДОДАТКОВІ ВИМОГИ КАФЕДРИ до щоденника (враховуй лише вимоги до змісту записів; ігноруй дедлайни, критерії оцінювання та інші процедурні деталі): ${deptGuidanceText.trim().slice(0, 9000)}`
     : "";
 
   // Пріоритет формату таблиці: вручну завантажений зразок > формат, розпізнаний з методички > типовий по днях
@@ -1368,7 +1401,7 @@ export function buildPracticeDiaryPrompt(info, diaryExampleText, methodInfo) {
 ${practiceText}
 ${periodLine}
 ${detailsLine ? `\n${detailsLine}` : ""}
-${taskGuidance}
+${taskGuidance}${deptGuidanceLine}
 ${sampleBlock}
 
 ${dayInstruction}

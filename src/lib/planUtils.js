@@ -10,6 +10,45 @@ const LATIN_APPENDIX_LETTERS = ["A","B","C","D","E","F","G","H","I","J","K","L",
 // ДСТУ 3008: нумерація додатків українською абеткою без літер Ґ, Є, З, І, Ї, Й, О, Ч, Ь (схожі на цифри/інші літери)
 const UKRAINIAN_APPENDIX_LETTERS = ["А","Б","В","Г","Д","Е","Ж","И","К","Л","М","Н","П","Р","С","Т","У","Ф","Х","Ц","Ш","Щ","Ю","Я"];
 
+// Виявлення посилань на рисунки в тексті ("Рис. 1.2", "Figure 3" тощо) — спільна для
+// перевірки "чи є в розділі рисунок" у флоу курсових/дипломних (academic-assistant.jsx)
+// і у флоу звітів з практики (PracticePage.jsx).
+export function scanFigures(text) {
+  const FIG_RE = /(?:рис(?:унок)?\.?\s*\d+(?:\.\d+)*|fig(?:ure)?\.?\s*\d+(?:\.\d+)*)/gi;
+  const results = [];
+  const lines = (text || "").split("\n");
+  lines.forEach(line => {
+    const matches = line.match(FIG_RE);
+    if (matches) {
+      const ctx = line.replace(/\s+/g, " ").trim().substring(0, 120);
+      matches.forEach(m => results.push({ label: m, context: ctx }));
+    }
+  });
+  const seen = new Set();
+  return results.filter(r => { if (seen.has(r.label.toLowerCase())) return false; seen.add(r.label.toLowerCase()); return true; });
+}
+
+// Витягує речення/фрагменти з конкретними числовими показниками (%, °C, градуси) з уже
+// написаного тексту — для передачі як "вже зафіксовані цифри" в наступні розділи звіту з
+// практики, щоб той самий показник (напр. концентрація сухих речовин, температура
+// зберігання) не отримував різні значення в різних розділах.
+export function extractNumericFacts(text) {
+  if (!text) return [];
+  const FACT_RE = /[^.!?\n]*\d+(?:[.,]\d+)?\s*(?:%|°C|градус[а-яії]*)[^.!?\n]*[.!?]/gi;
+  const matches = text.match(FACT_RE) || [];
+  const seen = new Set();
+  const out = [];
+  matches.forEach(m => {
+    const trimmed = m.replace(/\s+/g, " ").trim();
+    if (!trimmed) return;
+    const key = trimmed.toLowerCase().replace(/[^0-9a-zа-яії%°]/g, "");
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(trimmed);
+  });
+  return out;
+}
+
 export function getLangLabels(lang = "Українська") {
   const l = (lang || "").toLowerCase();
   // latinScript: true = мова використовує латиницю (не забороняємо її в тексті)

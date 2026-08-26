@@ -12,14 +12,14 @@ import {
   buildPracticeDiaryPrompt,
   buildTemplateAnalysisPrompt, buildPracticeDetailsPrompt,
 } from "./lib/prompts.js";
-import { parseTemplate, isEcon, isTechnical, getEconSections } from "./lib/planUtils.js";
+import { parseTemplate, isEcon, isTechnical, getEconSections, parsePagesMax, scanFigures, extractNumericFacts } from "./lib/planUtils.js";
 import { detectSpecialtyPrioritized } from "./lib/academicDefaults.js";
 import {
   CATEGORY_LABELS, PRACTICE_TYPES, getPracticeGuidance, detectPracticeType,
   parsePracticeDetails, buildPracticeTitlePageLines, buildPracticeDiaryTitlePageLines,
 } from "./lib/practiceDefaults.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
-import { enforceWordCount } from "./lib/wordCount.js";
+import { enforceWordCount, trimToPageTarget } from "./lib/wordCount.js";
 import { playDoneSound } from "./lib/audio.js";
 import {
   filterSourcesWithGemini, searchByPhrase, getEconInstitutionalSources, generateAlternatePhrases, enrichSources,
@@ -31,6 +31,7 @@ import { SpinDot } from "./components/SpinDot.jsx";
 import { DropZone } from "./components/DropZone.jsx";
 import { ClientMaterialsZone } from "./components/ClientMaterialsZone.jsx";
 import { ExampleFileZone } from "./components/ExampleFileZone.jsx";
+import { DeptGuidanceZone } from "./components/DeptGuidanceZone.jsx";
 import { FieldBox, Heading, NavBtn, PrimaryBtn, GreenBtn, SaveIndicator } from "./components/Buttons.jsx";
 import { TA, TA_WHITE, SHARED_STYLES } from "./shared.jsx";
 
@@ -177,6 +178,10 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
   const [studentGroup, setStudentGroup] = useState("");
   const [university, setUniversity] = useState("");
   const [faculty, setFaculty] = useState("");
+  const [department, setDepartment] = useState("");
+  const [specialty, setSpecialty] = useState("");
+  const [degreeLevel, setDegreeLevel] = useState("");
+  const [knowledgeField, setKnowledgeField] = useState("");
   const [city, setCity] = useState("");
 
   // Методичка (PDF)
@@ -195,6 +200,9 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
   const [clientMaterials, setClientMaterials] = useState([]);
   const [clientMaterialsText, setClientMaterialsText] = useState("");
   const [clientMaterialsSummary, setClientMaterialsSummary] = useState(null);
+
+  // Додаткові рекомендації кафедри/викладача (текст або фото/скріншоти — не офіційна методичка)
+  const [deptGuidanceText, setDeptGuidanceText] = useState("");
 
   // Структура (план)
   const [sections, setSections] = useState([]);
@@ -270,13 +278,13 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
     orderNumber, orderType, deadline, direction, subject, uniqueness, course, extras,
     companyName, supervisorCompany, supervisorUniversity, individualTask, dateStart, dateEnd,
     sourceCountExplicit,
-    studentName, studentGroup, university, faculty, city,
+    studentName, studentGroup, university, faculty, department, specialty, degreeLevel, knowledgeField, city,
     practiceGuidance: getPracticeGuidance(practiceCategory, practiceType),
   }), [
     practiceCategory, practiceType, practiceText, pages, language, topic,
     orderNumber, orderType, deadline, direction, subject, uniqueness, course, extras,
     companyName, supervisorCompany, supervisorUniversity, individualTask, dateStart, dateEnd,
-    sourceCountExplicit, studentName, studentGroup, university, faculty, city,
+    sourceCountExplicit, studentName, studentGroup, university, faculty, department, specialty, degreeLevel, knowledgeField, city,
   ]);
 
   // ── Збереження в Firestore ──────────────────────────────────────────────────
@@ -361,6 +369,10 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
           if (i.studentGroup) setStudentGroup(i.studentGroup);
           if (i.university) setUniversity(i.university);
           if (i.faculty) setFaculty(i.faculty);
+          if (i.department) setDepartment(i.department);
+          if (i.specialty) setSpecialty(i.specialty);
+          if (i.degreeLevel) setDegreeLevel(i.degreeLevel);
+          if (i.knowledgeField) setKnowledgeField(i.knowledgeField);
           if (i.city) setCity(i.city);
           if (d.fileLabel) setFileLabel(d.fileLabel);
           if (d.methodInfo) setMethodInfo(d.methodInfo);
@@ -370,6 +382,7 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
           if (d.diaryExampleText) setDiaryExampleText(d.diaryExampleText);
           if (d.clientMaterialsSummary) setClientMaterialsSummary(d.clientMaterialsSummary);
           if (d.clientMaterialsText) setClientMaterialsText(d.clientMaterialsText);
+          if (d.deptGuidanceText) setDeptGuidanceText(d.deptGuidanceText);
           if (d.sections?.length) setSections(d.sections);
           if (d.content) setContent(d.content);
           if (d.diaryContent) setDiaryContent(d.diaryContent);
@@ -520,6 +533,10 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
         dateEnd: parsedMethodInfo.practiceDateEnd,
         university: parsedMethodInfo.practiceUniversity,
         faculty: parsedMethodInfo.practiceFaculty,
+        department: parsedMethodInfo.practiceDepartment,
+        specialty: parsedMethodInfo.practiceSpecialty,
+        degreeLevel: parsedMethodInfo.practiceDegreeLevel,
+        knowledgeField: parsedMethodInfo.practiceKnowledgeField,
         city: parsedMethodInfo.practiceCity,
       };
       Object.entries(methodFallback).forEach(([k, v]) => { if (!details[k] && v) details[k] = v; });
@@ -542,6 +559,10 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
     if (!studentGroup && details.studentGroup) { setStudentGroup(details.studentGroup); info.studentGroup = details.studentGroup; }
     if (!university && details.university) { setUniversity(details.university); info.university = details.university; }
     if (!faculty && details.faculty) { setFaculty(details.faculty); info.faculty = details.faculty; }
+    if (!department && details.department) { setDepartment(details.department); info.department = details.department; }
+    if (!specialty && details.specialty) { setSpecialty(details.specialty); info.specialty = details.specialty; }
+    if (!degreeLevel && details.degreeLevel) { setDegreeLevel(details.degreeLevel); info.degreeLevel = details.degreeLevel; }
+    if (!knowledgeField && details.knowledgeField) { setKnowledgeField(details.knowledgeField); info.knowledgeField = details.knowledgeField; }
     if (!city && details.city) { setCity(details.city); info.city = details.city; }
 
     await saveToFirestore({
@@ -562,7 +583,7 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
     setRunning(true); runningRef.current = true; setLoadMsg("Генерую структуру звіту...");
     const info = getPracticeInfo();
     try {
-      const prompt = buildPracticePlanPrompt(info, methodInfo, structureExampleText);
+      const prompt = buildPracticePlanPrompt(info, methodInfo, structureExampleText, deptGuidanceText);
       const raw = await callClaude([{ role: "user", content: prompt }], null, "Respond only with valid JSON. No markdown.", 4000, null, MODEL_FAST);
       const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || raw);
       if (parsed.sections?.length) setSections(parsed.sections);
@@ -1117,6 +1138,16 @@ ${secBlock}
         }
       }
 
+      // 5в. Фінальна перевірка сумарного обсягу — так само, як у doRemapCitations великих
+      // робіт (academic-assistant.jsx): enforceWordCount тримає в межах кожен розділ окремо
+      // (з допуском), але допуски на кількох розділах плюс довставлені цитати з кроку 5б
+      // можуть у сумі дати перевищення заданого обсягу — обрізаємо найбільші розділи.
+      const maxTargetPages = parsePagesMax(info?.pages);
+      if (maxTargetPages) {
+        const trimmed = trimToPageTarget({ sections: mainSecs, content: nextContent, maxPages: maxTargetPages, formatting: methodInfo?.formatting, lang: info.language, onProgress: setLoadMsg });
+        Object.assign(nextContent, trimmed);
+      }
+
       const formattedText = fmtList.map((c, i) => `${i + 1}. ${c}`).join("\n");
       setContent(nextContent);
       setRefList(formattedText);
@@ -1167,7 +1198,26 @@ ${secBlock}
       const sec = writableSecs[idx];
       setGenIdx(idx);
       setLoadMsg(`Генерую: ${sec.label}...`);
-      const instruction = buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterialsSummary, citInputs, abstractsMap);
+      const establishedFacts = writableSecs
+        .filter(s => s.id !== sec.id && finalContent[s.id])
+        .flatMap(s => extractNumericFacts(finalContent[s.id]));
+      let instruction = buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterialsSummary, citInputs, abstractsMap, establishedFacts, deptGuidanceText);
+
+      // Обов'язкові схеми з методички (requiredFigures) — та сама перевірка "чи вже є рисунок
+      // десь у цьому розділі методички", що й e4c61f2 для курсових/дипломних: mandatoryFigureNote
+      // у system-промпті однаково каже кожному підрозділу "тут має бути рисунок", але жоден
+      // підрозділ "не бачить" сусідні, тож усі можуть покластись один на одного і розділ
+      // лишиться без жодної схеми. Перевіряємо кодом на останньому підрозділі розділу.
+      if (methodInfo?.requiredFigures?.length) {
+        const currentChapNum = sec.id.split(".")[0];
+        const chapterSecs = writableSecs.filter(s => s.id !== "intro" && s.id !== "conclusions" && s.id.split(".")[0] === currentChapNum);
+        const isLastInChapter = chapterSecs[chapterSecs.length - 1]?.id === sec.id;
+        const hasFigureAlready = chapterSecs.some(s => s.id !== sec.id && scanFigures(finalContent[s.id] || "").length > 0);
+        if (isLastInChapter && !hasFigureAlready) {
+          instruction += `\n\nОБОВ'ЯЗКОВО: жоден інший підрозділ цього розділу ще не містить рисунка/схеми — цей підрозділ МАЄ містити хоча б один рисунок (PlantUML-схема за правилами FIGURES вище, або графік із таблиці даних), інакше вимога методички щодо схем буде порушена. Методичка явно вимагає: ${methodInfo.requiredFigures.join("; ")}.`;
+        }
+      }
+
       const isTableSec = methodInfo?.reportFormat === "table_questionnaire" && sec.id !== "intro" && sec.id !== "conclusions";
       const sysPrompt = isTableSec ? buildSYSTable(lang, methodInfo) : buildSYS(lang, methodInfo);
       try {
@@ -1213,7 +1263,10 @@ ${secBlock}
     if (!sec) return;
     setRegenLoading(true);
     const info = getPracticeInfo();
-    let instruction = buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterialsSummary, citInputs, abstractsMap);
+    const establishedFacts = sections
+      .filter(s => s.id !== secId && s.id !== "sources" && content[s.id])
+      .flatMap(s => extractNumericFacts(content[s.id]));
+    let instruction = buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterialsSummary, citInputs, abstractsMap, establishedFacts);
     if (regenPrompt.trim()) instruction += `\n\nДОДАТКОВІ ВИМОГИ: ${regenPrompt.trim()}`;
     const isTableSec = methodInfo?.reportFormat === "table_questionnaire" && sec.id !== "intro" && sec.id !== "conclusions";
     const sysPrompt = isTableSec ? buildSYSTable(language, methodInfo) : buildSYS(language, methodInfo);
@@ -1241,7 +1294,7 @@ ${secBlock}
     setRunning(true); runningRef.current = true; setLoadMsg("Генерую щоденник практики...");
     const info = getPracticeInfo();
     try {
-      const prompt = buildPracticeDiaryPrompt(info, diaryExampleText, methodInfo);
+      const prompt = buildPracticeDiaryPrompt(info, diaryExampleText, methodInfo, deptGuidanceText);
       const text = await callClaude([{ role: "user", content: prompt }], null, buildSYS(language, methodInfo), 8000);
       setDiaryContent(text);
       await saveToFirestore({ diaryContent: text, stage: "diary", status: "writing" });
@@ -1314,6 +1367,9 @@ ${secBlock}
         diaryArrivalDeparture: !!methodInfo?.hasArrivalDepartureBlock,
         diaryBlankNotesPages: !!methodInfo?.hasBlankNotesPages,
         diaryStudentName: info.studentName,
+        diaryReviewBlock: true,
+        diarySupervisorCompany: info.supervisorCompany,
+        diarySupervisorUniversity: info.supervisorUniversity,
       });
     } catch (e) { setError(e.message); }
     setDiaryDocxLoading(false);
@@ -1477,7 +1533,11 @@ ${secBlock}
           <input value={studentName} onChange={e => setStudentName(e.target.value)} placeholder="ПІБ студента" style={{ ...TA_WHITE, minHeight: "auto", padding: "9px 10px", fontSize: 13 }} />
           <input value={studentGroup} onChange={e => setStudentGroup(e.target.value)} placeholder="Група" style={{ ...TA_WHITE, minHeight: "auto", padding: "9px 10px", fontSize: 13 }} />
           <input value={university} onChange={e => setUniversity(e.target.value)} placeholder="Назва університету" style={{ ...TA_WHITE, minHeight: "auto", padding: "9px 10px", fontSize: 13 }} />
-          <input value={faculty} onChange={e => setFaculty(e.target.value)} placeholder="Факультет / кафедра" style={{ ...TA_WHITE, minHeight: "auto", padding: "9px 10px", fontSize: 13 }} />
+          <input value={faculty} onChange={e => setFaculty(e.target.value)} placeholder="Факультет" style={{ ...TA_WHITE, minHeight: "auto", padding: "9px 10px", fontSize: 13 }} />
+          <input value={department} onChange={e => setDepartment(e.target.value)} placeholder="Кафедра" style={{ ...TA_WHITE, minHeight: "auto", padding: "9px 10px", fontSize: 13 }} />
+          <input value={specialty} onChange={e => setSpecialty(e.target.value)} placeholder="Спеціальність (напр. 181 Харчові технології)" style={{ ...TA_WHITE, minHeight: "auto", padding: "9px 10px", fontSize: 13 }} />
+          <input value={degreeLevel} onChange={e => setDegreeLevel(e.target.value)} placeholder="ОКР/ступінь (напр. Бакалавр)" style={{ ...TA_WHITE, minHeight: "auto", padding: "9px 10px", fontSize: 13 }} />
+          <input value={knowledgeField} onChange={e => setKnowledgeField(e.target.value)} placeholder="Галузь знань" style={{ ...TA_WHITE, minHeight: "auto", padding: "9px 10px", fontSize: 13 }} />
           <input value={city} onChange={e => setCity(e.target.value)} placeholder="Місто" style={{ ...TA_WHITE, minHeight: "auto", padding: "9px 10px", fontSize: 13 }} />
         </div>
       </FieldBox>
@@ -1510,6 +1570,13 @@ ${secBlock}
 
       <FieldBox label="Методичка (PDF)" tooltip="Завантажте методичні вказівки — програма врахує всі вимоги до оформлення та структури">
         <DropZone fileLabel={fileLabel} onFile={(name, b64, type) => { setFileLabel(name); setFileB64(b64); setFileType(type); }} />
+      </FieldBox>
+
+      <FieldBox label="Додаткові рекомендації кафедри (необов'язково)" tooltip="Якщо крім офіційної методички є ще вказівки викладача/кафедри (напр. скріншоти посту в Telegram) — вставте текст або завантажте фото, програма врахує їх при написанні розділів, плану та щоденника">
+        <DeptGuidanceZone
+          value={deptGuidanceText}
+          onChange={text => { setDeptGuidanceText(text); saveToFirestore({ deptGuidanceText: text }); }}
+        />
       </FieldBox>
 
       <FieldBox label="Зразок структури звіту (необов'язково)" tooltip="Приклад готового звіту — план розділів згенерується за його реальною структурою. Приймається .docx та .pdf; якщо файл .doc — спершу збережіть його як .pdf.">
@@ -1638,7 +1705,11 @@ ${secBlock}
           {row("ПІБ студента", studentName, e => setStudentName(e.target.value))}
           {row("Група", studentGroup, e => setStudentGroup(e.target.value))}
           {row("Університет", university, e => setUniversity(e.target.value))}
-          {row("Факультет / кафедра", faculty, e => setFaculty(e.target.value))}
+          {row("Факультет", faculty, e => setFaculty(e.target.value))}
+          {row("Кафедра", department, e => setDepartment(e.target.value))}
+          {row("Спеціальність", specialty, e => setSpecialty(e.target.value))}
+          {row("ОКР/ступінь", degreeLevel, e => setDegreeLevel(e.target.value))}
+          {row("Галузь знань", knowledgeField, e => setKnowledgeField(e.target.value))}
           {row("Місто", city, e => setCity(e.target.value))}
           {row("Методичка", fileLabel || (methodInfo ? "прочитано" : "не завантажено"), null, { readOnly: true })}
         </div>

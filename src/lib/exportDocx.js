@@ -560,7 +560,12 @@ export function detectTextLanguage(text, fallbackLang) {
 // ─────────────────────────────────────────────
 // Word export (основний документ)
 // ─────────────────────────────────────────────
-export async function exportToDocx({ content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo, commentAnalysis, orderId, annotationUk, annotationEn, illustrations = [], clientDrawings = [], skipToc = false, keepHeadingCase = false, diaryArrivalDeparture = false, diaryBlankNotesPages = false, diaryStudentName = "" }) {
+export async function exportToDocx({ content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo, commentAnalysis, orderId, annotationUk, annotationEn, illustrations = [], clientDrawings = [], skipToc = false, keepHeadingCase = false, diaryArrivalDeparture = false, diaryBlankNotesPages = false, diaryStudentName = "", diaryReviewBlock = false, diarySupervisorCompany = "", diarySupervisorUniversity = "" }) {
+  // Деякі виклики (напр. звіти з практики) не проставляють sec.type — довизначаємо його
+  // з id для фіксованих розділів, щоб список джерел коректно розпізнавався нижче.
+  displayOrder = (displayOrder || []).map(s =>
+    !s.type && ["intro", "conclusions", "sources"].includes(s.id) ? { ...s, type: s.id } : s
+  );
   const lc = getLangLabels(info?.language);
   const numberedContent = renumberTablesAndFigures(content, displayOrder, info?.language);
   Object.keys(numberedContent).forEach(k => { if (numberedContent[k]) numberedContent[k] = numberedContent[k].replace(/'/g, '\u2019'); });
@@ -1458,6 +1463,44 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
         children: [new TextRun({ text: "", font: FONT, size: SIZE })],
       }));
     }
+  }
+
+  // Щоденник практики: відгук керівника від бази практики + висновок керівника від закладу
+  // вищої освіти + місця під підписи (форма Н-7.03) — стандартна завершальна частина будь-якого
+  // щоденника практики, незалежно від того, який формат основної таблиці обрано вище. Без цього
+  // блоку щоденник обривається одразу після таблиці, хоча цей блок студент і керівники мають
+  // заповнити власноруч — тут лише лінований бланк, без вигаданого тексту відгуку.
+  if (diaryReviewBlock) {
+    const blankLine = () => new Paragraph({
+      spacing: { line: LINE, lineRule: "auto", before: 0, after: 260 },
+      border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: "000000", space: 1 } },
+      children: [new TextRun({ text: "", font: FONT, size: SIZE })],
+    });
+    const heading = (text) => new Paragraph({
+      alignment: AlignmentType.CENTER, indent: { firstLine: 0 },
+      spacing: { line: LINE, lineRule: "auto", before: 0, after: LINE },
+      children: [new TextRun({ text, font: FONT, size: SIZE, bold: true, color: "000000" })],
+    });
+    const plainLine2 = (text, opts = {}) => new Paragraph({
+      alignment: AlignmentType.LEFT,
+      indent: { firstLine: 0 },
+      spacing: { line: LINE, lineRule: "auto", before: 0, after: 0, ...opts.spacing },
+      children: [new TextRun({ text, font: FONT, size: opts.size || SIZE, bold: !!opts.bold, color: "000000" })],
+    });
+
+    children.push(new Paragraph({ pageBreakBefore: true, spacing: { before: 0, after: 0, line: LINE, lineRule: "auto" }, children: [] }));
+    children.push(heading("Відгук і оцінка роботи здобувача вищої освіти на практиці"));
+    for (let i = 0; i < 6; i++) children.push(blankLine());
+    children.push(plainLine2(`Керівник практики від підприємства: ${diarySupervisorCompany || "___________________"}`, { spacing: { before: LINE } }));
+    children.push(plainLine2("(підпис)                                   (ініціали, прізвище)"));
+    children.push(plainLine2("МП                                                                              «___» _____________ 20__ року", { spacing: { after: LINE } }));
+
+    children.push(new Paragraph({ pageBreakBefore: true, spacing: { before: 0, after: 0, line: LINE, lineRule: "auto" }, children: [] }));
+    children.push(heading("Висновок керівника практики від закладу вищої освіти"));
+    for (let i = 0; i < 6; i++) children.push(blankLine());
+    children.push(plainLine2(`Керівник практики від закладу вищої освіти: ${diarySupervisorUniversity || "___________________"}`, { spacing: { before: LINE } }));
+    children.push(plainLine2("(підпис)                                   (ініціали, прізвище)"));
+    children.push(plainLine2("«___» _____________ 20__ року"));
   }
 
   const doc = new Document({
