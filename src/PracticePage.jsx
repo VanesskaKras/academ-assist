@@ -12,7 +12,7 @@ import {
   buildPracticeDiaryPrompt,
   buildTemplateAnalysisPrompt, buildPracticeDetailsPrompt,
 } from "./lib/prompts.js";
-import { parseTemplate, isEcon, isTechnical, getEconSections, parsePagesMax, scanFigures, extractNumericFacts } from "./lib/planUtils.js";
+import { parseTemplate, isEcon, isTechnical, getEconSections, parsePagesMax, scanFigures, extractNumericFacts, normalizePageDistribution, stripNonContentSections } from "./lib/planUtils.js";
 import { detectSpecialtyPrioritized } from "./lib/academicDefaults.js";
 import {
   CATEGORY_LABELS, PRACTICE_TYPES, getPracticeGuidance, detectPracticeType,
@@ -586,7 +586,18 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
       const prompt = buildPracticePlanPrompt(info, methodInfo, structureExampleText, deptGuidanceText);
       const raw = await callClaude([{ role: "user", content: prompt }], null, "Respond only with valid JSON. No markdown.", 4000, null, MODEL_FAST);
       const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || raw);
-      if (parsed.sections?.length) setSections(parsed.sections);
+      if (parsed.sections?.length) parsed.sections = stripNonContentSections(parsed.sections);
+      if (parsed.sections?.length) {
+        // LLM не завжди точно влучає сумою сторінок у заданий обсяг, особливо коли
+        // підрозділів багато (кожен рахується окремо, похибки накопичуються) — підганяємо
+        // кодом, щоб "N / target стор." на кроці плану завжди збігалось точно.
+        const target = parseInt(info.pages) || 30;
+        const adjustable = parsed.sections.filter(s => s.id !== "sources");
+        const normPages = normalizePageDistribution(adjustable.map(s => s.pages), target, 2);
+        let ni = 0;
+        parsed.sections = parsed.sections.map(s => s.id === "sources" ? s : { ...s, pages: normPages[ni++] });
+        setSections(parsed.sections);
+      }
       await saveToFirestore({ info, sections: parsed.sections, stage: "plan", status: "new" });
       goToStage("plan");
     } catch (e) {
@@ -1422,9 +1433,10 @@ ${secBlock}
       const movable = prev.filter(movableFilter);
       const fixed = prev.filter(s => ["intro", "conclusions"].includes(s.id));
       const fixedP = fixed.reduce((a, s) => a + (s.pages || 0), 0);
-      const mainP = target - fixedP;
-      const perSec = Math.max(2, Math.round(mainP / Math.max(movable.length, 1)));
-      const next = prev.map(s => movableFilter(s) ? { ...s, pages: perSec } : s);
+      const mainP = Math.max(target - fixedP, movable.length);
+      const normPages = normalizePageDistribution(movable.map(() => 1), mainP, 2);
+      let mi = 0;
+      const next = prev.map(s => movableFilter(s) ? { ...s, pages: normPages[mi++] } : s);
       saveToFirestore({ sections: next });
       return next;
     });

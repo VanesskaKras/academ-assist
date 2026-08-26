@@ -10,6 +10,54 @@ const LATIN_APPENDIX_LETTERS = ["A","B","C","D","E","F","G","H","I","J","K","L",
 // ДСТУ 3008: нумерація додатків українською абеткою без літер Ґ, Є, З, І, Ї, Й, О, Ч, Ь (схожі на цифри/інші літери)
 const UKRAINIAN_APPENDIX_LETTERS = ["А","Б","В","Г","Д","Е","Ж","И","К","Л","М","Н","П","Р","С","Т","У","Ф","Х","Ц","Ш","Щ","Ю","Я"];
 
+// Пропорційно підганяє масив сторінок під точну цільову суму — виправляє неточну
+// арифметику ШІ (при генерації плану з багатьма підрозділами LLM часто не влучає
+// точно в задану суму) і похибку округлення при рівному розподілі (recalcPages).
+// minPerItem — бажаний мінімум на елемент, але якщо навіть по мінімуму сума вже
+// перевищує targetSum, floor автоматично знижується до 1, щоб не ламати точну суму.
+export function normalizePageDistribution(pagesArr, targetSum, minPerItem = 1) {
+  const n = pagesArr.length;
+  if (!n) return [];
+  const floor = (minPerItem * n <= targetSum) ? minPerItem : 1;
+  const nums = pagesArr.map(p => parseInt(p) || 0);
+  const currentSum = nums.reduce((a, p) => a + p, 0);
+  const scaled = currentSum > 0
+    ? nums.map(p => Math.max(floor, Math.round(p * targetSum / currentSum)))
+    : Array(n).fill(Math.max(floor, Math.round(targetSum / n)));
+  // Залишок округлення розподіляємо по +1/-1 за раз (не одним стрибком на один
+  // елемент) — інакше при великій похибці й малому floor корекція впирається в межу
+  // одного елемента, і сума так і не збігається з ціллю.
+  let diff = targetSum - scaled.reduce((a, p) => a + p, 0);
+  let guard = 0;
+  while (diff !== 0 && guard < 10000) {
+    guard++;
+    if (diff > 0) {
+      const idx = scaled.indexOf(Math.min(...scaled));
+      scaled[idx] += 1; diff -= 1;
+    } else {
+      const idx = scaled.indexOf(Math.max(...scaled));
+      if (scaled[idx] <= floor) break; // нема куди далі знімати
+      scaled[idx] -= 1; diff += 1;
+    }
+  }
+  return scaled;
+}
+
+// Прибирає з плану "розділи", які насправді є формальними елементами документа
+// (титульна сторінка, зміст, щоденник практики, список джерел) — вони вже існують
+// як окремі фіксовані частини звіту й не повинні опинятись серед sections, де для
+// кожного елемента система шукає джерела й генерує текст-переказ. Захист кодом на
+// випадок, якщо LLM попри інструкцію в промпті все ж скопіює такий пункт із чек-листа
+// складу документа (напр. з рекомендацій кафедри) як окремий розділ.
+const NON_CONTENT_SECTION_RE = /^(титульна\s*сторінка|зміст|щоденник(\s+практики)?|список\s+(використаних\s+)?джерел)$/i;
+export function stripNonContentSections(sections, fixedIds = ["intro", "conclusions", "sources"]) {
+  return (sections || []).filter(s => {
+    if (fixedIds.includes(s.id)) return true;
+    const clean = (s.label || "").replace(/^[\d.)\s]+/, "").trim();
+    return !NON_CONTENT_SECTION_RE.test(clean);
+  });
+}
+
 // Виявлення посилань на рисунки в тексті ("Рис. 1.2", "Figure 3" тощо) — спільна для
 // перевірки "чи є в розділі рисунок" у флоу курсових/дипломних (academic-assistant.jsx)
 // і у флоу звітів з практики (PracticePage.jsx).
