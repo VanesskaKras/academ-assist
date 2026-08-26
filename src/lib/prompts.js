@@ -161,7 +161,7 @@ export function buildSYSTable(lang = "Українська", methodInfo = null) 
     ? `If you add a short one-line caption above a table, follow this format from the methodology: ${mTableFormat}.`
     : `A short one-line caption above a table (e.g. "${tableWord} N – Назва") is optional and allowed.`;
 
-  return `You are an expert filling in a "questionnaire-style" practice report (звіт-анкета): a document built primarily around filled-in data tables, with short explanatory text where it helps.
+  return `You are a scientist (науковець) with over 15 years of experience writing and reviewing academic works of all kinds — coursework, bachelor's and master's theses, practice reports, and others — as well as publishing in peer-reviewed journals. Your writing is dry but not robotic: precise, unembellished, grounded in the actual material rather than generic phrasing. Right now you are filling in a "questionnaire-style" practice report (звіт-анкета): a document built primarily around filled-in data tables, with short explanatory text where it helps.
 
 ## LANGUAGE
 ${langLine}
@@ -199,7 +199,7 @@ export function buildSYSSmall(lang = "Українська") {
     ? `所有正文必须使用中文。引用格式中的外文作者姓名保持原文。`
     : `Write entirely in ${lang}. Do not mix with Ukrainian, Russian, or any other language. STRICTLY FORBIDDEN to use Cyrillic script anywhere in the body text, including researcher or author names used as subjects in sentences. If source materials contain Cyrillic names, replace them with impersonal academic phrasing (e.g. "research indicates" instead of "Калюжна argues"). EXCEPTION: citation markers [N] or (Author, year) may contain non-Cyrillic original-script names only.`;
 
-  return `You are an expert academic writer.
+  return `You are a scientist (науковець) with over 15 years of experience writing and reviewing academic works of all kinds — coursework, bachelor's and master's theses, practice reports, and others — as well as publishing in peer-reviewed journals. Your writing is dry but not robotic: precise, unembellished, grounded in the actual material rather than generic phrasing.
 
 ## LANGUAGE AND SOURCES
 ${langLine}
@@ -729,7 +729,7 @@ ${currentEn}
 
 // ── Промпт для аналізу шаблону замовлення ──
 export function buildTemplateAnalysisPrompt(tplText, comment) {
-  return `Проаналізуй шаблон замовлення.\n\nШАБЛОН:\n${tplText}\n${comment ? "\nКОМЕНТАР: " + comment : ""}\n\nПоверни ТІЛЬКИ JSON (без markdown):\n{"type":"","pages":"","topic":"","subject":"","direction":"","uniqueness":"","language":"Українська","deadline":"","orderNumber":"","extras":"","methodNotes":"","sourceCount":"30-40","course":null,"practiceType":null,"university":"","faculty":"","department":"","studentName":"","studentGroup":"","supervisorUniversity":"","city":""}\n\nПравила:\n- course: номер курсу (1, 2, 3, 4) якщо вказано в шаблоні (поле "курс"). null якщо не вказано або тип роботи не курсова.\n- practiceType: якщо це замовлення на практику — вид практики, ОДНЕ з: "navchalna" (навчальна/ознайомча), "vyrobnycha" (виробнича), "perededyplomna" (переддипломна/передипломна). Визначай з будь-якого явного згадування в шаблоні — не лише в полі "Тип", а й у темі, тематиці/предметі чи коментарі (напр. тема "Проходження виробничої практики..." → "vyrobnycha"). null якщо це не практика або вид ніде явно не вказаний — НЕ вгадуй за курсом.\n- university: повна назва закладу вищої освіти клієнта (напр. "Національний університет ...", "КНУ ім. Т. Шевченка"). "" якщо в шаблоні чи коментарі не вказано явно — НЕ вигадуй і не бери з методички.\n- faculty: назва факультету/інституту клієнта. "" якщо не вказано явно в шаблоні чи коментарі.\n- department: назва кафедри клієнта. "" якщо не вказано явно.\n- studentName: ПІБ студента-клієнта (не виконавця). "" якщо не вказано явно.\n- studentGroup: ТІЛЬКИ номер/шифр академічної групи клієнта, БЕЗ курсу (напр. "ФБС-31" або "1") — курс іде окремим полем "course", не дублюй його тут. "" якщо не вказано явно.\n- supervisorUniversity: ПІБ і посада/науковий ступінь наукового керівника клієнта (напр. "доц. Іваненко І.І." або "к.пед.н., доцент Петренко П.П."). "" якщо не вказано явно.\n- city: місто закладу освіти клієнта (для рядка "Місто – Рік" на титулці). "" якщо не вказано явно.\n- direction: галузь/напрям підготовки або спеціальність, ЯК У ТЕКСТІ, повним словосполученням (напр. "051 Економіка підприємства", "Психологія"), а не обірваним словом. "" якщо не вказано явно.\n- Для всіх полів вище: бери значення ТІЛЬКИ якщо воно явно присутнє в тексті шаблону або коментарі клієнта. Якщо не вказано — порожній рядок "" (для practiceType/course — null), а не здогадка чи значення з методички.`;
+  return `Проаналізуй шаблон замовлення.\n\nШАБЛОН:\n${tplText}\n${comment ? "\nКОМЕНТАР: " + comment : ""}\n\nПоверни ТІЛЬКИ JSON (без markdown):\n{"type":"","pages":"","topic":"","subject":"","direction":"","uniqueness":"","language":"Українська","deadline":"","orderNumber":"","extras":"","methodNotes":"","sourceCount":"30-40","course":null,"practiceType":null,"university":"","faculty":"","department":"","studentName":"","studentGroup":"","supervisorUniversity":"","city":""}\n\nПравила:\n- course: номер курсу (1, 2, 3, 4) якщо вказано в шаблоні (поле "курс"). null якщо не вказано або тип роботи не курсова.\n- practiceType: якщо це замовлення на практику — вид практики, ОДНЕ з: "navchalna" (навчальна/ознайомча), "vyrobnycha" (виробнича), "perededyplomna" (переддипломна/передипломна), "naukovo_doslidna" (науково-дослідна). Визначай з будь-якого явного згадування в шаблоні — не лише в полі "Тип", а й у темі, тематиці/предметі чи коментарі (напр. тема "Проходження виробничої практики..." → "vyrobnycha"; "науково-дослідна практика" → "naukovo_doslidna", навіть якщо поруч згадана "переддипломна" як етап навчання — вид практики тут "naukovo_doslidna"). null якщо це не практика або вид ніде явно не вказаний — НЕ вгадуй за курсом.\n- university: повна назва закладу вищої освіти клієнта (напр. "Національний університет ...", "КНУ ім. Т. Шевченка"). "" якщо в шаблоні чи коментарі не вказано явно — НЕ вигадуй і не бери з методички.\n- faculty: назва факультету/інституту клієнта. "" якщо не вказано явно в шаблоні чи коментарі.\n- department: назва кафедри клієнта. "" якщо не вказано явно.\n- studentName: ПІБ студента-клієнта (не виконавця). "" якщо не вказано явно.\n- studentGroup: ТІЛЬКИ номер/шифр академічної групи клієнта, БЕЗ курсу (напр. "ФБС-31" або "1") — курс іде окремим полем "course", не дублюй його тут. "" якщо не вказано явно.\n- supervisorUniversity: ПІБ і посада/науковий ступінь наукового керівника клієнта (напр. "доц. Іваненко І.І." або "к.пед.н., доцент Петренко П.П."). "" якщо не вказано явно.\n- city: місто закладу освіти клієнта (для рядка "Місто – Рік" на титулці). "" якщо не вказано явно.\n- direction: галузь/напрям підготовки або спеціальність, ЯК У ТЕКСТІ, повним словосполученням (напр. "051 Економіка підприємства", "Психологія"), а не обірваним словом. "" якщо не вказано явно.\n- Для всіх полів вище: бери значення ТІЛЬКИ якщо воно явно присутнє в тексті шаблону або коментарі клієнта. Якщо не вказано — порожній рядок "" (для practiceType/course — null), а не здогадка чи значення з методички.`;
 }
 
 // ── Промпт для аналізу коментаря клієнта ──
@@ -1247,6 +1247,7 @@ export function buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterial
   const {
     practiceText = "", language = "Українська", practiceGuidance,
     companyName, supervisorCompany, supervisorUniversity, individualTask,
+    dateStart, dateEnd, statsPeriod,
   } = info;
 
   const isIntro = sec.id === "intro";
@@ -1292,6 +1293,13 @@ export function buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterial
     ? `\nІНДИВІДУАЛЬНЕ ЗАВДАННЯ (розкрий саме це завдання в розділі): ${individualTask}`
     : "";
 
+  const periodLine = (dateStart && dateEnd)
+    ? `\nПЕРІОД ПРАКТИКИ (використовуй саме ці дати, якщо в розділі згадується термін проходження практики): ${dateStart} – ${dateEnd}`
+    : "";
+  const statsPeriodLine = statsPeriod
+    ? `\nЯКЩО в розділі згадуються статистичні показники, дослідження ринку чи динаміка за роками — використовуй період ${statsPeriod} (останні 3-5 років), не інший.`
+    : "";
+
   const isTableFormat = methodInfo?.reportFormat === "table_questionnaire" && !isIntro && !isConclusions;
 
   let instruction;
@@ -1310,7 +1318,7 @@ export function buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterial
 
 ДАНІ ПРАКТИКИ:
 ${practiceText}
-${detailsLine ? `\n${detailsLine}` : ""}${individualTaskLine}
+${detailsLine ? `\n${detailsLine}` : ""}${individualTaskLine}${periodLine}${statsPeriodLine}
 ${methodReq ? `\nВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${deptGuidanceLine}${tablesHint}${sourcesBlock}${guidanceLine}
 
 ФОРМАТ: ця методичка вимагає звіт-анкету — основний зміст пункту подай як одну або кілька markdown-таблиць (вертикальні риски). Якщо для розкриття пункту природно потрібно кілька таблиць (напр. окремо по рокам, або окремо структура/показники) — став їх послідовно.
@@ -1323,7 +1331,7 @@ ${methodReq ? `\nВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${deptGuida
 
 ДАНІ ПРАКТИКИ:
 ${practiceText}
-${detailsLine ? `\n${detailsLine}` : ""}${individualTaskLine}
+${detailsLine ? `\n${detailsLine}` : ""}${individualTaskLine}${periodLine}${statsPeriodLine}
 ${hint ? `\nОСОБЛИВОСТІ РОЗДІЛУ: ${hint}` : ""}
 ${methodReq ? `\nВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${deptGuidanceLine}${sourcesBlock}${guidanceLine}
 
@@ -1343,16 +1351,62 @@ ${methodReq ? `\nВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${deptGuida
   return instruction;
 }
 
-export function buildPracticeDiaryPrompt(info, diaryExampleText, methodInfo, deptGuidanceText) {
+// ── Структурний аналіз завантаженого зразка щоденника практики (офіційний бланк) ──
+// На відміну від методички (яка читається як живий PDF-документ через buildMethodologyReadingPrompt),
+// зразок щоденника вже витягнутий у чистий текст (ExampleFileZone) — тому це текстовий промпт,
+// що аналізує ГОТОВИЙ ТЕКСТ, а не документ. Мета — визначити РЕАЛЬНУ структуру офіційного бланка
+// (скільки в ньому розділів, які саме), щоб генерація й експорт щоденника її повторили, а не
+// вигадували спрощену структуру "таблиця + два відгуки".
+export function buildDiaryTemplateAnalysisPrompt(diaryExampleText) {
+  return `Уважно проаналізуй наведений нижче текст зразка щоденника практики (це може бути офіційний бланк форми з порожніми полями для заповнення, АБО вже заповнений приклад — байдуже, аналізуй лише СТРУКТУРУ: які розділи присутні).
+
+ТЕКСТ ЗРАЗКА ЩОДЕННИКА:
+${diaryExampleText.slice(0, 40000)}
+
+Поверни ТІЛЬКИ JSON (без markdown):
+{
+  "diaryTitlePageTemplate": null,
+  "diaryTableFormat": null,
+  "diaryTableColumns": null,
+  "hasArrivalDepartureBlock": false,
+  "hasBlankNotesPages": false,
+  "hasCalendarGraphSection": false,
+  "calendarGraphWeeksCount": null,
+  "hasSupervisorSignatureBlock": false,
+  "hasInspectorReviewSection": false,
+  "hasGradeFields": false,
+  "departmentNameForConclusion": null
+}
+
+Правила для кожного поля:
+- diaryTitlePageTemplate: якщо в тексті є титульна сторінка САМЕ щоденника (заголовок "ЩОДЕННИК ПРАКТИКИ", зазвичай з полями студента/інституту/кафедри/ОКР/спеціальності знизу і, можливо, блоком погодження "ЗАТВЕРДЖУЮ" зверху) — відтвори її рядок за рядком як масив об'єктів {"text":"...","align":"left|center|right","bold":true|false,"fontSize":14,"spaceBefore":0}. Місця, куди студент вписує СВОЇ дані, заміни на плейсхолдери: ПІБ здобувача → [ПІБ], номер академічної групи → [ГРУПА], курс навчання → [КУРС], назва інституту/факультету → [ФАКУЛЬТЕТ], назва кафедри → [КАФЕДРА], ОКР/ступінь → [ОКР], спеціальність → [СПЕЦІАЛЬНІСТЬ], галузь знань → [ГАЛУЗЬ_ЗНАНЬ], вид і назва практики → [ВИД_ПРАКТИКИ]. Текст навколо (написи-підказки на кшталт "(прізвище, ім'я, по батькові)", назву закладу освіти якщо вона вже надрукована в бланку) залиш як є. null якщо титульної сторінки щоденника в тексті немає.
+- diaryTableFormat: "daily" — якщо основна таблиця щоденника по РОБОЧИХ ДНЯХ (рядок = один день з датою). "topics" — якщо рядок = тема/етап роботи з термінами виконання (як "індивідуальний план"). "weekly" — якщо рядок = тиждень практики. null якщо жодної такої таблиці в тексті немає (напр. є тільки календарний графік і ліновані сторінки — це НЕ те саме, дивись hasCalendarGraphSection і hasBlankNotesPages нижче).
+- diaryTableColumns: масив заголовків колонок ТОЧНО як у знайденій основній таблиці (по порядку зліва направо). null якщо diaryTableFormat null.
+- hasArrivalDepartureBlock: true ТІЛЬКИ якщо є блок на кшталт "Прибув на підприємство... Вибув з підприємства..." з місцем під печатку (МП) і дату. Інакше false.
+- hasBlankNotesPages: true ТІЛЬКИ якщо є окрема сторінка(и) із заголовком на кшталт "Робочі записи під час практики", де під заголовком просто ПОРОЖНІ ліновані рядки без жодної таблиці з колонками. Якщо це вже таблиця з колонками (дата/зміст роботи) — це НЕ hasBlankNotesPages, а diaryTableFormat="daily" вище. Інакше false.
+- hasCalendarGraphSection: true ТІЛЬКИ якщо є ОКРЕМА від щоденних записів таблиця "Календарний графік проходження практики" — рядок = назва роботи/етапу, колонки = тижні практики (з відмітками про виконання), яка йде РАЗОМ з (а не замість) робочих записів/основної таблиці. Інакше false.
+- calendarGraphWeeksCount: кількість тижневих колонок у календарному графіку, якщо hasCalendarGraphSection true (напр. 4, 6). null якщо hasCalendarGraphSection false або кількість не видно.
+- hasSupervisorSignatureBlock: true якщо одразу після календарного графіка (чи після основної таблиці) є окремий блок підписів "Керівники практики: від кафедри .../ від підприємства ..." (без відгуку по суті — просто підписи). Інакше false.
+- hasInspectorReviewSection: true ТІЛЬКИ якщо є ОКРЕМИЙ розділ на кшталт "Відгук осіб, які перевіряли проходження практики" — відмінний від відгуку керівника від підприємства і від висновку керівника від кафедри. Інакше false.
+- hasGradeFields: true ТІЛЬКИ якщо у розділі "Висновок керівника практики" (чи аналогічному) є поля оцінювання: дата складання заліку та/або оцінка за національною шкалою/кількість балів/шкала ECTS. Інакше false.
+- departmentNameForConclusion: якщо в тексті десь прямо вказана назва кафедри разом із закладом освіти для підпису керівника практики (напр. "від кафедри ОПЦБ «Криворізький національний університет»") — витягни цей фрагмент дослівно для використання в заголовку розділу "Висновок керівника практики від [...]". null якщо не вказано.
+
+Якщо в наданому тексті взагалі не видно жодної чіткої структури щоденника (напр. це нерозбірливий фрагмент без заголовків розділів) — постав всі boolean-поля false, а решту null, замість вигадування.`;
+}
+
+export function buildPracticeDiaryPrompt(info, diaryExampleText, methodInfo, deptGuidanceText, diaryTemplateInfo, clientMaterialsText, reportSections) {
   const {
     practiceText = "", language = "Українська", practiceGuidance,
-    companyName, individualTask, dateStart, dateEnd,
+    companyName, individualTask, dateStart, dateEnd, statsPeriod,
   } = info;
   const taskGuidance = practiceGuidance?.diaryTasks
     ? `\nТипові завдання для цього напряму та виду практики (орієнтуйся на них): ${practiceGuidance.diaryTasks}`
     : "";
   const periodLine = (dateStart && dateEnd)
     ? `\nПЕРІОД ПРАКТИКИ (використовуй саме ці дати): ${dateStart} – ${dateEnd}`
+    : "";
+  const statsPeriodLine = statsPeriod
+    ? `\nЯКЩО в записах згадуєш аналіз даних/звітності підприємства за роками — використовуй період ${statsPeriod}, не інший.`
     : "";
   const detailsLine = [
     companyName && `Місце практики: ${companyName}`,
@@ -1364,14 +1418,45 @@ export function buildPracticeDiaryPrompt(info, diaryExampleText, methodInfo, dep
   const deptGuidanceLine = deptGuidanceText?.trim()
     ? `\nДОДАТКОВІ ВИМОГИ КАФЕДРИ до щоденника (враховуй лише вимоги до змісту записів; ігноруй дедлайни, критерії оцінювання та інші процедурні деталі): ${deptGuidanceText.trim().slice(0, 9000)}`
     : "";
+  // Матеріали клієнта (напр. окремі оголошення викладача з конкретними завданнями) раніше сюди
+  // взагалі не потрапляли — щоденник бачив лише practiceText, тому будь-яке завдання, надіслане
+  // окремим файлом чи вставлене в поле "Матеріали клієнта", а не в основний текст практики,
+  // мовчки губилося.
+  const clientMaterialsLine = clientMaterialsText?.trim()
+    ? `\n\nМАТЕРІАЛИ КЛІЄНТА (оголошення, завдання, листування — КОЖЕН пункт/завдання звідси, що стосується роботи студента під час практики, має явно з'явитися як окремий запис у щоденнику; не пропускай жодного пункту):\n${clientMaterialsText.trim().slice(0, 20000)}`
+    : "";
+  // Структура звіту (якщо вже сформована на попередньому кроці) — щоб щоденник не «жив своїм
+  // життям» окремо від звіту: кожен розділ, який студент фактично писатиме, має мати відповідний
+  // день чи запис у щоденнику, що це підтверджує.
+  const reportSectionsLine = reportSections?.length
+    ? `\n\nСТРУКТУРА ЗВІТУ (уже визначена окремо) — переконайся, що для КОЖНОГО з цих пунктів є хоча б один відповідний запис у щоденнику, який показує, що студент над ним працював:\n${reportSections.map(s => `— ${s.label || s}`).join("\n")}`
+    : "";
 
-  // Пріоритет формату таблиці: вручну завантажений зразок > формат, розпізнаний з методички > типовий по днях
+  // Пріоритет формату таблиці: СТРУКТУРНИЙ аналіз завантаженого зразка (найнадійніший — колонки
+  // визначені окремим проходом, а не вгадуються тут наосліп із сирого тексту) > формат, розпізнаний
+  // з методички > вгадування прямо з сирого тексту зразка (фолбек, якщо структурний аналіз не дав
+  // diaryTableFormat) > типовий по днях.
+  const templateFormat = diaryTemplateInfo?.diaryTableFormat || null;
+  const templateColumns = templateFormat && diaryTemplateInfo?.diaryTableColumns?.length ? diaryTemplateInfo.diaryTableColumns : null;
   const methodFormat = !diaryExampleText ? methodInfo?.diaryTableFormat : null;
   const methodColumns = methodFormat && methodInfo?.diaryTableColumns?.length ? methodInfo.diaryTableColumns : null;
 
   let dayInstruction;
   let tableInstruction;
-  if (diaryExampleText) {
+  if (templateFormat === "topics") {
+    const cols = templateColumns || ["Завдання за планом", "Термін виконання", "Фактичне виконання", "Підписи керівника та керівника від кафедри"];
+    dayInstruction = `Зразок щоденника вимагає формат "індивідуальний план за темами завдань", а НЕ по календарних днях. Склади рядки за темами/етапами роботи практики в логічному порядку виконання (кожен рядок — окрема тема чи етап).`;
+    tableInstruction = `Поверни ТІЛЬКИ markdown-таблицю з колонками: ${cols.map(c => `"${c}"`).join(", ")}. Колонки термінів/підписів залиш порожніми (заповнюються вручну після проходження практики).`;
+  } else if (templateFormat === "weekly") {
+    const cols = templateColumns || ["Назви (теми) робіт", "Тиждень 1", "Тиждень 2", "Тиждень 3", "Тиждень 4", "Оцінка", "Відмітки про виконання"];
+    dayInstruction = `Зразок щоденника вимагає формат "календарний графік по тижнях", а НЕ по календарних днях. Склади рядки за темами/видами робіт практики.`;
+    tableInstruction = `Поверни ТІЛЬКИ markdown-таблицю з колонками: ${cols.map(c => `"${c}"`).join(", ")}. Тижневі колонки та колонки оцінки/відміток залиш порожніми (заповнюються вручну).`;
+  } else if (templateFormat === "daily" && templateColumns) {
+    dayInstruction = `Склади таблицю по робочих днях (понеділок–п'ятниця) у межах вказаних дат${periodLine ? "" : " (визнач дати з тексту вище)"}. Кожен день — окремий рядок.
+Зміст роботи має бути конкретним і відповідати профілю підприємства та типу практики.
+В останні 2-3 дні включи: оформлення звіту, перевірку документів.`;
+    tableInstruction = `Поверни ТІЛЬКИ markdown-таблицю з колонками: ${templateColumns.map(c => `"${c}"`).join(", ")} — це ТОЧНІ колонки зі зразка щоденника, не змінюй їх.`;
+  } else if (diaryExampleText) {
     dayInstruction = `Склади таблицю по робочих днях (понеділок–п'ятниця) у межах вказаних дат${periodLine ? "" : " (визнач дати з тексту вище)"}. Кожен день — окремий рядок.
 Зміст роботи має бути конкретним і відповідати профілю підприємства та типу практики.
 В останні 2-3 дні включи: оформлення звіту, перевірку документів.`;
@@ -1399,9 +1484,9 @@ export function buildPracticeDiaryPrompt(info, diaryExampleText, methodInfo, dep
 
 ДАНІ ПРАКТИКИ:
 ${practiceText}
-${periodLine}
+${periodLine}${statsPeriodLine}
 ${detailsLine ? `\n${detailsLine}` : ""}
-${taskGuidance}${deptGuidanceLine}
+${taskGuidance}${deptGuidanceLine}${clientMaterialsLine}${reportSectionsLine}
 ${sampleBlock}
 
 ${dayInstruction}
@@ -1417,9 +1502,13 @@ ${practiceText}
 ${comment ? `\nДОДАТКОВІ МАТЕРІАЛИ КЛІЄНТА:\n${comment}` : ""}
 
 Поверни ТІЛЬКИ JSON (без markdown):
-{"companyName":"","supervisorCompany":"","supervisorUniversity":"","individualTask":"","dateStart":"","dateEnd":"","sourceCount":null,"studentName":"","studentGroup":"","university":"","faculty":"","city":""}
+{"companyName":"","supervisorCompany":"","supervisorUniversity":"","individualTask":"","dateStart":"","dateEnd":"","sourceCount":null,"studentName":"","studentGroup":"","university":"","faculty":"","department":"","specialty":"","degreeLevel":"","knowledgeField":"","city":""}
 
 Правила:
+- department: назва кафедри, яка курує практику. "" якщо не вказано явно.
+- specialty: спеціальність студента так, як вона названа в тексті — номер і назва разом (напр. "263 Цивільна безпека"). "" якщо не вказано явно.
+- degreeLevel: освітньо-кваліфікаційний рівень/ступінь (напр. "Бакалавр", "Магістр"). "" якщо не вказано явно.
+- knowledgeField: галузь знань, ЯКЩО названа окремо від спеціальності (напр. "26 Цивільна безпека"). "" якщо не вказано явно.
 - companyName: назва підприємства/установи/закладу, де проходить практика. "" якщо не вказано.
 - supervisorCompany: ПІБ та посада керівника від підприємства/бази практики. "" якщо не вказано.
 - supervisorUniversity: ПІБ та посада керівника від університету/кафедри. "" якщо не вказано.

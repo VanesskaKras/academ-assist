@@ -7,9 +7,10 @@
 // і виклики в prompts.js це враховують.
 
 export const PRACTICE_TYPES = [
-  { key: "navchalna",      label: "Навчальна" },
-  { key: "vyrobnycha",     label: "Виробнича" },
-  { key: "perededyplomna", label: "Переддипломна" },
+  { key: "navchalna",         label: "Навчальна" },
+  { key: "vyrobnycha",        label: "Виробнича" },
+  { key: "perededyplomna",    label: "Переддипломна" },
+  { key: "naukovo_doslidna",  label: "Науково-дослідна" },
 ];
 
 // Людські назви напрямів для UI (той самий перелік ключів, що й SPECIALTY_MAP)
@@ -93,6 +94,10 @@ export function getPracticeGuidance(cat, type) {
 // а не в полі "Тип"). Регулярка — фолбек, якщо окреме LLM-поле practiceType не визначилось.
 export function detectPracticeType(course, ...texts) {
   const t = texts.filter(Boolean).join(" ").toLowerCase();
+  // Перевіряємо ПЕРЕД "переддипломн" — методички/оголошення нерідко згадують обидва слова поруч
+  // (напр. "переддипломна науково-дослідна практика"), а "науково-дослідна" тут точніша ознака
+  // виду практики, ніж "переддипломна", яка радше вказує на етап навчання.
+  if (/науков[а-яії]*[-\s]?дослідн/.test(t)) return "naukovo_doslidna";
   if (/передипломн|переддипломн/.test(t)) return "perededyplomna";
   if (/навчальн|ознайомч/.test(t)) return "navchalna";
   if (/виробнич/.test(t)) return "vyrobnycha";
@@ -138,10 +143,11 @@ export function parsePracticeDetails(text) {
 
 // Будує рядки титульної сторінки звіту з практики (формат для exportToDocx({titlePageLines})).
 // Використовується, лише якщо в методичці НЕ знайдено власного зразка титулки (methodInfo.titlePageTemplate).
-const PRACTICE_TYPE_GENITIVE = {
+export const PRACTICE_TYPE_GENITIVE = {
   navchalna: "навчальної",
   vyrobnycha: "виробничої",
   perededyplomna: "переддипломної",
+  naukovo_doslidna: "науково-дослідної",
 };
 
 export function buildPracticeTitlePageLines(info) {
@@ -176,7 +182,7 @@ export function buildPracticeTitlePageLines(info) {
 // Дефолт, якщо в методичці НЕ знайдено власного зразка титулки щоденника — підставляє реальні
 // дані де вони відомі, інакше залишає загальний підпис-плейсхолдер (без вигаданого закладу).
 export function buildPracticeDiaryTitlePageLines(info) {
-  const { faculty, department, specialty, degreeLevel, knowledgeField, studentName, supervisorCompany, practiceType } = info || {};
+  const { faculty, department, specialty, degreeLevel, knowledgeField, studentName, supervisorCompany, practiceType, course, studentGroup } = info || {};
   const practiceLabel = PRACTICE_TYPE_GENITIVE[practiceType]
     ? `${PRACTICE_TYPE_GENITIVE[practiceType]} практики`
     : "практики";
@@ -207,6 +213,8 @@ export function buildPracticeDiaryTitlePageLines(info) {
   lines.push({ text: `спеціальність ${specialty || "___________________"}`, align: "left", bold: false, spaceBefore: 0 });
   lines.push({ text: `галузь знань ${knowledgeField || "___________________"}`, align: "left", bold: false, spaceBefore: 0 });
   lines.push({ text: "ОПП ___________________", align: "left", bold: false, spaceBefore: 0 });
+  lines.push({ text: "", align: "center", spaceBefore: 240 });
+  lines.push({ text: `курс ${course || "___________"}, група ${studentGroup || "___________"}`, align: "left", bold: false, spaceBefore: 0 });
 
   return lines;
 }

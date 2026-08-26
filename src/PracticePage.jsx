@@ -9,7 +9,7 @@ import {
   buildSYS, buildSYSTable, SYS_JSON, SYS_JSON_SHORT, STRUCTURE_READING_PROMPT,
   buildMethodologyReadingPrompt,
   buildPracticePlanPrompt, buildPracticeWritingPrompt,
-  buildPracticeDiaryPrompt,
+  buildPracticeDiaryPrompt, buildDiaryTemplateAnalysisPrompt,
   buildTemplateAnalysisPrompt, buildPracticeDetailsPrompt,
 } from "./lib/prompts.js";
 import { parseTemplate, isEcon, isTechnical, getEconSections, parsePagesMax, scanFigures, extractNumericFacts, normalizePageDistribution, stripNonContentSections } from "./lib/planUtils.js";
@@ -17,6 +17,7 @@ import { detectSpecialtyPrioritized } from "./lib/academicDefaults.js";
 import {
   CATEGORY_LABELS, PRACTICE_TYPES, getPracticeGuidance, detectPracticeType,
   parsePracticeDetails, buildPracticeTitlePageLines, buildPracticeDiaryTitlePageLines,
+  PRACTICE_TYPE_GENITIVE,
 } from "./lib/practiceDefaults.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { enforceWordCount, trimToPageTarget } from "./lib/wordCount.js";
@@ -195,6 +196,9 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
   const [structureExampleText, setStructureExampleText] = useState("");
   const [diaryExampleName, setDiaryExampleName] = useState("");
   const [diaryExampleText, setDiaryExampleText] = useState("");
+  // Структурний аналіз зразка щоденника (які розділи офіційного бланка присутні —
+  // календарний графік, ліновані сторінки, відгук осіб перевірки, поля оцінки тощо)
+  const [diaryTemplateInfo, setDiaryTemplateInfo] = useState(null);
 
   // Матеріали клієнта
   const [clientMaterials, setClientMaterials] = useState([]);
@@ -277,6 +281,10 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
     type: "Звіт із практики",
     orderNumber, orderType, deadline, direction, subject, uniqueness, course, extras,
     companyName, supervisorCompany, supervisorUniversity, individualTask, dateStart, dateEnd,
+    // Період "останні N років" для статистики/динаміки показників, що можуть згадуватись у розділах
+    // і в щоденнику — рахуємо один раз тут (а не даємо кожній генерації вгадувати свій діапазон),
+    // щоб усі частини роботи посилались на той самий проміжок років.
+    statsPeriod: `${new Date().getFullYear() - 4}–${new Date().getFullYear()}`,
     sourceCountExplicit,
     studentName, studentGroup, university, faculty, department, specialty, degreeLevel, knowledgeField, city,
     practiceGuidance: getPracticeGuidance(practiceCategory, practiceType),
@@ -380,6 +388,7 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
           if (d.structureExampleText) setStructureExampleText(d.structureExampleText);
           if (d.diaryExampleName) setDiaryExampleName(d.diaryExampleName);
           if (d.diaryExampleText) setDiaryExampleText(d.diaryExampleText);
+          if (d.diaryTemplateInfo) setDiaryTemplateInfo(d.diaryTemplateInfo);
           if (d.clientMaterialsSummary) setClientMaterialsSummary(d.clientMaterialsSummary);
           if (d.clientMaterialsText) setClientMaterialsText(d.clientMaterialsText);
           if (d.deptGuidanceText) setDeptGuidanceText(d.deptGuidanceText);
@@ -452,6 +461,22 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
         setMethodInfo(parsedMethodInfo);
       } catch (e) {
         console.warn("methodInfo failed:", e.message);
+      }
+    }
+
+    // Зразок щоденника практики: структурний аналіз (яка структура в офіційному бланку —
+    // календарний графік, ліновані сторінки, відгук осіб перевірки, поля оцінки тощо), щоб
+    // генерація й експорт щоденника її повторили, а не спрощували довільно.
+    let parsedDiaryTemplateInfo = diaryTemplateInfo;
+    if (diaryExampleText) {
+      setLoadMsg("Аналізую зразок щоденника...");
+      try {
+        const dtRaw = await callClaude([{ role: "user", content: buildDiaryTemplateAnalysisPrompt(diaryExampleText) }], null, SYS_JSON_SHORT, 1500, null, MODEL_FAST);
+        const dtMatch = dtRaw.match(/\{[\s\S]*\}/);
+        parsedDiaryTemplateInfo = dtMatch ? JSON.parse(dtMatch[0]) : null;
+        setDiaryTemplateInfo(parsedDiaryTemplateInfo);
+      } catch (e) {
+        console.warn("diary template analysis failed:", e.message);
       }
     }
 
@@ -569,6 +594,7 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
       info,
       fileLabel: fileLabel || null,
       methodInfo: parsedMethodInfo || null,
+      diaryTemplateInfo: parsedDiaryTemplateInfo || null,
       clientMaterialsSummary: summary || null,
       clientMaterialsText: clientMaterialsText?.trim() || null,
       stage: "parsed",
@@ -1056,7 +1082,7 @@ ${secBlock}
       const info = getPracticeInfo();
 
       // 3. Сортування + форматування стилю (спільна функція, як у великих роботах)
-      const { refList: fmtList, oldToNew, refCiteText, pageRanges, pageAbbrev } = await remapAndFormatCitations({
+      let { refList: fmtList, oldToNew, refCiteText, pageRanges, pageAbbrev } = await remapAndFormatCitations({
         citations: rawRefs,
         citStructured: flatStructured,
         citStyle: getEffectiveCitStyle(),
@@ -1144,8 +1170,32 @@ ${secBlock}
             unresolvedOrphans.push(...secOrphans.map(o => o.globalN));
           }
         }));
+        // Джерела, які так і не вдалось процитувати навіть хірургічною вставкою (модель
+        // не змогла знайти природне місце в тексті) — прибираємо зі списку літератури
+        // замість того, щоб лишати там непроцитований "сирітський" запис: список джерел
+        // має точно відповідати тому, що реально процитоване в тексті.
         if (unresolvedOrphans.length) {
-          alert(`Не вдалося автоматично процитувати ${unresolvedOrphans.length} джерел${unresolvedOrphans.length === 1 ? "о" : ""} зі списку літератури (№${unresolvedOrphans.join(", ")}) — перевірте вручну.`);
+          const removedSet = new Set(unresolvedOrphans);
+          const removeOldToNew = {};
+          const newFmtList = [];
+          const newRefCiteText = {};
+          const newPageRanges = {};
+          fmtList.forEach((ref, i) => {
+            const oldN = i + 1;
+            if (removedSet.has(oldN)) return;
+            const newN = newFmtList.length + 1;
+            newFmtList.push(ref);
+            removeOldToNew[oldN] = newN;
+            if (refCiteText[oldN] != null) newRefCiteText[newN] = refCiteText[oldN];
+            if (pageRanges[oldN] != null) newPageRanges[newN] = pageRanges[oldN];
+          });
+          mainSecs.forEach(sec => {
+            if (!nextContent[sec.id]) return;
+            nextContent[sec.id] = applyCitationRemap(nextContent[sec.id], removeOldToNew, newRefCiteText, { pageRanges: newPageRanges, pageAbbrev });
+          });
+          fmtList = newFmtList;
+          refCiteText = newRefCiteText;
+          pageRanges = newPageRanges;
         }
       }
 
@@ -1305,7 +1355,7 @@ ${secBlock}
     setRunning(true); runningRef.current = true; setLoadMsg("Генерую щоденник практики...");
     const info = getPracticeInfo();
     try {
-      const prompt = buildPracticeDiaryPrompt(info, diaryExampleText, methodInfo, deptGuidanceText);
+      const prompt = buildPracticeDiaryPrompt(info, diaryExampleText, methodInfo, deptGuidanceText, diaryTemplateInfo, clientMaterialsSummary?.rawText, sections?.filter(s => s.id !== "sources"));
       const text = await callClaude([{ role: "user", content: prompt }], null, buildSYS(language, methodInfo), 8000);
       setDiaryContent(text);
       await saveToFirestore({ diaryContent: text, stage: "diary", status: "writing" });
@@ -1357,9 +1407,18 @@ ${secBlock}
     setDiaryDocxLoading(true);
     try {
       const info = getPracticeInfo();
-      const diaryTitlePageLines = methodInfo?.diaryTitlePageTemplate?.length
-        ? methodInfo.diaryTitlePageTemplate
-        : buildPracticeDiaryTitlePageLines(info);
+      // Пріоритет титулки щоденника: явний зразок офіційного бланка (diaryTemplateInfo, з окремого
+      // структурного аналізу завантаженого "Прикладу щоденника") > те, що знайшлось у методичці
+      // (може бути менш точним — зразок щоденника там часто лише один з багатьох додатків) > типова.
+      const dti = diaryTemplateInfo;
+      const diaryTitlePageLines = dti?.diaryTitlePageTemplate?.length
+        ? dti.diaryTitlePageTemplate
+        : methodInfo?.diaryTitlePageTemplate?.length
+          ? methodInfo.diaryTitlePageTemplate
+          : buildPracticeDiaryTitlePageLines(info);
+      const practiceLabel = PRACTICE_TYPE_GENITIVE[info.practiceType]
+        ? `${PRACTICE_TYPE_GENITIVE[info.practiceType]} практики`
+        : "";
       await exportToDocx({
         content: { diary: diaryContent },
         info: {
@@ -1367,6 +1426,8 @@ ${secBlock}
           studentName: info.studentName, studentGroup: info.studentGroup, course: info.course,
           companyName: info.companyName, supervisorCompany: info.supervisorCompany, supervisorUniversity: info.supervisorUniversity,
           dateStart: info.dateStart, dateEnd: info.dateEnd,
+          faculty: info.faculty, department: info.department, degreeLevel: info.degreeLevel,
+          specialty: info.specialty, knowledgeField: info.knowledgeField, practiceLabel,
         },
         displayOrder: [{ id: "diary", label: "", pages: 0 }],
         titlePage: null,
@@ -1375,8 +1436,14 @@ ${secBlock}
         orderId: currentIdRef.current ? `${currentIdRef.current}_diary` : null,
         skipToc: true,
         keepHeadingCase: true,
-        diaryArrivalDeparture: !!methodInfo?.hasArrivalDepartureBlock,
-        diaryBlankNotesPages: !!methodInfo?.hasBlankNotesPages,
+        diaryArrivalDeparture: dti ? !!dti.hasArrivalDepartureBlock : !!methodInfo?.hasArrivalDepartureBlock,
+        diaryBlankNotesPages: dti ? !!dti.hasBlankNotesPages : !!methodInfo?.hasBlankNotesPages,
+        diaryCalendarGraph: !!dti?.hasCalendarGraphSection,
+        diaryCalendarGraphWeeks: dti?.calendarGraphWeeksCount || 6,
+        diarySupervisorSignatureBlock: !!dti?.hasSupervisorSignatureBlock,
+        diaryInspectorReview: !!dti?.hasInspectorReviewSection,
+        diaryGradeFields: !!dti?.hasGradeFields,
+        diaryConclusionDepartment: dti?.departmentNameForConclusion || "",
         diaryStudentName: info.studentName,
         diaryReviewBlock: true,
         diarySupervisorCompany: info.supervisorCompany,

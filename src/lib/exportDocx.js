@@ -560,7 +560,7 @@ export function detectTextLanguage(text, fallbackLang) {
 // ─────────────────────────────────────────────
 // Word export (основний документ)
 // ─────────────────────────────────────────────
-export async function exportToDocx({ content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo, commentAnalysis, orderId, annotationUk, annotationEn, illustrations = [], clientDrawings = [], skipToc = false, keepHeadingCase = false, diaryArrivalDeparture = false, diaryBlankNotesPages = false, diaryStudentName = "", diaryReviewBlock = false, diarySupervisorCompany = "", diarySupervisorUniversity = "" }) {
+export async function exportToDocx({ content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo, commentAnalysis, orderId, annotationUk, annotationEn, illustrations = [], clientDrawings = [], skipToc = false, keepHeadingCase = false, diaryArrivalDeparture = false, diaryBlankNotesPages = false, diaryStudentName = "", diaryReviewBlock = false, diarySupervisorCompany = "", diarySupervisorUniversity = "", diaryCalendarGraph = false, diaryCalendarGraphWeeks = 6, diarySupervisorSignatureBlock = false, diaryInspectorReview = false, diaryGradeFields = false, diaryConclusionDepartment = "" }) {
   // Деякі виклики (напр. звіти з практики) не проставляють sec.type — довизначаємо його
   // з id для фіксованих розділів, щоб список джерел коректно розпізнавався нижче.
   displayOrder = (displayOrder || []).map(s =>
@@ -1041,6 +1041,10 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     "[ФАКУЛЬТЕТ]": info?.faculty,
     "[КАФЕДРА]": info?.department,
     "[КЕРІВНИК]": info?.supervisorUniversity,
+    "[ОКР]": info?.degreeLevel,
+    "[СПЕЦІАЛЬНІСТЬ]": info?.specialty,
+    "[ГАЛУЗЬ_ЗНАНЬ]": info?.knowledgeField,
+    "[ВИД_ПРАКТИКИ]": info?.practiceLabel,
   };
   const applyTopic = (t) => {
     let s = topicStr ? t.replace(/\[ТЕМА\]/g, topicStr) : t;
@@ -1449,12 +1453,74 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     children.push(plainLine("_________________     (посада, прізвище та ініціали відповідальної особи)"));
   }
 
+  // Календарний графік проходження практики — окрема таблиця по тижнях, яка в офіційних бланках
+  // (форма Н-6.03) стоїть ПЕРЕД робочими записами, а не замінює їх. Рядки/тижневі клітинки лишаємо
+  // порожніми (як і в самому бланку) — заповнюються вручну студентом і керівником під час практики.
+  if (diaryCalendarGraph) {
+    const border = { style: BorderStyle.SINGLE, size: 1, color: "000000" };
+    const cellBorders = { top: border, bottom: border, left: border, right: border };
+    const weeksCount = Math.max(1, Math.min(12, diaryCalendarGraphWeeks || 6));
+    const headCell = (text, widthPct) => new TableCell({
+      width: { size: widthPct, type: WidthType.PERCENTAGE },
+      borders: cellBorders,
+      margins: { left: 57, right: 57, top: 57, bottom: 57 },
+      children: [new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { line: 240, lineRule: "exact", before: 0, after: 0 },
+        children: [new TextRun({ text, font: FONT, size: SIZE_NUM, bold: true, color: "000000" })],
+      })],
+    });
+    const bodyCell = () => new TableCell({
+      borders: cellBorders,
+      margins: { left: 57, right: 57, top: 57, bottom: 57 },
+      children: [new Paragraph({ spacing: { line: 240, lineRule: "exact", before: 0, after: 0 }, children: [new TextRun({ text: "", font: FONT, size: SIZE_NUM })] })],
+    });
+    const numColPct = 6, workColPct = 100 - numColPct - weeksCount * 8 - 12;
+    const headerRow = new TableRow({
+      children: [
+        headCell("№ з/п", numColPct),
+        headCell("Назви робіт", workColPct),
+        ...Array.from({ length: weeksCount }, (_, i) => headCell(`Тиждень ${i + 1}`, 8)),
+        headCell("Відмітки про виконання", 12),
+      ],
+    });
+    const bodyRows = Array.from({ length: 12 }, (_, i) => new TableRow({
+      children: [
+        new TableCell({
+          borders: cellBorders, margins: { left: 57, right: 57, top: 57, bottom: 57 },
+          children: [new Paragraph({ alignment: AlignmentType.CENTER, spacing: { line: 240, lineRule: "exact", before: 0, after: 0 }, children: [new TextRun({ text: String(i + 1), font: FONT, size: SIZE_NUM, color: "000000" })] })],
+        }),
+        bodyCell(),
+        ...Array.from({ length: weeksCount }, () => bodyCell()),
+        bodyCell(),
+      ],
+    }));
+    children.push(new Paragraph({ pageBreakBefore: true, spacing: { before: 0, after: 0, line: LINE, lineRule: "auto" }, children: [] }));
+    children.push(new Paragraph({
+      alignment: AlignmentType.CENTER, indent: { firstLine: 0 },
+      spacing: { line: LINE, lineRule: "auto", before: 0, after: LINE },
+      children: [new TextRun({ text: "1. Календарний графік проходження практики", font: FONT, size: SIZE, bold: true, color: "000000" })],
+    }));
+    children.push(new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: [headerRow, ...bodyRows] }));
+
+    if (diarySupervisorSignatureBlock) {
+      const sigLine = (text) => new Paragraph({
+        alignment: AlignmentType.LEFT, indent: { firstLine: 0 },
+        spacing: { line: LINE, lineRule: "auto", before: LINE, after: 0 },
+        children: [new TextRun({ text, font: FONT, size: SIZE, color: "000000" })],
+      });
+      children.push(sigLine("Керівники практики:"));
+      children.push(sigLine(`від кафедри: _______________     ${diarySupervisorUniversity || "___________________"}`));
+      children.push(sigLine(`від підприємства (організації, установи): _______________     ${diarySupervisorCompany || "___________________"}`));
+    }
+  }
+
   if (diaryBlankNotesPages) {
     children.push(new Paragraph({ pageBreakBefore: true, spacing: { before: 0, after: 0, line: LINE, lineRule: "auto" }, children: [] }));
     children.push(new Paragraph({
       alignment: AlignmentType.CENTER, indent: { firstLine: 0 },
       spacing: { line: LINE, lineRule: "auto", before: 0, after: LINE },
-      children: [new TextRun({ text: "Робочі записи під час практики", font: FONT, size: SIZE, bold: true, color: "000000" })],
+      children: [new TextRun({ text: diaryCalendarGraph ? "2. Робочі записи під час практики" : "Робочі записи під час практики", font: FONT, size: SIZE, bold: true, color: "000000" })],
     }));
     for (let i = 0; i < 28; i++) {
       children.push(new Paragraph({
@@ -1495,9 +1561,26 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     children.push(plainLine2("(підпис)                                   (ініціали, прізвище)"));
     children.push(plainLine2("МП                                                                              «___» _____________ 20__ року", { spacing: { after: LINE } }));
 
+    // Відгук осіб, які перевіряли проходження практики — окремий розділ офіційного бланка,
+    // відмінний від відгуку керівника від підприємства і від висновку керівника від кафедри.
+    if (diaryInspectorReview) {
+      children.push(new Paragraph({ pageBreakBefore: true, spacing: { before: 0, after: 0, line: LINE, lineRule: "auto" }, children: [] }));
+      children.push(heading("Відгук осіб, які перевіряли проходження практики"));
+      for (let i = 0; i < 6; i++) children.push(blankLine());
+    }
+
     children.push(new Paragraph({ pageBreakBefore: true, spacing: { before: 0, after: 0, line: LINE, lineRule: "auto" }, children: [] }));
-    children.push(heading("Висновок керівника практики від закладу вищої освіти"));
+    children.push(heading(diaryConclusionDepartment
+      ? `Висновок керівника практики від ${diaryConclusionDepartment}`
+      : "Висновок керівника практики від закладу вищої освіти"));
     for (let i = 0; i < 6; i++) children.push(blankLine());
+    if (diaryGradeFields) {
+      children.push(plainLine2("Дата складання заліку «___» _____________ 20__ року", { spacing: { before: LINE } }));
+      children.push(plainLine2("Оцінка:"));
+      children.push(plainLine2("за національною шкалою ___________________________"));
+      children.push(plainLine2("кількість балів ___________________________"));
+      children.push(plainLine2("за шкалою ECTS ___________________________", { spacing: { after: LINE } }));
+    }
     children.push(plainLine2(`Керівник практики від закладу вищої освіти: ${diarySupervisorUniversity || "___________________"}`, { spacing: { before: LINE } }));
     children.push(plainLine2("(підпис)                                   (ініціали, прізвище)"));
     children.push(plainLine2("«___» _____________ 20__ року"));
