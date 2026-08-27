@@ -1,3 +1,5 @@
+import { resolvePracticeFixedPages } from "./planUtils.js";
+
 export function buildSYS(lang = "Українська", methodInfo = null) {
   const { tableWord, figWord, tableRef, figRef, forbiddenWords, latinScript, sources: sourcesLabel } = _lc(lang);
   const isEnglish = /англ|english/i.test(lang || "");
@@ -77,6 +79,7 @@ Do NOT use markdown markup: no #, ##, **, *, - at line start. Write plain text.
 EXCEPTION: if a table is needed — format it exclusively as markdown with vertical bars: first row = column headers with |, second row = separator |---|---|, then data rows with |. Do not use / or other symbols as column separators.
 ${tableRules}
 ${figureRules}
+STRICTLY FORBIDDEN to end a section or subsection with a table or figure (including its caption) as the last element. After the last table or figure in a section there MUST be at least one more text paragraph — never let the section text stop right at a caption line.
 Do NOT bold anything in the subsection text.
 Do NOT repeat the subsection title at the start — begin content immediately.
 STRICTLY FORBIDDEN to write a chapter heading line ("CHAPTER N", "РОЗДІЛ N", etc.) or any chapter title at the start of the subsection text, even if you are writing the first subsection of a chapter. You are given only the subsection title, never the chapter title — do NOT invent or guess one and do NOT write it.
@@ -384,6 +387,7 @@ export function buildMethodologyReadingPrompt(structureInfo, practiceMode, pract
 
   const practiceFields = practiceMode ? `,
   "reportFormat": "narrative",
+  "practiceType": null,
   "practiceDateStart": null,
   "practiceDateEnd": null,
   "practiceCompanyName": null,
@@ -410,6 +414,7 @@ export function buildMethodologyReadingPrompt(structureInfo, practiceMode, pract
     : `Якщо знайшов кілька таких альтернативних блоків — поверни КОЖЕН окремим елементом масиву. Якщо блок один — один елемент.`;
 
   const practiceRules = practiceMode ? `
+- practiceType: вид практики так, як він названий у самій методичці (у назві/титулці документа, вступній частині чи в тексті програми) — ОДНЕ з: "navchalna" (навчальна/ознайомча), "vyrobnycha" (виробнича), "perededyplomna" (переддипломна/передипломна), "naukovo_doslidna" (науково-дослідна). Напр. "Програма виробничої практики" → "vyrobnycha"; "Наскрізна програма навчальної та переддипломної практики" — якщо явно названо ОБИДВА види і незрозуміло який саме тут потрібен — поверни null, не вгадуй. null якщо вид практики в методичці ніде явно не названий.
 - contentPlans: ЛИШЕ якщо методичка НЕ містить класичного зразка змісту (тобто exampleTOC вище буде null — немає сторінки виду "ВСТУП / РОЗДІЛ 1 / 1.1 / ВИСНОВКИ"), але замість цього в основному тексті методички (зазвичай у розділі про завдання/зміст практики) є ОПИСОВИЙ перелік того, що має містити звіт — послідовність пунктів з заголовками чи номерами (напр. "1. Загальна інформація", "3.1 Організація...", "Аналіз і планування прибутку підприємства" як підпункт тощо). Витягни цей перелік як структуру звіту. КРИТИЧНО ВАЖЛИВО — межа переліку: бери пункти ЛИШЕ з того розділу методички, що безпосередньо описує зміст/завдання/алгоритм виконання практики. ЗУПИНИСЬ, щойно цей розділ закінчується і починається ІНШИЙ розділ методички — про вимоги до структури/змісту/технічного оформлення звіту, технічні параметри верстки, порядок подання чи захисту, критерії оцінювання, практичний інструментарій/зразки/шаблони оформлення, підсумкові рекомендації щодо самостійної роботи тощо. Такі розділи (навіть якщо вони так само пронумеровані і мають на вигляд схожий заголовок-пункт) описують ПРАВИЛА про те, як оформити, подати чи захистити звіт — це НЕ зміст, який студент пише всередині розділів звіту, і їх НЕ можна додавати як окремі пункти переліку. ВАЖЛИВО: деякі методички практики (особливо для напрямів на кшталт туризму, готельно-ресторанної справи) наводять ДЕКІЛЬКА альтернативних варіантів такого переліку — по одному для кожного типу бази практики (напр. окремо "Характеристика туристичного підприємства" для турфірм, окремо "Загальна характеристика закладу готельно-ресторанного господарства" для готелів/ресторанів, окремо "Загальна характеристика музею" для музеїв/культурних закладів). ${contentPlanSelectionRule} Формат: масив об'єктів [{"appliesTo":"короткий опис типу бази практики яким словами описана ця альтернатива в методичці, напр. 'готель, ресторан, заклад готельно-ресторанного господарства' або 'туристична фірма, турагентство, туроператор' або 'музей, культурно-мистецький заклад'","items":[{"label":"1. Назва пункту як у методичці","subitems":["1.1 Назва підпункту","1.2 Назва підпункту"]},{"label":"2. Назва пункту без підпунктів","subitems":[]}]}]. Адаптуй нумерацію так, щоб вона йшла послідовно (1, 2, 3... з підпунктами N.M). Якщо структуру звіту неможливо визначити взагалі (немає ні класичного змісту, ні такого переліку) — поверни null.
 - reportFormat: "table_questionnaire" ТІЛЬКИ якщо методичка ЯВНО вимагає оформити звіт як "звіт-анкету" — тобто основна частина звіту складається з набору заповнених таблиць (характерні формулювання: "звіт-анкета", "оформлений у вигляді анкети", "у вигляді таблиць", явна вказівка кількості таблиць на весь звіт на кшталт "15-18 таблиць"). Це НЕ те саме, що звичайна вимога "оформити результати аналізу таблицею" в одному-двох місцях — для такого випадку залиш "narrative". "narrative" — типовий випадок (звіт це зв'язний текст, можливо з окремими таблицями/рисунками всередині).
 - practiceDateStart, practiceDateEnd: якщо в документі є розклад/графік практики (по днях чи тижнях) — дати початку і закінчення цього періоду у форматі "дд.мм.рррр" (перша і остання дата розкладу). null якщо графіка/дат немає.
@@ -1106,7 +1111,8 @@ function contentPlanToToc(plan) {
 export function buildPracticePlanPrompt(info, methodInfo, structureExampleText, deptGuidanceText) {
   const { practiceText = "", practiceCategory = "economy", pages = 30, practiceGuidance } = info;
   const total = parseInt(pages) || 30;
-  const main = total - 5;
+  const { introPages, conclPages } = resolvePracticeFixedPages(practiceText, deptGuidanceText);
+  const main = total - introPages - conclPages;
 
   // Шаблони структури по категоріях
   const templates = {
@@ -1159,13 +1165,11 @@ export function buildPracticePlanPrompt(info, methodInfo, structureExampleText, 
 
   const tmpl = templates[practiceCategory] || templates.other;
   const mainSecs = tmpl.map(s => ({ ...s, pages: Math.max(3, Math.round(main * s.w)) }));
-  const usedPages = mainSecs.reduce((a, s) => a + s.pages, 0);
-  const concl = Math.max(2, total - 2 - usedPages);
 
   const sectionsJson = [
-    `  {"id":"intro","label":"Вступ","pages":2}`,
+    `  {"id":"intro","label":"Вступ","pages":${introPages}}`,
     ...mainSecs.map(s => `  {"id":"${s.id}","label":"${s.label}","pages":${s.pages}}`),
-    `  {"id":"conclusions","label":"Висновки","pages":${concl}}`,
+    `  {"id":"conclusions","label":"Висновки","pages":${conclPages}}`,
     `  {"id":"sources","label":"Список використаних джерел","pages":0}`,
   ].join(",\n");
 
@@ -1208,14 +1212,14 @@ ${sampleBlock}
 
 Поверни ТІЛЬКИ JSON (без markdown):
 {"sections":[
-  {"id":"intro","label":"Вступ","pages":2},
+  {"id":"intro","label":"Вступ","pages":${introPages}},
   {"id":"1.1","label":"1.1 Назва підрозділу","sectionTitle":"Розділ 1. Назва розділу","pages":5},
   {"id":"1.2","label":"1.2 Назва підрозділу","sectionTitle":"Розділ 1. Назва розділу","pages":5},
   {"id":"2.1","label":"2.1 Назва підрозділу","sectionTitle":"Розділ 2. Назва розділу","pages":6},
-  {"id":"conclusions","label":"Висновки","pages":2},
+  {"id":"conclusions","label":"Висновки","pages":${conclPages}},
   {"id":"sources","label":"Список використаних джерел","pages":0}
 ]}
-(значення "pages" у прикладі вище — лише ілюстрація формату; для "conclusions" завжди рахуй за правилом нижче, а не копіюй число з прикладу)
+(значення "pages" у прикладі для підрозділів 1.1/1.2/2.1 вище — лише ілюстрація формату; для "intro" і "conclusions" завжди бери ТОЧНО числа, вказані в цьому прикладі, — ${introPages} і ${conclPages} відповідно, не змінюй і не перераховуй їх)
 
 Правила:
 - Кожен підрозділ зі зразка — окремий елемент масиву з id виду "N.M" (номер розділу.номер підрозділу за порядком у зразку)
@@ -1224,7 +1228,7 @@ ${sampleBlock}
 - "label" — номер і назва підрозділу (напр. "1.1 Загальна характеристика підприємства (бази практики)")
 - Якщо якийсь розділ зі зразка не має підрозділів — додай один елемент з id рівним номеру розділу (напр. "3", без крапки) і без "sectionTitle"
 - pages розподіли пропорційно між усіма підрозділами/розділами так, щоб їх сума дорівнювала ${main}
-- intro: 2 стор., conclusions: залишок сторінок (мінімум 2)
+- intro: РІВНО ${introPages} стор., conclusions: РІВНО ${conclPages} стор. — фіксовані значення, не "залишок" і не пропорція
 - id "intro"/"conclusions"/"sources" залишати незмінними; для решти використовуй нумерацію зі зразка`;
   }
 
@@ -1255,9 +1259,9 @@ export function buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterial
   const isIndividualTask = /індивідуальн.*завданн/i.test(sec.label || "");
 
   const hint = isIntro
-    ? "Вступ: мета та завдання практики, місце проходження, керівники. Обсяг не більше 2 сторінок."
+    ? `Вступ: мета та завдання практики, місце проходження, керівники. Обсяг не більше ${sec.pages || 2} сторінок.`
     : isConclusions
-    ? "Висновки: підсумки практики, що виконано, набуті компетентності, рекомендації."
+    ? `Висновки: підсумки практики, що виконано, набуті компетентності, рекомендації. Обсяг не більше ${sec.pages || 2} сторінок.`
     : "";
 
   const methodReq = methodInfo

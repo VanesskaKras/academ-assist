@@ -12,7 +12,7 @@ import {
   buildPracticeDiaryPrompt, buildDiaryTemplateAnalysisPrompt,
   buildTemplateAnalysisPrompt, buildPracticeDetailsPrompt,
 } from "./lib/prompts.js";
-import { parseTemplate, isEcon, isTechnical, getEconSections, parsePagesMax, scanFigures, extractNumericFacts, normalizePageDistribution, stripNonContentSections } from "./lib/planUtils.js";
+import { parseTemplate, isEcon, isTechnical, getEconSections, parsePagesMax, scanFigures, extractNumericFacts, normalizePageDistribution, stripNonContentSections, resolvePracticeFixedPages } from "./lib/planUtils.js";
 import { detectSpecialtyPrioritized } from "./lib/academicDefaults.js";
 import {
   CATEGORY_LABELS, PRACTICE_TYPES, getPracticeGuidance, detectPracticeType,
@@ -524,14 +524,20 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
       if (detected && CATEGORY_LABELS[detected]) { setPracticeCategory(detected); info.practiceCategory = detected; }
     }
     // Вид практики: автопідказка, якщо користувач не обрав вручну.
-    // Пріоритет: 1) practiceType з LLM-аналізу шаблону (бачить весь контекст замовлення) →
-    // 2) регулярка по типу/темі/тематиці (вид часто згаданий лише в темі, не в полі "Тип") →
-    // 3) курс як останній фолбек (усередині detectPracticeType).
+    // Пріоритет: 1) practiceType з LLM-аналізу шаблону (бачить весь контекст замовлення — часто
+    // єдине місце, де вид взагалі згаданий, якщо клієнт не завантажив методичку) →
+    // 2) practiceType з методички (клієнт нерідко лише прикріплює методичку й не пише вид
+    // практики в самому замовленні — тоді назва/вступ методички лишається єдиним джерелом) →
+    // 3) регулярка по ВСІХ доступних текстах (розпарсені поля тип/тема/тематика + сирий текст
+    // замовлення й матеріалів клієнта — вид часто згаданий лише десь у вільному тексті) →
+    // 4) курс як останній фолбек (усередині detectPracticeType).
     if (!typeManualRef.current) {
       const validPracticeTypes = PRACTICE_TYPES.map(t => t.key);
       const suggestedType = validPracticeTypes.includes(tpl.practiceType)
         ? tpl.practiceType
-        : detectPracticeType(tpl.course, tpl.type, tpl.topic, tpl.subject);
+        : validPracticeTypes.includes(parsedMethodInfo?.practiceType)
+        ? parsedMethodInfo.practiceType
+        : detectPracticeType(tpl.course, tpl.type, tpl.topic, tpl.subject, practiceText, combinedText);
       if (suggestedType) { setPracticeType(suggestedType); info.practiceType = suggestedType; }
     }
     info.practiceGuidance = getPracticeGuidance(info.practiceCategory, info.practiceType);
@@ -614,14 +620,25 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
       const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || raw);
       if (parsed.sections?.length) parsed.sections = stripNonContentSections(parsed.sections);
       if (parsed.sections?.length) {
+        // Вступ і висновки мають фіксований обсяг (стандартно 2 стор. кожен, якщо в
+        // методичці/умовах клієнта явно не вказано інше) — рахуємо кодом, а не
+        // довіряємо LLM, і виключаємо їх з пропорційного підганяння нижче, щоб той
+        // крок їх не "роздував"/не стискав разом з основними розділами.
+        const { introPages, conclPages } = resolvePracticeFixedPages(info.practiceText, deptGuidanceText);
+        parsed.sections = parsed.sections.map(s =>
+          s.id === "intro" ? { ...s, pages: introPages } : s.id === "conclusions" ? { ...s, pages: conclPages } : s
+        );
         // LLM не завжди точно влучає сумою сторінок у заданий обсяг, особливо коли
         // підрозділів багато (кожен рахується окремо, похибки накопичуються) — підганяємо
         // кодом, щоб "N / target стор." на кроці плану завжди збігалось точно.
         const target = parseInt(info.pages) || 30;
-        const adjustable = parsed.sections.filter(s => s.id !== "sources");
-        const normPages = normalizePageDistribution(adjustable.map(s => s.pages), target, 2);
+        const fixedPages = introPages + conclPages;
+        const adjustable = parsed.sections.filter(s => !["sources", "intro", "conclusions"].includes(s.id));
+        const normPages = normalizePageDistribution(adjustable.map(s => s.pages), target - fixedPages, 2);
         let ni = 0;
-        parsed.sections = parsed.sections.map(s => s.id === "sources" ? s : { ...s, pages: normPages[ni++] });
+        parsed.sections = parsed.sections.map(s =>
+          ["sources", "intro", "conclusions"].includes(s.id) ? s : { ...s, pages: normPages[ni++] }
+        );
         setSections(parsed.sections);
       }
       await saveToFirestore({ info, sections: parsed.sections, stage: "plan", status: "new" });

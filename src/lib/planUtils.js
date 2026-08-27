@@ -242,6 +242,21 @@ export function parsePagesMax(str) {
   return max;
 }
 
+// Явно вказаний клієнтом чи кафедрою обсяг вступу/висновків (у сторінках) для звіту
+// з практики — регексом з вільного тексту (даних практики, вимог кафедри), без
+// виклику ШІ. За відсутності явної вказівки — стандартний обсяг 2 сторінки для
+// кожного (типовий для звітів з практики, на відміну від курсових/дипломних).
+export function resolvePracticeFixedPages(practiceText, deptGuidanceText) {
+  const combined = `${practiceText || ""} ${deptGuidanceText || ""}`;
+  const extract = (keywordRe) => {
+    const m = combined.match(keywordRe);
+    return m ? parseInt(m[1], 10) : null;
+  };
+  const introPages = extract(/вступ[^.\d]{0,20}(\d+)\s*стор/i) || 2;
+  const conclPages = extract(/висновк[^.\d]{0,20}(\d+)\s*стор/i) || 2;
+  return { introPages, conclPages };
+}
+
 export function parseTemplate(text) {
   const g = (re, fb = "") => { const m = text.match(re); return m ? m[1].trim() : fb; };
   return {
