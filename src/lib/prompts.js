@@ -921,6 +921,33 @@ ${itemsBlock}
 - Поверни ТІЛЬКИ JSON-масив (без markdown і пояснень), рівно ${insertions.length} об'єктів`;
 }
 
+// ── Точкова добудова рисунка для речення, яке вже посилається на "Рис. X.Y", але
+// сам рисунок (plantuml-блок/таблиця) відсутній у тексті — findDanglingFigureRefs
+// (planUtils.js) ловить це кодом, ця функція формує точковий запит на добудову,
+// без переписування всього підрозділу (той самий підхід, що й buildCitationInsertPrompt). ──
+export function buildFigureInsertPrompt({ sectionText, dangling, lang }) {
+  const isEnglish = /англ|english/i.test(lang || "");
+  const langLine = isEnglish ? "Write ONLY in English." : `Мова відповіді: ТІЛЬКИ ${lang || "українська"}.`;
+  const itemsBlock = dangling.map((d, i) => `${i}. Речення: "${d.sentence}" (посилається на Рис. ${d.number})`).join("\n");
+  return `${langLine}
+Нижче — текст підрозділу академічної роботи. У ньому є речення, які посилаються на рисунок/схему за номером, але сам рисунок у тексті відсутній (він так і не був намальований). Для кожного такого речення створи PlantUML-діаграму (клас, послідовність, use case, або проста схема процесу/структури — залежно від контексту речення й підрозділу), яка відповідає тому, про що йдеться в реченні.
+
+ТЕКСТ ПІДРОЗДІЛУ:
+${sectionText}
+
+РЕЧЕННЯ БЕЗ РИСУНКА:
+${itemsBlock}
+
+Поверни JSON-масив, РІВНО по одному об'єкту на кожне речення зі списку вище, у тому самому порядку — "index" відповідає його номеру (0, 1, 2...):
+[{"index":0,"feasible":true,"plantuml":"@startuml\\n...\\n@enduml","caption":"Рис. X.Y – короткий підпис"}]
+
+Правила:
+- "plantuml" — валідний PlantUML-код (рядок з екранованими переносами \\n), що починається з @startuml і закінчується @enduml, БЕЗ code fence (без потрійних лапок)
+- "feasible": false, якщо для цього речення діаграму побудувати неможливо чи недоречно (наприклад, йдеться про фотографію обладнання, а не про структуру/процес) — тоді "plantuml" і "caption" постав null
+- "caption" — короткий підпис рисунка з ТИМ САМИМ номером, що вказано в реченні
+- Поверни ТІЛЬКИ JSON-масив (без markdown і пояснень), рівно ${dangling.length} об'єктів`;
+}
+
 // ── Вигадати назви розділів/підрозділів, яких БРАКУЄ в готовій частині роботи клієнта (продовження) ──
 export function buildContinuationPlanPrompt({ topic, subject, type, lang, existingChapterTitles, newChapters, otherRequirements }) {
   const chaptersBlock = newChapters
@@ -1398,7 +1425,7 @@ ${diaryExampleText.slice(0, 40000)}
 Якщо в наданому тексті взагалі не видно жодної чіткої структури щоденника (напр. це нерозбірливий фрагмент без заголовків розділів) — постав всі boolean-поля false, а решту null, замість вигадування.`;
 }
 
-export function buildPracticeDiaryPrompt(info, diaryExampleText, methodInfo, deptGuidanceText, diaryTemplateInfo, clientMaterialsText, reportSections) {
+export function buildPracticeDiaryPrompt(info, diaryExampleText, methodInfo, deptGuidanceText, diaryTemplateInfo, clientMaterialsText, reportSections, reportText) {
   const {
     practiceText = "", language = "Українська", practiceGuidance,
     companyName, individualTask, dateStart, dateEnd, statsPeriod,
@@ -1434,6 +1461,12 @@ export function buildPracticeDiaryPrompt(info, diaryExampleText, methodInfo, dep
   // день чи запис у щоденнику, що це підтверджує.
   const reportSectionsLine = reportSections?.length
     ? `\n\nСТРУКТУРА ЗВІТУ (уже визначена окремо) — переконайся, що для КОЖНОГО з цих пунктів є хоча б один відповідний запис у щоденнику, який показує, що студент над ним працював:\n${reportSections.map(s => `— ${s.label || s}`).join("\n")}`
+    : "";
+  // Уже написаний текст звіту — щоб щоденник не вигадував свої власні цифри, назви сировини,
+  // обладнання чи процесів там, де звіт уже описав їх конкретно (напр. концентрація в одному
+  // розділі і трубопровідна сировина в іншому мають лишатись тими самими фактами в щоденнику).
+  const reportTextLine = reportText?.trim()
+    ? `\n\nТЕКСТ ЗВІТУ (уже написаний) — це джерело фактів для щоденника. Якщо в щоденнику згадуєш ті самі показники, сировину, обладнання чи процеси, що й тут, використовуй ТІ Ж САМІ конкретні значення й назви, не вигадуй інші:\n${reportText.trim().slice(0, 15000)}`
     : "";
 
   // Пріоритет формату таблиці: СТРУКТУРНИЙ аналіз завантаженого зразка (найнадійніший — колонки
@@ -1490,7 +1523,7 @@ export function buildPracticeDiaryPrompt(info, diaryExampleText, methodInfo, dep
 ${practiceText}
 ${periodLine}${statsPeriodLine}
 ${detailsLine ? `\n${detailsLine}` : ""}
-${taskGuidance}${deptGuidanceLine}${clientMaterialsLine}${reportSectionsLine}
+${taskGuidance}${deptGuidanceLine}${clientMaterialsLine}${reportSectionsLine}${reportTextLine}
 ${sampleBlock}
 
 ${dayInstruction}

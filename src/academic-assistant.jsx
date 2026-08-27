@@ -14,7 +14,7 @@ import { playDoneSound } from "./lib/audio.js";
 import { enforceWordCount, trimToPageTarget } from "./lib/wordCount.js";
 import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildExampleWorkReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildIllustrationsPdfPrompt, buildDrawingsDescriptionPrompt, buildClientMaterialsAnalysisPrompt, buildExtractStructurePrompt, buildContinuationPlanPrompt, buildAnnotationPrompt, buildAnnotationRegenPrompt, buildAntiPlagiarismSYS, buildAntiDetectionSYS } from "./lib/prompts.js";
 import { extractReadyWorkStructure, quickParsePlanIds } from "./lib/readyWorkExtract.js";
-import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, getEmpiricalSections, getEconSections, getTechnicalSections, CODE_FILE_EXTENSIONS, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parsePagesMax, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, deriveStructureFromExampleTOC, mergeExampleWorkIntoMethodInfo, getLangLabels, insertBeforeTail, detectRequestedChapterCount, scanFigures } from "./lib/planUtils.js";
+import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, getEmpiricalSections, getEconSections, getTechnicalSections, CODE_FILE_EXTENSIONS, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parsePagesMax, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, deriveStructureFromExampleTOC, mergeExampleWorkIntoMethodInfo, getLangLabels, insertBeforeTail, detectRequestedChapterCount, scanFigures, hasRealFigure } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { getAcademicDefaults, classifyAppendixItem, detectSpecialty, normalizeWorkType } from "./lib/academicDefaults.js";
 import { searchByPhrase, filterSourcesWithGemini, getEconInstitutionalSources, generateAlternatePhrases, paperToCitation, enrichSources } from "./lib/sourcesSearch.js";
@@ -2097,7 +2097,7 @@ ${planSummary}
         const currentChapNum = sec.id.split(".")[0];
         const chapterSecs = sections.filter(s => chapterMainTypes.includes(s.type) && s.id.split(".")[0] === currentChapNum);
         const isLastInChapter = chapterSecs[chapterSecs.length - 1]?.id === sec.id;
-        const hasFigureAlready = chapterSecs.some(s => s.id !== sec.id && scanFigures(contentRef.current[s.id] || "").length > 0);
+        const hasFigureAlready = chapterSecs.some(s => s.id !== sec.id && hasRealFigure(contentRef.current[s.id] || ""));
         if (isLastInChapter && !hasFigureAlready) {
           instruction += `\n\nОБОВ'ЯЗКОВО: жоден інший підрозділ цього розділу ще не містить рисунка — цей підрозділ МАЄ містити хоча б один рисунок (графік із таблиці даних або PlantUML-схема за правилами FIGURES вище), інакше вимога методички "щонайменше один рисунок на розділ" буде порушена.`;
         }

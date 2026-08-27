@@ -8,6 +8,22 @@ function withTimeout(promise, ms = 12000) {
   ]);
 }
 
+async function fetchKroki(source, timeoutMs) {
+  const r = await withTimeout(
+    fetch('https://kroki.io/plantuml/png', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ diagram_source: source }),
+    }),
+    timeoutMs,
+  );
+  if (!r.ok) {
+    const errText = await r.text().catch(() => '');
+    throw new Error(`Kroki ${r.status}: ${errText.slice(0, 300)}`);
+  }
+  return Buffer.from(await r.arrayBuffer());
+}
+
 export default async function handler(req, res) {
   if (req.method === 'OPTIONS') {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -26,25 +42,20 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Missing diagram source' });
   }
 
+  // Одна повторна спроба при тайм-ауті/збої Kroki — рисунок раніше мовчки зникав
+  // через разову затримку сервісу. Перша спроба 12с, друга коротша 6с, разом
+  // укладаємось у maxDuration 20с serverless-функції.
   try {
-    const r = await withTimeout(
-      fetch('https://kroki.io/plantuml/png', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ diagram_source: source }),
-      }),
-    );
-
-    if (!r.ok) {
-      const errText = await r.text().catch(() => '');
-      console.error('Kroki error:', r.status, errText.slice(0, 300));
+    const buf = await fetchKroki(source, 12000);
+    return res.status(200).json({ image: buf.toString('base64') });
+  } catch (e1) {
+    console.error('Kroki attempt 1 failed:', e1.message);
+    try {
+      const buf = await fetchKroki(source, 6000);
+      return res.status(200).json({ image: buf.toString('base64') });
+    } catch (e2) {
+      console.error('Kroki attempt 2 failed:', e2.message);
       return res.status(200).json({ error: 'render_failed' });
     }
-
-    const buf = Buffer.from(await r.arrayBuffer());
-    return res.status(200).json({ image: buf.toString('base64') });
-  } catch (e) {
-    console.error('render-diagram error:', e.message);
-    return res.status(200).json({ error: 'render_failed' });
   }
 }

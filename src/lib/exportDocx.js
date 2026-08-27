@@ -1,4 +1,5 @@
 import { getLangLabels } from "./planUtils.js";
+import { PRACTICE_TYPE_GENITIVE } from "./practiceDefaults.js";
 import {
   Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel,
   TableOfContents, Table, TableRow, TableCell, WidthType, BorderStyle,
@@ -1066,6 +1067,19 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     s = s.replace(/(?<![/\d])20\d{2}(?![/\d])/g, currentYear);
     for (const [token, value] of Object.entries(practiceFieldMap)) {
       if (s.includes(token)) s = s.split(token).join(value || "___________________");
+    }
+    // Страховка, якщо аналіз зразка щоденника/методички не розпізнав фразу "вид практики" і не
+    // підставив токен [ВИД_ПРАКТИКИ] — тоді в титулці лишається буквальний вид практики зі
+    // зразка (напр. "переддипломної"), який може не збігатись із фактичним info.practiceType
+    // (напр. коли зразок узятий з іншого курсу/етапу навчання). Виправляємо будь-яку іншу форму
+    // виду практики поруч зі словом "практики" на правильну.
+    const correctGenitive = info?.practiceType ? PRACTICE_TYPE_GENITIVE[info.practiceType] : null;
+    if (correctGenitive) {
+      const wrongForms = Object.values(PRACTICE_TYPE_GENITIVE).filter(f => f !== correctGenitive);
+      if (wrongForms.length) {
+        const wrongRe = new RegExp(`(?:${wrongForms.join("|")})(\\s+практики)`, "gi");
+        s = s.replace(wrongRe, `${correctGenitive}$1`);
+      }
     }
     return s;
   };

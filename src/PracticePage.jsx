@@ -10,9 +10,10 @@ import {
   buildMethodologyReadingPrompt,
   buildPracticePlanPrompt, buildPracticeWritingPrompt,
   buildPracticeDiaryPrompt, buildDiaryTemplateAnalysisPrompt,
-  buildTemplateAnalysisPrompt, buildPracticeDetailsPrompt,
+  buildTemplateAnalysisPrompt, buildPracticeDetailsPrompt, buildFigureInsertPrompt,
 } from "./lib/prompts.js";
-import { parseTemplate, isEcon, isTechnical, getEconSections, parsePagesMax, scanFigures, extractNumericFacts, normalizePageDistribution, stripNonContentSections, resolvePracticeFixedPages } from "./lib/planUtils.js";
+import { parseTemplate, isEcon, isTechnical, getEconSections, parsePagesMax, hasRealFigure, findDanglingFigureRefs, extractNumericFacts, normalizePageDistribution, stripNonContentSections, resolvePracticeFixedPages, getLangLabels } from "./lib/planUtils.js";
+import { locateFragment } from "./lib/textFragmentLocate.js";
 import { detectSpecialtyPrioritized } from "./lib/academicDefaults.js";
 import {
   CATEGORY_LABELS, PRACTICE_TYPES, getPracticeGuidance, detectPracticeType,
@@ -1216,7 +1217,19 @@ ${secBlock}
         }
       }
 
-      // 5в. Фінальна перевірка сумарного обсягу — так само, як у doRemapCitations великих
+      // 5в. Рисунки, на які текст посилається словами ("...показано на Рис. X.Y"), але сам
+      // рисунок (plantuml-блок/таблиця) так і не з'явився в тексті — fixDanglingFigures
+      // (findDanglingFigureRefs кодом ловить "голі" посилання) пробує домалювати кожен
+      // точково, а якщо не вдалось — прибирає саме речення-посилання.
+      setLoadMsg("Перевіряю рисунки...");
+      await Promise.all(mainSecs.map(async sec => {
+        const text = nextContent[sec.id];
+        if (!text) return;
+        const fixed = await fixDanglingFigures(text, info.language);
+        if (fixed !== text) nextContent[sec.id] = fixed;
+      }));
+
+      // 5г. Фінальна перевірка сумарного обсягу — так само, як у doRemapCitations великих
       // робіт (academic-assistant.jsx): enforceWordCount тримає в межах кожен розділ окремо
       // (з допуском), але допуски на кількох розділах плюс довставлені цитати з кроку 5б
       // можуть у сумі дати перевищення заданого обсягу — обрізаємо найбільші розділи.
@@ -1261,6 +1274,50 @@ ${secBlock}
     }
   };
 
+  // ── Фінальна перевірка "рисунок без картинки": ШІ під час генерації розділу могла
+  // написати "...показано на Рис. X.Y", так і не вивівши сам рисунок (plantuml-блок
+  // чи таблицю з підписом) — findDanglingFigureRefs (planUtils.js) ловить такі "голі"
+  // згадки кодом. Для кожної — одна точкова спроба домалювати саме цей рисунок; якщо
+  // ШІ визнала його недоречним (feasible:false) чи відповідь не розпарсилась —
+  // прибираємо саме речення-посилання, щоб звіт не посилався на неіснуючу схему.
+  const fixDanglingFigures = async (text, lang) => {
+    const figWord = getLangLabels(lang).figWord;
+    const dangling = findDanglingFigureRefs(text, figWord);
+    if (!dangling.length) return text;
+    let raw;
+    try {
+      raw = await callClaude(
+        [{ role: "user", content: buildFigureInsertPrompt({ sectionText: text, dangling, lang }) }],
+        null, "Ти — редактор академічного тексту. Повертай лише JSON, без пояснень.", 4000,
+      );
+    } catch (e) {
+      console.error("fixDanglingFigures error:", e.message);
+      raw = null;
+    }
+    let parsed = [];
+    try {
+      const m = raw?.match(/\[[\s\S]*\]/);
+      parsed = m ? JSON.parse(m[0]) : [];
+    } catch { /* нижче — фолбек: прибираємо всі речення без рисунка */ }
+
+    let fixed = text;
+    dangling.forEach((d, i) => {
+      const loc = locateFragment(fixed, d.sentence, null);
+      if (!loc) return;
+      const item = parsed.find(p => p.index === i);
+      if (item?.feasible && item?.plantuml) {
+        const caption = item.caption?.trim() || `${figWord} ${d.number}`;
+        const block = `\n\n\`\`\`plantuml\n${item.plantuml.trim()}\n\`\`\`\n${caption}`;
+        fixed = fixed.slice(0, loc.end) + block + fixed.slice(loc.end);
+      } else {
+        const before = fixed.slice(0, loc.start).replace(/\s+$/, "");
+        const after = fixed.slice(loc.end).replace(/^\s+/, "");
+        fixed = before + (before && after ? " " : "") + after;
+      }
+    });
+    return fixed;
+  };
+
   // ── Написання: генерація всіх секцій ───────────────────────────────────────
   const doWrite = async (startIdx = 0) => {
     const writableSecs = sections.filter(s => s.id !== "sources");
@@ -1290,7 +1347,7 @@ ${secBlock}
         const currentChapNum = sec.id.split(".")[0];
         const chapterSecs = writableSecs.filter(s => s.id !== "intro" && s.id !== "conclusions" && s.id.split(".")[0] === currentChapNum);
         const isLastInChapter = chapterSecs[chapterSecs.length - 1]?.id === sec.id;
-        const hasFigureAlready = chapterSecs.some(s => s.id !== sec.id && scanFigures(finalContent[s.id] || "").length > 0);
+        const hasFigureAlready = chapterSecs.some(s => s.id !== sec.id && hasRealFigure(finalContent[s.id] || ""));
         if (isLastInChapter && !hasFigureAlready) {
           instruction += `\n\nОБОВ'ЯЗКОВО: жоден інший підрозділ цього розділу ще не містить рисунка/схеми — цей підрозділ МАЄ містити хоча б один рисунок (PlantUML-схема за правилами FIGURES вище, або графік із таблиці даних), інакше вимога методички щодо схем буде порушена. Методичка явно вимагає: ${methodInfo.requiredFigures.join("; ")}.`;
         }
@@ -1357,6 +1414,7 @@ ${secBlock}
       });
       text = await insertMissingSectionCitations(secId, text, language);
       text = capCitationRepeats(text);
+      text = await fixDanglingFigures(text, language);
       setContent(prev => {
         const next = { ...prev, [secId]: text };
         saveToFirestore({ content: next });
@@ -1372,7 +1430,9 @@ ${secBlock}
     setRunning(true); runningRef.current = true; setLoadMsg("Генерую щоденник практики...");
     const info = getPracticeInfo();
     try {
-      const prompt = buildPracticeDiaryPrompt(info, diaryExampleText, methodInfo, deptGuidanceText, diaryTemplateInfo, clientMaterialsSummary?.rawText, sections?.filter(s => s.id !== "sources"));
+      const writableSecs = sections?.filter(s => s.id !== "sources") || [];
+      const reportText = writableSecs.map(s => content[s.id]).filter(Boolean).join("\n\n");
+      const prompt = buildPracticeDiaryPrompt(info, diaryExampleText, methodInfo, deptGuidanceText, diaryTemplateInfo, clientMaterialsSummary?.rawText, writableSecs, reportText);
       const text = await callClaude([{ role: "user", content: prompt }], null, buildSYS(language, methodInfo), 8000);
       setDiaryContent(text);
       await saveToFirestore({ diaryContent: text, stage: "diary", status: "writing" });
@@ -1405,7 +1465,7 @@ ${secBlock}
           topic: info.topic, type: info.type, language: info.language, pages: info.pages, orderNumber: info.orderNumber,
           studentName: info.studentName, studentGroup: info.studentGroup, course: info.course,
           companyName: info.companyName, supervisorCompany: info.supervisorCompany, supervisorUniversity: info.supervisorUniversity,
-          dateStart: info.dateStart, dateEnd: info.dateEnd,
+          dateStart: info.dateStart, dateEnd: info.dateEnd, practiceType: info.practiceType,
         },
         displayOrder,
         titlePage: null,
@@ -1444,7 +1504,7 @@ ${secBlock}
           companyName: info.companyName, supervisorCompany: info.supervisorCompany, supervisorUniversity: info.supervisorUniversity,
           dateStart: info.dateStart, dateEnd: info.dateEnd,
           faculty: info.faculty, department: info.department, degreeLevel: info.degreeLevel,
-          specialty: info.specialty, knowledgeField: info.knowledgeField, practiceLabel,
+          specialty: info.specialty, knowledgeField: info.knowledgeField, practiceLabel, practiceType: info.practiceType,
         },
         displayOrder: [{ id: "diary", label: "", pages: 0 }],
         titlePage: null,

@@ -76,6 +76,77 @@ export function scanFigures(text) {
   return results.filter(r => { if (seen.has(r.label.toLowerCase())) return false; seen.add(r.label.toLowerCase()); return true; });
 }
 
+// Чи є в тексті розділу РЕАЛЬНО намальований рисунок (plantuml-блок або таблиця
+// даних, одразу за якою йде підпис) — на відміну від scanFigures, яка ловить будь-
+// яку словесну згадку "Рис. X" навіть без самого рисунка. Потрібна окремо для
+// перевірки "чи розділ уже має рисунок" (mandatoryFigureNote у PracticePage.jsx і
+// academic-assistant.jsx) — інакше підрозділ, що лише згадав рисунок словами,
+// хибно "закриває" вимогу методички для решти розділу.
+export function hasRealFigure(text) {
+  if (!text) return false;
+  if (/^\s*```\s*plantuml\s*$/im.test(text)) return true;
+  const lines = text.split("\n");
+  const FIG_CAP_RE = /^(рис(?:унок)?\.?|fig(?:ure)?\.?|rys\.?|abb\.?|obr\.?)\s*\d/i;
+  let i = 0;
+  while (i < lines.length) {
+    if (/^\s*\|/.test(lines[i])) {
+      let j = i;
+      while (j < lines.length && /^\s*\|/.test(lines[j])) j++;
+      let k = j;
+      while (k < lines.length && !lines[k].trim()) k++;
+      if (k < lines.length && FIG_CAP_RE.test(lines[k].trim())) return true;
+      i = j;
+      continue;
+    }
+    i++;
+  }
+  return false;
+}
+
+// Знаходить речення в тексті, які посилаються на рисунок за номером ("...показано
+// на Рис. X.Y"), але для цього номера немає реального рисунка (plantuml-блоку чи
+// таблиці з підписом) — тобто ШІ написала посилання, так і не намалювавши сам
+// рисунок. Повертає {number, sentence} для точкової фінальної добудови/прибирання
+// (fixDanglingFigures у PracticePage.jsx).
+export function findDanglingFigureRefs(text, figWord) {
+  if (!text) return [];
+  const fwEsc = figWord.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const CAP_RE = new RegExp(`^\\s*${fwEsc}\\s*(\\d+(?:\\.\\d+)?)`, "i");
+  const REF_RE = new RegExp(`${fwEsc}\\s*(\\d+(?:\\.\\d+)?)`, "gi");
+
+  const lines = text.split("\n");
+  const resolvedNums = new Set();
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].trim().match(CAP_RE);
+    if (!m) continue;
+    let j = i - 1;
+    while (j >= 0 && !lines[j].trim()) j--;
+    const prevTrimmed = j >= 0 ? lines[j].trim() : "";
+    if (prevTrimmed === "```" || /^\s*\|/.test(lines[j] || "")) resolvedNums.add(m[1]);
+  }
+
+  // Межі речення шукаємо вручну (а не наївним split за крапками) — сам номер
+  // рисунка вже містить крапку (X.Y), тож розбиття тексту на речення "по крапці"
+  // ламало б збіг рівно на цьому місці. Замість цього йдемо від знайденого
+  // посилання назад/вперед до найближчого справжнього кінця речення.
+  const out = [];
+  const seen = new Set();
+  const globalRefRe = new RegExp(REF_RE.source, "gi");
+  let m;
+  while ((m = globalRefRe.exec(text))) {
+    const num = m[1];
+    if (resolvedNums.has(num) || seen.has(num)) continue;
+    seen.add(num);
+    let start = m.index;
+    while (start > 0 && !".!?\n".includes(text[start - 1])) start--;
+    let end = m.index + m[0].length;
+    while (end < text.length && !".!?\n".includes(text[end])) end++;
+    if (end < text.length) end++;
+    out.push({ number: num, sentence: text.slice(start, end).trim() });
+  }
+  return out;
+}
+
 // Витягує речення/фрагменти з конкретними числовими показниками (%, °C, градуси) з уже
 // написаного тексту — для передачі як "вже зафіксовані цифри" в наступні розділи звіту з
 // практики, щоб той самий показник (напр. концентрація сухих речовин, температура
