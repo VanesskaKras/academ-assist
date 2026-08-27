@@ -123,12 +123,21 @@ function scaleDrawingImage(width, height) {
   return scaleToFit(width, height, DRAWING_MAX_W_PX, DRAWING_MAX_H_PX);
 }
 
+// Примусово робить усі PlantUML-схеми чорно-білими (без сірих/кольорових
+// заливок за замовчуванням), незалежно від того, що згенерував ШІ.
+const MONOCHROME_SKINPARAMS = "skinparam monochrome true\nskinparam shadowing false";
+
+function withMonochromeSkin(source) {
+  if (/skinparam\s+monochrome/i.test(source)) return source;
+  return source.replace(/^(\s*@startuml[^\n]*\n)/i, `$1${MONOCHROME_SKINPARAMS}\n`);
+}
+
 export async function renderPlantUmlToPng(source) {
   try {
     const res = await fetch("/api/render-diagram", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ source }),
+      body: JSON.stringify({ source: withMonochromeSkin(source) }),
     });
     const data = await res.json();
     if (!data?.image) return null;
