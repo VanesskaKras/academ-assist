@@ -11,10 +11,10 @@ import { exportToPptxFile } from "./lib/exportPptx.js";
 import { extractPdfPageImages } from "./lib/pdfImages.js";
 import { callClaude, callGemini, MODEL, MODEL_FAST, resetGenerationCost } from "./lib/api.js";
 import { playDoneSound } from "./lib/audio.js";
-import { enforceWordCount, trimToPageTarget } from "./lib/wordCount.js";
+import { enforceWordCount } from "./lib/wordCount.js";
 import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildExampleWorkReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildIllustrationsPdfPrompt, buildDrawingsDescriptionPrompt, buildClientMaterialsAnalysisPrompt, buildExtractStructurePrompt, buildContinuationPlanPrompt, buildAnnotationPrompt, buildAnnotationRegenPrompt, buildAntiPlagiarismSYS, buildAntiDetectionSYS, buildClientPlanEditsPrompt } from "./lib/prompts.js";
 import { extractReadyWorkStructure, quickParsePlanIds } from "./lib/readyWorkExtract.js";
-import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, getEmpiricalSections, getEconSections, getTechnicalSections, CODE_FILE_EXTENSIONS, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parsePagesMax, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, deriveStructureFromExampleTOC, mergeExampleWorkIntoMethodInfo, getLangLabels, insertBeforeTail, detectRequestedChapterCount, scanFigures, hasRealFigure, renumberSections, rebuildWithChapterConclusions, applyPlanEditOps, describePlanEditOp } from "./lib/planUtils.js";
+import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, getEmpiricalSections, getEconSections, getTechnicalSections, CODE_FILE_EXTENSIONS, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, deriveStructureFromExampleTOC, mergeExampleWorkIntoMethodInfo, getLangLabels, insertBeforeTail, detectRequestedChapterCount, scanFigures, hasRealFigure, renumberSections, rebuildWithChapterConclusions, applyPlanEditOps, describePlanEditOp } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { getAcademicDefaults, classifyAppendixItem, detectSpecialty, normalizeWorkType } from "./lib/academicDefaults.js";
 import { searchByPhrase, filterSourcesWithGemini, getEconInstitutionalSources, generateAlternatePhrases, paperToCitation, enrichSources } from "./lib/sourcesSearch.js";
@@ -4449,21 +4449,7 @@ ${secBlocks}
     const newRefList = (fmtResult || allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n"))
       .split("\n").filter(Boolean);
 
-    // ── 10. Фінальна перевірка сумарного обсягу — ТІЛЬКИ ТУТ, коли текст уже
-    // остаточний (довставлені цитати осиротілих джерел і сформований список
-    // джерел вище вже враховані). enforceWordCount тримає в межах кожен
-    // підрозділ окремо (з допуском), але ці допуски на десятках підрозділів, а
-    // ще й довставлені цитати з кроку 7б, можуть у сумі дати перевищення межі —
-    // обрізаємо найбільші основні підрозділи, якщо фактичний обсяг вийшов за неї.
     if (!ctrl.signal.aborted) {
-      const maxTargetPages = parsePagesMax(info?.pages);
-      if (maxTargetPages) {
-        const trimmed = trimToPageTarget({
-          sections, content: newContent, maxPages: maxTargetPages,
-          formatting: methodInfo?.formatting, lang: info?.language, onProgress: setLoadMsg,
-        });
-        Object.assign(newContent, trimmed);
-      }
       // Підставляємо у "Структура роботи" фактичну (пораховану з готового тексту) к-сть
       // сторінок замість запланованої — токен __TOTAL_PAGES__ ставить AI під час написання вступу.
       const introSec = sections.find(s => s.type === "intro");
