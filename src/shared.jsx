@@ -73,8 +73,8 @@ export function parsePagesAvg(str) {
   const nums = s.match(/\d+/g);
   if (!nums) return 20;
   const avg = nums.length === 1 ? parseInt(nums[0]) : Math.round(nums.reduce((a, b) => a + parseInt(b), 0) / nums.length);
-  // Якщо поруч із числом вказано "слів"/"слова"/"words" — це обсяг у словах, конвертуємо в сторінки (~270 слів/стор.)
-  if (/слів|слова|слово|words?\b/i.test(s)) return Math.max(1, Math.round(avg / 270));
+  // Якщо поруч із числом вказано "слів"/"слова"/"words" — це обсяг у словах, конвертуємо в сторінки (~230 слів/стор.)
+  if (/слів|слова|слово|words?\b/i.test(s)) return Math.max(1, Math.round(avg / 230));
   return avg;
 }
 

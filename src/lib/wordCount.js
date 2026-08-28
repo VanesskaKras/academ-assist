@@ -11,12 +11,26 @@ export function countWords(text) {
 // Кінець речення: крапка/!/?/… (можливо перед закриваючою лапкою/дужкою),
 // після якого йде пробіл або кінець тексту.
 const SENTENCE_END_RE = /[.!?…]+[»"'）)\]]*(?=\s|$)/g;
+const SENT_SPLIT_RE = /[\s\S]+?[.!?…]+[»"'）)\]]*(?:\s+|$)|[\s\S]+$/g;
+
+// Якщо в тексті непарна кількість ``` — останній fence не закрився (генерація
+// обірвалась посеред коду plantuml-діаграми через ліміт токенів). У такому разі
+// прибираємо весь незавершений блок від його відкриваючого маркера й далі: код
+// діаграми часто містить крапки/знаки оклику (в підписах стрілок на кшталт
+// "Alice -> Bob: Готово."), тож "останнє речення" всередині нього — не справжня
+// межа речення, а випадковий збіг.
+function stripUnterminatedFence(text) {
+  const fences = [...text.matchAll(/```/g)];
+  if (fences.length % 2 !== 1) return text;
+  const lastOpenIdx = fences[fences.length - 1].index;
+  return text.slice(0, lastOpenIdx).replace(/\s+$/, "");
+}
 
 // Відрізає незавершений "хвіст" в кінці тексту (обрив ШІ посеред речення
 // через ліміт токенів) — повертає текст по останню знайдену межу речення.
 // Якщо в тексті взагалі немає завершеного речення - повертає як є (нема куди різати).
 export function cutToLastSentence(text) {
-  const trimmed = (text || "").replace(/\s+$/, "");
+  const trimmed = stripUnterminatedFence((text || "").replace(/\s+$/, ""));
   let lastEnd = -1;
   SENTENCE_END_RE.lastIndex = 0;
   let m;
@@ -28,7 +42,9 @@ export function cutToLastSentence(text) {
 }
 
 function endsWithSentence(text) {
-  const trimmed = (text || "").replace(/\s+$/, "");
+  const raw = (text || "").replace(/\s+$/, "");
+  const trimmed = stripUnterminatedFence(raw);
+  if (trimmed !== raw) return false; // незавершений fence - точно не коректний кінець
   if (!trimmed) return true;
   let lastEnd = -1;
   SENTENCE_END_RE.lastIndex = 0;
@@ -37,11 +53,80 @@ function endsWithSentence(text) {
   return lastEnd === trimmed.length;
 }
 
+// Знаходить у тексті "неподільні" блоки — plantuml-fence (```plantuml ... ```) і
+// markdown-таблиці, кожен разом з рядком підпису одразу після (якщо є) — щоб
+// скорочення тексту (нижче) ніколи не різало fence чи таблицю навпіл: раніше
+// наївне розбиття "по реченнях" не знало про ці блоки, і межа скорочення могла
+// випасти всередині коду діаграми (де теж трапляються крапки/знаки оклику),
+// лишаючи fence незакритим — рисунок після цього або не рендерився, або
+// парсер "з'їдав" підпис і текст після нього як нібито ще код діаграми.
+function findAtomicBlocks(text) {
+  const blocks = [];
+  const FENCE_RE = /```[a-z]*\n[\s\S]*?```\n?/gi;
+  let m;
+  while ((m = FENCE_RE.exec(text))) {
+    let end = m.index + m[0].length;
+    const capMatch = /^[^\n]+\n?/.exec(text.slice(end));
+    if (capMatch && capMatch[0].trim()) end += capMatch[0].length;
+    blocks.push({ start: m.index, end });
+  }
+
+  const lines = text.split("\n");
+  const lineStarts = [];
+  { let pos = 0; for (const l of lines) { lineStarts.push(pos); pos += l.length + 1; } }
+  let li = 0;
+  while (li < lines.length) {
+    if (/^\s*\|/.test(lines[li])) {
+      const startLine = li;
+      while (li < lines.length && /^\s*\|/.test(lines[li])) li++;
+      const blockStart = lineStarts[startLine];
+      let blockEnd = li < lines.length ? lineStarts[li] : text.length;
+      if (li < lines.length && lines[li].trim()) {
+        blockEnd = (li + 1 < lines.length) ? lineStarts[li + 1] : text.length;
+      }
+      if (!blocks.some(b => blockStart < b.end && blockEnd > b.start)) {
+        blocks.push({ start: blockStart, end: blockEnd });
+      }
+    } else {
+      li++;
+    }
+  }
+
+  blocks.sort((a, b) => a.start - b.start);
+  const merged = [];
+  for (const b of blocks) {
+    if (merged.length && b.start <= merged[merged.length - 1].end) {
+      merged[merged.length - 1].end = Math.max(merged[merged.length - 1].end, b.end);
+    } else {
+      merged.push({ ...b });
+    }
+  }
+  return merged;
+}
+
+// Розбиває текст на одиниці для скорочення: звичайна проза — по реченнях (можна
+// різати між ними), а plantuml-блоки й таблиці (findAtomicBlocks) — суцільним
+// неподільним шматком кожен, щоб їх ніколи не різало навпіл.
+function splitIntoUnits(text) {
+  const blocks = findAtomicBlocks(text);
+  const units = [];
+  let pos = 0;
+  for (const b of blocks) {
+    if (b.start > pos) units.push(...(text.slice(pos, b.start).match(SENT_SPLIT_RE) || []));
+    units.push(text.slice(b.start, b.end));
+    pos = b.end;
+  }
+  if (pos < text.length) units.push(...(text.slice(pos).match(SENT_SPLIT_RE) || []));
+  return units.filter(Boolean);
+}
+
 // Детерміновано скорочує текст до приблизно targetWords слів, набираючи цілі
-// речення по порядку і зупиняючись, щойно ціль досягнута - завжди по межі
-// речення, ніколи посеред слова.
+// речення (або цілі fence/table-блоки — splitIntoUnits) по порядку і зупиняючись,
+// щойно ціль досягнута - завжди по межі речення чи блоку, ніколи посеред слова
+// чи посеред коду діаграми.
 export function trimToWordTarget(text, targetWords) {
-  const sentences = text.match(/[\s\S]+?[.!?…]+[»"'）)\]]*(?:\s+|$)|[\s\S]+$/g) || [text];
+  const cleaned = stripUnterminatedFence(text);
+  const sentences = splitIntoUnits(cleaned);
   let result = "";
   let count = 0;
   for (const sentence of sentences) {
@@ -51,7 +136,7 @@ export function trimToWordTarget(text, targetWords) {
     count += w;
     if (count >= targetWords) break;
   }
-  return (result.trim() || text.trim());
+  return (result.trim() || cleaned.trim());
 }
 
 export async function enforceWordCount({ text, targetWords, label, callClaude, sys, signal, onProgress, clean, cacheOpts }) {
@@ -110,9 +195,9 @@ export function trimToPageTarget({ sections, content, maxPages, formatting, lang
   const isEligible = (s) => (s.type ? eligibleTypes.has(s.type) : !fixedIds.has(s.id));
 
   const updated = { ...content };
-  // Рахуємо не приблизно "слова/270", а через реальну розкладку сторінки (pageLayout.js) —
+  // Рахуємо не приблизно "слова/230", а через реальну розкладку сторінки (pageLayout.js) —
   // враховує ширину сторінки, шрифт, таблиці, рисунки/схеми й посторінкові виноски, які
-  // "слова/270" бачить як кілька слів, хоча реально вони займають значно більше місця.
+  // "слова/230" бачить як кілька слів, хоча реально вони займають значно більше місця.
   const pagesOf = (id) => estimateRealPages(updated[id] || "", formatting, lang);
 
   const totalPages = sections.reduce((sum, s) => sum + pagesOf(s.id), 0);

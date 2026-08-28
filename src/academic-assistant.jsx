@@ -1857,7 +1857,7 @@ IMPORTANT: use already written sections (in context) for exact formulation of me
       instruction = `Напиши ВИСНОВКИ для ${d.type} на тему "${d.topic}".
 ${conclReq ? `ВИМОГИ МЕТОДИЧКИ: ${conclReq}\n` : ""}${commentAnalysis?.textStructureHints ? `ВИМОГИ КЛІЄНТА ДО СТРУКТУРИ (ОБОВ'ЯЗКОВО): ${commentAnalysis.textStructureHints}\n` : ""}
 ПРАВИЛА:
-- Обсяг: приблизно ${(sec.pages || 2) * 270} слів, ±10% (~${sec.pages} стор.).
+- Обсяг: приблизно ${(sec.pages || 2) * 230} слів, ±10% (~${sec.pages} стор.).
 - Перший абзац — загальний підсумок мети і що вдалось досягти
 - Далі — рівно ${conclTasksProfile.count} абзаців, по одному на кожне завдання дослідження, сформульоване у вступі (текст вступу є в контексті) — у тому самому порядку. Якщо завдання у вступі поєднувало кілька підрозділів плану — зведи їхні конкретні результати в одному абзаці; якщо завдання було розбите з одного підрозділу — розподіли результати на відповідну кількість абзаців
 - Кожен такий абзац = конкретний результат, що відповідає своєму завданню
@@ -2079,7 +2079,7 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ ДО ЦЬОГО РОЗДІЛУ: $
 ПЛАН РОБОТИ (для розуміння структури та уникнення повторів):
 ${planSummary}
 
-Обсяг: приблизно ${Math.round((sec.pages || 1) * 270)} слів, ±10% (~${sec.pages} стор.).
+Обсяг: приблизно ${Math.round((sec.pages || 1) * 230)} слів, ±10% (~${sec.pages} стор.).
 Не обривай текст. Завершуй підсумковим абзацом. ${citNote} Без жирного.
 ЗАБОРОНЕНО вставляти будь-які внутрішні підназви, заголовки абзаців або окремі рядки-мітки ("Загальна картина", "Результати аналізу" тощо). Кожен рядок тексту — повне речення, рядок таблиці або підпис до таблиці/рисунка.
 Абзаци мають різнитись за довжиною: чергуй короткі (2-3 речення) з довшими (5-7 речень).`;
@@ -2134,7 +2134,7 @@ ${planSummary}
       .replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2")
       .replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2");
     // Ціль в словах для перевірки фактичного обсягу після генерації (окремо від тексту промпту)
-    const targetWords = sec.type === "chapter_conclusion" ? 135 : Math.round((sec.pages || 1) * 270);
+    const targetWords = sec.type === "chapter_conclusion" ? 115 : Math.round((sec.pages || 1) * 230);
     try {
       const raw = await callClaude(buildMessages(instruction), ctrl.signal, buildSYS(lang, methodInfo, normalizeWorkType(d.type, d.course)), sectionMaxTokens, (s) => setLoadMsg(`Генерую: ${sec.label}... зачекайте ${s}с`), undefined, genOpts);
       // Видаляємо довге тире на всякий випадок (модель іноді ігнорує заборону)
@@ -3331,7 +3331,7 @@ ${slideSpecs.join("\n\n")}
         const text = textPart.trim();
         if (!text) continue;
         const words = text.split(/\s+/).length;
-        const pages = Math.max(1, Math.round(words / 270));
+        const pages = Math.max(1, Math.round(words / 230));
         extractedSecs.push({ id, label: title?.trim() || id, ...(chapterTitle?.trim() ? { sectionTitle: chapterTitle.trim() } : {}), pages, type: type || "theory" });
         extractedContent[id] = text;
         extractedIds.push(id);
@@ -4470,7 +4470,7 @@ ${secBlocks}
       if (introSec && newContent[introSec.id]?.includes("__TOTAL_PAGES__")) {
         const totalWords = sections
           .reduce((sum, s) => sum + (newContent[s.id] || "").trim().split(/\s+/).filter(Boolean).length, 0);
-        const actualPages = Math.max(1, Math.round(totalWords / 270));
+        const actualPages = Math.max(1, Math.round(totalWords / 230));
         newContent[introSec.id] = newContent[introSec.id].replaceAll("__TOTAL_PAGES__", String(actualPages));
       }
     }

@@ -236,7 +236,7 @@ export function extractReadyWorkStructure({ documentText, lang = "Українс
     if (!rawText) return;
 
     const words = rawText.split(/\s+/).filter(Boolean).length;
-    const pages = Math.max(1, Math.round(words / 270));
+    const pages = Math.max(1, Math.round(words / 230));
     const { text, sources } = localizeCitations(rawText, bibliography);
 
     let type = "intro";

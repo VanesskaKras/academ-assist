@@ -106,43 +106,88 @@ export function hasRealFigure(text) {
 // Знаходить речення в тексті, які посилаються на рисунок за номером ("...показано
 // на Рис. X.Y"), але для цього номера немає реального рисунка (plantuml-блоку чи
 // таблиці з підписом) — тобто ШІ написала посилання, так і не намалювавши сам
-// рисунок. Повертає {number, sentence} для точкової фінальної добудови/прибирання
-// (fixDanglingFigures у PracticePage.jsx).
+// рисунок. Повертає {number, sentence, kind:"missing"} для точкової фінальної
+// добудови/прибирання (fixDanglingFigures у PracticePage.jsx).
+//
+// Окремо ловить і другий випадок: рисунок з таким номером У ТЕКСТІ Є, але стоїть
+// задалеко від речення, яке на нього посилається (типово — ШІ згадала "Рис. X.Y"
+// на початку абзацу, а саму схему домалювала аж у кінці підрозділу). Раніше такий
+// рисунок вважався "закритим" лише за фактом існування десь у тексті, тож і
+// опинявся систематично в кінці. Такі елементи повертаються з kind:"misplaced" і
+// межами свого блоку (blockStart/blockEnd) — fixDanglingFigures переносить сам
+// блок ближче до посилання кодом, без повторного виклику ШІ.
 export function findDanglingFigureRefs(text, figWord) {
   if (!text) return [];
   const fwEsc = figWord.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const CAP_RE = new RegExp(`^\\s*${fwEsc}\\s*(\\d+(?:\\.\\d+)?)`, "i");
   const REF_RE = new RegExp(`${fwEsc}\\s*(\\d+(?:\\.\\d+)?)`, "gi");
+  const FENCE_OPEN_RE = /^\s*```\s*plantuml\s*$/i;
 
   const lines = text.split("\n");
-  const resolvedNums = new Set();
+  const lineStarts = [];
+  { let pos = 0; for (const l of lines) { lineStarts.push(pos); pos += l.length + 1; } }
+
+  // Для кожного номера — межі його ПЕРШОГО реального блоку в тексті (fence чи
+  // таблиця + підпис одразу після). Перенесення (kind:"misplaced") робимо лише
+  // для plantuml-блоків: межі fence однозначні й переносяться безпечно, а межі
+  // таблиці з даними прив'язані до сусіднього тексту сильніше — там ризикованіше.
+  const resolvedBlocks = new Map();
   for (let i = 0; i < lines.length; i++) {
     const m = lines[i].trim().match(CAP_RE);
     if (!m) continue;
     let j = i - 1;
     while (j >= 0 && !lines[j].trim()) j--;
     const prevTrimmed = j >= 0 ? lines[j].trim() : "";
-    if (prevTrimmed === "```" || /^\s*\|/.test(lines[j] || "")) resolvedNums.add(m[1]);
+    const isFenceClose = prevTrimmed === "```";
+    const isTableRow = /^\s*\|/.test(lines[j] || "");
+    if (!isFenceClose && !isTableRow) continue;
+    const num = m[1];
+    if (resolvedBlocks.has(num)) continue; // лишаємо перший знайдений блок
+    const capLineEnd = lineStarts[i] + lines[i].length + (i < lines.length - 1 ? 1 : 0);
+    let blockStart;
+    if (isFenceClose) {
+      let k = j;
+      while (k >= 0 && !FENCE_OPEN_RE.test(lines[k])) k--;
+      blockStart = k >= 0 ? lineStarts[k] : lineStarts[j];
+    } else {
+      let k = j;
+      while (k >= 0 && /^\s*\|/.test(lines[k])) k--;
+      blockStart = lineStarts[k + 1];
+    }
+    resolvedBlocks.set(num, { blockStart, blockEnd: capLineEnd, isFence: isFenceClose });
   }
 
   // Межі речення шукаємо вручну (а не наївним split за крапками) — сам номер
   // рисунка вже містить крапку (X.Y), тож розбиття тексту на речення "по крапці"
   // ламало б збіг рівно на цьому місці. Замість цього йдемо від знайденого
   // посилання назад/вперед до найближчого справжнього кінця речення.
+  const MAX_NEARBY_DIST = 600; // символів між кінцем речення-посилання й початком блоку
   const out = [];
   const seen = new Set();
   const globalRefRe = new RegExp(REF_RE.source, "gi");
   let m;
   while ((m = globalRefRe.exec(text))) {
     const num = m[1];
-    if (resolvedNums.has(num) || seen.has(num)) continue;
+    if (seen.has(num)) continue;
     seen.add(num);
     let start = m.index;
     while (start > 0 && !".!?\n".includes(text[start - 1])) start--;
     let end = m.index + m[0].length;
     while (end < text.length && !".!?\n".includes(text[end])) end++;
     if (end < text.length) end++;
-    out.push({ number: num, sentence: text.slice(start, end).trim() });
+    const sentence = text.slice(start, end).trim();
+
+    const block = resolvedBlocks.get(num);
+    if (!block) {
+      out.push({ number: num, sentence, kind: "missing" });
+      continue;
+    }
+    // Саме це "посилання" і є рядком підпису блоку — не помилка позиціювання.
+    if (m.index >= block.blockStart && m.index <= block.blockEnd) continue;
+    const dist = block.blockStart - end;
+    if (block.isFence && (dist < 0 || dist > MAX_NEARBY_DIST)) {
+      out.push({ number: num, sentence, kind: "misplaced", blockStart: block.blockStart, blockEnd: block.blockEnd });
+    }
   }
   return out;
 }
@@ -296,8 +341,8 @@ export function parsePagesAvg(str) {
   const nums = s.match(/\d+/g);
   if (!nums) return 80;
   const avg = nums.length === 1 ? parseInt(nums[0]) : Math.round(nums.reduce((a, b) => a + parseInt(b), 0) / nums.length);
-  // Якщо поруч із числом вказано "слів"/"слова"/"words" — це обсяг у словах, конвертуємо в сторінки (~270 слів/стор.)
-  if (/слів|слова|слово|words?\b/i.test(s)) return Math.max(1, Math.round(avg / 270));
+  // Якщо поруч із числом вказано "слів"/"слова"/"words" — це обсяг у словах, конвертуємо в сторінки (~230 слів/стор.)
+  if (/слів|слова|слово|words?\b/i.test(s)) return Math.max(1, Math.round(avg / 230));
   return avg;
 }
 
@@ -309,7 +354,7 @@ export function parsePagesMax(str) {
   const nums = s.match(/\d+/g);
   if (!nums) return null;
   const max = Math.max(...nums.map(n => parseInt(n, 10)));
-  if (/слів|слова|слово|words?\b/i.test(s)) return Math.max(1, Math.round(max / 270));
+  if (/слів|слова|слово|words?\b/i.test(s)) return Math.max(1, Math.round(max / 230));
   return max;
 }
 

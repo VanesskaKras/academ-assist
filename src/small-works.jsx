@@ -1493,7 +1493,7 @@ ${materialContext}${methodReqBlock}${commentBlock}${sourcesBlock}${!methodReqBlo
       const secMaxTokens = Math.min(30000, Math.max(6000, Math.round(pagesPerSec * 3000)));
       const raw = cleanDash(await callClaude(msgs, null, buildSYSSmall(lang), secMaxTokens));
       const result = await enforceWordCount({
-        text: raw, targetWords: Math.round(pagesPerSec * 270), label: sec.label,
+        text: raw, targetWords: Math.round(pagesPerSec * 230), label: sec.label,
         callClaude, sys: buildSYSSmall(lang), onProgress: setLoadMsg, clean: cleanDash,
       });
       setSections(p => {
@@ -1654,7 +1654,7 @@ ${isLast ? "Це ОСТАННЯ частина — заверши роботу �
         const chunkMaxTokens = Math.min(20000, Math.max(4000, Math.round(pagesForChunk * 3000)));
         const rawChunk = cleanDash(await callClaude(msgs, controller.signal, buildSYSSmall(lang), chunkMaxTokens));
         const chunkText = await enforceWordCount({
-          text: rawChunk, targetWords: Math.round(pagesForChunk * 270),
+          text: rawChunk, targetWords: Math.round(pagesForChunk * 230),
           label: `${info?.topic || ""}${numChunks > 1 ? ` — частина ${i + 1}/${numChunks}` : ""}`,
           callClaude, sys: buildSYSSmall(lang), signal: controller.signal, onProgress: setLoadMsg, clean: cleanDash,
         });

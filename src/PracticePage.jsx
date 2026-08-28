@@ -1274,20 +1274,45 @@ ${secBlock}
     }
   };
 
-  // ── Фінальна перевірка "рисунок без картинки": ШІ під час генерації розділу могла
-  // написати "...показано на Рис. X.Y", так і не вивівши сам рисунок (plantuml-блок
-  // чи таблицю з підписом) — findDanglingFigureRefs (planUtils.js) ловить такі "голі"
-  // згадки кодом. Для кожної — одна точкова спроба домалювати саме цей рисунок; якщо
-  // ШІ визнала його недоречним (feasible:false) чи відповідь не розпарсилась —
-  // прибираємо саме речення-посилання, щоб звіт не посилався на неіснуючу схему.
+  // ── Фінальна перевірка розміщення рисунків. findDanglingFigureRefs (planUtils.js)
+  // повертає два типи проблем кодом:
+  // - kind:"missing" — ШІ написала "...показано на Рис. X.Y", так і не вивівши сам
+  //   рисунок. Для кожного — одна точкова спроба домалювати саме цей рисунок; якщо
+  //   ШІ визнала його недоречним (feasible:false) чи відповідь не розпарсилась —
+  //   прибираємо саме речення-посилання, щоб звіт не посилався на неіснуючу схему.
+  // - kind:"misplaced" — рисунок є, але задалеко від речення-посилання (типово —
+  //   в кінці підрозділу, а не одразу після згадки). Такий блок просто переносимо
+  //   кодом ближче до посилання — без виклику ШІ, бо сама схема вже готова.
   const fixDanglingFigures = async (text, lang) => {
     const figWord = getLangLabels(lang).figWord;
     const dangling = findDanglingFigureRefs(text, figWord);
     if (!dangling.length) return text;
+
+    // Переносимо "misplaced" від кінця тексту до початку — щоб вирізання одного
+    // блоку не зсувало blockStart/blockEnd ще не оброблених блоків, розташованих
+    // раніше в тексті.
+    let fixed = text;
+    const misplaced = dangling.filter(d => d.kind === "misplaced").sort((a, b) => b.blockStart - a.blockStart);
+    misplaced.forEach(d => {
+      const blockText = fixed.slice(d.blockStart, d.blockEnd).trim();
+      const before = fixed.slice(0, d.blockStart).replace(/\n{3,}$/, "\n\n");
+      const after = fixed.slice(d.blockEnd).replace(/^\n{3,}/, "\n\n");
+      const withoutBlock = before + after;
+      const loc = locateFragment(withoutBlock, d.sentence, null);
+      if (!loc) {
+        // Не знайшли, куди саме переносити — лишаємо блок на місці, не втрачаємо рисунок.
+        return;
+      }
+      fixed = withoutBlock.slice(0, loc.end) + "\n\n" + blockText + "\n" + withoutBlock.slice(loc.end);
+    });
+
+    const missing = dangling.filter(d => d.kind === "missing");
+    if (!missing.length) return fixed;
+
     let raw;
     try {
       raw = await callClaude(
-        [{ role: "user", content: buildFigureInsertPrompt({ sectionText: text, dangling, lang }) }],
+        [{ role: "user", content: buildFigureInsertPrompt({ sectionText: fixed, dangling: missing, lang }) }],
         null, "Ти — редактор академічного тексту. Повертай лише JSON, без пояснень.", 4000,
       );
     } catch (e) {
@@ -1300,8 +1325,7 @@ ${secBlock}
       parsed = m ? JSON.parse(m[0]) : [];
     } catch { /* нижче — фолбек: прибираємо всі речення без рисунка */ }
 
-    let fixed = text;
-    dangling.forEach((d, i) => {
+    missing.forEach((d, i) => {
       const loc = locateFragment(fixed, d.sentence, null);
       if (!loc) return;
       const item = parsed.find(p => p.index === i);
@@ -1342,14 +1366,21 @@ ${secBlock}
       // десь у цьому розділі методички", що й e4c61f2 для курсових/дипломних: mandatoryFigureNote
       // у system-промпті однаково каже кожному підрозділу "тут має бути рисунок", але жоден
       // підрозділ "не бачить" сусідні, тож усі можуть покластись один на одного і розділ
-      // лишиться без жодної схеми. Перевіряємо кодом на останньому підрозділі розділу.
+      // лишиться без жодної схеми.
+      // Раніше вимога форсувалась ЛИШЕ на останньому підрозділі розділу — і рисунок
+      // системно опинявся в кінці розділу незалежно від того, де за змістом він
+      // насправді доречний. Тепер попередні підрозділи отримують м'яке заохочення
+      // (якщо тема природно пасує — намалюй тут), а жорстка вимога лишається лише
+      // як гарантія-фолбек на останньому підрозділі, якщо досі жоден рисунок не з'явився.
       if (methodInfo?.requiredFigures?.length) {
         const currentChapNum = sec.id.split(".")[0];
         const chapterSecs = writableSecs.filter(s => s.id !== "intro" && s.id !== "conclusions" && s.id.split(".")[0] === currentChapNum);
         const isLastInChapter = chapterSecs[chapterSecs.length - 1]?.id === sec.id;
         const hasFigureAlready = chapterSecs.some(s => s.id !== sec.id && hasRealFigure(finalContent[s.id] || ""));
-        if (isLastInChapter && !hasFigureAlready) {
-          instruction += `\n\nОБОВ'ЯЗКОВО: жоден інший підрозділ цього розділу ще не містить рисунка/схеми — цей підрозділ МАЄ містити хоча б один рисунок (PlantUML-схема за правилами FIGURES вище, або графік із таблиці даних), інакше вимога методички щодо схем буде порушена. Методичка явно вимагає: ${methodInfo.requiredFigures.join("; ")}.`;
+        if (!hasFigureAlready) {
+          instruction += isLastInChapter
+            ? `\n\nОБОВ'ЯЗКОВО: жоден інший підрозділ цього розділу ще не містить рисунка/схеми — цей підрозділ МАЄ містити хоча б один рисунок (PlantUML-схема за правилами FIGURES вище, або графік із таблиці даних), інакше вимога методички щодо схем буде порушена. Методичка явно вимагає: ${methodInfo.requiredFigures.join("; ")}.`
+            : `\n\nЯкщо зміст цього підрозділу природно ілюструється рисунком чи схемою (PlantUML за правилами FIGURES вище, або графік із таблиці даних) — додай його саме тут, одразу біля відповідного тексту: це краще, ніж відкладати рисунок у кінець розділу. Методичка вимагає: ${methodInfo.requiredFigures.join("; ")}.`;
         }
       }
 
@@ -1364,7 +1395,7 @@ ${secBlock}
           maxTok,
         );
         let text = isTableSec ? raw : await enforceWordCount({
-          text: raw, targetWords: Math.round((sec.pages || 1) * 270), label: sec.label,
+          text: raw, targetWords: Math.round((sec.pages || 1) * 230), label: sec.label,
           callClaude, sys: sysPrompt, onProgress: setLoadMsg,
         });
         text = await insertMissingSectionCitations(sec.id, text, lang);
@@ -1409,7 +1440,7 @@ ${secBlock}
       const maxTok = Math.min(30000, Math.max(6000, Math.round(sec.pages * 1800)));
       const raw = await callClaude([{ role: "user", content: instruction }], null, sysPrompt, maxTok);
       let text = isTableSec ? raw : await enforceWordCount({
-        text: raw, targetWords: Math.round((sec.pages || 1) * 270), label: sec.label,
+        text: raw, targetWords: Math.round((sec.pages || 1) * 230), label: sec.label,
         callClaude, sys: sysPrompt, onProgress: setLoadMsg,
       });
       text = await insertMissingSectionCitations(secId, text, language);
