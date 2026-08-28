@@ -11,7 +11,7 @@ import { exportToPptxFile } from "./lib/exportPptx.js";
 import { extractPdfPageImages } from "./lib/pdfImages.js";
 import { callClaude, callGemini, MODEL, MODEL_FAST, resetGenerationCost } from "./lib/api.js";
 import { playDoneSound } from "./lib/audio.js";
-import { enforceWordCount } from "./lib/wordCount.js";
+import { enforceWordCount, stripEmDash } from "./lib/wordCount.js";
 import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildExampleWorkReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildIllustrationsPdfPrompt, buildDrawingsDescriptionPrompt, buildClientMaterialsAnalysisPrompt, buildExtractStructurePrompt, buildContinuationPlanPrompt, buildAnnotationPrompt, buildAnnotationRegenPrompt, buildAntiPlagiarismSYS, buildAntiDetectionSYS, buildClientPlanEditsPrompt } from "./lib/prompts.js";
 import { extractReadyWorkStructure, quickParsePlanIds } from "./lib/readyWorkExtract.js";
 import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, getEmpiricalSections, getEconSections, getTechnicalSections, CODE_FILE_EXTENSIONS, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, deriveStructureFromExampleTOC, mergeExampleWorkIntoMethodInfo, getLangLabels, insertBeforeTail, detectRequestedChapterCount, scanFigures, hasRealFigure, renumberSections, rebuildWithChapterConclusions, applyPlanEditOps, describePlanEditOp } from "./lib/planUtils.js";
@@ -3092,7 +3092,7 @@ ${dateFilledText}
 Заміни КОЖЕН маркер ${APPENDIX_FILL_MARKER} на конкретне значення, узгоджене з тим, що вже стверджується в основному тексті роботи (наприклад, якщо текст стверджує, що функціонал працює коректно — постав відповідний фактичний результат і статус "ПРОЙДЕНО"; якщо десь згадано проблему чи обмеження — врахуй це). Решту тексту додатків НЕ змінюй і поверни дослівно, окрім заміни маркерів. Мова: ${lang}. БЕЗ markdown, зірочок, жирного (markdown-таблиці, що вже є в тексті, лишаються у форматі |---|---|).`;
       const raw = await callClaude([{ role: "user", content: prompt }], null, buildSYS(lang, methodInfo, normalizeWorkType(info?.type, info?.course)), 6000, null, MODEL);
       if (raw && raw.trim()) {
-        const filled = raw.trim();
+        const filled = stripEmDash(raw.trim());
         setAppendicesText(filled);
         await saveToFirestore({ appendicesText: filled });
       }
@@ -3273,7 +3273,7 @@ ${slideSpecs.join("\n\n")}
 
       let slideData;
       try {
-        slideData = JSON.parse(claudeRaw.replace(/```json\n?|\n?```/g, "").trim());
+        slideData = JSON.parse(stripEmDash(claudeRaw.replace(/```json\n?|\n?```/g, "").trim()));
       } catch { throw new Error("Claude повернув некоректний JSON слайдів"); }
 
       // ── Вставляємо реальні ілюстрації з роботи (якщо студент їх завантажив) одразу після слайду з методами ──

@@ -6,6 +6,12 @@ export function countWords(text) {
   return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
+// Прибирає довге тире "—" на всякий випадок (модель іноді ігнорує заборону
+// з промпту) — центральна версія патерну, що раніше дублювався по файлах.
+export function stripEmDash(text) {
+  return (text || "").replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "");
+}
+
 // Кінець речення: крапка/!/?/… (можливо перед закриваючою лапкою/дужкою),
 // після якого йде пробіл або кінець тексту.
 const SENTENCE_END_RE = /[.!?…]+[»"'）)\]]*(?=\s|$)/g;

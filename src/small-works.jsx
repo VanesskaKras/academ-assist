@@ -1791,7 +1791,7 @@ N. layout "hero" — "Дякую за увагу!", subtitle: ""
 
       let slideData;
       try {
-        slideData = JSON.parse(claudeRaw.replace(/```json\n?|\n?```/g, "").trim());
+        slideData = JSON.parse(cleanDash(claudeRaw.replace(/```json\n?|\n?```/g, "").trim()));
       } catch { throw new Error("Claude повернув некоректний JSON слайдів"); }
 
       // ── Крок 3: Зберігаємо дані ДО експорту (щоб при помилці або оновленні сторінки не загубити) ──

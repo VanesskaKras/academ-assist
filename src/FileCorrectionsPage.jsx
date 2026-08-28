@@ -14,6 +14,7 @@ import {
   buildSourcePlacementInTextPrompt,
   buildMethodologyReadingPrompt,
 } from "./lib/prompts.js";
+import { stripEmDash } from "./lib/wordCount.js";
 import { SpinDot } from "./components/SpinDot.jsx";
 import { PhotoDropZone } from "./components/PhotoDropZone.jsx";
 import { DropZone } from "./components/DropZone.jsx";
@@ -152,14 +153,14 @@ async function adjustVolume({ original, replacement, lang, methodInfo, label }) 
     const contPrompt = `Ось поточний текст фрагмента "${label || ""}" (${newWords} слів, оригінал мав ${origWords}):\n\n${replacement}\n\nДопиши ще приблизно ${missing} слів, органічно продовжуючи виклад далі, не повторюючи вже написане. Без вступних фраз, без заголовків. Просто продовж текст.`;
     try {
       const contRaw = await callClaude([{ role: "user", content: contPrompt }], null, sys, Math.min(20000, Math.max(2000, Math.round(missing * 3))), null, MODEL, { cache: true });
-      return (replacement + "\n\n" + contRaw).trim();
+      return stripEmDash(replacement + "\n\n" + contRaw).trim();
     } catch { return replacement; }
   }
   if (newWords > origWords * 1.5) {
     const shortenPrompt = `Ось поточний текст фрагмента "${label || ""}" (${newWords} слів):\n\n${replacement}\n\nСкороти його до приблизно ${origWords} слів: прибери повтори та другорядні деталі, збережи головні тези. Поверни лише скорочений текст, без коментарів.`;
     try {
       const shortRaw = await callClaude([{ role: "user", content: shortenPrompt }], null, sys, Math.min(30000, Math.max(4000, Math.round(origWords * 3))), null, MODEL, { cache: true });
-      return shortRaw.trim();
+      return stripEmDash(shortRaw).trim();
     } catch { return replacement; }
   }
   return replacement;
@@ -746,7 +747,7 @@ export default function FileCorrectionsPage({ onBack }) {
           if (loc) {
             // Контроль обсягу — лише для суттєвих ручних завдань (кілька речень
             // і більше); для короткого виділення природно, що заміна коротша.
-            let replacement = item.replacement || "";
+            let replacement = stripEmDash(item.replacement || "");
             if (kind === "manual" && original) {
               replacement = await adjustVolume({ original, replacement, lang, methodInfo, label: task.location });
             }
@@ -791,7 +792,7 @@ export default function FileCorrectionsPage({ onBack }) {
           if (!item?.original) continue;
           const loc = locateFragment(text, item.original, null);
           if (!loc) continue;
-          const replacement = item.replacement || "";
+          const replacement = stripEmDash(item.replacement || "");
           applyDocxReplacement(map, loc.start, loc.end, replacement);
           changes.push({ label: task.label || task.location || "По всьому документу", original: item.original, replacement });
           ({ map, plainText: text } = refreshTextMap(docStateRef.current.docXml));

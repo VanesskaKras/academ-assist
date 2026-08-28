@@ -21,7 +21,7 @@ import {
   PRACTICE_TYPE_GENITIVE,
 } from "./lib/practiceDefaults.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
-import { enforceWordCount } from "./lib/wordCount.js";
+import { enforceWordCount, stripEmDash } from "./lib/wordCount.js";
 import { playDoneSound } from "./lib/audio.js";
 import {
   filterSourcesWithGemini, searchByPhrase, getEconInstitutionalSources, generateAlternatePhrases, enrichSources,
@@ -1378,15 +1378,15 @@ ${secBlock}
       const sysPrompt = isTableSec ? buildSYSTable(lang, methodInfo) : buildSYS(lang, methodInfo);
       try {
         const maxTok = Math.min(30000, Math.max(6000, Math.round(sec.pages * 1800)));
-        const raw = await callClaude(
+        const raw = stripEmDash(await callClaude(
           [{ role: "user", content: instruction }],
           null,
           sysPrompt,
           maxTok,
-        );
+        ));
         let text = isTableSec ? raw : await enforceWordCount({
           text: raw, targetWords: Math.round((sec.pages || 1) * 230), label: sec.label,
-          callClaude, sys: sysPrompt, onProgress: setLoadMsg,
+          callClaude, sys: sysPrompt, onProgress: setLoadMsg, clean: stripEmDash,
         });
         text = await insertMissingSectionCitations(sec.id, text, lang);
         text = capCitationRepeats(text);
@@ -1428,10 +1428,10 @@ ${secBlock}
     const sysPrompt = isTableSec ? buildSYSTable(language, methodInfo) : buildSYS(language, methodInfo);
     try {
       const maxTok = Math.min(30000, Math.max(6000, Math.round(sec.pages * 1800)));
-      const raw = await callClaude([{ role: "user", content: instruction }], null, sysPrompt, maxTok);
+      const raw = stripEmDash(await callClaude([{ role: "user", content: instruction }], null, sysPrompt, maxTok));
       let text = isTableSec ? raw : await enforceWordCount({
         text: raw, targetWords: Math.round((sec.pages || 1) * 230), label: sec.label,
-        callClaude, sys: sysPrompt, onProgress: setLoadMsg,
+        callClaude, sys: sysPrompt, onProgress: setLoadMsg, clean: stripEmDash,
       });
       text = await insertMissingSectionCitations(secId, text, language);
       text = capCitationRepeats(text);
@@ -1454,7 +1454,7 @@ ${secBlock}
       const writableSecs = sections?.filter(s => s.id !== "sources") || [];
       const reportText = writableSecs.map(s => content[s.id]).filter(Boolean).join("\n\n");
       const prompt = buildPracticeDiaryPrompt(info, diaryExampleText, methodInfo, deptGuidanceText, diaryTemplateInfo, clientMaterialsSummary?.rawText, writableSecs, reportText);
-      const text = await callClaude([{ role: "user", content: prompt }], null, buildSYS(language, methodInfo), 8000);
+      const text = stripEmDash(await callClaude([{ role: "user", content: prompt }], null, buildSYS(language, methodInfo), 8000));
       setDiaryContent(text);
       await saveToFirestore({ diaryContent: text, stage: "diary", status: "writing" });
       goToStage("diary");
