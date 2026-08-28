@@ -1482,7 +1482,8 @@ ${diaryExampleText.slice(0, 40000)}
   "hasSupervisorSignatureBlock": false,
   "hasInspectorReviewSection": false,
   "hasGradeFields": false,
-  "departmentNameForConclusion": null
+  "departmentNameForConclusion": null,
+  "additionalInstructions": null
 }
 
 Правила для кожного поля:
@@ -1497,6 +1498,7 @@ ${diaryExampleText.slice(0, 40000)}
 - hasInspectorReviewSection: true ТІЛЬКИ якщо є ОКРЕМИЙ розділ на кшталт "Відгук осіб, які перевіряли проходження практики" — відмінний від відгуку керівника від підприємства і від висновку керівника від кафедри. Інакше false.
 - hasGradeFields: true ТІЛЬКИ якщо у розділі "Висновок керівника практики" (чи аналогічному) є поля оцінювання: дата складання заліку та/або оцінка за національною шкалою/кількість балів/шкала ECTS. Інакше false.
 - departmentNameForConclusion: якщо в тексті десь прямо вказана назва кафедри разом із закладом освіти для підпису керівника практики (напр. "від кафедри ОПЦБ «Криворізький національний університет»") — витягни цей фрагмент дослівно для використання в заголовку розділу "Висновок керівника практики від [...]". null якщо не вказано.
+- additionalInstructions: якщо в тексті є будь-які вказівки, доручення чи зауваження керівника практики/кафедри, що НЕ є частиною самої таблиці записів чи стандартних розділів бланку (наприклад: "додатково виконати...", "доопрацювати...", окремі приписки чи абзаци з конкретними завданнями поза графіком) — витягни їх дослівно одним текстом. null якщо в тексті немає нічого, крім стандартної структури щоденника.
 
 Якщо в наданому тексті взагалі не видно жодної чіткої структури щоденника (напр. це нерозбірливий фрагмент без заголовків розділів) — постав всі boolean-поля false, а решту null, замість вигадування.`;
 }
@@ -1531,6 +1533,13 @@ export function buildPracticeDiaryPrompt(info, diaryExampleText, methodInfo, dep
   // мовчки губилося.
   const clientMaterialsLine = clientMaterialsText?.trim()
     ? `\n\nМАТЕРІАЛИ КЛІЄНТА (оголошення, завдання, листування — КОЖЕН пункт/завдання звідси, що стосується роботи студента під час практики, має явно з'явитися як окремий запис у щоденнику; не пропускай жодного пункту):\n${clientMaterialsText.trim().slice(0, 20000)}`
+    : "";
+  // Додаткові вказівки, знайдені при структурному аналізі зразка щоденника (поза самою таблицею —
+  // напр. приписка керівника "додатково зробити Х"). Без цього блоку sampleBlock нижче подавав
+  // такий текст лише як приклад "формату й рівня деталізації", і модель могла його проігнорувати
+  // як контент, що не стосується задачі.
+  const diaryAdditionalInstructionsLine = diaryTemplateInfo?.additionalInstructions?.trim()
+    ? `\n\nДОДАТКОВІ ВКАЗІВКИ, ЗНАЙДЕНІ В ЗАВАНТАЖЕНОМУ ЩОДЕННИКУ (поза стандартною структурою бланку — КОЖЕН пункт має явно з'явитися як окремий запис у згенерованому щоденнику; не пропускай жодного): ${diaryTemplateInfo.additionalInstructions.trim().slice(0, 5000)}`
     : "";
   // Структура звіту (якщо вже сформована на попередньому кроці) — щоб щоденник не «жив своїм
   // життям» окремо від звіту: кожен розділ, який студент фактично писатиме, має мати відповідний
@@ -1599,7 +1608,7 @@ export function buildPracticeDiaryPrompt(info, diaryExampleText, methodInfo, dep
 ${practiceText}
 ${periodLine}${statsPeriodLine}
 ${detailsLine ? `\n${detailsLine}` : ""}
-${taskGuidance}${deptGuidanceLine}${clientMaterialsLine}${reportSectionsLine}${reportTextLine}
+${taskGuidance}${deptGuidanceLine}${clientMaterialsLine}${diaryAdditionalInstructionsLine}${reportSectionsLine}${reportTextLine}
 ${sampleBlock}
 
 ${dayInstruction}
