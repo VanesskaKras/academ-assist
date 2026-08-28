@@ -12,7 +12,7 @@ import {
   buildPracticeDiaryPrompt, buildDiaryTemplateAnalysisPrompt,
   buildTemplateAnalysisPrompt, buildPracticeDetailsPrompt, buildFigureInsertPrompt,
 } from "./lib/prompts.js";
-import { parseTemplate, isEcon, isTechnical, getEconSections, parsePagesMax, hasRealFigure, findDanglingFigureRefs, extractNumericFacts, normalizePageDistribution, stripNonContentSections, resolvePracticeFixedPages, getLangLabels } from "./lib/planUtils.js";
+import { parseTemplate, isEcon, isTechnical, getEconSections, hasRealFigure, findDanglingFigureRefs, extractNumericFacts, normalizePageDistribution, stripNonContentSections, resolvePracticeFixedPages, getLangLabels } from "./lib/planUtils.js";
 import { locateFragment } from "./lib/textFragmentLocate.js";
 import { detectSpecialtyPrioritized } from "./lib/academicDefaults.js";
 import {
@@ -21,12 +21,12 @@ import {
   PRACTICE_TYPE_GENITIVE,
 } from "./lib/practiceDefaults.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
-import { enforceWordCount, trimToPageTarget } from "./lib/wordCount.js";
+import { enforceWordCount } from "./lib/wordCount.js";
 import { playDoneSound } from "./lib/audio.js";
 import {
   filterSourcesWithGemini, searchByPhrase, getEconInstitutionalSources, generateAlternatePhrases, enrichSources,
 } from "./lib/sourcesSearch.js";
-import { exportToDocx, exportPracticePlanToDocx } from "./lib/exportDocx.js";
+import { exportToDocx, exportPracticePlanToDocx, splitDiaryCalendarGraph, parseDiaryCalendarGraphRows, parseDiaryWorkRecords } from "./lib/exportDocx.js";
 import { remapAndFormatCitations, applyCitationRemap, createReferenceDeduper, insertMissingCitations, capCitationRepeats } from "./lib/citationFormatting.js";
 import { SourcesStage } from "./components/stages/SourcesStage.jsx";
 import { SpinDot } from "./components/SpinDot.jsx";
@@ -1229,16 +1229,6 @@ ${secBlock}
         if (fixed !== text) nextContent[sec.id] = fixed;
       }));
 
-      // 5г. Фінальна перевірка сумарного обсягу — так само, як у doRemapCitations великих
-      // робіт (academic-assistant.jsx): enforceWordCount тримає в межах кожен розділ окремо
-      // (з допуском), але допуски на кількох розділах плюс довставлені цитати з кроку 5б
-      // можуть у сумі дати перевищення заданого обсягу — обрізаємо найбільші розділи.
-      const maxTargetPages = parsePagesMax(info?.pages);
-      if (maxTargetPages) {
-        const trimmed = trimToPageTarget({ sections: mainSecs, content: nextContent, maxPages: maxTargetPages, formatting: methodInfo?.formatting, lang: info.language, onProgress: setLoadMsg });
-        Object.assign(nextContent, trimmed);
-      }
-
       const formattedText = fmtList.map((c, i) => `${i + 1}. ${c}`).join("\n");
       setContent(nextContent);
       setRefList(formattedText);
@@ -1527,8 +1517,18 @@ ${secBlock}
       const practiceLabel = PRACTICE_TYPE_GENITIVE[info.practiceType]
         ? `${PRACTICE_TYPE_GENITIVE[info.practiceType]} практики`
         : "";
+      // Основна таблиця щоденника і, якщо зразок вимагає окремий "Календарний графік" (форма
+      // Н-6.03), таблиця під маркером %%CALENDAR_GRAPH%% (buildPracticeDiaryPrompt) розбираються
+      // тут кодом (не ШІ) — щоб дані з відповіді ШІ реально потрапили в обидва бланки замість
+      // порожніх клітинок/рядків.
+      const diaryCalendarGraphWeeks = dti?.calendarGraphWeeksCount || 6;
+      const { mainText: diaryMainText, calendarGraphText } = splitDiaryCalendarGraph(diaryContent);
+      const diaryCalendarGraphRows = dti?.hasCalendarGraphSection
+        ? parseDiaryCalendarGraphRows(calendarGraphText, diaryCalendarGraphWeeks)
+        : [];
+      const diaryWorkRecords = parseDiaryWorkRecords(diaryMainText);
       await exportToDocx({
-        content: { diary: diaryContent },
+        content: { diary: diaryMainText },
         info: {
           topic: `Щоденник практики ${info.topic || ""}`.trim(), type: "Щоденник", language: info.language, pages: "5", orderNumber: info.orderNumber,
           studentName: info.studentName, studentGroup: info.studentGroup, course: info.course,
@@ -1547,7 +1547,9 @@ ${secBlock}
         diaryArrivalDeparture: dti ? !!dti.hasArrivalDepartureBlock : !!methodInfo?.hasArrivalDepartureBlock,
         diaryBlankNotesPages: dti ? !!dti.hasBlankNotesPages : !!methodInfo?.hasBlankNotesPages,
         diaryCalendarGraph: !!dti?.hasCalendarGraphSection,
-        diaryCalendarGraphWeeks: dti?.calendarGraphWeeksCount || 6,
+        diaryCalendarGraphWeeks,
+        diaryCalendarGraphRows,
+        diaryWorkRecords,
         diarySupervisorSignatureBlock: !!dti?.hasSupervisorSignatureBlock,
         diaryInspectorReview: !!dti?.hasInspectorReviewSection,
         diaryGradeFields: !!dti?.hasGradeFields,

@@ -568,9 +568,51 @@ export function detectTextLanguage(text, fallbackLang) {
 }
 
 // ─────────────────────────────────────────────
+// Щоденник практики: розбір markdown-таблиць, згенерованих ШІ (buildPracticeDiaryPrompt),
+// у структуровані дані для "Календарного графіка" та "Робочих записів" — детерміновано, кодом,
+// а не повторним зверненням до ШІ.
+// ─────────────────────────────────────────────
+const CALENDAR_GRAPH_MARKER = "%%CALENDAR_GRAPH%%";
+
+function parseMdTableDataRows(text) {
+  const tableLines = (text || "").split("\n").filter(l => /^\s*\|/.test(l));
+  const dataLines = tableLines.filter(l => !/^\s*\|[-:| ]+\|\s*$/.test(l));
+  const rows = dataLines.map(l => l.replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|").map(c => c.trim()));
+  return rows.length > 1 ? rows.slice(1) : []; // без рядка шапки
+}
+
+// Відокремлює основну таблицю щоденника від блоку "Календарний графік", який ШІ (за інструкцією
+// в buildPracticeDiaryPrompt) виводить після явного маркера-роздільника — щоб друга таблиця не
+// потрапила в тіло щоденника як звичайний текст.
+export function splitDiaryCalendarGraph(diaryText) {
+  const idx = (diaryText || "").indexOf(CALENDAR_GRAPH_MARKER);
+  if (idx === -1) return { mainText: diaryText || "", calendarGraphText: "" };
+  return { mainText: diaryText.slice(0, idx).trim(), calendarGraphText: diaryText.slice(idx + CALENDAR_GRAPH_MARKER.length) };
+}
+
+// Таблиця "Календарний графік" → рядки для exportToDocx: [{ name, weeks: [...], note }]
+export function parseDiaryCalendarGraphRows(calendarGraphText, weeksCount) {
+  return parseMdTableDataRows(calendarGraphText)
+    .map(cells => ({
+      name: cells[0] || "",
+      weeks: Array.from({ length: weeksCount }, (_, i) => cells[i + 1] || ""),
+      note: cells[weeksCount + 1] || "Виконано",
+    }))
+    .filter(r => r.name);
+}
+
+// Основна таблиця щоденника → короткі рядки "дата/тема — зміст" для лінованих сторінок
+// "Робочі записи під час практики" (замість порожніх рядків для рукопису).
+export function parseDiaryWorkRecords(mainDiaryText) {
+  return parseMdTableDataRows(mainDiaryText)
+    .map(cells => cells.filter(Boolean).join(" — "))
+    .filter(Boolean);
+}
+
+// ─────────────────────────────────────────────
 // Word export (основний документ)
 // ─────────────────────────────────────────────
-export async function exportToDocx({ content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo, commentAnalysis, orderId, annotationUk, annotationEn, illustrations = [], clientDrawings = [], skipToc = false, keepHeadingCase = false, diaryArrivalDeparture = false, diaryBlankNotesPages = false, diaryStudentName = "", diaryReviewBlock = false, diarySupervisorCompany = "", diarySupervisorUniversity = "", diaryCalendarGraph = false, diaryCalendarGraphWeeks = 6, diarySupervisorSignatureBlock = false, diaryInspectorReview = false, diaryGradeFields = false, diaryConclusionDepartment = "" }) {
+export async function exportToDocx({ content, info, displayOrder, appendicesText, titlePage, titlePageLines, methodInfo, commentAnalysis, orderId, annotationUk, annotationEn, illustrations = [], clientDrawings = [], skipToc = false, keepHeadingCase = false, diaryArrivalDeparture = false, diaryBlankNotesPages = false, diaryStudentName = "", diaryReviewBlock = false, diarySupervisorCompany = "", diarySupervisorUniversity = "", diaryCalendarGraph = false, diaryCalendarGraphWeeks = 6, diaryCalendarGraphRows = [], diaryWorkRecords = [], diarySupervisorSignatureBlock = false, diaryInspectorReview = false, diaryGradeFields = false, diaryConclusionDepartment = "" }) {
   // Деякі виклики (напр. звіти з практики) не проставляють sec.type — довизначаємо його
   // з id для фіксованих розділів, щоб список джерел коректно розпізнавався нижче.
   displayOrder = (displayOrder || []).map(s =>
@@ -1477,8 +1519,10 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
   }
 
   // Календарний графік проходження практики — окрема таблиця по тижнях, яка в офіційних бланках
-  // (форма Н-6.03) стоїть ПЕРЕД робочими записами, а не замінює їх. Рядки/тижневі клітинки лишаємо
-  // порожніми (як і в самому бланку) — заповнюються вручну студентом і керівником під час практики.
+  // (форма Н-6.03) стоїть ПЕРЕД робочими записами, а не замінює їх. Заповнюється даними, які ШІ
+  // згенерував за окремою інструкцією в buildPracticeDiaryPrompt (diaryCalendarGraphRows, розібрані
+  // з відповіді кодом через parseDiaryCalendarGraphRows) — якщо їх немає, клітинки лишаються
+  // порожніми, як і в самому бланку, для ручного заповнення.
   if (diaryCalendarGraph) {
     const border = { style: BorderStyle.SINGLE, size: 1, color: "000000" };
     const cellBorders = { top: border, bottom: border, left: border, right: border };
@@ -1493,10 +1537,10 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
         children: [new TextRun({ text, font: FONT, size: SIZE_NUM, bold: true, color: "000000" })],
       })],
     });
-    const bodyCell = () => new TableCell({
+    const bodyCell = (text = "", alignment = AlignmentType.LEFT) => new TableCell({
       borders: cellBorders,
       margins: { left: 57, right: 57, top: 57, bottom: 57 },
-      children: [new Paragraph({ spacing: { line: 240, lineRule: "exact", before: 0, after: 0 }, children: [new TextRun({ text: "", font: FONT, size: SIZE_NUM })] })],
+      children: [new Paragraph({ alignment, spacing: { line: 240, lineRule: "exact", before: 0, after: 0 }, children: [new TextRun({ text, font: FONT, size: SIZE_NUM, color: "000000" })] })],
     });
     const numColPct = 6, workColPct = 100 - numColPct - weeksCount * 8 - 12;
     const headerRow = new TableRow({
@@ -1507,17 +1551,20 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
         headCell("Відмітки про виконання", 12),
       ],
     });
-    const bodyRows = Array.from({ length: 12 }, (_, i) => new TableRow({
-      children: [
-        new TableCell({
-          borders: cellBorders, margins: { left: 57, right: 57, top: 57, bottom: 57 },
-          children: [new Paragraph({ alignment: AlignmentType.CENTER, spacing: { line: 240, lineRule: "exact", before: 0, after: 0 }, children: [new TextRun({ text: String(i + 1), font: FONT, size: SIZE_NUM, color: "000000" })] })],
-        }),
-        bodyCell(),
-        ...Array.from({ length: weeksCount }, () => bodyCell()),
-        bodyCell(),
-      ],
-    }));
+    const bodyRows = Array.from({ length: 12 }, (_, i) => {
+      const row = diaryCalendarGraphRows[i];
+      return new TableRow({
+        children: [
+          new TableCell({
+            borders: cellBorders, margins: { left: 57, right: 57, top: 57, bottom: 57 },
+            children: [new Paragraph({ alignment: AlignmentType.CENTER, spacing: { line: 240, lineRule: "exact", before: 0, after: 0 }, children: [new TextRun({ text: String(i + 1), font: FONT, size: SIZE_NUM, color: "000000" })] })],
+          }),
+          bodyCell(row?.name || ""),
+          ...Array.from({ length: weeksCount }, (_, w) => bodyCell(row?.weeks?.[w] || "", AlignmentType.CENTER)),
+          bodyCell(row ? (row.note || "Виконано") : "", AlignmentType.CENTER),
+        ],
+      });
+    });
     children.push(new Paragraph({ pageBreakBefore: true, spacing: { before: 0, after: 0, line: LINE, lineRule: "auto" }, children: [] }));
     children.push(new Paragraph({
       alignment: AlignmentType.CENTER, indent: { firstLine: 0 },
@@ -1545,13 +1592,17 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
       spacing: { line: LINE, lineRule: "auto", before: 0, after: LINE },
       children: [new TextRun({ text: diaryCalendarGraph ? "2. Робочі записи під час практики" : "Робочі записи під час практики", font: FONT, size: SIZE, bold: true, color: "000000" })],
     }));
-    for (let i = 0; i < 28; i++) {
+    // diaryWorkRecords — рядки основної таблиці щоденника (розібрані кодом через
+    // parseDiaryWorkRecords), по одному на лінований рядок; якщо їх немає (напр. щоденник ще не
+    // згенеровано), лишаємо порожні ліновані рядки для рукопису, як і раніше.
+    const notesLines = diaryWorkRecords.length ? diaryWorkRecords : Array.from({ length: 28 }, () => "");
+    notesLines.forEach(text => {
       children.push(new Paragraph({
         spacing: { line: LINE, lineRule: "auto", before: 0, after: 260 },
         border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: "000000", space: 1 } },
-        children: [new TextRun({ text: "", font: FONT, size: SIZE })],
+        children: [new TextRun({ text, font: FONT, size: SIZE })],
       }));
-    }
+    });
   }
 
   // Щоденник практики: відгук керівника від бази практики + висновок керівника від закладу
