@@ -12,9 +12,9 @@ import { extractPdfPageImages } from "./lib/pdfImages.js";
 import { callClaude, callGemini, MODEL, MODEL_FAST, resetGenerationCost } from "./lib/api.js";
 import { playDoneSound } from "./lib/audio.js";
 import { enforceWordCount, trimToPageTarget } from "./lib/wordCount.js";
-import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildExampleWorkReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildIllustrationsPdfPrompt, buildDrawingsDescriptionPrompt, buildClientMaterialsAnalysisPrompt, buildExtractStructurePrompt, buildContinuationPlanPrompt, buildAnnotationPrompt, buildAnnotationRegenPrompt, buildAntiPlagiarismSYS, buildAntiDetectionSYS } from "./lib/prompts.js";
+import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildExampleWorkReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildIllustrationsPdfPrompt, buildDrawingsDescriptionPrompt, buildClientMaterialsAnalysisPrompt, buildExtractStructurePrompt, buildContinuationPlanPrompt, buildAnnotationPrompt, buildAnnotationRegenPrompt, buildAntiPlagiarismSYS, buildAntiDetectionSYS, buildClientPlanEditsPrompt } from "./lib/prompts.js";
 import { extractReadyWorkStructure, quickParsePlanIds } from "./lib/readyWorkExtract.js";
-import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, getEmpiricalSections, getEconSections, getTechnicalSections, CODE_FILE_EXTENSIONS, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parsePagesMax, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, deriveStructureFromExampleTOC, mergeExampleWorkIntoMethodInfo, getLangLabels, insertBeforeTail, detectRequestedChapterCount, scanFigures, hasRealFigure } from "./lib/planUtils.js";
+import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, getEmpiricalSections, getEconSections, getTechnicalSections, CODE_FILE_EXTENSIONS, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parsePagesMax, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, deriveStructureFromExampleTOC, mergeExampleWorkIntoMethodInfo, getLangLabels, insertBeforeTail, detectRequestedChapterCount, scanFigures, hasRealFigure, renumberSections, rebuildWithChapterConclusions, applyPlanEditOps, describePlanEditOp } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { getAcademicDefaults, classifyAppendixItem, detectSpecialty, normalizeWorkType } from "./lib/academicDefaults.js";
 import { searchByPhrase, filterSourcesWithGemini, getEconInstitutionalSources, generateAlternatePhrases, paperToCitation, enrichSources } from "./lib/sourcesSearch.js";
@@ -84,65 +84,6 @@ const APPENDIX_FILL_MARKER_RULE = `Якщо для якогось конкрет
 // ── Заземлення технічних тверджень на реальному коді клієнта (проти вигаданого функціоналу) ──
 const CODE_GROUNDING_RULE = `Кожне технічне твердження про функціональність (назва методу, класу, поля, логіка обробки) має спиратися на конкретний фрагмент коду нижче. Якщо ти не можеш вказати, в якому саме методі це реалізовано — не згадуй це в тексті. Наявність поля чи структури, що натякає на функціональність (наприклад, поле IsConfirmed натякає на модерацію), не означає, що вся ця функціональність реалізована — описуй лише те, для чого є конкретний метод чи блок логіки в коді, а не те, що логічно мало б існувати. Використовуй лише наданий матеріал.`;
 
-// ── Helpers for section reordering ──
-
-function renumberSections(sections) {
-  const chapterTitles = [];
-  sections.forEach(s => {
-    if (!["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type) && s.sectionTitle) {
-      if (!chapterTitles.includes(s.sectionTitle)) chapterTitles.push(s.sectionTitle);
-    }
-  });
-  const chNumMap = {};
-  chapterTitles.forEach((title, idx) => { chNumMap[title] = idx + 1; });
-  const chTitleMap = {};
-  chapterTitles.forEach(title => {
-    const newN = chNumMap[title];
-    const match = title.match(/^РОЗДІЛ\s+\d+[.:]?\s*(.*)/i);
-    const rest = match ? match[1] : title;
-    chTitleMap[title] = `РОЗДІЛ ${newN}. ${rest}`.trimEnd();
-  });
-  const subCount = {};
-  let lastChNum = 1;
-  return sections.map(s => {
-    if (["intro", "conclusions", "sources"].includes(s.type)) return s;
-    if (s.type === "chapter_conclusion") {
-      const newTitle = chTitleMap[s.sectionTitle] || s.sectionTitle;
-      return { ...s, id: `${lastChNum}.conclusions`, sectionTitle: newTitle };
-    }
-    const cn = chNumMap[s.sectionTitle] || 1;
-    lastChNum = cn;
-    if (!subCount[cn]) subCount[cn] = 0;
-    subCount[cn]++;
-    const newId = `${cn}.${subCount[cn]}`;
-    const newTitle = chTitleMap[s.sectionTitle] || s.sectionTitle;
-    const labelBody = s.label.replace(/^\d+\.\d+\s*/, "");
-    return { ...s, id: newId, sectionTitle: newTitle, label: `${newId} ${labelBody}` };
-  });
-}
-
-function rebuildWithChapterConclusions(prev, newMainSecs) {
-  const intro = prev.filter(s => s.type === "intro");
-  const conclusions = prev.filter(s => s.type === "conclusions");
-  const sources = prev.filter(s => s.type === "sources");
-  const chapConcs = prev
-    .filter(s => s.type === "chapter_conclusion")
-    .sort((a, b) => (parseInt(a.id) || 0) - (parseInt(b.id) || 0));
-  const chapTitles = [];
-  const chapSecs = {};
-  newMainSecs.forEach(s => {
-    if (!chapSecs[s.sectionTitle]) { chapTitles.push(s.sectionTitle); chapSecs[s.sectionTitle] = []; }
-    chapSecs[s.sectionTitle].push(s);
-  });
-  const result = [...intro];
-  chapTitles.forEach((title, i) => {
-    result.push(...chapSecs[title]);
-    if (chapConcs[i]) result.push(chapConcs[i]);
-  });
-  result.push(...conclusions, ...sources);
-  return result;
-}
-
 const AUTO_STEPS = { analyze: "Аналіз шаблону", plan: "Генерація плану", sources: "Підбір джерел", writing: "Написання тексту" };
 
 export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
@@ -200,6 +141,12 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [planDocxLoading, setPlanDocxLoading] = useState(false);
   const [showManualPlanInput, setShowManualPlanInput] = useState(false);
   const [manualPlanText, setManualPlanText] = useState("");
+  const [showClientEditsInput, setShowClientEditsInput] = useState(false);
+  const [clientEditsText, setClientEditsText] = useState("");
+  const [clientEditsLoading, setClientEditsLoading] = useState(false);
+  const [clientEditsOps, setClientEditsOps] = useState(null); // null = ще не проаналізовано; [] = проаналізовано, нічого не знайдено
+  const [clientEditsChecked, setClientEditsChecked] = useState({});
+  const [clientEditsError, setClientEditsError] = useState("");
   const [namingLoading, setNamingLoading] = useState(false);
   const [singleNamingId, setSingleNamingId] = useState(null);
   const [allCitLoading, setAllCitLoading] = useState(false);
@@ -1608,6 +1555,58 @@ Return ONLY JSON:
     setSingleNamingId(null);
   };
 
+  // ── Правки клієнта до плану: ШІ лише перетворює вільний текст клієнта на список
+  // структурних операцій (planUtils не вміє розуміти вільну мову) — саме застосування
+  // до sections виконує детермінований код (applyPlanEditOps), не ШІ. ──
+  const doAnalyzeClientEdits = async () => {
+    if (!clientEditsText.trim()) return;
+    setClientEditsLoading(true);
+    setClientEditsError("");
+    try {
+      const prompt = buildClientPlanEditsPrompt({ sections, editsText: clientEditsText });
+      const raw = await callClaude([{ role: "user", content: prompt }], null, SYS_JSON_ARRAY, 2000, null, MODEL_FAST);
+      const match = raw.match(/\[[\s\S]*\]/);
+      const parsed = JSON.parse(match?.[0] || raw.replace(/```json|```/g, "").trim());
+      if (!Array.isArray(parsed)) throw new Error("Некоректна відповідь ШІ");
+      const withIds = parsed.map((op, i) => ({ ...op, _id: `op_${i}` }));
+      const defaultChecked = {};
+      withIds.forEach(op => {
+        const { invalid } = describePlanEditOp(op, sections);
+        defaultChecked[op._id] = !invalid;
+      });
+      setClientEditsOps(withIds);
+      setClientEditsChecked(defaultChecked);
+    } catch (e) {
+      setClientEditsError("Не вдалося розпізнати правки: " + e.message);
+    }
+    setClientEditsLoading(false);
+  };
+
+  const doApplyClientEdits = () => {
+    const toApply = (clientEditsOps || []).filter(op => clientEditsChecked[op._id] !== false);
+    if (!toApply.length) return;
+    setSections(prev => {
+      const next = applyPlanEditOps(prev, toApply, info?.language);
+      setPlanDisplay(buildPlanText(next));
+      const { dist, total } = calcSourceDist(next);
+      setSourceDist(dist); setSourceTotal(total);
+      return next;
+    });
+    setShowClientEditsInput(false);
+    setClientEditsText("");
+    setClientEditsOps(null);
+    setClientEditsChecked({});
+    setClientEditsError("");
+  };
+
+  const cancelClientEdits = () => {
+    setShowClientEditsInput(false);
+    setClientEditsText("");
+    setClientEditsOps(null);
+    setClientEditsChecked({});
+    setClientEditsError("");
+  };
+
   const startGen = async () => {
     resetGenerationCost();
     const ORDER = ["theory", "analysis", "recommendations", "chapter_conclusion", "intro", "conclusions", "sources"];
@@ -2137,12 +2136,12 @@ ${planSummary}
     // Ціль в словах для перевірки фактичного обсягу після генерації (окремо від тексту промпту)
     const targetWords = sec.type === "chapter_conclusion" ? 135 : Math.round((sec.pages || 1) * 270);
     try {
-      const raw = await callClaude(buildMessages(instruction), ctrl.signal, buildSYS(lang, methodInfo), sectionMaxTokens, (s) => setLoadMsg(`Генерую: ${sec.label}... зачекайте ${s}с`), undefined, genOpts);
+      const raw = await callClaude(buildMessages(instruction), ctrl.signal, buildSYS(lang, methodInfo, normalizeWorkType(d.type, d.course)), sectionMaxTokens, (s) => setLoadMsg(`Генерую: ${sec.label}... зачекайте ${s}с`), undefined, genOpts);
       // Видаляємо довге тире на всякий випадок (модель іноді ігнорує заборону)
       const cleaned = cleanResult(raw);
       const result = sec.type === "sources" ? cleaned : await enforceWordCount({
         text: cleaned, targetWords, label: sec.label, callClaude,
-        sys: buildSYS(lang, methodInfo), signal: ctrl.signal, onProgress: setLoadMsg, clean: cleanResult,
+        sys: buildSYS(lang, methodInfo, normalizeWorkType(d.type, d.course)), signal: ctrl.signal, onProgress: setLoadMsg, clean: cleanResult,
         cacheOpts: genOpts,
       });
 
@@ -2487,7 +2486,7 @@ ${clientReqsRegen ? `ВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО вико
     }
     const regenMaxTokens = Math.min(60000, Math.max(8000, Math.round((sec.pages || 1) * 3000)));
     try {
-      const raw = await callClaude(buildRegenMessages(instruction), null, buildSYS(lang, methodInfo), regenMaxTokens);
+      const raw = await callClaude(buildRegenMessages(instruction), null, buildSYS(lang, methodInfo, normalizeWorkType(d.type, d.course)), regenMaxTokens);
       const result = typographQuotes(fixMixedScript(raw, lang)
         .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
         .replace(/[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF]/g, "")
@@ -2781,7 +2780,7 @@ ${realMaterials.slice(0, 80000)}
 
 Ці дані будуть використані як незмінна основа для всіх розрахунків і таблиць у роботі, тому цифри мають бути внутрішньо узгодженими (динаміка логічна, показники не суперечать один одному).`;
 
-      const raw = await callClaude([{ role: "user", content: prompt }], null, buildSYS(lang, methodInfo), 1200, null, MODEL_FAST);
+      const raw = await callClaude([{ role: "user", content: prompt }], null, buildSYS(lang, methodInfo, normalizeWorkType(info?.type, info?.course)), 1200, null, MODEL_FAST);
       result = raw
         .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
         .replace(/[ᄀ-ᇿ⺀-鿿ꀀ-꓿가-퟿豈-﫿]/g, "")
@@ -3044,7 +3043,7 @@ ${customBlock || `Включи один або два додатки що лог
       prompt += `\n\n${APPENDIX_FILL_MARKER_RULE}`;
 
       const raw = await callClaude(
-        [{ role: "user", content: prompt }], null, buildSYS(lang, methodInfo), 6000, null, MODEL
+        [{ role: "user", content: prompt }], null, buildSYS(lang, methodInfo, normalizeWorkType(info?.type, info?.course)), 6000, null, MODEL
       );
       const result = typographQuotes(raw
         .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
@@ -3091,7 +3090,7 @@ ${finishedText.slice(0, 60000)}
 ${dateFilledText}
 
 Заміни КОЖЕН маркер ${APPENDIX_FILL_MARKER} на конкретне значення, узгоджене з тим, що вже стверджується в основному тексті роботи (наприклад, якщо текст стверджує, що функціонал працює коректно — постав відповідний фактичний результат і статус "ПРОЙДЕНО"; якщо десь згадано проблему чи обмеження — врахуй це). Решту тексту додатків НЕ змінюй і поверни дослівно, окрім заміни маркерів. Мова: ${lang}. БЕЗ markdown, зірочок, жирного (markdown-таблиці, що вже є в тексті, лишаються у форматі |---|---|).`;
-      const raw = await callClaude([{ role: "user", content: prompt }], null, buildSYS(lang, methodInfo), 6000, null, MODEL);
+      const raw = await callClaude([{ role: "user", content: prompt }], null, buildSYS(lang, methodInfo, normalizeWorkType(info?.type, info?.course)), 6000, null, MODEL);
       if (raw && raw.trim()) {
         const filled = raw.trim();
         setAppendicesText(filled);
@@ -3523,7 +3522,7 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
 
       const sectionMaxTokens = Math.min(60000, Math.max(8000, Math.round((sec.pages || 1) * 3000)));
       try {
-        const raw = await callClaude(buildRegenAllMessages(sec.id, instruction), ctrl.signal, buildSYS(lang, methodInfo), sectionMaxTokens, null, MODEL);
+        const raw = await callClaude(buildRegenAllMessages(sec.id, instruction), ctrl.signal, buildSYS(lang, methodInfo, normalizeWorkType(d.type, d.course)), sectionMaxTokens, null, MODEL);
         const result = typographQuotes(fixMixedScript(raw, lang)
           .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
           .replace(/[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF]/g, "")
@@ -4938,6 +4937,13 @@ ${secBlocks}
               moveSectionUp={moveSectionUp} moveSectionDown={moveSectionDown}
               moveSectionToPosition={moveSectionToPosition}
               doNameSinglePlaceholder={doNameSinglePlaceholder} singleNamingId={singleNamingId}
+              showClientEditsInput={showClientEditsInput} setShowClientEditsInput={setShowClientEditsInput}
+              clientEditsText={clientEditsText} setClientEditsText={setClientEditsText}
+              clientEditsLoading={clientEditsLoading} clientEditsOps={clientEditsOps}
+              clientEditsChecked={clientEditsChecked} setClientEditsChecked={setClientEditsChecked}
+              clientEditsError={clientEditsError}
+              doAnalyzeClientEdits={doAnalyzeClientEdits} doApplyClientEdits={doApplyClientEdits}
+              cancelClientEdits={cancelClientEdits}
             />
           )}
           {stage === "writing" && (

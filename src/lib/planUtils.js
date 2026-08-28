@@ -603,6 +603,204 @@ export function calcSourceDist(secs) {
   return { dist, total: Object.values(dist).reduce((a, b) => a + b, 0) };
 }
 
+// ── Перенумерація id/назв розділів і підрозділів після перебудови плану (переміщення,
+// додавання, видалення) — розділи нумеруються за порядком першої появи їхнього
+// sectionTitle у масиві, підрозділи — послідовно в межах свого розділу. Раніше жила
+// лише в academic-assistant.jsx (для стрілок ↑/↓); винесена сюди, щоб її ж міг
+// використати applyPlanEditOps нижче — без дублювання логіки.
+export function renumberSections(sections) {
+  const chapterTitles = [];
+  sections.forEach(s => {
+    if (!["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type) && s.sectionTitle) {
+      if (!chapterTitles.includes(s.sectionTitle)) chapterTitles.push(s.sectionTitle);
+    }
+  });
+  const chNumMap = {};
+  chapterTitles.forEach((title, idx) => { chNumMap[title] = idx + 1; });
+  const chTitleMap = {};
+  chapterTitles.forEach(title => {
+    const newN = chNumMap[title];
+    const match = title.match(/^РОЗДІЛ\s+\d+[.:]?\s*(.*)/i);
+    const rest = match ? match[1] : title;
+    chTitleMap[title] = `РОЗДІЛ ${newN}. ${rest}`.trimEnd();
+  });
+  const subCount = {};
+  let lastChNum = 1;
+  return sections.map(s => {
+    if (["intro", "conclusions", "sources"].includes(s.type)) return s;
+    if (s.type === "chapter_conclusion") {
+      const newTitle = chTitleMap[s.sectionTitle] || s.sectionTitle;
+      return { ...s, id: `${lastChNum}.conclusions`, sectionTitle: newTitle };
+    }
+    const cn = chNumMap[s.sectionTitle] || 1;
+    lastChNum = cn;
+    if (!subCount[cn]) subCount[cn] = 0;
+    subCount[cn]++;
+    const newId = `${cn}.${subCount[cn]}`;
+    const newTitle = chTitleMap[s.sectionTitle] || s.sectionTitle;
+    const labelBody = s.label.replace(/^\d+\.\d+\s*/, "");
+    return { ...s, id: newId, sectionTitle: newTitle, label: `${newId} ${labelBody}` };
+  });
+}
+
+// ── Перезбирає повний масив sections з intro/conclusions/sources/висновків-до-розділу
+// (взятих із prev) навколо нового порядку основних підрозділів (newMainSecs) —
+// висновки до розділу прив'язуються позиційно до i-го розділу в новому порядку.
+export function rebuildWithChapterConclusions(prev, newMainSecs) {
+  const intro = prev.filter(s => s.type === "intro");
+  const conclusions = prev.filter(s => s.type === "conclusions");
+  const sources = prev.filter(s => s.type === "sources");
+  const chapConcs = prev
+    .filter(s => s.type === "chapter_conclusion")
+    .sort((a, b) => (parseInt(a.id) || 0) - (parseInt(b.id) || 0));
+  const chapTitles = [];
+  const chapSecs = {};
+  newMainSecs.forEach(s => {
+    if (!chapSecs[s.sectionTitle]) { chapTitles.push(s.sectionTitle); chapSecs[s.sectionTitle] = []; }
+    chapSecs[s.sectionTitle].push(s);
+  });
+  const result = [...intro];
+  chapTitles.forEach((title, i) => {
+    result.push(...chapSecs[title]);
+    if (chapConcs[i]) result.push(chapConcs[i]);
+  });
+  result.push(...conclusions, ...sources);
+  return result;
+}
+
+// ── Людський опис однієї операції правки плану (для прев'ю перед застосуванням) —
+// формується кодом з полів операції й поточного sections, а не з тексту від ШІ,
+// щоб опис завжди точно відповідав тому, що реально застосується.
+export function describePlanEditOp(op, sections) {
+  const findLabel = (id) => {
+    if (id === "intro") return sections.find(s => s.type === "intro")?.label ?? null;
+    if (id === "conclusions") return sections.find(s => s.type === "conclusions")?.label ?? null;
+    if (id === "sources") return sections.find(s => s.type === "sources")?.label ?? null;
+    return sections.find(s => s.id === id)?.label ?? null;
+  };
+  switch (op.op) {
+    case "rename": {
+      const old = findLabel(op.id);
+      if (old == null) return { text: `Перейменувати ${op.id} — не знайдено в плані, пропущено`, invalid: true };
+      return { text: `Перейменувати «${old}» → «${op.newLabel}»` };
+    }
+    case "rename_chapter": {
+      const target = sections.find(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type) && s.id.split(".")[0] === String(op.chapterId));
+      if (!target) return { text: `Перейменувати розділ ${op.chapterId} — не знайдено, пропущено`, invalid: true };
+      return { text: `Перейменувати розділ ${op.chapterId}: «${target.sectionTitle}» → «${op.newTitle}»` };
+    }
+    case "resize": {
+      const old = op.id === "intro" || op.id === "conclusions" || op.id === "sources"
+        ? sections.find(s => s.type === op.id)
+        : sections.find(s => s.id === op.id);
+      if (!old) return { text: `Змінити обсяг ${op.id} — не знайдено, пропущено`, invalid: true };
+      return { text: `Обсяг «${old.label}»: ${old.pages} → ${op.newPages} стор.` };
+    }
+    case "remove": {
+      const old = findLabel(op.id);
+      if (old == null) return { text: `Видалити ${op.id} — не знайдено, пропущено`, invalid: true };
+      return { text: `Видалити: «${old}»` };
+    }
+    case "add_subsection":
+      return { text: `Додати підрозділ у розділ ${op.chapterId}: «${op.label || "новий підрозділ"}» (${op.pages || 3} стор.)` };
+    case "add_chapter":
+      return { text: `Додати новий розділ: «${op.title || "новий розділ"}»${op.subsections?.length ? ` (${op.subsections.length} підрозділ.)` : ""}` };
+    default:
+      return { text: `Невідома операція «${op.op}»`, invalid: true };
+  }
+}
+
+// ── Детерміноване застосування розпізнаних ШІ операцій правки плану до sections.
+// ШІ лише перетворює вільний текст клієнта на структуровані операції (planUtils
+// цього не вміє — це вимагає розуміння мови); саму мутацію масиву sections
+// завжди виконує код нижче, а не ШІ, щоб результат був передбачуваним.
+export function applyPlanEditOps(sections, ops, lang = "Українська") {
+  const lc = getLangLabels(lang);
+  let mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
+  const special = {
+    intro: sections.find(s => s.type === "intro") || null,
+    conclusions: sections.find(s => s.type === "conclusions") || null,
+    sources: sections.find(s => s.type === "sources") || null,
+  };
+  let chapConcs = sections.filter(s => s.type === "chapter_conclusion");
+  let tmpCounter = 0;
+
+  for (const op of ops) {
+    switch (op.op) {
+      case "rename": {
+        if (["intro", "conclusions", "sources"].includes(op.id)) {
+          if (special[op.id]) special[op.id] = { ...special[op.id], label: op.newLabel };
+        } else {
+          mainSecs = mainSecs.map(s => s.id === op.id ? { ...s, label: op.newLabel } : s);
+        }
+        break;
+      }
+      case "rename_chapter": {
+        const target = mainSecs.find(s => s.id.split(".")[0] === String(op.chapterId));
+        if (target) {
+          const oldTitle = target.sectionTitle;
+          const newTitle = `${lc.chapterWord} ${op.chapterId}. ${op.newTitle}`;
+          mainSecs = mainSecs.map(s => s.sectionTitle === oldTitle ? { ...s, sectionTitle: newTitle } : s);
+          chapConcs = chapConcs.map(s => s.sectionTitle === oldTitle ? { ...s, sectionTitle: newTitle } : s);
+        }
+        break;
+      }
+      case "resize": {
+        const newPages = Math.max(1, parseInt(op.newPages) || 1);
+        const resize = (s) => ({ ...s, pages: newPages, prompts: s.type === "sources" ? 0 : Math.max(1, Math.ceil(newPages / 3)) });
+        if (["intro", "conclusions", "sources"].includes(op.id)) {
+          if (special[op.id]) special[op.id] = resize(special[op.id]);
+        } else {
+          mainSecs = mainSecs.map(s => s.id === op.id ? resize(s) : s);
+        }
+        break;
+      }
+      case "remove": {
+        mainSecs = mainSecs.filter(s => s.id !== op.id);
+        break;
+      }
+      case "add_subsection": {
+        const chapterSecs = mainSecs.filter(s => s.id.split(".")[0] === String(op.chapterId));
+        if (!chapterSecs.length) break;
+        const sectionTitle = chapterSecs[0].sectionTitle;
+        const type = chapterSecs[0].type;
+        const pages = Math.max(1, parseInt(op.pages) || 3);
+        const newSec = { id: `_new_${tmpCounter++}`, label: op.label || `[${lc.subsWord}]`, sectionTitle, pages, prompts: Math.max(1, Math.ceil(pages / 3)), type };
+        const afterIdx = op.afterId ? mainSecs.findIndex(s => s.id === op.afterId) : -1;
+        if (afterIdx >= 0) {
+          mainSecs = [...mainSecs.slice(0, afterIdx + 1), newSec, ...mainSecs.slice(afterIdx + 1)];
+        } else {
+          let lastIdx = -1;
+          mainSecs.forEach((s, i) => { if (s.id.split(".")[0] === String(op.chapterId)) lastIdx = i; });
+          mainSecs = lastIdx >= 0
+            ? [...mainSecs.slice(0, lastIdx + 1), newSec, ...mainSecs.slice(lastIdx + 1)]
+            : [...mainSecs, newSec];
+        }
+        break;
+      }
+      case "add_chapter": {
+        const maxCh = mainSecs.reduce((m, s) => Math.max(m, parseInt(s.id.split(".")[0]) || 0), 0);
+        const chapNum = maxCh + 1;
+        const chTypes = ["theory", "analysis", "recommendations"];
+        const chType = chTypes[Math.min(chapNum - 1, chTypes.length - 1)];
+        const sectionTitle = `${lc.chapterWord} ${chapNum}. ${op.title || "[Назва розділу]"}`;
+        const subsInput = op.subsections?.length ? op.subsections : [{}, {}, {}];
+        const newSubs = subsInput.map((sub) => {
+          const pages = Math.max(1, parseInt(sub.pages) || 3);
+          return { id: `_new_${tmpCounter++}`, label: sub.label || `[${lc.subsWord}]`, sectionTitle, pages, prompts: Math.max(1, Math.ceil(pages / 3)), type: chType };
+        });
+        mainSecs = [...mainSecs, ...newSubs];
+        break;
+      }
+      default: break;
+    }
+  }
+
+  const pseudoPrev = [special.intro, special.conclusions, special.sources, ...chapConcs].filter(Boolean);
+  const rebuilt = rebuildWithChapterConclusions(pseudoPrev, mainSecs);
+  return renumberSections(rebuilt);
+}
+
 export function buildWorkConfig({ info, methodInfo, commentAnalysis }) {
   const totalPages = parsePagesAvg(info?.pages);
 

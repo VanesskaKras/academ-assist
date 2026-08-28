@@ -1,4 +1,4 @@
-import { parseClientPlan, buildPlanText, calcSourceDist, getLangLabels, insertBeforeTail } from "../../lib/planUtils.js";
+import { parseClientPlan, buildPlanText, calcSourceDist, getLangLabels, insertBeforeTail, describePlanEditOp } from "../../lib/planUtils.js";
 import { exportPlanToDocx } from "../../lib/exportDocx.js";
 import { SpinDot } from "../SpinDot.jsx";
 import { Heading, NavBtn, PrimaryBtn, GreenBtn } from "../Buttons.jsx";
@@ -13,6 +13,9 @@ export function PlanStage({
   setSourceDist, setSourceTotal, addNewChapter, recalcPages, toggleStructureSection,
   moveSectionUp, moveSectionDown,
   doNameSinglePlaceholder, singleNamingId,
+  showClientEditsInput, setShowClientEditsInput, clientEditsText, setClientEditsText,
+  clientEditsLoading, clientEditsOps, clientEditsChecked, setClientEditsChecked, clientEditsError,
+  doAnalyzeClientEdits, doApplyClientEdits, cancelClientEdits,
 }) {
   return (
     <div className="fade">
@@ -51,6 +54,7 @@ export function PlanStage({
               <div style={{ display: "flex", gap: 8 }}>
                 <button onClick={() => navigator.clipboard.writeText(planDisplay)} style={{ background: "transparent", border: "1px solid #555", color: "#aaa", borderRadius: 5, padding: "4px 12px", fontSize: 11, cursor: "pointer", fontFamily: "'Spectral',serif", letterSpacing: 1 }}>COPY</button>
                 <button onClick={() => { setShowManualPlanInput(v => !v); setManualPlanText(""); }} style={{ background: showManualPlanInput ? "#3a2a00" : "transparent", border: "1px solid #888", color: "#e8c84a", borderRadius: 5, padding: "4px 12px", fontSize: 11, cursor: "pointer", fontFamily: "'Spectral',serif", letterSpacing: 1 }}>✏ Замінити</button>
+                <button onClick={() => setShowClientEditsInput(v => !v)} style={{ background: showClientEditsInput ? "#1a2a3a" : "transparent", border: "1px solid #6a90b8", color: "#7ab0e0", borderRadius: 5, padding: "4px 12px", fontSize: 11, cursor: "pointer", fontFamily: "'Spectral',serif", letterSpacing: 1 }}>📝 Правки клієнта</button>
                 <button
                   disabled={planDocxLoading}
                   onClick={async () => { setPlanDocxLoading(true); try { await exportPlanToDocx({ sections, info, methodInfo }); } catch (e) { alert("Помилка: " + e.message); } setPlanDocxLoading(false); }}
@@ -112,6 +116,68 @@ export function PlanStage({
                   style={{ background: "transparent", border: "1px solid #555", color: "#aaa", borderRadius: 6, padding: "7px 16px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}
                 >Скасувати</button>
               </div>
+            </div>
+          )}
+
+          {showClientEditsInput && (
+            <div style={{ background: "#0e1a24", border: "1.5px solid #6a90b8", borderRadius: 8, padding: 16, marginBottom: 18 }}>
+              <div style={{ fontFamily: "'Spectral SC'", fontSize: 11, color: "#7ab0e0", letterSpacing: 3, marginBottom: 10 }}>ПРАВКИ КЛІЄНТА ДО ПЛАНУ</div>
+              {!clientEditsOps ? (
+                <>
+                  <textarea
+                    value={clientEditsText}
+                    onChange={e => setClientEditsText(e.target.value)}
+                    placeholder={"Вставте текст правок клієнта як є, наприклад:\nприберіть підрозділ 2.3\nдодайте у розділ 1 підрозділ про історію питання\nзбільшіть вступ до 3 сторінок"}
+                    style={{ width: "100%", minHeight: 120, background: "#141410", color: "#e0ddd4", border: "1px solid #555", borderRadius: 6, padding: "10px 12px", fontFamily: "'Spectral',serif", fontSize: 13, lineHeight: 1.8, resize: "vertical", boxSizing: "border-box" }}
+                  />
+                  {clientEditsError && <div style={{ color: "#e08a6a", fontSize: 12, marginTop: 8 }}>{clientEditsError}</div>}
+                  <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                    <button
+                      onClick={doAnalyzeClientEdits}
+                      disabled={clientEditsLoading || !clientEditsText.trim()}
+                      style={{ background: clientEditsLoading ? "#333" : "#1a3a4a", color: clientEditsLoading ? "#888" : "#7ab0e0", border: "none", borderRadius: 6, padding: "7px 20px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: clientEditsLoading || !clientEditsText.trim() ? "default" : "pointer", letterSpacing: 1, display: "inline-flex", alignItems: "center", gap: 6 }}
+                    >{clientEditsLoading ? <><SpinDot light />Аналізую...</> : "Розпізнати правки"}</button>
+                    <button onClick={cancelClientEdits} style={{ background: "transparent", border: "1px solid #555", color: "#aaa", borderRadius: 6, padding: "7px 16px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>Скасувати</button>
+                  </div>
+                </>
+              ) : clientEditsOps.length === 0 ? (
+                <>
+                  <div style={{ fontSize: 13, color: "#aaa" }}>ШІ не знайшов у цьому тексті конкретних структурних змін до плану.</div>
+                  <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                    <button onClick={cancelClientEdits} style={{ background: "transparent", border: "1px solid #555", color: "#aaa", borderRadius: 6, padding: "7px 16px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>Закрити</button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{ fontSize: 12, color: "#8ab0d0", marginBottom: 10 }}>Перевірте розпізнані зміни — зайве можна зняти галочкою:</div>
+                  <div style={{ borderRadius: 6, overflow: "hidden", marginBottom: 12 }}>
+                    {clientEditsOps.map((op, i) => {
+                      const { text, invalid } = describePlanEditOp(op, sections);
+                      const checked = clientEditsChecked[op._id] !== false;
+                      return (
+                        <label key={op._id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "8px 10px", background: i % 2 === 0 ? "#152430" : "#0e1a24", cursor: invalid ? "default" : "pointer", opacity: checked ? 1 : 0.45 }}>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={invalid}
+                            onChange={e => setClientEditsChecked(prev => ({ ...prev, [op._id]: e.target.checked }))}
+                            style={{ marginTop: 3, accentColor: "#6a90b8", flexShrink: 0 }}
+                          />
+                          <span style={{ fontSize: 13, color: invalid ? "#c07050" : "#e0ddd4", fontFamily: "'Spectral',serif" }}>{text}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                      onClick={doApplyClientEdits}
+                      disabled={!clientEditsOps.some(op => clientEditsChecked[op._id] !== false)}
+                      style={{ background: "#2a3a1a", color: "#a8d060", border: "none", borderRadius: 6, padding: "7px 20px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer", letterSpacing: 1 }}
+                    >Застосувати вибрані</button>
+                    <button onClick={cancelClientEdits} style={{ background: "transparent", border: "1px solid #555", color: "#aaa", borderRadius: 6, padding: "7px 16px", fontFamily: "'Spectral',serif", fontSize: 12, cursor: "pointer" }}>Скасувати</button>
+                  </div>
+                </>
+              )}
             </div>
           )}
 
