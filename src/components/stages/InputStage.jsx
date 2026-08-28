@@ -53,7 +53,7 @@ export function InputStage({
               placeholder="Вставте план клієнта якщо є. Порожньо = план згенерується автоматично."
               style={{ ...TA, minHeight: 90 }} />
           </FieldBox>
-          <FieldBox label="Або фото плану" labelColor={COLORS.plan} tooltip={"Альтернатива текстовому плану — завантажте фото або скрін плану.\nAI розпізнає структуру і використає назви розділів точно як у клієнта."}>
+          <FieldBox label="Або файл плану" labelColor={COLORS.plan} tooltip={"Альтернатива текстовому плану — завантажте фото/скрін, PDF або .docx з планом.\nAI розпізнає структуру і використає назви розділів точно як у клієнта."}>
             <ClientPlanInput onExtracted={setClientPlan} extracted={clientPlan} />
           </FieldBox>
         </div>

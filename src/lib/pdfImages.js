@@ -12,6 +12,23 @@ function base64ToUint8Array(b64) {
   return bytes;
 }
 
+// Витягує текстовий шар перших сторінок PDF (без ШІ, напряму з pdf.js) — працює для
+// PDF, збережених з текстового документа (Word → PDF тощо). Для сканованих/фото-PDF
+// текстового шару немає — повертає порожній рядок, і виклик має впасти на fallback
+// через зображення сторінок (extractPdfPageImages) + ШІ-розпізнавання.
+export async function extractPdfText(pdfB64, maxPages = 5) {
+  const pdf = await pdfjsLib.getDocument({ data: base64ToUint8Array(pdfB64) }).promise;
+  const numPages = Math.min(pdf.numPages, maxPages);
+  const pageTexts = [];
+  for (let i = 1; i <= numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    const text = content.items.map(it => it.str).join(" ").trim();
+    if (text) pageTexts.push(text);
+  }
+  return pageTexts.join("\n");
+}
+
 // Рендерить кожну сторінку PDF у окреме JPEG-зображення (сторінка = одна ілюстрація —
 // типовий випадок PDF, зібраного зі сканів/фото телефоном для великих робіт, де ілюстрацій
 // більше за ліміт прямого завантаження). Помилка на конкретній сторінці не рве весь масив.
