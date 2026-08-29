@@ -89,33 +89,7 @@ Reduce dramatic urgency and pathos. Keep all key facts intact.
 Adopt a simple, conversational yet academic tone. Text must be in scientific style.
 Each subsection ends logically with a complete sentence. Do not cut off the text. Do not force every subsection to end on a summarizing or concluding statement — a subsection may also end on a concrete detail, example, or continuation of a point, without wrapping up. Vary which ending type you use across subsections; an explicit concluding thought at the end of every single subsection reads as repetitive and formulaic.`;
 
-  // Для магістерських: прибрано "спрощуй/пом'якшуй/приклади-метафори" (це саме
-  // той пояснювальний "AI-помічник" тон, який детектори звикли розпізнавати),
-  // натомість вимога точної термінології, справжньої критичної синтези джерел
-  // і природно складнішого синтаксису БЕЗ примусової формули (урок з
-  // buildAntiDetectionSYS: жорстка однакова формула сама стає ознакою ШІ).
-  const styleBlockMaster = `Vary how each subsection opens across the whole work. Do NOT open every subsection the same way. Rotate between these opening styles: a direct scholarly claim, a concrete fact or statistic, a brief definition, a short real-world example, or a reference to an unresolved tension in the literature. If earlier subsections are shown to you as prior context above, look at how the last one or two of them opened and deliberately pick a different style now.
-Write with precision. Use active voice where it strengthens the claim, passive where the object of the sentence matters more than the actor.
-Use exact disciplinary terminology; do not simplify it or replace it with accessible paraphrases. Define a genuinely unfamiliar term briefly on first use instead of avoiding it.
-Allow structurally complex sentences with subordinate clauses (causal, conditional, concessive, comparative) where the argument genuinely calls for it. Do not force every sentence short and do not force every sentence long. Let sentence length follow the density of the idea being expressed.
-Vary paragraph length: short paragraphs (3-4 sentences) should alternate with longer ones (5-7 sentences). Avoid consecutive same-size paragraphs. FORBIDDEN to write single- or two-sentence paragraphs.
-Use natural connectors appropriate for ${lang} academic writing.
-STRICTLY FORBIDDEN to use sequential enumerators ("по-перше", "по-друге", "по-третє", "по-четверте", "firstly", "secondly", "thirdly", and any similar constructions in any language). Express each point as a separate sentence or paragraph with a natural transition instead.
-STRICTLY FORBIDDEN to open a sentence with an ordinal number word that implies a list position: "Перша умова...", "Друга умова...", "Третя умова...", "Перший крок...", "Другий крок...", "Перша помилка...", "Друга помилка...", "Перша причина...", "Перший фактор...", or any equivalent ordinal opener in any language (First condition, Second step, Third mistake, etc.). Do NOT structure content as a hidden numbered list. Instead, name each item by its actual characteristic: "Важливою умовою є...", "Не менш суттєвим є...", "Окремої уваги заслуговує...".
-STRICTLY FORBIDDEN openers and phrases (AI-detection triggers — never use or derive from): "Варто зазначити", "Слід відмітити", "Слід зазначити", "Необхідно підкреслити", "Варто підкреслити", "Зазначимо що", "Необхідно зауважити", "В умовах сьогодення", "В сучасних умовах", "В сучасних реаліях", "На сучасному етапі розвитку", "відіграє важливу роль", "відіграє ключову роль", "відіграє значну роль", "має важливе значення", "слугує основою для"; English equivalents: "It is worth noting", "It should be noted", "It is important to note", "In today's world", "In the modern era", "plays a crucial role", "plays a key role", "is of great importance", "serves as a foundation".
-Do NOT start two consecutive paragraphs with the same grammatical construction. Do NOT start two consecutive sentences with the same word.
-STRICTLY FORBIDDEN generic connector words as sentence or paragraph openers (extremely common AI-detector triggers): "Таким чином", "Отже", "Крім того", "Більше того", "Підсумовуючи", "Загалом", "Насамкінець", "Зрештою", "У результаті", "Варто додати", "Не можна не відзначити", "Одним із ключових аспектів", "Важливо розуміти, що", "Слід підкреслити, що"; English equivalents: "Thus", "Therefore", "In conclusion", "Overall", "Furthermore", "Moreover", "As a result", "It is worth adding", "One of the key aspects", "It is important to understand that". Open the sentence with a concrete detail, fact, or direct claim instead.
-STRICTLY FORBIDDEN to list exactly three parallel examples, items, or clauses within one sentence using identical grammatical structure (the "rule of three" pattern, e.g. "X, Y, and Z" or "X, Y, а також Z"). Use two items, four or more, or split into separate sentences instead.
-Vary paragraph macrostructure: do NOT make every paragraph follow the same claim-then-elaboration-then-summary shape. Some paragraphs should open with a concrete example or fact, others with a direct claim, others as a mid-thought continuation of the previous paragraph's idea.
-Do NOT repeat the same synonym or phrase for the same recurring concept more than twice within one subsection. Vary word choice for recurring concepts.
-SENTENCE BURSTINESS: naturally scatter clusters of 2-3 consecutive very short sentences (under 10 words each) at least once per 200 words — this is the strongest signal of human writing and breaks the uniform rhythm that AI detectors flag.
-Do not soften a well-evidenced claim into a tentative one just to sound cautious. State it with the confidence the source material supports, and reserve hedging language for genuine uncertainty in the material itself, not as a stylistic habit.
-Where sources or client materials present differing or conflicting positions, do not merely list them side by side: compare them directly, and where the material allows it, state which position the evidence favors or what unresolved tension remains.
-Reduce dramatic urgency and pathos. Keep all key facts intact.
-Maintain a rigorous, dense scientific register throughout. Do not adopt a conversational or explanatory tone.
-Each subsection ends logically with a complete sentence. Do not cut off the text. Do not force every subsection to end on a summarizing or concluding statement — a subsection may also end on a concrete detail, example, or continuation of a point, without wrapping up. Vary which ending type you use across subsections; an explicit concluding thought at the end of every single subsection reads as repetitive and formulaic.`;
-
-  const styleBlock = workType === "master" ? styleBlockMaster : styleBlockDefault;
+  const styleBlock = styleBlockDefault;
 
   return `You are an expert academic writer.
 
@@ -1442,7 +1416,7 @@ ${detailsLine ? `\n${detailsLine}` : ""}${individualTaskLine}${periodLine}${stat
 ${hint ? `\nОСОБЛИВОСТІ РОЗДІЛУ: ${hint}` : ""}
 ${methodReq ? `\nВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${deptGuidanceLine}${sourcesBlock}${guidanceLine}
 
-Обсяг: приблизно ${sec.pages * 225} слів, ±10% (~${sec.pages} стор.). ${citNote}
+Обсяг: приблизно ${sec.pages * 230} слів (~${sec.pages} стор.). ${citNote}
 Без markdown заголовків (#, ##). Не повторюй назву розділу на початку тексту.`;
   }
 

@@ -1857,7 +1857,7 @@ IMPORTANT: use already written sections (in context) for exact formulation of me
       instruction = `Напиши ВИСНОВКИ для ${d.type} на тему "${d.topic}".
 ${conclReq ? `ВИМОГИ МЕТОДИЧКИ: ${conclReq}\n` : ""}${commentAnalysis?.textStructureHints ? `ВИМОГИ КЛІЄНТА ДО СТРУКТУРИ (ОБОВ'ЯЗКОВО): ${commentAnalysis.textStructureHints}\n` : ""}
 ПРАВИЛА:
-- Обсяг: приблизно ${(sec.pages || 2) * 230} слів, ±10% (~${sec.pages} стор.).
+- Обсяг: приблизно ${(sec.pages || 2) * 230} слів (~${sec.pages} стор.).
 - Перший абзац — загальний підсумок мети і що вдалось досягти
 - Далі — рівно ${conclTasksProfile.count} абзаців, по одному на кожне завдання дослідження, сформульоване у вступі (текст вступу є в контексті) — у тому самому порядку. Якщо завдання у вступі поєднувало кілька підрозділів плану — зведи їхні конкретні результати в одному абзаці; якщо завдання було розбите з одного підрозділу — розподіли результати на відповідну кількість абзаців
 - Кожен такий абзац = конкретний результат, що відповідає своєму завданню
@@ -2079,7 +2079,7 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ ДО ЦЬОГО РОЗДІЛУ: $
 ПЛАН РОБОТИ (для розуміння структури та уникнення повторів):
 ${planSummary}
 
-Обсяг: приблизно ${Math.round((sec.pages || 1) * 230)} слів, ±10% (~${sec.pages} стор.).
+Обсяг: приблизно ${Math.round((sec.pages || 1) * 230)} слів (~${sec.pages} стор.).
 Не обривай текст. Завершуй підсумковим абзацом. ${citNote} Без жирного.
 ЗАБОРОНЕНО вставляти будь-які внутрішні підназви, заголовки абзаців або окремі рядки-мітки ("Загальна картина", "Результати аналізу" тощо). Кожен рядок тексту — повне речення, рядок таблиці або підпис до таблиці/рисунка.
 Абзаци мають різнитись за довжиною: чергуй короткі (2-3 речення) з довшими (5-7 речень).`;
@@ -2336,7 +2336,7 @@ IMPORTANT: use the written chapters (provided in context) for precise formulatio
       const conclTasksProfile = getIntroTasksProfile(d.type, d.course, mainSecsForConcl.length, isLarge);
       instruction = `Перепиши ВИСНОВКИ для ${d.type} на тему "${d.topic}".
 ${methodInfo?.conclusionsRequirements ? `ВИМОГИ МЕТОДИЧКИ: ${methodInfo.conclusionsRequirements}\n` : ""}
-Обсяг: приблизно ${(sec.pages || 2) * 225} слів, ±10% (~${sec.pages} стор.). Кожен абзац = один конкретний результат.
+Обсяг: приблизно ${(sec.pages || 2) * 230} слів (~${sec.pages} стор.). Кожен абзац = один конкретний результат.
 Перший — загальний підсумок. Далі — рівно ${conclTasksProfile.count} абзаців, по одному на кожне завдання дослідження, сформульоване у вступі (текст вступу є в контексті), у тому самому порядку; якщо завдання поєднувало кілька підрозділів — зведи результати в одному абзаці, якщо було розбите з одного підрозділу — розподіли на відповідну кількість абзаців. Останній — перспективи.
 Абзаци-результати мають мати різний ритм і різні відкривачі речень, не всі підряд у форматі "Аналіз... засвідчив, що..." — чергуй з прямим твердженням, конкретним фактом, розгортанням попередньої думки. Висновки мають звучати іншим голосом, ніж вступ, а не дзеркалити його ритм.
 НЕ повторювати вступ. НЕ вводити нове. Без посилань. Без жирного. Без нумерації.
@@ -2480,7 +2480,7 @@ ${empHintRegen ? `ВИМОГА: ${empHintRegen}\n` : ""}Рекомендації
         : "";
       instruction = `Перепиши підрозділ "${sec.label}" для ${d.type} на тему "${d.topic}". Галузь: ${d.subject}.
 ${empiricalBlockRegen}${econBlockRegen}${technicalBlockRegen}
-${clientReqsRegen ? `ВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО виконати):\n${clientReqsRegen}\n` : ""}Обсяг: приблизно ${Math.round((sec.pages || 1) * 225)} слів, ±10% (~${sec.pages} стор.).
+${clientReqsRegen ? `ВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО виконати):\n${clientReqsRegen}\n` : ""}Обсяг: приблизно ${Math.round((sec.pages || 1) * 230)} слів (~${sec.pages} стор.).
 Не обривай текст. Завершуй підсумковим абзацом. Без посилань. Без жирного.
 ЗАБОРОНЕНО вставляти будь-які внутрішні підназви, заголовки абзаців або окремі рядки-мітки. Кожен рядок тексту — повне речення, рядок таблиці або підпис до таблиці/рисунка.${customInstructions}${illBlockRegen}${clientMaterialsBlockRegen}`;
     }
@@ -2505,7 +2505,7 @@ ${clientReqsRegen ? `ВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО вико
   // ── Перефразувати наявний текст секції, щоб знизити плагіат (не генерація з нуля) ──
   const reduceSectionPlagiarismText = async (text, lang, signal) => {
     const approxWords = text.trim().split(/\s+/).length;
-    const maxTokens = Math.min(60000, Math.max(4000, Math.round((approxWords / 225) * 3000)));
+    const maxTokens = Math.min(60000, Math.max(4000, Math.round((approxWords / 230) * 3000)));
     const raw = await callClaude(
       [{ role: "user", content: text }],
       signal,
@@ -3318,7 +3318,7 @@ ${slideSpecs.join("\n\n")}
     try {
       const prompt = buildExtractStructurePrompt({ documentText: readyWorkText });
       const approxWords = readyWorkText.trim().split(/\s+/).length;
-      const maxTokens = Math.min(60000, Math.max(16000, Math.round((approxWords / 225) * 3000)));
+      const maxTokens = Math.min(60000, Math.max(16000, Math.round((approxWords / 230) * 3000)));
       const raw = await callClaude([{ role: "user", content: prompt }], null, null, maxTokens, null, MODEL);
       const blockRe = /@@@SECTION id="([^"]+)" title="([^"]*)" chapterTitle="([^"]*)" type="([^"]+)"@@@([\s\S]*?)@@@SOURCES@@@([\s\S]*?)@@@END@@@/g;
       const extractedSecs = [];
@@ -3514,7 +3514,7 @@ ${methodInfo?.chapterConclusionRequirements ? `ВИМОГИ МЕТОДИЧКИ: 
 Тип: ${typeHints[sec.type] || "основний"}.
 ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBlock}
 
-Обсяг: приблизно ${Math.round((sec.pages || 1) * 225)} слів, ±10% (~${sec.pages} стор.).
+Обсяг: приблизно ${Math.round((sec.pages || 1) * 230)} слів (~${sec.pages} стор.).
 Не обривай текст. Завершуй підсумковим абзацом. Без посилань [1],[2]. Без жирного.
 ЗАБОРОНЕНО вставляти будь-які внутрішні підназви, заголовки абзаців або окремі рядки-мітки. Кожен рядок тексту — повне речення, рядок таблиці або підпис до таблиці/рисунка.
 Абзаци різняться за довжиною: чергуй короткі (2-3 речення) з довшими (5-7 речень).`;
