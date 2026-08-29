@@ -213,6 +213,26 @@ export function extractNumericFacts(text) {
   return out;
 }
 
+// Перші 3 речення вже написаного підрозділу — для передачі в промпт НАСТУПНИХ
+// підрозділів тієї ж роботи як "уже використані початки, не повторюй". Генерація
+// йде строго послідовно (runSection/doWrite), тож увесь попередній текст завжди
+// вже готовий, просто досі ніде не передавався моделі: інструкція в buildSYS
+// ("якщо попередні підрозділи показані тобі як контекст вище — обери інший
+// стиль") була порожньою обіцянкою без реальних даних під нею. Три речення (а
+// не одне) — щоб зловити не лише перше слово-гачок, а й ритм довжини речень і
+// форму абзацу (теза-приклад-висновок тощо), які buildSYS також просить варіювати.
+export function extractOpeningSentences(text, count = 3) {
+  if (!text?.trim()) return "";
+  const clean = text.trim();
+  const SENT_RE = /[^.!?\n]*[.!?…]+/g;
+  let lastEnd = 0, found = 0, m;
+  while (found < count && (m = SENT_RE.exec(clean))) {
+    lastEnd = m.index + m[0].length;
+    found++;
+  }
+  return (lastEnd > 0 ? clean.slice(0, lastEnd) : clean.slice(0, 200)).trim();
+}
+
 export function getLangLabels(lang = "Українська") {
   const l = (lang || "").toLowerCase();
   // latinScript: true = мова використовує латиницю (не забороняємо її в тексті)

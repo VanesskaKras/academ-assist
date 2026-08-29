@@ -14,7 +14,7 @@ import { playDoneSound } from "./lib/audio.js";
 import { enforceWordCount, enforceTotalVolume, stripEmDash } from "./lib/wordCount.js";
 import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildExampleWorkReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildIllustrationsPdfPrompt, buildDrawingsDescriptionPrompt, buildClientMaterialsAnalysisPrompt, buildExtractStructurePrompt, buildContinuationPlanPrompt, buildAnnotationPrompt, buildAnnotationRegenPrompt, buildAntiPlagiarismSYS, buildAntiDetectionSYS, buildClientPlanEditsPrompt } from "./lib/prompts.js";
 import { extractReadyWorkStructure, quickParsePlanIds } from "./lib/readyWorkExtract.js";
-import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, getEmpiricalSections, getEconSections, getTechnicalSections, CODE_FILE_EXTENSIONS, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, deriveStructureFromExampleTOC, mergeExampleWorkIntoMethodInfo, getLangLabels, insertBeforeTail, detectRequestedChapterCount, scanFigures, hasRealFigure, renumberSections, rebuildWithChapterConclusions, applyPlanEditOps, describePlanEditOp } from "./lib/planUtils.js";
+import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, getEmpiricalSections, getEconSections, getTechnicalSections, CODE_FILE_EXTENSIONS, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, deriveStructureFromExampleTOC, mergeExampleWorkIntoMethodInfo, getLangLabels, insertBeforeTail, detectRequestedChapterCount, scanFigures, hasRealFigure, renumberSections, rebuildWithChapterConclusions, applyPlanEditOps, describePlanEditOp, extractOpeningSentences } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { getAcademicDefaults, classifyAppendixItem, detectSpecialty, normalizeWorkType } from "./lib/academicDefaults.js";
 import { searchByPhrase, filterSourcesWithGemini, getEconInstitutionalSources, generateAlternatePhrases, paperToCitation, enrichSources } from "./lib/sourcesSearch.js";
@@ -2073,9 +2073,20 @@ ${appendixBlock}${empHint ? `ВИМОГА: ${empHint}\n` : ""}Рекоменда
         ? "Вставляй [N] у текст одразу після тверджень що спираються на джерело (де N — номер зі списку вище). ЗАБОРОНЕНО вигадувати імена авторів перед цитатою — не пиши 'Іванов А. стверджує...'. Використовуй безособові конструкції: 'у дослідженні зазначається [N]', 'науковці вказують [N]', 'встановлено [N]' тощо. Цитата в тексті — ЛИШЕ [N] (технічна позначка), НІКОЛИ не пиши саму цитату (прізвище, рік, сторінку) в жодному вигляді, ні круглими, ні квадратними дужками — фінальний стиль оформлення підставить система пізніше. Посилайся ЛИШЕ на джерела зі списку вище під їхніми номерами — не згадуй і не посилайся на будь-яке дослідження чи автора, якого немає в цьому списку. Розподіляй посилання рівномірно між усіма наданими джерелами — спочатку використай кожне хоч раз, і лише потім за потреби повторюй. Одне й те саме джерело [N] НЕ цитувати більше 2 разів у межах цього підрозділу."
         : "Без посилань [1],[2].";
 
+      // Уже написані початки попередніх підрозділів цієї ж роботи — генерація йде строго
+      // послідовно (useEffect вище), тож увесь текст sec-ів до поточного вже готовий у
+      // contentRef.current. Без цього кожен підрозділ обирає стиль відкриття "наосліп",
+      // не знаючи що вже було, і схожість відкриттів між підрозділами (а не всередині
+      // одного) — саме те, що потім ловлять ШІ-детектори як статистичну одноманітність.
+      const priorMainSecIds = sections.slice(0, sections.findIndex(s => s.id === sec.id))
+        .filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type) && contentRef.current[s.id]);
+      const priorOpeningsBlock = priorMainSecIds.length
+        ? `\n\nУЖЕ НАПИСАНІ ПОЧАТКИ ПОПЕРЕДНІХ ПІДРОЗДІЛІВ ЦІЄЇ Ж РОБОТИ (не повторюй ні структуру речень, ні перше слово, ні порядок "теза-приклад-висновок" — обери інший стиль відкриття й інший ритм):\n${priorMainSecIds.map((s, i) => `${i + 1}. ${extractOpeningSentences(contentRef.current[s.id])}`).join("\n")}`
+        : "";
+
       instruction = `Напиши підрозділ "${sec.label}" для ${d.type} на тему "${d.topic}". Галузь: ${d.subject}.
 Тип підрозділу: ${typeHints[sec.type] || "основний"}.
-${methodReq ? `ВИМОГИ МЕТОДИЧКИ ДО ЦЬОГО РОЗДІЛУ: ${methodReq}` : ""}${empiricalBlock}${practicalBlock}${econBlock}${technicalBlock}${secMethodsHint}${sourcesBlock}
+${methodReq ? `ВИМОГИ МЕТОДИЧКИ ДО ЦЬОГО РОЗДІЛУ: ${methodReq}` : ""}${empiricalBlock}${practicalBlock}${econBlock}${technicalBlock}${secMethodsHint}${sourcesBlock}${priorOpeningsBlock}
 ПЛАН РОБОТИ (для розуміння структури та уникнення повторів):
 ${planSummary}
 

@@ -12,7 +12,7 @@ import {
   buildPracticeDiaryPrompt, buildDiaryTemplateAnalysisPrompt,
   buildTemplateAnalysisPrompt, buildPracticeDetailsPrompt, buildFigureInsertPrompt,
 } from "./lib/prompts.js";
-import { parseTemplate, isEcon, isTechnical, getEconSections, hasRealFigure, findDanglingFigureRefs, extractNumericFacts, normalizePageDistribution, stripNonContentSections, resolvePracticeFixedPages, getLangLabels } from "./lib/planUtils.js";
+import { parseTemplate, isEcon, isTechnical, getEconSections, hasRealFigure, findDanglingFigureRefs, extractNumericFacts, extractOpeningSentences, normalizePageDistribution, stripNonContentSections, resolvePracticeFixedPages, getLangLabels } from "./lib/planUtils.js";
 import { locateFragment } from "./lib/textFragmentLocate.js";
 import { detectSpecialtyPrioritized } from "./lib/academicDefaults.js";
 import {
@@ -1365,6 +1365,15 @@ ${secBlock}
         .filter(s => s.id !== sec.id && finalContent[s.id])
         .flatMap(s => extractNumericFacts(finalContent[s.id]));
       let instruction = buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterialsSummary, citInputs, abstractsMap, establishedFacts, deptGuidanceText);
+
+      // Уже написані початки попередніх розділів цієї ж роботи — doWrite генерує строго
+      // послідовно, тож увесь текст до поточного idx вже готовий у finalContent. Без цього
+      // кожен розділ обирає стиль відкриття "наосліп", і однакові відкриття між розділами
+      // (не всередині одного) — саме те, що ловлять ШІ-детектори як статистичну одноманітність.
+      const priorSecs = writableSecs.slice(0, idx).filter(s => finalContent[s.id]);
+      if (priorSecs.length) {
+        instruction += `\n\nУЖЕ НАПИСАНІ ПОЧАТКИ ПОПЕРЕДНІХ РОЗДІЛІВ ЦІЄЇ Ж РОБОТИ (не повторюй ні структуру речень, ні перше слово, ні порядок "теза-приклад-висновок" — обери інший стиль відкриття й інший ритм):\n${priorSecs.map((s, i) => `${i + 1}. ${extractOpeningSentences(finalContent[s.id])}`).join("\n")}`;
+      }
 
       // Обов'язкові схеми з методички (requiredFigures) — та сама перевірка "чи вже є рисунок
       // десь у цьому розділі методички", що й e4c61f2 для курсових/дипломних: mandatoryFigureNote
