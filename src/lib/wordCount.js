@@ -85,3 +85,152 @@ export async function enforceWordCount({ text, targetWords, label, callClaude, s
   // межі речення незалежно від обсягу, а не лише в гілках "задовго"/"закоротко".
   return endsWithSentence(text) ? text : cutToLastSentence(text);
 }
+
+const PLANTUML_FENCE_RE = /^```\s*plantuml\s*$/i;
+
+// Розбиває текст на блоки-рядки: звичайний абзац (у сховищі кожен абзац — один
+// рядок), markdown-таблиця чи plantuml-схема (кожна — суцільний неподільний
+// блок з кількох рядків) і порожні рядки-роздільники. Той самий поділ, що й
+// pageLayout.js використовує для підрахунку сторінок, тож "абзац" тут завжди
+// збігається з тим, що реально побачить читач як окрему одиницю тексту.
+function splitIntoLineBlocks(text) {
+  const lines = text.split("\n");
+  const blocks = [];
+  let i = 0;
+  while (i < lines.length) {
+    const trimmed = lines[i].trim();
+    if (!trimmed) { blocks.push({ type: "blank", lines: [lines[i]] }); i++; continue; }
+    if (trimmed.startsWith("|")) {
+      const start = i;
+      while (i < lines.length && lines[i].trim().startsWith("|")) i++;
+      blocks.push({ type: "table", lines: lines.slice(start, i) });
+      continue;
+    }
+    if (PLANTUML_FENCE_RE.test(trimmed)) {
+      const start = i;
+      i++;
+      while (i < lines.length && !/^```\s*$/.test(lines[i].trim())) i++;
+      i = Math.min(i + 1, lines.length);
+      blocks.push({ type: "plantuml", lines: lines.slice(start, i) });
+      continue;
+    }
+    blocks.push({ type: "para", lines: [lines[i]], words: countWords(trimmed) });
+    i++;
+  }
+  return blocks;
+}
+
+// Скорочує текст, прибираючи цілі абзаци з КІНЦЯ — ніколи не всередині абзацу
+// й ніколи не перетинаючи таблицю/plantuml-блок (вони — тверда межа: якщо
+// скорочення до них доходить, зупиняється, не займаючи їх). Раніше скорочення
+// різало по межі речення й могло лишити абзац із тезою, але без розвитку думки
+// чи висновку — саме завершальні речення й зрізались, тож абзац "провисав".
+// Прибираючи абзац цілком, такого розриву логіки всередині абзацу вже не буде.
+// Завжди лишає хоч один абзац — підрозділ ніколи не спорожняється повністю.
+export function trimTrailingParagraphs(text, wordsToCut) {
+  if (wordsToCut <= 0) return text;
+  const blocks = splitIntoLineBlocks(text);
+  const paraCount = blocks.filter(b => b.type === "para").length;
+  if (paraCount <= 1) return text;
+
+  let cut = 0;
+  let removedParas = 0;
+  let keptUntil = blocks.length;
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const b = blocks[i];
+    if (b.type === "table" || b.type === "plantuml") break;
+    if (b.type === "para") {
+      if (removedParas >= paraCount - 1) break;
+      cut += b.words;
+      removedParas++;
+      keptUntil = i;
+      if (cut >= wordsToCut) break;
+    } else {
+      keptUntil = i;
+    }
+  }
+  if (cut === 0) return text;
+  const kept = blocks.slice(0, keptUntil);
+  while (kept.length && kept[kept.length - 1].type === "blank") kept.pop();
+  return kept.map(b => b.lines.join("\n")).join("\n");
+}
+
+// ── Фінальна перевірка сумарного обсягу готової роботи ──
+// enforceWordCount тримає в межах кожен підрозділ окремо (допуск 85-120%), а
+// цитати "осиротілих" джерел довставляються (doRemapCitations/doFinalizeSources)
+// вже ПІСЛЯ цієї перевірки, без повторного контролю обсягу. Разом ці допуски,
+// помножені на десяток підрозділів, і додані цитати можуть дати сумарний обсяг
+// усієї роботи за межами заданої к-сті сторінок, навіть якщо кожен підрозділ
+// окремо формально пройшов перевірку. enforceTotalVolume рахує сумарний обсяг
+// усіх переданих секцій і, якщо він вийшов за межі допуску (tolerance):
+// - при перевищенні — скорочує кодом (trimTrailingParagraphs, цілими абзацами,
+//   ніколи не всередині абзацу чи таблиці/схеми) найбільш "переповнені" відносно
+//   власної цілі придатні підрозділи;
+// - при нестачі — дописує ще одним викликом ШІ найбільші придатні підрозділи
+//   (щоб додаток був якнайменш помітним відносно вже написаного обсягу).
+// Службові секції (вступ/висновки/висновки до розділу/список джерел — див.
+// isEligible) не займає: їх обсяг зазвичай суворо регламентований форматом.
+export async function enforceTotalVolume({
+  sections, content, targetWords, isEligible, tolerance = 0.05,
+  callClaude, sys, signal, onProgress, clean, cacheOpts,
+}) {
+  const updated = { ...content };
+  const wordsOf = (id) => countWords(updated[id] || "");
+  const total = () => sections.reduce((sum, s) => sum + wordsOf(s.id), 0);
+
+  const upper = targetWords * (1 + tolerance);
+  const lower = targetWords * (1 - tolerance);
+  const currentTotal = total();
+  if (currentTotal <= upper && currentTotal >= lower) return updated;
+
+  const eligible = sections.filter(s => isEligible(s) && updated[s.id]);
+
+  if (currentTotal > upper) {
+    let excess = currentTotal - targetWords;
+    for (let round = 0; round < 4 && excess > 0; round++) {
+      const bySize = eligible
+        .map(s => ({ s, words: wordsOf(s.id), ownTarget: Math.max(1, Number(s.pages || 1) * 230) }))
+        .filter(x => x.words > x.ownTarget)
+        .sort((a, b) => (b.words - b.ownTarget) - (a.words - a.ownTarget));
+      if (!bySize.length) break;
+      let cutThisRound = 0;
+      for (const { s, words } of bySize) {
+        if (excess <= 0) break;
+        const wantCut = Math.min(Math.round(words * 0.25), excess);
+        if (wantCut < 30) continue;
+        onProgress?.(`Перевіряю обсяг: скорочую "${s.label}"...`);
+        const before = wordsOf(s.id);
+        updated[s.id] = trimTrailingParagraphs(updated[s.id], wantCut);
+        const actualCut = before - wordsOf(s.id);
+        excess -= actualCut;
+        cutThisRound += actualCut;
+      }
+      if (cutThisRound < 5) break;
+    }
+    return updated;
+  }
+
+  let deficit = targetWords - currentTotal;
+  const targets = eligible
+    .map(s => ({ s, words: wordsOf(s.id) }))
+    .sort((a, b) => b.words - a.words)
+    .slice(0, 2);
+  for (const { s } of targets) {
+    if (deficit < 30) break;
+    const addWords = targets.length > 1 ? Math.round(deficit / targets.length) : deficit;
+    onProgress?.(`Перевіряю обсяг: доповнюю "${s.label}"...`);
+    try {
+      const text = updated[s.id];
+      const before = countWords(text);
+      const contPrompt = `Ось поточний текст "${s.label}" (${before} слів):\n\n${text}\n\nДопиши ще приблизно ${addWords} слів, органічно продовжуючи виклад далі. Не повторюй вже написане. Не додавай вступних фраз на кшталт "Продовжимо" чи "Отже". Просто продовжуй текст з того місця де він закінчився, без заголовків і міток.`;
+      const raw = await callClaude([{ role: "user", content: contPrompt }], signal, sys, Math.min(20000, Math.max(2000, Math.round(addWords * 3))), null, undefined, cacheOpts);
+      let contClean = (clean ? clean(raw) : raw).trim();
+      if (!endsWithSentence(contClean)) contClean = cutToLastSentence(contClean);
+      updated[s.id] = text + "\n\n" + contClean;
+      deficit -= (countWords(updated[s.id]) - before);
+    } catch {
+      // якщо дописати не вдалось - лишаємо як є, наступний придатний підрозділ спробує компенсувати
+    }
+  }
+  return updated;
+}

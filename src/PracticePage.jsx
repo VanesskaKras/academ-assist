@@ -21,7 +21,7 @@ import {
   PRACTICE_TYPE_GENITIVE,
 } from "./lib/practiceDefaults.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
-import { enforceWordCount, stripEmDash } from "./lib/wordCount.js";
+import { enforceWordCount, enforceTotalVolume, stripEmDash } from "./lib/wordCount.js";
 import { playDoneSound } from "./lib/audio.js";
 import {
   filterSourcesWithGemini, searchByPhrase, getEconInstitutionalSources, generateAlternatePhrases, enrichSources,
@@ -1228,6 +1228,20 @@ ${secBlock}
         const fixed = await fixDanglingFigures(text, info.language);
         if (fixed !== text) nextContent[sec.id] = fixed;
       }));
+
+      // ── 5г. Фінальна перевірка сумарного обсягу готової роботи (вступ...список
+      // джерел) — той самий крок, що й у великих роботах (academic-assistant.jsx,
+      // doRemapCitations): без нього обсяг кожного розділу міг формально пройти
+      // enforceWordCount окремо, а сумарний обсяг усе одно вийти за межі заданої
+      // к-сті сторінок, особливо після довставки осиротілих цитат вище (5б-5в).
+      setLoadMsg("Перевіряю сумарний обсяг...");
+      const totalTargetWords = sections.reduce((sum, s) => sum + (parseInt(s.pages) || 0) * 230, 0);
+      const adjustedVolume = await enforceTotalVolume({
+        sections, content: nextContent, targetWords: totalTargetWords,
+        isEligible: (s) => !["sources", "intro", "conclusions"].includes(s.id) && !/додат/i.test(s.label || ""),
+        callClaude, sys: buildSYS(info.language, methodInfo), onProgress: setLoadMsg, clean: stripEmDash,
+      });
+      Object.assign(nextContent, adjustedVolume);
 
       const formattedText = fmtList.map((c, i) => `${i + 1}. ${c}`).join("\n");
       setContent(nextContent);

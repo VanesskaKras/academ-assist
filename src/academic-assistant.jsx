@@ -11,7 +11,7 @@ import { exportToPptxFile } from "./lib/exportPptx.js";
 import { extractPdfPageImages } from "./lib/pdfImages.js";
 import { callClaude, callGemini, MODEL, MODEL_FAST, resetGenerationCost } from "./lib/api.js";
 import { playDoneSound } from "./lib/audio.js";
-import { enforceWordCount, stripEmDash } from "./lib/wordCount.js";
+import { enforceWordCount, enforceTotalVolume, stripEmDash } from "./lib/wordCount.js";
 import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildExampleWorkReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildIllustrationsPdfPrompt, buildDrawingsDescriptionPrompt, buildClientMaterialsAnalysisPrompt, buildExtractStructurePrompt, buildContinuationPlanPrompt, buildAnnotationPrompt, buildAnnotationRegenPrompt, buildAntiPlagiarismSYS, buildAntiDetectionSYS, buildClientPlanEditsPrompt } from "./lib/prompts.js";
 import { extractReadyWorkStructure, quickParsePlanIds } from "./lib/readyWorkExtract.js";
 import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, getEmpiricalSections, getEconSections, getTechnicalSections, CODE_FILE_EXTENSIONS, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, deriveStructureFromExampleTOC, mergeExampleWorkIntoMethodInfo, getLangLabels, insertBeforeTail, detectRequestedChapterCount, scanFigures, hasRealFigure, renumberSections, rebuildWithChapterConclusions, applyPlanEditOps, describePlanEditOp } from "./lib/planUtils.js";
@@ -4448,6 +4448,24 @@ ${secBlocks}
     if (srcSec) newContent[srcSec.id] = fmtResult || allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n");
     const newRefList = (fmtResult || allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n"))
       .split("\n").filter(Boolean);
+
+    // ── 9б. Фінальна перевірка сумарного обсягу готової роботи (вступ...список
+    // джерел — додатки й титулка й так поза sections/content, не займаються).
+    // enforceWordCount тримає в межах кожен підрозділ окремо, а цитати
+    // осиротілих джерел (крок 7 вище) довставляються вже ПІСЛЯ цієї перевірки —
+    // сумарний обсяг усієї роботи може вийти за межі заданої к-сті сторінок,
+    // навіть якщо кожен підрозділ окремо формально пройшов перевірку.
+    if (!ctrl.signal.aborted) {
+      const totalTargetWords = sections.reduce((sum, s) => sum + Number(s.pages || 0) * 230, 0);
+      const adjustedVolume = await enforceTotalVolume({
+        sections, content: newContent, targetWords: totalTargetWords,
+        isEligible: (s) => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type),
+        callClaude: callClaudeAbortable, signal: ctrl.signal,
+        sys: buildSYS(_remapWorkLang, methodInfo, normalizeWorkType(info?.type, info?.course)),
+        clean: stripEmDash,
+      });
+      Object.assign(newContent, adjustedVolume);
+    }
 
     if (!ctrl.signal.aborted) {
       // Підставляємо у "Структура роботи" фактичну (пораховану з готового тексту) к-сть
