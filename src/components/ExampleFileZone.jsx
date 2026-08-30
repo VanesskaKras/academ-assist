@@ -1,41 +1,33 @@
 import { useState, useRef } from "react";
 import mammoth from "mammoth";
+import { callClaude, MODEL_FAST } from "../lib/api.js";
+import { extractPdfText, extractPdfPageImages } from "../lib/pdfImages.js";
 
 const MAX_TEXT_CHARS = 50000;
+const OCR_PAGE_LIMIT = 20;
 
-// Односайлова зона: приймає .docx (mammoth) або .pdf (pdf.js), одразу витягує
-// текст і повертає його через onExtracted — сирі байти файлу нікуди не зберігаються.
+const EXTRACT_SCAN_PROMPT = "Transcribe all text from these page images exactly as it appears — headings, chapter/section titles and numbering, paragraph text. Preserve the original structure and line breaks between paragraphs and headings so the document's real division into parts stays visible. Return only the plain text content, no explanations, no markdown.";
+
+// Односайлова зона: приймає .docx (mammoth) або .pdf, одразу витягує текст і повертає
+// його через onExtracted — сирі байти файлу нікуди не зберігаються.
 export function ExampleFileZone({ hint, fileName, onExtracted }) {
   const fileRef = useRef();
   const [dragging, setDragging] = useState(false);
   const [extracting, setExtracting] = useState(false);
   const [error, setError] = useState("");
 
-  async function extractPdfText(b64) {
-    if (!window.pdfjsLib) {
-      await new Promise((resolve, reject) => {
-        const s = document.createElement("script");
-        s.src = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js";
-        s.onload = () => {
-          window.pdfjsLib.GlobalWorkerOptions.workerSrc =
-            "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
-          resolve();
-        };
-        s.onerror = reject;
-        document.head.appendChild(s);
-      });
-    }
-    const binary = atob(b64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    const pdf = await window.pdfjsLib.getDocument({ data: bytes }).promise;
-    let text = "";
-    for (let p = 1; p <= pdf.numPages; p++) {
-      const page = await pdf.getPage(p);
-      const content = await page.getTextContent();
-      text += content.items.map(i => i.str).join(" ") + "\n";
-    }
-    return text.trim();
+  // Скановані/фото-PDF не мають текстового шару (pdf.js поверне порожній рядок) —
+  // тоді рендеримо сторінки в зображення і розпізнаємо текст через Claude vision,
+  // інакше зразок структури мовчки залишається порожнім і губиться пріоритет над методичкою.
+  async function extractPdfViaOcr(b64) {
+    const images = await extractPdfPageImages(b64, { maxDim: 1400, quality: 0.85 });
+    const pageParts = images.slice(0, OCR_PAGE_LIMIT).filter(Boolean)
+      .map(img => ({ type: "image", source: { type: "base64", media_type: img.type, data: img.b64 } }));
+    if (!pageParts.length) throw new Error("не вдалося прочитати жодної сторінки");
+    const raw = await callClaude([{
+      role: "user", content: [...pageParts, { type: "text", text: EXTRACT_SCAN_PROMPT }],
+    }], null, "Return only plain text, no markdown.", 6000, null, MODEL_FAST);
+    return raw.trim();
   }
 
   async function processFile(f) {
@@ -62,7 +54,8 @@ export function ExampleFileZone({ hint, fileName, onExtracted }) {
           r.onerror = rej;
           r.readAsDataURL(f);
         });
-        text = await extractPdfText(b64);
+        try { text = await extractPdfText(b64, 200); } catch (e) { console.warn("pdf text layer read failed:", e.message); text = ""; }
+        if (!text || text.trim().length < 30) text = await extractPdfViaOcr(b64);
       }
       onExtracted(f.name, text.slice(0, MAX_TEXT_CHARS));
     } catch (e) {

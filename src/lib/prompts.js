@@ -1265,7 +1265,12 @@ export function buildPracticePlanPrompt(info, methodInfo, structureExampleText, 
   // будуємо структуру за ним замість плоского шаблону по категорії.
   // Зразок готового звіту від клієнта (якщо завантажений) має пріоритет над зразком з методички.
   let toc = methodInfo?.exampleTOC || "";
-  let hasSubsections = !!structureExampleText || /^\s*\d+\.\d+/m.test(toc);
+  // Зразок готового звіту рахуємо джерелом підрозділів лише якщо в його тексті справді
+  // є нумеровані підрозділи (1.1, 1.2 ...) — інакше (суцільна розповідь без заголовків)
+  // немає реальної структури, яку можна відтворити, і треба падати на плоский шаблон
+  // за категорією, а НЕ на contentPlans з методички (structureExampleText все одно
+  // блокує цей фолбек нижче — приклад завжди пріоритетніший за методичку).
+  let hasSubsections = /^\s*\d+\.\d+/m.test(structureExampleText || "") || /^\s*\d+\.\d+/m.test(toc);
   // Немає класичного зразка змісту, але методичка описала зміст звіту переліком пунктів
   // (contentPlans, витягнутих на кроці читання методички) — використовуємо найбільш підхожий варіант.
   if (!hasSubsections && !structureExampleText && methodInfo?.contentPlans?.length) {
