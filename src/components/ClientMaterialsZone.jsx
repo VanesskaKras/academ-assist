@@ -1,12 +1,15 @@
 import { useState, useRef } from "react";
 import { CODE_FILE_EXTENSIONS } from "../lib/planUtils.js";
 import { callClaude, MODEL_FAST } from "../lib/api.js";
+import { extractPdfText, extractPdfPageImages } from "../lib/pdfImages.js";
 
 const MAX_FILES = 20;
 const MAX_TEXT_CHARS = 50000;
+const OCR_PAGE_LIMIT = 20;
 const CODE_ACCEPT = CODE_FILE_EXTENSIONS.join(",");
 
 const EXTRACT_IMAGE_PROMPT = "Transcribe all text, data and content visible in this image exactly as it appears (headings, tables, numbers, notes). Return only the plain text content, no explanations.";
+const EXTRACT_SCAN_PROMPT = "Transcribe all text from these page images exactly as it appears — headings, tables, numbers, notes, structure. Return only the plain text content, no explanations.";
 
 const XLSX_CDN = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
 
@@ -46,31 +49,17 @@ export function ClientMaterialsZone({ materials, onAdd, onRemove, manualText, on
     return parts.join("\n\n").slice(0, MAX_TEXT_CHARS);
   }
 
-  async function extractPdfText(b64) {
-    if (!window.pdfjsLib) {
-      await new Promise((resolve, reject) => {
-        const s = document.createElement("script");
-        s.src = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js";
-        s.onload = () => {
-          window.pdfjsLib.GlobalWorkerOptions.workerSrc =
-            "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
-          resolve();
-        };
-        s.onerror = reject;
-        document.head.appendChild(s);
-      });
-    }
-    const binary = atob(b64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    const pdf = await window.pdfjsLib.getDocument({ data: bytes }).promise;
-    let text = "";
-    for (let p = 1; p <= pdf.numPages; p++) {
-      const page = await pdf.getPage(p);
-      const content = await page.getTextContent();
-      text += content.items.map(i => i.str).join(" ") + "\n";
-    }
-    return text.trim().slice(0, MAX_TEXT_CHARS);
+  // Скановані/фото-PDF не мають текстового шару (pdf.js поверне порожній рядок) —
+  // тоді рендеримо сторінки в зображення і розпізнаємо текст через Claude vision.
+  async function extractPdfViaOcr(b64) {
+    const images = await extractPdfPageImages(b64, { maxDim: 1400, quality: 0.85 });
+    const pageParts = images.slice(0, OCR_PAGE_LIMIT).filter(Boolean)
+      .map(img => ({ type: "image", source: { type: "base64", media_type: img.type, data: img.b64 } }));
+    if (!pageParts.length) throw new Error("не вдалося прочитати жодної сторінки");
+    const raw = await callClaude([{
+      role: "user", content: [...pageParts, { type: "text", text: EXTRACT_SCAN_PROMPT }],
+    }], null, "Return only plain text, no markdown.", 6000, null, MODEL_FAST);
+    return raw.trim();
   }
 
   async function extractImageText(b64, mediaType) {
@@ -123,8 +112,10 @@ export function ClientMaterialsZone({ materials, onAdd, onRemove, manualText, on
             r.onerror = rej;
             r.readAsDataURL(f);
           });
-          const text = await extractPdfText(b64);
-          onAdd({ name: f.name, text });
+          let text = "";
+          try { text = await extractPdfText(b64, 200); } catch (e) { console.warn("pdf text layer read failed:", e.message); }
+          if (!text || text.trim().length < 30) text = await extractPdfViaOcr(b64);
+          onAdd({ name: f.name, text: text.trim().slice(0, MAX_TEXT_CHARS) });
         } else if (isXlsx) {
           const arrayBuffer = await new Promise((res, rej) => {
             const r = new FileReader();
