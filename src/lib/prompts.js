@@ -558,6 +558,19 @@ conclusionsPages: ${s.conclusionsPages ?? 'null'}
 - requiredFormulas: шукай формули/розрахунки які студент має виконати у роботі. Поверни масив: [{"name":"назва показника","formula":"формула у вигляді plain text, наприклад β = Σ(kij × pi) / (m × n)","variables":"опис кожної змінної через крапку з комою","interpretation":"шкала інтерпретації результату якщо є в методичці","section":"analysis або recommendations"}]. null якщо формул немає.${practiceRules}`;
 }
 
+// Слова-маркери прикладу-заглушки titlePageTemplate зі схеми вище (рядок з "titlePageTemplate":
+// у buildMethodologyReadingPrompt). Словесна заборона копіювати цей приклад у самому промпті не
+// стовідсоткова — модель іноді все одно повертає його дослівно замість null, коли в методичці
+// немає власної титулки. Це кодова, детермінована страховка: якщо в результаті трапляються
+// хоча б 2 з цих фраз, це напевно скопійований приклад, а не реальний зразок з методички, і
+// поле треба обнулити, щоб спрацював резервний варіант (зразок структури / дефолтна титулка).
+const SCHEMA_PLACEHOLDER_TITLEPAGE_MARKERS = ["Кафедра назва", "Прізвище Ім’я По-батькові", "Посада, ПІБ", "студент(ка) групи"];
+export function isSchemaPlaceholderTitlePage(titlePageTemplate) {
+  if (!Array.isArray(titlePageTemplate) || !titlePageTemplate.length) return false;
+  const joined = titlePageTemplate.map(l => l?.text || "").join(" | ");
+  return SCHEMA_PLACEHOLDER_TITLEPAGE_MARKERS.filter(m => joined.includes(m)).length >= 2;
+}
+
 // ── Промпт: читання ГОТОВОЇ ЧУЖОЇ РОБОТИ як зразка структури й оформлення ──
 // На відміну від buildMethodologyReadingPrompt це не документ з ОПИСОВИМИ вимогами
 // ("вступ повинен містити..."), а вже завершена студентська робота: структуру й

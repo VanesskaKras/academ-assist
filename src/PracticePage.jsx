@@ -7,7 +7,7 @@ import {
 } from "./lib/api.js";
 import {
   buildSYS, buildSYSTable, SYS_JSON, SYS_JSON_SHORT, STRUCTURE_READING_PROMPT,
-  buildMethodologyReadingPrompt, buildStructureExampleTitlePagePrompt,
+  buildMethodologyReadingPrompt, buildStructureExampleTitlePagePrompt, isSchemaPlaceholderTitlePage,
   buildPracticePlanPrompt, buildPracticeWritingPrompt, FREEFORM_PARAGRAPH_RULES,
   buildPracticeDiaryPrompt, buildDiaryTemplateAnalysisPrompt,
   buildTemplateAnalysisPrompt, buildPracticeDetailsPrompt, buildFigureInsertPrompt,
@@ -458,6 +458,12 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
         if (structureInfo) {
           if (structureInfo.chaptersCount != null) parsedMethodInfo.chaptersCount = structureInfo.chaptersCount;
           if (structureInfo.totalPages != null) parsedMethodInfo.totalPages = structureInfo.totalPages;
+        }
+        // Словесна заборона копіювати приклад-заглушку зі схеми промпту не стовідсоткова —
+        // модель іноді все одно повертає її дослівно замість null. Кодова страховка: якщо
+        // впізнаємо саме цей приклад, обнуляємо поле, щоб спрацював резервний варіант нижче.
+        if (isSchemaPlaceholderTitlePage(parsedMethodInfo.titlePageTemplate)) {
+          parsedMethodInfo.titlePageTemplate = null;
         }
         setMethodInfo(parsedMethodInfo);
       } catch (e) {
