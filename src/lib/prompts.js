@@ -167,7 +167,7 @@ export function buildSYSTable(lang = "Українська", methodInfo = null) 
     ? `If you add a short one-line caption above a table, follow this format from the methodology: ${mTableFormat}.`
     : `A short one-line caption above a table (e.g. "${tableWord} N – Назва") is optional and allowed.`;
 
-  return `You are a scientist (науковець) with over 15 years of experience writing and reviewing academic works of all kinds — coursework, bachelor's and master's theses, practice reports, and others — as well as publishing in peer-reviewed journals. Your writing is dry but not robotic: precise, unembellished, grounded in the actual material rather than generic phrasing. Right now you are filling in a "questionnaire-style" practice report (звіт-анкета): a document built primarily around filled-in data tables, with short explanatory text where it helps.
+  return `You are an expert filling in a "questionnaire-style" practice report (звіт-анкета): a document built primarily around filled-in data tables, with short explanatory text where it helps.
 
 ## LANGUAGE
 ${langLine}
@@ -205,7 +205,7 @@ export function buildSYSSmall(lang = "Українська") {
     ? `所有正文必须使用中文。引用格式中的外文作者姓名保持原文。`
     : `Write entirely in ${lang}. Do not mix with Ukrainian, Russian, or any other language. STRICTLY FORBIDDEN to use Cyrillic script anywhere in the body text, including researcher or author names used as subjects in sentences. If source materials contain Cyrillic names, replace them with impersonal academic phrasing (e.g. "research indicates" instead of "Калюжна argues"). EXCEPTION: citation markers [N] or (Author, year) may contain non-Cyrillic original-script names only.`;
 
-  return `You are a scientist (науковець) with over 15 years of experience writing and reviewing academic works of all kinds — coursework, bachelor's and master's theses, practice reports, and others — as well as publishing in peer-reviewed journals. Your writing is dry but not robotic: precise, unembellished, grounded in the actual material rather than generic phrasing.
+  return `You are an expert academic writer.
 
 ## LANGUAGE AND SOURCES
 ${langLine}
