@@ -1,9 +1,12 @@
 import { useState, useRef } from "react";
 import { CODE_FILE_EXTENSIONS } from "../lib/planUtils.js";
+import { callClaude, MODEL_FAST } from "../lib/api.js";
 
 const MAX_FILES = 20;
 const MAX_TEXT_CHARS = 50000;
 const CODE_ACCEPT = CODE_FILE_EXTENSIONS.join(",");
+
+const EXTRACT_IMAGE_PROMPT = "Transcribe all text, data and content visible in this image exactly as it appears (headings, tables, numbers, notes). Return only the plain text content, no explanations.";
 
 const XLSX_CDN = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
 
@@ -70,6 +73,16 @@ export function ClientMaterialsZone({ materials, onAdd, onRemove, manualText, on
     return text.trim().slice(0, MAX_TEXT_CHARS);
   }
 
+  async function extractImageText(b64, mediaType) {
+    const raw = await callClaude([{
+      role: "user", content: [
+        { type: "image", source: { type: "base64", media_type: mediaType, data: b64 } },
+        { type: "text", text: EXTRACT_IMAGE_PROMPT },
+      ],
+    }], null, "Return only plain text, no markdown.", 800, null, MODEL_FAST);
+    return raw.trim().slice(0, MAX_TEXT_CHARS);
+  }
+
   async function processFiles(files) {
     const remaining = MAX_FILES - materials.length;
     const toProcess = Array.from(files).slice(0, remaining);
@@ -84,8 +97,18 @@ export function ClientMaterialsZone({ materials, onAdd, onRemove, manualText, on
           f.type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
           f.type === "application/vnd.ms-excel";
         const isXml = f.name.endsWith(".xml") || f.type === "text/xml" || f.type === "application/xml";
+        const isImage = f.type.startsWith("image/");
 
-        if (isText || isXml) {
+        if (isImage) {
+          const b64 = await new Promise((res, rej) => {
+            const r = new FileReader();
+            r.onload = ev => res(ev.target.result.split(",")[1]);
+            r.onerror = rej;
+            r.readAsDataURL(f);
+          });
+          const text = await extractImageText(b64, f.type);
+          onAdd({ name: f.name, text });
+        } else if (isText || isXml) {
           const text = await new Promise((res, rej) => {
             const r = new FileReader();
             r.onload = ev => res(ev.target.result.slice(0, MAX_TEXT_CHARS));
@@ -155,14 +178,14 @@ export function ClientMaterialsZone({ materials, onAdd, onRemove, manualText, on
             {extracting
               ? "Витягую текст..."
               : canAdd
-                ? `Перетягніть або клікніть — PDF, TXT, CSV, XLSX, XML, файли коду (${materials.length}/${MAX_FILES})`
+                ? `Перетягніть або клікніть — PDF, TXT, CSV, XLSX, XML, фото, файли коду (${materials.length}/${MAX_FILES})`
                 : `Максимум ${MAX_FILES} файлів завантажено`}
           </div>
         </div>
         <input
           ref={fileRef}
           type="file"
-          accept={`.pdf,.txt,.csv,.xlsx,.xls,.xml,text/plain,application/pdf,text/csv,text/xml,application/xml,${CODE_ACCEPT}`}
+          accept={`.pdf,.txt,.csv,.xlsx,.xls,.xml,image/*,text/plain,application/pdf,text/csv,text/xml,application/xml,${CODE_ACCEPT}`}
           multiple
           style={{ display: "none" }}
           onChange={e => { processFiles(e.target.files); e.target.value = ""; }}
