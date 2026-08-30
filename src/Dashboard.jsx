@@ -443,6 +443,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
     const [hasMore, setHasMore] = useState(false);
     const [loadingMore, setLoadingMore] = useState(false);
     const [serverCounts, setServerCounts] = useState(null);
+    const [selectedIds, setSelectedIds] = useState(() => new Set());
     const [allOrdersFull, setAllOrdersFull] = useState(null); // для пошуку по всій колекції (адмін)
 
     const isAdmin = profile?.role === "admin";
@@ -578,6 +579,38 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
         setOrders(p => p.filter(o => o.id !== id));
     };
 
+    const toggleSelect = (id, e) => {
+        e.stopPropagation();
+        setSelectedIds(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id); else next.add(id);
+            return next;
+        });
+    };
+
+    const bulkMoveToTrash = async () => {
+        if (!window.confirm(`Перемістити в кошик ${selectedIds.size} замовлень?`)) return;
+        const ids = [...selectedIds];
+        await Promise.all(ids.map(id => setDoc(doc(db, "orders", id), { deleted: true, deletedAt: new Date().toISOString() }, { merge: true })));
+        setOrders(p => p.map(o => selectedIds.has(o.id) ? { ...o, deleted: true } : o));
+        setSelectedIds(new Set());
+    };
+
+    const bulkRestore = async () => {
+        const ids = [...selectedIds];
+        await Promise.all(ids.map(id => setDoc(doc(db, "orders", id), { deleted: false }, { merge: true })));
+        setOrders(p => p.map(o => selectedIds.has(o.id) ? { ...o, deleted: false } : o));
+        setSelectedIds(new Set());
+    };
+
+    const bulkPermanentDelete = async () => {
+        if (!window.confirm(`Видалити назавжди ${selectedIds.size} замовлень? Це незворотна дія!`)) return;
+        const ids = [...selectedIds];
+        await Promise.all(ids.map(id => deleteDoc(doc(db, "orders", id))));
+        setOrders(p => p.filter(o => !selectedIds.has(o.id)));
+        setSelectedIds(new Set());
+    };
+
     const transferOrder = async (orderId, newUid, e) => {
         e.stopPropagation();
         await setDoc(doc(db, "orders", orderId), { uid: newUid }, { merge: true });
@@ -690,6 +723,13 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
         return result;
     }, [orders, allOrdersFull, search, filterStatus, dlFrom, dlTo, sortBy, filterManager, isAdmin]);
 
+    const toggleSelectAll = () => {
+        setSelectedIds(prev => {
+            const allSelected = filtered.length > 0 && filtered.every(o => prev.has(o.id));
+            return allSelected ? new Set() : new Set(filtered.map(o => o.id));
+        });
+    };
+
     const counts = useMemo(() => {
         const c = { all: 0, done: 0, writing: 0, sources: 0, plan_ready: 0, new: 0, archived: 0, corrections: 0, deleted: 0 };
         orders.forEach(o => {
@@ -776,7 +816,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
                             const isActive = filterStatus === s.key;
                             return (
                                 <div key={s.label}
-                                    onClick={() => setFilterStatus(isActive ? null : s.key)}
+                                    onClick={() => { setFilterStatus(isActive ? null : s.key); setSelectedIds(new Set()); }}
                                     style={{
                                         padding: "8px 18px", borderRadius: 20, background: isActive ? s.color : s.bg,
                                         color: isActive ? "#fff" : s.color, fontSize: 12, fontWeight: 600,
@@ -867,6 +907,36 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
                                 <span style={{ fontSize: 12, color: "#aaa" }}>Показано перші {orders.length} замовлень</span>
                             </div>
                         )}
+                        {(filterStatus !== "deleted" || isAdmin) && (
+                            <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "0 4px 4px", flexWrap: "wrap" }}>
+                                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#888", cursor: "pointer", userSelect: "none" }}>
+                                    <input type="checkbox" checked={filtered.length > 0 && filtered.every(o => selectedIds.has(o.id))} onChange={toggleSelectAll} style={{ cursor: "pointer" }} />
+                                    Обрати всі ({filtered.length})
+                                </label>
+                                {selectedIds.size > 0 && (<>
+                                    <span style={{ fontSize: 12, color: "#aaa" }}>Виділено: {selectedIds.size}</span>
+                                    <button onClick={() => setSelectedIds(new Set())}
+                                        style={{ background: "transparent", border: "1px solid #eee", color: "#888", borderRadius: 6, padding: "5px 10px", fontSize: 12, cursor: "pointer" }}>
+                                        Зняти виділення
+                                    </button>
+                                    {filterStatus === "deleted" ? (<>
+                                        <button onClick={bulkRestore}
+                                            style={{ background: "#e4ffe4", border: "1px solid #4aba4a50", color: "#1a6a1a", borderRadius: 6, padding: "5px 10px", fontSize: 12, cursor: "pointer", fontWeight: 600 }}>
+                                            ↩ Відновити ({selectedIds.size})
+                                        </button>
+                                        <button onClick={bulkPermanentDelete}
+                                            style={{ background: "transparent", border: "1px solid #f99", color: "#c55", borderRadius: 6, padding: "5px 10px", fontSize: 12, cursor: "pointer" }}>
+                                            ✕✕ Видалити назавжди ({selectedIds.size})
+                                        </button>
+                                    </>) : (
+                                        <button onClick={bulkMoveToTrash}
+                                            style={{ background: "transparent", border: "1px solid #f99", color: "#c55", borderRadius: 6, padding: "5px 10px", fontSize: 12, cursor: "pointer", fontWeight: 600 }}>
+                                            🗑 У кошик ({selectedIds.size})
+                                        </button>
+                                    )}
+                                </>)}
+                            </div>
+                        )}
                         {filtered.map(order => {
                             const isCorrections = order.type === "file_corrections";
                             const st = isCorrections
@@ -879,6 +949,13 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
                                     style={{ background: "#fff", borderRadius: 10, padding: "16px 20px", cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,0.05)", display: "flex", alignItems: "center", gap: 14, transition: "box-shadow .2s" }}
                                     onMouseEnter={e => e.currentTarget.style.boxShadow = "0 4px 18px rgba(0,0,0,0.10)"}
                                     onMouseLeave={e => e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.05)"}>
+
+                                    {/* Select checkbox */}
+                                    {(filterStatus !== "deleted" || isAdmin) && (
+                                        <div onClick={e => e.stopPropagation()} style={{ flexShrink: 0 }}>
+                                            <input type="checkbox" checked={selectedIds.has(order.id)} onChange={e => toggleSelect(order.id, e)} style={{ cursor: "pointer", width: 16, height: 16 }} />
+                                        </div>
+                                    )}
 
                                     {/* Status dot */}
                                     <div style={{ width: 10, height: 10, borderRadius: "50%", background: st.dot, flexShrink: 0 }} />
