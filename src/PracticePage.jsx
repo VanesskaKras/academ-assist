@@ -1536,6 +1536,9 @@ ${secBlock}
       const titlePageLines = methodInfo?.titlePageTemplate?.length
         ? methodInfo.titlePageTemplate
         : buildPracticeTitlePageLines(info);
+      // Зразок без підрозділів → звіт це один суцільний розділ "main" (без вступу/висновків) —
+      // сторінка "Зміст" з одного пункту не має сенсу і не відповідає зразку, пропускаємо її.
+      const isFreeformReport = sections.length === 1 && sections[0]?.id === "main";
       await exportToDocx({
         content: exportContent,
         info: {
@@ -1550,6 +1553,7 @@ ${secBlock}
         methodInfo,
         orderId: currentIdRef.current,
         keepHeadingCase: true,
+        skipToc: isFreeformReport,
       });
     } catch (e) { setError(e.message); }
     setDocxLoading(false);
