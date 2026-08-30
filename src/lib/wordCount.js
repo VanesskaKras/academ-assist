@@ -56,13 +56,13 @@ function endsWithSentence(text) {
   return lastEnd === trimmed.length;
 }
 
-export async function enforceWordCount({ text, targetWords, label, callClaude, sys, signal, onProgress, clean, cacheOpts }) {
+export async function enforceWordCount({ text, targetWords, label, callClaude, sys, signal, onProgress, clean, cacheOpts, styleNote }) {
   const n = countWords(text);
   try {
     if (n < targetWords * 0.85) {
       const missing = targetWords - n;
       onProgress?.(`Дописую: ${label}...`);
-      const contPrompt = `Ось поточний текст "${label}" (${n} слів):\n\n${text}\n\nДопиши ще приблизно ${missing} слів, органічно продовжуючи виклад далі. Не повторюй вже написане. Не додавай вступних фраз на кшталт "Продовжимо" чи "Отже". Просто продовжуй текст з того місця де він закінчився, без заголовків і міток.`;
+      const contPrompt = `Ось поточний текст "${label}" (${n} слів):\n\n${text}\n\nДопиши ще приблизно ${missing} слів, органічно продовжуючи виклад далі. Не повторюй вже написане. Не додавай вступних фраз на кшталт "Продовжимо" чи "Отже". Просто продовжуй текст з того місця де він закінчився, без заголовків і міток.${styleNote ? `\n\n${styleNote}` : ""}`;
       const contRaw = await callClaude([{ role: "user", content: contPrompt }], signal, sys, Math.min(20000, Math.max(2000, Math.round(missing * 3))), null, undefined, cacheOpts);
       let contClean = (clean ? clean(contRaw) : contRaw).trim();
       if (!endsWithSentence(contClean)) contClean = cutToLastSentence(contClean);

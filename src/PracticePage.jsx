@@ -8,7 +8,7 @@ import {
 import {
   buildSYS, buildSYSTable, SYS_JSON, SYS_JSON_SHORT, STRUCTURE_READING_PROMPT,
   buildMethodologyReadingPrompt, buildStructureExampleTitlePagePrompt,
-  buildPracticePlanPrompt, buildPracticeWritingPrompt,
+  buildPracticePlanPrompt, buildPracticeWritingPrompt, FREEFORM_PARAGRAPH_RULES,
   buildPracticeDiaryPrompt, buildDiaryTemplateAnalysisPrompt,
   buildTemplateAnalysisPrompt, buildPracticeDetailsPrompt, buildFigureInsertPrompt,
 } from "./lib/prompts.js";
@@ -1421,6 +1421,7 @@ ${secBlock}
       }
 
       const isTableSec = methodInfo?.reportFormat === "table_questionnaire" && sec.id !== "intro" && sec.id !== "conclusions";
+      const isFreeformMain = sec.id === "main" && !sec.sectionTitle;
       const sysPrompt = isTableSec ? buildSYSTable(lang, methodInfo) : buildSYS(lang, methodInfo);
       try {
         const maxTok = Math.min(30000, Math.max(6000, Math.round(sec.pages * 1800)));
@@ -1433,6 +1434,7 @@ ${secBlock}
         let text = isTableSec ? raw : await enforceWordCount({
           text: raw, targetWords: Math.round((sec.pages || 1) * 230), label: sec.label,
           callClaude, sys: sysPrompt, onProgress: setLoadMsg, clean: stripEmDash,
+          styleNote: isFreeformMain ? FREEFORM_PARAGRAPH_RULES : undefined,
         });
         text = await insertMissingSectionCitations(sec.id, text, lang);
         text = capCitationRepeats(text);
@@ -1471,6 +1473,7 @@ ${secBlock}
     let instruction = buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterialsSummary, citInputs, abstractsMap, establishedFacts);
     if (regenPrompt.trim()) instruction += `\n\nДОДАТКОВІ ВИМОГИ: ${regenPrompt.trim()}`;
     const isTableSec = methodInfo?.reportFormat === "table_questionnaire" && sec.id !== "intro" && sec.id !== "conclusions";
+    const isFreeformMain = sec.id === "main" && !sec.sectionTitle;
     const sysPrompt = isTableSec ? buildSYSTable(language, methodInfo) : buildSYS(language, methodInfo);
     try {
       const maxTok = Math.min(30000, Math.max(6000, Math.round(sec.pages * 1800)));
@@ -1478,6 +1481,7 @@ ${secBlock}
       let text = isTableSec ? raw : await enforceWordCount({
         text: raw, targetWords: Math.round((sec.pages || 1) * 230), label: sec.label,
         callClaude, sys: sysPrompt, onProgress: setLoadMsg, clean: stripEmDash,
+        styleNote: isFreeformMain ? FREEFORM_PARAGRAPH_RULES : undefined,
       });
       text = await insertMissingSectionCitations(secId, text, language);
       text = capCitationRepeats(text);
