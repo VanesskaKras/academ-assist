@@ -7,7 +7,7 @@ import {
 } from "./lib/api.js";
 import {
   buildSYS, buildSYSTable, SYS_JSON, SYS_JSON_SHORT, STRUCTURE_READING_PROMPT,
-  buildMethodologyReadingPrompt,
+  buildMethodologyReadingPrompt, buildStructureExampleTitlePagePrompt,
   buildPracticePlanPrompt, buildPracticeWritingPrompt,
   buildPracticeDiaryPrompt, buildDiaryTemplateAnalysisPrompt,
   buildTemplateAnalysisPrompt, buildPracticeDetailsPrompt, buildFigureInsertPrompt,
@@ -462,6 +462,25 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
         setMethodInfo(parsedMethodInfo);
       } catch (e) {
         console.warn("methodInfo failed:", e.message);
+      }
+    }
+
+    // Титулка з методички може бути відсутня (робоча програма практики часто не містить
+    // зразка для заповнення студентом), тоді як "зразок структури звіту" — реальна завершена
+    // робота іншого студента — дуже часто її має. Перевіряємо цей текстовий зразок окремо,
+    // щоб не втратити готову титулку лише через те, що вона лежить не в тому файлі.
+    if (structureExampleText && !parsedMethodInfo?.titlePageTemplate?.length) {
+      setLoadMsg("Шукаю титулку в зразку структури...");
+      try {
+        const tpRaw = await callClaude([{ role: "user", content: buildStructureExampleTitlePagePrompt(structureExampleText) }], null, SYS_JSON_SHORT, 1500, null, MODEL_FAST);
+        const tpMatch = tpRaw.match(/\{[\s\S]*\}/);
+        const tpParsed = tpMatch ? JSON.parse(tpMatch[0]) : null;
+        if (tpParsed?.titlePageTemplate?.length) {
+          parsedMethodInfo = { ...(parsedMethodInfo || {}), titlePageTemplate: tpParsed.titlePageTemplate };
+          setMethodInfo(parsedMethodInfo);
+        }
+      } catch (e) {
+        console.warn("structure example title page failed:", e.message);
       }
     }
 
