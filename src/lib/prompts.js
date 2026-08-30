@@ -1270,7 +1270,11 @@ export function buildPracticePlanPrompt(info, methodInfo, structureExampleText, 
   // немає реальної структури, яку можна відтворити, і треба падати на плоский шаблон
   // за категорією, а НЕ на contentPlans з методички (structureExampleText все одно
   // блокує цей фолбек нижче — приклад завжди пріоритетніший за методичку).
-  let hasSubsections = /^\s*\d+\.\d+/m.test(structureExampleText || "") || /^\s*\d+\.\d+/m.test(toc);
+  // ВАЖЛИВО: проста /\d+\.\d+/ хибно ловить і дати на кшталт "25.08.2024" (підпис під
+  // сканом) чи "17.08.2026" — тому вимагаємо, щоб після "N.N" не йшла ще одна ".цифра"
+  // (третій компонент дати) і щоб далі був пробіл і буква (реальна назва підрозділу).
+  const TOC_SUBSECTION_RE = /^\s*\d{1,2}\.\d{1,2}(?!\.\d)\.?\s+\p{L}/mu;
+  let hasSubsections = TOC_SUBSECTION_RE.test(structureExampleText || "") || TOC_SUBSECTION_RE.test(toc);
   // Немає класичного зразка змісту, але методичка описала зміст звіту переліком пунктів
   // (contentPlans, витягнутих на кроці читання методички) — використовуємо найбільш підхожий варіант.
   if (!hasSubsections && !structureExampleText && methodInfo?.contentPlans?.length) {
