@@ -632,8 +632,12 @@ export default function PracticePage({ orderId, onOrderCreated, onBack }) {
         // LLM не завжди точно влучає сумою сторінок у заданий обсяг, особливо коли
         // підрозділів багато (кожен рахується окремо, похибки накопичуються) — підганяємо
         // кодом, щоб "N / target стор." на кроці плану завжди збігалось точно.
+        // Вступ/висновки фіксовані лише якщо вони реально є в масиві (напр. цілком
+        // безструктурний звіт за зразком їх не має — тоді ввесь обсяг іде в "main").
         const target = parseInt(info.pages) || 30;
-        const fixedPages = introPages + conclPages;
+        const hasIntroSec = parsed.sections.some(s => s.id === "intro");
+        const hasConclSec = parsed.sections.some(s => s.id === "conclusions");
+        const fixedPages = (hasIntroSec ? introPages : 0) + (hasConclSec ? conclPages : 0);
         const adjustable = parsed.sections.filter(s => !["sources", "intro", "conclusions"].includes(s.id));
         const normPages = normalizePageDistribution(adjustable.map(s => s.pages), target - fixedPages, 2);
         let ni = 0;
