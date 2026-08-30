@@ -1376,7 +1376,7 @@ export function buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterial
   const {
     practiceText = "", language = "Українська", practiceGuidance,
     companyName, supervisorCompany, supervisorUniversity, individualTask,
-    dateStart, dateEnd, statsPeriod,
+    dateStart, dateEnd, statsPeriod, studentName,
   } = info;
 
   const isIntro = sec.id === "intro";
@@ -1434,6 +1434,11 @@ ${FREEFORM_PARAGRAPH_RULES}`
     ? `\nЯКЩО в розділі згадуються статистичні показники, дослідження ринку чи динаміка за роками — використовуй період ${statsPeriod} (останні 3-5 років), не інший.`
     : "";
 
+  // Це особистий звіт практиканта про себе, а не методичка чи інструкція про студента —
+  // методичка сама пишеться в третій особі ("студент має ознайомитись"), і модель без
+  // явної вказівки схильна мимоволі скопіювати цей тон замість першої особи практиканта.
+  const personLine = `\nПИШИ ВІД ПЕРШОЇ ОСОБИ ОДНИНИ — це особистий звіт практиканта про себе (я проходив/проходила практику, я ознайомився/ознайомилась, я брав/брала участь), а НЕ опис студента в третій особі ("студент виконав", "студентка долучалась") і не безособові конструкції.${studentName ? ` ПІБ практиканта: ${studentName} — визнач стать за іменем і послідовно узгоджуй усі дієслова минулого часу з нею.` : " Стать не вказана — обери одну форму роду (чоловічу або жіночу) і тримайся її послідовно по всьому тексту, не змішуй форми."}`;
+
   const isTableFormat = methodInfo?.reportFormat === "table_questionnaire" && !isIntro && !isConclusions;
 
   let instruction;
@@ -1452,7 +1457,7 @@ ${FREEFORM_PARAGRAPH_RULES}`
 
 ДАНІ ПРАКТИКИ:
 ${practiceText}
-${detailsLine ? `\n${detailsLine}` : ""}${individualTaskLine}${periodLine}${statsPeriodLine}
+${detailsLine ? `\n${detailsLine}` : ""}${individualTaskLine}${periodLine}${statsPeriodLine}${personLine}
 ${methodReq ? `\nВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${deptGuidanceLine}${tablesHint}${sourcesBlock}${guidanceLine}
 
 ФОРМАТ: ця методичка вимагає звіт-анкету — основний зміст пункту подай як одну або кілька markdown-таблиць (вертикальні риски). Якщо для розкриття пункту природно потрібно кілька таблиць (напр. окремо по рокам, або окремо структура/показники) — став їх послідовно.
@@ -1465,7 +1470,7 @@ ${methodReq ? `\nВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${deptGuida
 
 ДАНІ ПРАКТИКИ:
 ${practiceText}
-${detailsLine ? `\n${detailsLine}` : ""}${individualTaskLine}${periodLine}${statsPeriodLine}
+${detailsLine ? `\n${detailsLine}` : ""}${individualTaskLine}${periodLine}${statsPeriodLine}${personLine}
 ${hint ? `\nОСОБЛИВОСТІ РОЗДІЛУ: ${hint}` : ""}
 ${methodReq ? `\nВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${deptGuidanceLine}${sourcesBlock}${guidanceLine}
 
