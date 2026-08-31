@@ -613,7 +613,7 @@ export default function FileCorrectionsPage({ onBack }) {
       const prompt = buildFileCorrectionsAnalysisPrompt({ documentText: docText, correctionsText });
       const imageContent = correctionPhotos.map(p => ({ type: "image", source: { type: "base64", media_type: p.type, data: p.b64 } }));
       const userContent = imageContent.length ? [...imageContent, { type: "text", text: prompt }] : prompt;
-      const raw = await callClaude([{ role: "user", content: userContent }], null, SYS_JSON_ARRAY, 2000, null, MODEL_FAST);
+      const raw = await callClaude([{ role: "user", content: userContent }], null, SYS_JSON_ARRAY, 10000, null, MODEL_FAST);
       const parsed = JSON.parse(raw.replace(/```json|```/g, "").trim());
       if (!Array.isArray(parsed)) throw new Error("Некоректна відповідь");
       // Власний унікальний id (а не той, що повернув ШІ) — інакше повторний аналіз
