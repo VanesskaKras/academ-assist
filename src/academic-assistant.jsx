@@ -19,6 +19,7 @@ import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { getAcademicDefaults, classifyAppendixItem, detectSpecialty, normalizeWorkType } from "./lib/academicDefaults.js";
 import { searchByPhrase, filterSourcesWithGemini, getEconInstitutionalSources, generateAlternatePhrases, paperToCitation, enrichSources } from "./lib/sourcesSearch.js";
 import { applyCitationRemap, buildFinalReferenceList, buildCiteFormats, createReferenceDeduper, detectSourceGrouping, insertMissingCitations, capCitationRepeats } from "./lib/citationFormatting.js";
+import { fixDanglingFigures } from "./lib/figureFixup.js";
 import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
 import { StagePills } from "./components/StagePills.jsx";
 import { FieldBox, Heading, NavBtn, PrimaryBtn, GreenBtn, SaveIndicator } from "./components/Buttons.jsx";
@@ -2217,6 +2218,12 @@ ${planSummary}
 
       finalResult = capCitationRepeats(finalResult);
 
+      if (!ctrl.signal.aborted) {
+        try {
+          finalResult = await fixDanglingFigures({ text: finalResult, lang, callClaude, signal: ctrl.signal });
+        } catch (e) { console.error("fixDanglingFigures:", e.message); }
+      }
+
       const newContent = { ...contentRef.current, [sec.id]: finalResult };
       setContent(newContent);
       runningRef.current = false; setRunning(false); setLoadMsg("");
@@ -2504,7 +2511,10 @@ ${clientReqsRegen ? `ВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО вико
 )
         .replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2")
         .replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2");
-      const cappedResult = capCitationRepeats(result);
+      let cappedResult = capCitationRepeats(result);
+      try {
+        cappedResult = await fixDanglingFigures({ text: cappedResult, lang, callClaude });
+      } catch (e) { console.error("fixDanglingFigures:", e.message); }
       const newContent = { ...contentRef.current, [sec.id]: cappedResult };
       setContent(newContent);
       setRegenId(null); setRegenPrompt("");
@@ -3538,7 +3548,12 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
           .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
           .replace(/[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF]/g, "")
 );
-        const cappedResult = capCitationRepeats(result);
+        let cappedResult = capCitationRepeats(result);
+        if (!ctrl.signal.aborted) {
+          try {
+            cappedResult = await fixDanglingFigures({ text: cappedResult, lang, callClaude, signal: ctrl.signal });
+          } catch (e) { console.error("fixDanglingFigures:", e.message); }
+        }
         const newContent = { ...contentRef.current, [sec.id]: cappedResult };
         setContent(newContent);
         await saveToFirestore({ content: newContent });

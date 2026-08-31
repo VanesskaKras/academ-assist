@@ -14,6 +14,7 @@ import { FieldBox, Heading, NavBtn, PrimaryBtn, GreenBtn, SaveIndicator } from "
 import { DropZone } from "./components/DropZone.jsx";
 import { parsePagesAvg, exportSimpleDocx, TA, TA_WHITE, SHARED_STYLES } from "./shared.jsx";
 import { getLangLabels } from "./lib/planUtils.js";
+import { fixDanglingFigures } from "./lib/figureFixup.js";
 import mammoth from "mammoth";
 import { exportToDocx, exportSpeechToDocx } from "./lib/exportDocx.js";
 import { SYS_JSON_SHORT } from "./lib/prompts.js";
@@ -1090,7 +1091,11 @@ ${supervisorBlock}`;
     try {
       const msgs = [{ role: "user", content: [...fileContext, ...matFileContext, { type: "text", text: prompt }] }];
       const tezyMaxTokens = Math.min(30000, Math.max(6000, Math.round(totalPages * 3000)));
-      const text = cleanDash(await callClaude(msgs, null, buildSYSSmall(lang), tezyMaxTokens));
+      const rawResult = cleanDash(await callClaude(msgs, null, buildSYSSmall(lang), tezyMaxTokens));
+      let text = rawResult;
+      try {
+        text = await fixDanglingFigures({ text: rawResult, lang, callClaude });
+      } catch (e) { console.error("fixDanglingFigures:", e.message); }
       setResult(text);
       playDoneSound();
       await saveToFirestore({ result: text, authorData, tezyCitations: activeCitations, stage: "done", status: "done" });
@@ -1492,10 +1497,13 @@ ${materialContext}${methodReqBlock}${commentBlock}${sourcesBlock}${!methodReqBlo
     try {
       const secMaxTokens = Math.min(30000, Math.max(6000, Math.round(pagesPerSec * 3000)));
       const raw = cleanDash(await callClaude(msgs, null, buildSYSSmall(lang), secMaxTokens));
-      const result = await enforceWordCount({
+      let result = await enforceWordCount({
         text: raw, targetWords: Math.round(pagesPerSec * 230), label: sec.label,
         callClaude, sys: buildSYSSmall(lang), onProgress: setLoadMsg, clean: cleanDash,
       });
+      try {
+        result = await fixDanglingFigures({ text: result, lang, callClaude });
+      } catch (e) { console.error("fixDanglingFigures:", e.message); }
       setSections(p => {
         const next = p.map((s, i) => i === genIdx ? { ...s, text: result } : s);
         saveToFirestore({ sections: next, stage: "writing", status: "writing", genIdx: genIdx + 1 });
@@ -1660,6 +1668,10 @@ ${isLast ? "Це ОСТАННЯ частина — заверши роботу �
         });
         fullText = fullText ? `${fullText}\n\n${chunkText.trim()}` : chunkText.trim();
       }
+
+      try {
+        fullText = await fixDanglingFigures({ text: fullText, lang, callClaude, signal: controller.signal });
+      } catch (e) { console.error("fixDanglingFigures:", e.message); }
 
       // Назву й блок автора вставляємо кодом на початок — з маркерами \x00TITLE\x00/
       // \x00AUTHORBLOCK\x00, які exportSimpleDocx розпізнає й рендерить жирним по
