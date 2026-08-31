@@ -500,7 +500,7 @@ function detectForeignFirstFromGrouping(sourcesGrouping) {
   const s = (sourcesGrouping || "").trim();
   if (!s) return null;
   const FOREIGN = "(іноземн\\w*|англ\\w*|латин\\w*|зарубіжн\\w*|польськ\\w*|нім\\w*|французьк\\w*)";
-  const UKR = "(укра[їі]нськ\\w*)";
+  const UKR = "(укр\\w*|кирил\\w*)";
   const POS = "(спочатку|першими|на\\s+початку)";
   const foreignFirst = new RegExp(`${FOREIGN}[^.]{0,40}${POS}`, "i").test(s) || new RegExp(`${POS}[^.]{0,40}${FOREIGN}`, "i").test(s);
   const ukrFirst = new RegExp(`${UKR}[^.]{0,40}${POS}`, "i").test(s) || new RegExp(`${POS}[^.]{0,40}${UKR}`, "i").test(s);
