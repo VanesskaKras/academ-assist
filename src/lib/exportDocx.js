@@ -622,9 +622,15 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
   const numberedContent = renumberTablesAndFigures(content, displayOrder, info?.language);
   Object.keys(numberedContent).forEach(k => { if (numberedContent[k]) numberedContent[k] = numberedContent[k].replace(/'/g, '\u2019'); });
   const langCode = detectTextLanguage(Object.values(numberedContent).join("\n\n"), info?.language);
-  const normAppendices = appendicesText ? appendicesText.replace(/'/g, '\u2019') : appendicesText;
+  const rawAppendices = appendicesText ? appendicesText.replace(/'/g, '\u2019') : appendicesText;
   const { content: diagramResolvedContent, diagramImages } = await resolveDiagrams(numberedContent, lc.figWord);
   Object.assign(numberedContent, diagramResolvedContent);
+  // Додатки рендеряться окремим циклом нижче (не через makeBlocks), тож рисунки в них
+  // резолвимо окремим викликом — інакше plantuml-схема лишалась би сирим кодом у тексті.
+  const { content: appendixDiagramResolved, diagramImages: appendixDiagramImages } = rawAppendices
+    ? await resolveDiagrams({ appendix: rawAppendices }, lc.figWord)
+    : { content: {}, diagramImages: [] };
+  const normAppendices = rawAppendices ? appendixDiagramResolved.appendix : rawAppendices;
   const clientImages = await resolveClientIllustrations(illustrations);
   const drawingImages = await resolveClientIllustrations(clientDrawings, 1600);
 
@@ -1381,6 +1387,22 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     const tBold      = fmt.tableTitleBold   ?? /жирн|bold/i.test(tf);
     while (ai < appLines.length) {
       const line = appLines[ai];
+      const trimmedAppLine = line.trim();
+      const appDiagMatch = trimmedAppLine.startsWith("\x00DIAGRAM") && trimmedAppLine.endsWith("\x00")
+        ? trimmedAppLine.slice(8, -1)
+        : null;
+      if (appDiagMatch !== null) {
+        const img = appendixDiagramImages[Number(appDiagMatch)];
+        if (img) {
+          children.push(new Paragraph({
+            alignment: AlignmentType.CENTER,
+            spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
+            children: [new ImageRun({ data: img.data, transformation: { width: img.width, height: img.height } })],
+          }));
+        }
+        ai++;
+        continue;
+      }
       if (isFenceLine(line)) {
         const { codeLines, nextIndex } = readFencedBlock(appLines, ai);
         children.push(...codeListingParagraphs(codeLines, methodInfo));
@@ -1892,12 +1914,33 @@ export async function exportAppendixToDocx(text, info, methodInfo, orderId) {
   }
 
   if (text) text = text.replace(/'/g, '\u2019');
+  const lc = getLangLabels(info?.language);
+  const { content: diagResolved, diagramImages } = text
+    ? await resolveDiagrams({ appendix: text }, lc.figWord)
+    : { content: {}, diagramImages: [] };
+  if (text) text = diagResolved.appendix;
   const children = [];
   const lines = text.split("\n");
   let i = 0;
   let isQuestionnaire = false;
   while (i < lines.length) {
     const line = lines[i];
+    const trimmedLine0 = line.trim();
+    const diagMatch0 = trimmedLine0.startsWith("\x00DIAGRAM") && trimmedLine0.endsWith("\x00")
+      ? trimmedLine0.slice(8, -1)
+      : null;
+    if (diagMatch0 !== null) {
+      const img = diagramImages[Number(diagMatch0)];
+      if (img) {
+        children.push(new Paragraph({
+          alignment: AlignmentType.CENTER,
+          spacing: { line: LINE, lineRule: "auto", before: 0, after: 0 },
+          children: [new ImageRun({ data: img.data, transformation: { width: img.width, height: img.height } })],
+        }));
+      }
+      i++;
+      continue;
+    }
     if (isFenceLine(line)) {
       const { codeLines, nextIndex } = readFencedBlock(lines, i);
       children.push(...codeListingParagraphs(codeLines, methodInfo));
