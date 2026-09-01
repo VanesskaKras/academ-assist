@@ -1950,7 +1950,7 @@ ${methodInfo?.chapterConclusionRequirements ? `ВИМОГИ МЕТОДИЧКИ: 
       }
 
       const appendixBlock = appendicesText
-        ? `\nДОДАТОК А (вже згенерований — спирайся на нього точно):\n${appendicesText}\n`
+        ? `\nДОДАТОК А (вже згенерований — спирайся на нього точно):\n${appendicesText}\nПРАВИЛО ПОГОДЖЕННЯ ПОКАЗНИКІВ: якщо в тексті підрозділу наводиш відсоток чи цифру, пов'язану з даними з таблиці додатку, — або (а) вживай те саме число й те саме формулювання показника, що вже є в таблиці додатку, або (б) якщо це справді інший, ширший/агрегований показник (напр. частка тих, хто відповів "так" на будь-яке з кількох питань, — на відміну від частки конкретної відповіді на одне питання анкети) — прямо поясни в тексті, з яких показників таблиці він виводиться і чому число відрізняється. Не залишай поруч два близькі за формулюванням, але різні за суттю числа без явного пояснення зв'язку між ними.\n`
         : "";
 
       const rd = commentAnalysis?.researchDesign ?? (commentAnalysis?.empiricalHints ? { instrumentType: "questionnaire", groups: [], comparisonRequired: false, biographicalFields: [], statisticalMinN: null } : null);
@@ -4310,13 +4310,13 @@ ${secBlocks}
       return null;
     };
 
-    const { finalTexts: allRefs, indexMap } = await buildFinalReferenceList({
+    let { finalTexts: allRefs, indexMap } = await buildFinalReferenceList({
       rawRefs, findStructured: findStructured2, sourcesStyle, isLatinWork: _remapLatinFirst,
       sourcesFormatRules: methodInfo?.sourcesFormatRules, sourcesGrouping: methodInfo?.sourcesGrouping, callClaude: callClaudeAbortable,
       skipSort: !isAlphabeticalOrder && !isDstu,
     });
     if (ctrl.signal.aborted) { setRemapLoading(false); return; }
-    const fmtLines = allRefs;
+    let fmtLines = allRefs;
     let fmtResult = allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n");
 
     // ── Маппінг localN → globalN для кожного підрозділу ──
@@ -4411,8 +4411,36 @@ ${secBlocks}
       }
     }));
     if (ctrl.signal.aborted) { setRemapLoading(false); return; }
+
+    // ── 7в. Джерела, які так і не вдалося процитувати (unresolvedOrphans) — вони
+    // ніде в тексті не згадуються, тож просто прибираємо їх зі списку літератури
+    // замість попередження користувачу. Для позиційних стилів (не APA/MLA) разом
+    // з видаленням компактно ренумеровуємо решту — без цього прибрані номери
+    // лишили б "дірку" в нумерації.
     if (unresolvedOrphans.length) {
-      alert(`Не вдалося автоматично процитувати ${unresolvedOrphans.length} джерел${unresolvedOrphans.length === 1 ? "о" : ""} зі списку літератури (№${unresolvedOrphans.join(", ")}) — перевірте вручну.`);
+      const removed = new Set(unresolvedOrphans);
+      const oldToNewGlobal = {};
+      let nextN = 1;
+      allRefs.forEach((_, i) => {
+        const oldN = i + 1;
+        if (!removed.has(oldN)) oldToNewGlobal[oldN] = nextN++;
+      });
+      if (!isAPA && !isMLA) {
+        const newRefCiteText = {};
+        const newPageRanges = {};
+        Object.entries(oldToNewGlobal).forEach(([oldNStr, newN]) => {
+          const oldN = Number(oldNStr);
+          newRefCiteText[newN] = isFootnoteMode ? `%%FN${newN}%%` : `[${newN}]`;
+          if (pageRanges2[oldN]) newPageRanges[newN] = pageRanges2[oldN];
+        });
+        mainSecs.forEach(sec => {
+          if (!newContent[sec.id]) return;
+          newContent[sec.id] = applyCitationRemap(newContent[sec.id], oldToNewGlobal, newRefCiteText, { pageRanges: newPageRanges, pageAbbrev: _remapPageAbbrev });
+        });
+      }
+      allRefs = allRefs.filter((_, i) => !removed.has(i + 1));
+      fmtLines = allRefs;
+      fmtResult = allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n");
     }
 
     // ── 8а. Очищення: прибираємо номери поза діапазоном реального списку (будь-який стиль) ──
