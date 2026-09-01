@@ -123,6 +123,12 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const [sections, setSections] = useState([]);
   const [planDisplay, setPlanDisplay] = useState("");
   const [content, setContent] = useState({});
+  // Ключові авторські терміни/назви методик з кожного вже згенерованого підрозділу основної
+  // частини — окремий від content канал, бо при стисненні контексту для великих робіт
+  // (isLargeWork у buildMessages) чужі розділи підставляються лише "першим абзацом", і
+  // терміни, введені глибше в тексті, губляться. Висновки завжди отримують повний глосарій,
+  // незалежно від стиснення — це і не дає їм "вигадувати" власну термінологію.
+  const [glossary, setGlossary] = useState({});
   const [genIdx, setGenIdx] = useState(0);
   const [running, setRunning] = useState(false);
   const runningRef = useRef(false);
@@ -245,8 +251,10 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const abortRef = useRef(null);
   const remapAbortRef = useRef(null);
   const contentRef = useRef(content);
+  const glossaryRef = useRef(glossary);
   const savedTimerRef = useRef(null);
   useEffect(() => { contentRef.current = content; }, [content]);
+  useEffect(() => { glossaryRef.current = glossary; }, [glossary]);
   useEffect(() => {
     const onScroll = () => {
       const y = window.scrollY;
@@ -1618,6 +1626,7 @@ Return ONLY JSON:
       (readyWorkImportedIds || []).forEach(id => { if (prev[id]) preserved[id] = prev[id]; });
       return preserved;
     });
+    setGlossary({});
     setGenIdx(0); setPaused(false); writingDoneRef.current = false; autoRemapDoneRef.current = false; appendixFillDoneRef.current = false;
     const practicalApproachForGen = commentAnalysis?.practicalApproach;
     const acadDefaultsForGen = getAcademicDefaults(info?.subject, info?.type, info?.course, info?.topic);
@@ -1735,6 +1744,14 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
       const empSecsForConclusions = sec.type === "conclusions"
         ? getEmpiricalSections(sections, d, commentAnalysis, methodInfo)
         : null;
+      // Вступ пишеться ПІСЛЯ емпіричного підрозділу (ORDER у startGen), тому реальна вибірка
+      // (хто саме анкетувався) вже написана — але без цього винятку вона при стисненні
+      // контексту для великих робіт підставлялась би лише "першим абзацом", і мета/завдання
+      // могли сформулюватись про іншу популяцію (напр. "учнів"), ніж та, що фактично
+      // досліджена (напр. вчителі) — саме той розрив мета↔вибірка, який ловить рецензент.
+      const empSecsForIntro = sec.type === "intro"
+        ? getEmpiricalSections(sections, d, commentAnalysis, methodInfo)
+        : null;
       const contextText = prevEntries.map(([k, v]) => {
         const s = sections.find(x => x.id === k);
         const label = s?.label || k;
@@ -1743,14 +1760,32 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
         const isIntroForConclusions = sec.type === "conclusions" && s?.type === "intro";
         const isEmpiricalForConclusions = sec.type === "conclusions" && empSecsForConclusions &&
           (empSecsForConclusions.chapterSectionIds.includes(k) || k === empSecsForConclusions.anchorId);
-        if (sameChapter || isIntroForConclusions || isEmpiricalForConclusions) return `=== ${label} ===\n${v}`;
+        const isEmpiricalForIntro = sec.type === "intro" && empSecsForIntro &&
+          (empSecsForIntro.chapterSectionIds.includes(k) || k === empSecsForIntro.anchorId);
+        if (sameChapter || isIntroForConclusions || isEmpiricalForConclusions || isEmpiricalForIntro) return `=== ${label} ===\n${v}`;
         // Інші розділи: лише перший змістовний абзац
         const firstPara = v.split("\n").find(p => p.trim().length > 60) || v.slice(0, 400);
         return `=== ${label} [перший абзац] ===\n${firstPara}`;
       }).join("\n\n---\n\n");
+      // Висновки завжди отримують повний глосарій авторських термінів/назв методик з усіх
+      // розділів — навіть коли самі розділи вище підставлені лише "першим абзацом". Інакше
+      // модель не бачить термінів, введених глибше в тексті підрозділу, і вигадує власні.
+      const glossaryBlock = sec.type === "conclusions"
+        ? Object.entries(glossaryRef.current)
+          .map(([k, terms]) => {
+            if (!terms) return null;
+            const s = sections.find(x => x.id === k);
+            return `${s?.label || k}: ${terms}`;
+          })
+          .filter(Boolean)
+          .join("\n")
+        : "";
+      const fullContextText = glossaryBlock
+        ? `${contextText}\n\n---\n\n=== Глосарій ключових авторських термінів і назв методик за розділами ===\n${glossaryBlock}`
+        : contextText;
       return [
         { role: "user", content: "Ось вже написані частини цієї роботи:" },
-        { role: "assistant", content: contextText },
+        { role: "assistant", content: fullContextText },
         { role: "user", content: instruction },
       ];
     };
@@ -1848,7 +1883,9 @@ INTRO STRUCTURE (follow strictly, each element as a new paragraph):
 ${componentLines.map((l, i) => `${i + 1}. ${l}`).join("\n\n")}
 ${methodInfo?.otherRequirements ? `\nМЕТОДИЧКА ВИМОГИ: ${methodInfo.otherRequirements}` : ""}${commentAnalysis?.textStructureHints ? `\nКЛІЄНТ ВИМОГИ (ОБОВ'ЯЗКОВО): ${commentAnalysis.textStructureHints}` : ""}
 
-IMPORTANT: use already written sections (in context) for exact formulation of methods, sample, object — everything must match the text. Follow each element's format strictly. No citations. No bold or italic. Write in continuous paragraphs. EXCEPTION: research tasks — write as numbered list (1. 2. 3. ...), each task on a new line.`;
+IMPORTANT: use already written sections (in context) for exact formulation of methods, sample, object — everything must match the text. Follow each element's format strictly. No citations. No bold or italic. Write in continuous paragraphs. EXCEPTION: research tasks — write as numbered list (1. 2. 3. ...), each task on a new line.
+
+КРИТИЧНО ВАЖЛИВО (об'єкт, предмет, мета, завдання): якщо в тексті вище (розділ з анкетуванням/емпіричним дослідженням) вже вказано РЕАЛЬНИХ respondents дослідження (напр. вчителі, батьки, фахівці) — об'єкт, предмет, мета і завдання ОБОВ'ЯЗКОВО мають описувати ефект/результат САМЕ щодо цієї реальної вибірки, а не абстрактної групи з теми (напр. учнів), яку дослідження фактично не вимірювало. Якщо тема стосується учнів, а опитані — вчителі, сформулюй мету про вплив на педагогічну практику/готовність вчителів (за потреби — з поясненням, що це опосередкований шлях впливу на учнів), а НЕ про безпосередній ефект на учнях. Розрив між заявленою метою та реально дослідженою вибіркою — груба методологічна помилка, яку одразу помітить рецензент.`;
 
     } else if (sec.type === "conclusions") {
       const conclReq = methodInfo?.conclusionsRequirements || "";
@@ -2226,6 +2263,20 @@ ${planSummary}
 
       const newContent = { ...contentRef.current, [sec.id]: finalResult };
       setContent(newContent);
+
+      // Витягуємо авторські терміни/назви методик цього підрозділу окремим легким
+      // викликом і кладемо в спільний глосарій — щоб висновки бачили їх навіть тоді,
+      // коли сам підрозділ для економії контексту підставляється лише "першим абзацом".
+      if (["theory", "analysis", "recommendations"].includes(sec.type) && !ctrl.signal.aborted) {
+        try {
+          setLoadMsg(`Виділяю терміни: ${sec.label}...`);
+          const glossPrompt = `Текст підрозділу "${sec.label}" ${d.type} на тему "${d.topic}":\n\n${finalResult.slice(0, 16000)}\n\nВиділи 3-6 ключових авторських термінів, назв методик/моделей/технологій чи багаторівневих структур (напр. "Етап 1 – Етап 2 – Етап 3"), ВВЕДЕНИХ саме в цьому тексті. Якщо таких немає — поверни порожній масив.\nВідповідь — ТІЛЬКИ JSON масив рядків, напр. ["термін 1", "термін 2"].`;
+          const glossRaw = await callClaude([{ role: "user", content: glossPrompt }], null, SYS_JSON_ARRAY, 300, null, MODEL_FAST);
+          const terms = JSON.parse(glossRaw.match(/\[[\s\S]*\]/)?.[0] || "[]");
+          if (terms.length) setGlossary(prev => ({ ...prev, [sec.id]: terms.join("; ") }));
+        } catch (e) { console.error("Глосарій термінів підрозділу:", e.message); }
+      }
+
       runningRef.current = false; setRunning(false); setLoadMsg("");
       await saveToFirestore({ content: newContent, stage: "writing", status: "writing", genIdx: genIdx + 1 });
       // Пауза між підрозділами щоб не вичерпати rate limit
@@ -4612,7 +4663,7 @@ ${secBlocks}
   const resetAll = () => {
     setStage("input"); setTplText(""); setComment(""); setClientPlan("");
     setFileLabel(""); setFileB64(null); setFileType(null); setInfo(null);
-    setSections([]); setPlanDisplay(""); setContent({}); setGenIdx(0);
+    setSections([]); setPlanDisplay(""); setContent({}); setGlossary({}); setGenIdx(0);
     setPaused(false); setPlanLoading(false); setMethodInfo(null); setCommentAnalysis(null); setSourceDist({}); setSourceTotal(0);
     setKeywords({}); setCitInputs({}); setAllCitLoading(false); setRefList([]); setCitInputsSnapshot(null); setFigureRefs({}); setFigureKeywords([]); setFigKwLoading(false);
     setSpeechText(""); setAppendicesText(""); setEconProfile("");
