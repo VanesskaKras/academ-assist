@@ -23,7 +23,7 @@ import { ChecklistStage } from "./components/stages/ChecklistStage.jsx";
 
 // ── Видаляємо довге тире на всякий випадок (модель іноді ігнорує заборону з промпту) ──
 function cleanDash(raw) {
-  return raw.replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "");
+  return raw.replace(/ — /g, ", ").replace(/— /g, " ").replace(/ —/g, " ");
 }
 
 // ── Файл → контент для Claude. Claude приймає для "document" лише application/pdf,

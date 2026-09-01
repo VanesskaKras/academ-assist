@@ -80,7 +80,7 @@ const INTRO_TASKS_MERGE_SPLIT_RULE = `Розділи плану — це змі�
 
 // ── Додатки з полями, що заповнюються автоматично після готовності основного тексту ──
 const APPENDIX_FILL_MARKER = "ЗАПОВНЮЄТЬСЯ_АВТОМАТИЧНО";
-const APPENDIX_FILL_MARKER_RULE = `Якщо для якогось конкретного поля додатку (очікуваний/фактичний результат, статус "пройдено/не пройдено", висновок, показник) значення логічно випливає із самої роботи, але наразі невідоме, бо основний текст роботи ще не написаний, — постав замість цього поля рівно текст ${APPENDIX_FILL_MARKER} (без лапок і додаткових символів), не вигадуй конкретне значення заздалегідь. Якщо ж поле вимагає реальних особистих чи фізичних даних, яких ти не можеш знати (ім'я виконавця, дата, підпис, характеристики обладнання, номер академічної групи) — залиш порожній підкреслений бланк "________" для ручного заповнення, це поле НЕ позначай маркером.`;
+const APPENDIX_FILL_MARKER_RULE = `Якщо для якогось конкретного поля додатку (очікуваний/фактичний результат, статус "пройдено/не пройдено", висновок, показник, кількість респондентів чи учасників, частка/відсоток відповідей, будь-яке число чи статистичний показник, що має збігатися з тим, що буде написано в основному тексті) значення логічно випливає із самої роботи, але наразі невідоме, бо основний текст роботи ще не написаний, — постав замість цього поля рівно текст ${APPENDIX_FILL_MARKER} (без лапок і додаткових символів), не вигадуй конкретне значення заздалегідь. Це стосується і кількісних даних вибірки (загальна кількість респондентів, кількість осіб за групами, кількість тих, хто погодився на подальшу участь тощо) — вони НЕ є особистими даними і мають позначатись маркером, а не порожнім бланком. Порожній підкреслений бланк "________" залишай лише для полів, що вимагають реальних особистих чи фізичних даних, яких ти не можеш знати (ім'я виконавця, дата, підпис, характеристики обладнання, номер академічної групи) — такі поля маркером НЕ позначай.`;
 
 // ── Заземлення технічних тверджень на реальному коді клієнта (проти вигаданого функціоналу) ──
 const CODE_GROUNDING_RULE = `Кожне технічне твердження про функціональність (назва методу, класу, поля, логіка обробки) має спиратися на конкретний фрагмент коду нижче. Якщо ти не можеш вказати, в якому саме методі це реалізовано — не згадуй це в тексті. Наявність поля чи структури, що натякає на функціональність (наприклад, поле IsConfirmed натякає на модерацію), не означає, що вся ця функціональність реалізована — описуй лише те, для чого є конкретний метод чи блок логіки в коді, а не те, що логічно мало б існувати. Використовуй лише наданий матеріал.`;
@@ -2140,7 +2140,7 @@ ${planSummary}
     const genOpts = { cache: true, ...(materialsBlock ? { extraCached: [materialsBlock] } : {}) };
     const sectionMaxTokens = Math.min(60000, Math.max(8000, Math.round((sec.pages || 1) * 3000)));
     const cleanResult = (raw) => typographQuotes(fixMixedScript(raw, lang)
-      .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
+      .replace(/ — /g, ", ").replace(/— /g, " ").replace(/ —/g, " ")
       .replace(/[ᄀ-ᇿ⺀-鿿ꀀ-꓿가-퟿豈-﫿]/g, "")
 )
       .replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2")
@@ -2506,7 +2506,7 @@ ${clientReqsRegen ? `ВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО вико
     try {
       const raw = await callClaude(buildRegenMessages(instruction), null, buildSYS(lang, methodInfo, normalizeWorkType(d.type, d.course)), regenMaxTokens);
       const result = typographQuotes(fixMixedScript(raw, lang)
-        .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
+        .replace(/ — /g, ", ").replace(/— /g, " ").replace(/ —/g, " ")
         .replace(/[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF]/g, "")
 )
         .replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2")
@@ -2534,7 +2534,7 @@ ${clientReqsRegen ? `ВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО вико
       maxTokens
     );
     return typographQuotes(fixMixedScript(raw, lang)
-      .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
+      .replace(/ — /g, ", ").replace(/— /g, " ").replace(/ —/g, " ")
 )
       .replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2")
       .replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2");
@@ -2631,7 +2631,7 @@ ${clientReqsRegen ? `ВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО вико
       const newContent = { ...contentRef.current };
       for (const sec of secsToProcess) {
         newContent[sec.id] = typographQuotes(fixMixedScript(resultById[sec.id], lang)
-          .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, ""))
+          .replace(/ — /g, ", ").replace(/— /g, " ").replace(/ —/g, " "))
           .replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2")
           .replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2");
       }
@@ -2803,7 +2803,7 @@ ${realMaterials.slice(0, 80000)}
 
       const raw = await callClaude([{ role: "user", content: prompt }], null, buildSYS(lang, methodInfo, normalizeWorkType(info?.type, info?.course)), 1200, null, MODEL_FAST);
       result = raw
-        .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
+        .replace(/ — /g, ", ").replace(/— /g, " ").replace(/ —/g, " ")
         .replace(/[ᄀ-ᇿ⺀-鿿ꀀ-꓿가-퟿豈-﫿]/g, "")
         .trim();
       setEconProfile(result);
@@ -2939,7 +2939,8 @@ ${bioFieldsLine}
 
       // ── Спеціалізовані білдери для генерації Додатків за таблицею academicDefaults (не-психологічні спеціальності) ──
       const buildDataTableAppendixPart = (slot, itemName, topic) => `${slot} — ${itemName}.
-Створи ілюстративну таблицю markdown (|---|---| формат) з реалістичними, правдоподібними даними відповідно до теми "${topic}". Підпис таблиці одним рядком перед нею. За потреби короткий пояснювальний коментар під таблицею (2-3 речення).`;
+Створи ілюстративну таблицю markdown (|---|---| формат) відповідно до теми "${topic}". Підпис таблиці одним рядком перед нею. За потреби короткий пояснювальний коментар під таблицею (2-3 речення).
+Якщо ця таблиця узагальнює результати дослідження/опитування, що також описуються в основному тексті роботи (частки відповідей, середні оцінки, кількісні показники тощо) — постав у відповідні клітинки маркер із правила нижче замість вигаданих чисел, щоб цифри згодом узгодились з основним текстом. Якщо ж таблиця містить довідкові/нормативні дані, не пов'язані з результатами конкретного дослідження (наприклад загальні класифікації, нормативи, характеристики об'єктів) — заповнюй її реалістичними, правдоподібними даними одразу.`;
 
       const buildSchemeAppendixPart = (slot, itemName, topic) => `${slot} — ${itemName}.
 Опиши схему/структуру у вигляді чіткого структурованого тексту (список рівнів, блоків і зв'язків між ними) відповідно до теми "${topic}". Це текстовий опис схеми, графічний рендер недоступний.`;
@@ -3067,7 +3068,7 @@ ${customBlock || `Включи один або два додатки що лог
         [{ role: "user", content: prompt }], null, buildSYS(lang, methodInfo, normalizeWorkType(info?.type, info?.course)), 6000, null, MODEL
       );
       const result = typographQuotes(raw
-        .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
+        .replace(/ — /g, ", ").replace(/— /g, " ").replace(/ —/g, " ")
         .replace(/[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF]/g, "")
 )
         .replace(/\n{2,}/g, '\n');
@@ -3545,7 +3546,7 @@ ${methodReq ? `ВИМОГИ МЕТОДИЧКИ: ${methodReq}` : ""}${empiricalBl
       try {
         const raw = await callClaude(buildRegenAllMessages(sec.id, instruction), ctrl.signal, buildSYS(lang, methodInfo, normalizeWorkType(d.type, d.course)), sectionMaxTokens, null, MODEL);
         const result = typographQuotes(fixMixedScript(raw, lang)
-          .replace(/ — /g, ", ").replace(/— /g, "").replace(/ —/g, "")
+          .replace(/ — /g, ", ").replace(/— /g, " ").replace(/ —/g, " ")
           .replace(/[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF]/g, "")
 );
         let cappedResult = capCitationRepeats(result);
@@ -3974,23 +3975,32 @@ ${secBlocks}
 - "searchAnchors": об'єкт, ключ = ідентифікатор підрозділу з квадратних дужок, значення = масив з 2–3 якірних фраз (рядки)
 - "enPhrases": об'єкт, ключ = ідентифікатор підрозділу з квадратних дужок, значення = масив з 3 англомовних фраз (рядки)`;
 
-        const res = await fetch("/api/gemini", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            _model: "gemini-2.5-flash-lite",
-            contents: [{ role: "user", parts: [{ text: prompt }] }],
-            generationConfig: { maxOutputTokens: 8192, responseMimeType: "application/json" },
-          }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error?.message || JSON.stringify(data).slice(0, 200));
-        if (data.usageMetadata) {
-          const cost = (data.usageMetadata.promptTokenCount * 0.10 + data.usageMetadata.candidatesTokenCount * 0.40) / 1_000_000;
-          window.dispatchEvent(new CustomEvent("apicost", { detail: { cost, model: "gemini-2.5-flash-lite", inTok: data.usageMetadata.promptTokenCount, outTok: data.usageMetadata.candidatesTokenCount } }));
+        const MAX_ATTEMPTS = 3;
+        let parsed;
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+          const res = await fetch("/api/gemini", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              _model: "gemini-2.5-flash-lite",
+              contents: [{ role: "user", parts: [{ text: prompt }] }],
+              generationConfig: { maxOutputTokens: 8192, responseMimeType: "application/json" },
+            }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error?.message || JSON.stringify(data).slice(0, 200));
+          if (data.usageMetadata) {
+            const cost = (data.usageMetadata.promptTokenCount * 0.10 + data.usageMetadata.candidatesTokenCount * 0.40) / 1_000_000;
+            window.dispatchEvent(new CustomEvent("apicost", { detail: { cost, model: "gemini-2.5-flash-lite", inTok: data.usageMetadata.promptTokenCount, outTok: data.usageMetadata.candidatesTokenCount } }));
+          }
+          const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+          try {
+            parsed = JSON.parse(raw);
+            break;
+          } catch (e) {
+            if (attempt === MAX_ATTEMPTS) throw new Error(`Не вдалося розпарсити відповідь ШІ після ${MAX_ATTEMPTS} спроб: ${e.message}`);
+          }
         }
-        const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-        const parsed = JSON.parse(raw);
         const thesesRaw = parsed.theses || {};
         const anchorsRaw = parsed.searchAnchors || {};
         const enPhrasesRaw = parsed.enPhrases || {};
