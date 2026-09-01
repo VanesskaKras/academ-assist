@@ -627,11 +627,15 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
         setOrders(p => p.map(o => o.id === id ? { ...o, archived: archive } : o));
     };
 
+    // Пагінований запит (orders) містить лише перші 30 замовлень адміна.
+    // Щойно активний фільтр за статусом або пошук — треба дивитись у весь
+    // фоново завантажений список (allOrdersFull), інакше фільтр працює лише
+    // в межах цих 30 і може показувати "порожньо" при ненульовому лічильнику.
+    const usingFullSet = isAdmin && (!!search.trim() || !!filterStatus) && !!allOrdersFull;
+
     const filtered = useMemo(() => {
         const isSearching = !!search.trim();
-        // Під час пошуку в адміна беремо весь фоново завантажений список,
-        // а не лише перші 30 замовлень з пагінованого запиту
-        let result = (isSearching && isAdmin && allOrdersFull) ? allOrdersFull : orders;
+        let result = usingFullSet ? allOrdersFull : orders;
         // Фільтр по менеджеру
         if (filterManager !== "all") {
             result = result.filter(o => o.uid === filterManager);
@@ -721,7 +725,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
             });
         }
         return result;
-    }, [orders, allOrdersFull, search, filterStatus, dlFrom, dlTo, sortBy, filterManager, isAdmin]);
+    }, [orders, allOrdersFull, search, filterStatus, dlFrom, dlTo, sortBy, filterManager, isAdmin, usingFullSet]);
 
     const toggleSelectAll = () => {
         setSelectedIds(prev => {
@@ -801,7 +805,9 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
                 </div>
 
                 {/* Stats */}
-                {!loading && orders.length > 0 && (
+                {!loading && orders.length > 0 && isAdmin && !serverCounts ? (
+                    <div style={{ marginBottom: 20, fontSize: 12, color: "#bbb" }}>Рахуємо статистику...</div>
+                ) : !loading && orders.length > 0 && (
                     <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap", alignItems: "center" }}>
                         {[
                             { label: "Всього", val: (serverCounts ?? counts).all, color: "#1a1a14", bg: "#e8e4d8", key: null },
@@ -828,9 +834,6 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
                                 </div>
                             );
                         })}
-                        {isAdmin && !serverCounts && (
-                            <span style={{ fontSize: 11, color: "#bbb", marginLeft: 4 }}>рахуємо...</span>
-                        )}
                     </div>
                 )}
 
@@ -896,13 +899,15 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
                             Створити перше замовлення →
                         </button>
                     </div>
+                ) : isAdmin && (search.trim() || filterStatus) && !allOrdersFull ? (
+                    <div style={{ textAlign: "center", padding: 40, color: "#888", fontSize: 14 }}>Завантаження повного списку...</div>
                 ) : filtered.length === 0 ? (
                     <div style={{ textAlign: "center", padding: 40, color: "#888", fontSize: 14 }}>
                         {filterStatus === "archived" ? "Архів порожній" : filterStatus === "deleted" ? "Кошик порожній" : search ? `Нічого не знайдено за запитом «${search}»` : "Немає замовлень у цьому фільтрі"}
                     </div>
                 ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                        {isAdmin && hasMore && (
+                        {isAdmin && hasMore && !usingFullSet && (
                             <div style={{ textAlign: "center", padding: "4px 0 8px" }}>
                                 <span style={{ fontSize: 12, color: "#aaa" }}>Показано перші {orders.length} замовлень</span>
                             </div>
@@ -1054,7 +1059,7 @@ export default function Dashboard({ onOpen, onNew, onAdmin, onTraining, onFileCo
                                 </div>
                             );
                         })}
-                        {isAdmin && hasMore && (
+                        {isAdmin && hasMore && !usingFullSet && (
                             <div style={{ textAlign: "center", padding: "16px 0 4px" }}>
                                 <button
                                     onClick={loadMore}
