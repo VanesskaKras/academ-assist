@@ -190,6 +190,8 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
   const writingDoneRef = useRef(false);
   const autoRemapDoneRef = useRef(false);
   const appendixFillDoneRef = useRef(false);
+  const appendixDeferredRef = useRef(false);
+  const appendixDeferredGenDoneRef = useRef(false);
   const maxStageIdxRef = useRef(0);
   const generationStartRef = useRef(null);
   const [apiError, setApiError] = useState("");
@@ -1628,16 +1630,24 @@ Return ONLY JSON:
     });
     setGlossary({});
     setGenIdx(0); setPaused(false); writingDoneRef.current = false; autoRemapDoneRef.current = false; appendixFillDoneRef.current = false;
+    appendixDeferredGenDoneRef.current = false;
     const practicalApproachForGen = commentAnalysis?.practicalApproach;
     const acadDefaultsForGen = getAcademicDefaults(info?.subject, info?.type, info?.course, info?.topic);
     const specialtyRecognizedForGen = !!detectSpecialty(info?.subject || "");
     const needsAppendixForGen = practicalApproachForGen || isPsychoPed(info) || (acadDefaultsForGen?.appendicesAiGen?.length > 0) || !specialtyRecognizedForGen;
     const needsEconProfileForGen = !econProfile && isEcon(info);
+    // Реальну методику/тест/експеримент (фіксований інструмент) і додатки з реальним обґрунтуванням
+    // (код клієнта, профіль підприємства) генеруємо ДО тексту — вони не залежать від того, що напише AI.
+    // Авторську анкету (немає фіксованого джерела істини) — відкладаємо й генеруємо ПІСЛЯ тексту,
+    // узгоджено з тим, що там реально написано (вибірка, вік/клас, кількість запитань).
+    const instrumentTypeForGen = commentAnalysis?.researchDesign?.instrumentType;
+    const isRealInstrumentForGen = ["psycho_scale", "fitness_test", "pedagogical_experiment"].includes(instrumentTypeForGen);
+    appendixDeferredRef.current = needsAppendixForGen && !isRealInstrumentForGen && !isEcon(info) && !isTechnical(info);
     (async () => {
       // Для економічних робіт додатки мають спиратись на той самий профіль підприємства,
       // що й основний текст — тому чекаємо його готовності перед генерацією додатків.
       const profileForAppendices = needsEconProfileForGen ? await doGenEconProfile() : econProfile;
-      if (!appendicesText && needsAppendixForGen) doGenAppendices(profileForAppendices);
+      if (!appendicesText && needsAppendixForGen && !appendixDeferredRef.current) doGenAppendices(profileForAppendices);
     })();
     setStage("sources");
     generationStartRef.current = Date.now();
@@ -1681,11 +1691,24 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
     setFigureRefs(newRefs);
   }, [stage, content]);
 
+  // ── Відкладена генерація Додатку А (авторська анкета) — після завершення тексту,
+  // щоб анкета точно відповідала вибірці й даним, які там реально описані ──
+  useEffect(() => {
+    if (stage !== "done") return;
+    if (!appendixDeferredRef.current || appendicesText || appendixDeferredGenDoneRef.current) return;
+    appendixDeferredGenDoneRef.current = true;
+    const empSecsForApp = getEmpiricalSections(sections, info, commentAnalysis, methodInfo);
+    const empIds = new Set([...(empSecsForApp.chapterSectionIds || []), empSecsForApp.anchorId].filter(Boolean));
+    const empText = sections.filter(s => empIds.has(s.id)).map(s => content[s.id]).filter(Boolean).join("\n\n");
+    const finishedBodyText = empText || sections.filter(s => s.type !== "sources").map(s => content[s.id]).filter(Boolean).join("\n\n");
+    doGenAppendices(undefined, finishedBodyText);
+  }, [stage]); // eslint-disable-line
+
   // ── Авто-заповнення полів додатків, позначених маркером, при переході на done ──
   useEffect(() => {
     if (stage !== "done") return;
     doFillAppendixData();
-  }, [stage]); // eslint-disable-line
+  }, [stage, appendicesText]); // eslint-disable-line
 
   // ── Генерація тексту ──
   useEffect(() => {
@@ -2888,7 +2911,7 @@ ${realMaterials.slice(0, 80000)}
     return `\nДОДАТОК ${letter}\nВихідний код програми\n\n${listings}`;
   };
 
-  const doGenAppendices = async (econProfileOverride) => {
+  const doGenAppendices = async (econProfileOverride, finishedBodyTextOverride) => {
     setAppendicesLoading(true);
     try {
       const lang = info?.language || "Українська";
@@ -2911,6 +2934,12 @@ ${realMaterials.slice(0, 80000)}
 
       const methodBlock = methodInfo?.theoryRequirements || methodInfo?.analysisRequirements || methodInfo?.otherRequirements
         ? `ВИМОГИ МЕТОДИЧКИ: ${[methodInfo.theoryRequirements, methodInfo.analysisRequirements, methodInfo.otherRequirements].filter(Boolean).join(". ")}`
+        : "";
+
+      // Відкладена генерація (авторська анкета): текст роботи вже написаний — Додаток А
+      // має підлаштуватись під нього, а не під загальні дефолти нижче.
+      const bodyGroundingBlock = finishedBodyTextOverride
+        ? `\nТЕКСТ РОБОТИ ВЖЕ ПОВНІСТЮ НАПИСАНИЙ. Нижче наведені завершені емпіричні підрозділи — Додаток А ОБОВ'ЯЗКОВО має точно відповідати тому, що в них уже стверджується: та сама вибірка (кількість осіб, вік/клас/категорія, критерії відбору), той самий тип респондентів, той самий інструмент і кількість запитань. Це джерело істини, воно ПЕРЕВАЖАЄ над будь-якими загальними дефолтами чи прикладами нижче.\n\nЗАВЕРШЕНИЙ ТЕКСТ ЕМПІРИЧНОГО ДОСЛІДЖЕННЯ:\n${finishedBodyTextOverride.slice(0, 60000)}\n`
         : "";
 
       const clientBlock = commentAnalysis?.writingHints
@@ -3042,7 +3071,7 @@ ${parts.join("\n\n---\n\n")}
         const header = `Згенеруй інструмент дослідження (Додаток А) для ${info?.type || "наукової роботи"} на тему "${info?.topic}". Галузь: ${info?.subject}.
 ${planBlock}
 ${methodBlock}
-${empClientBlock}${clientBlock}${groundingBlock}
+${empClientBlock}${clientBlock}${groundingBlock}${bodyGroundingBlock}
 Мова: ${lang}. БЕЗ markdown, зірочок, жирного. Звичайний текст.`;
 
         if (instrumentType === "psycho_scale") {
@@ -3099,7 +3128,7 @@ ${buildQuestionnairePrompt("ДОДАТОК А", rdApp?.groups?.[0]?.name || "")}
         const header = `Згенеруй Додатки для ${info?.type || "наукової роботи"} на тему "${info?.topic}". Галузь: ${info?.subject}.
 ${planBlock}
 ${methodBlock}
-${clientBlock}${groundingBlock}
+${clientBlock}${groundingBlock}${bodyGroundingBlock}
 Мова: ${lang}. БЕЗ markdown, зірочок, жирного. Звичайний текст.`;
         prompt = `${header}
 
@@ -3108,7 +3137,7 @@ ${buildAcadDefaultsAppendixBlock(acadDefaultsApp.appendicesAiGen, info?.topic)}`
         prompt = `Згенеруй розділ "Додатки" для ${info?.type || "наукової роботи"} на тему "${info?.topic}". Галузь: ${info?.subject || ""}.
 ${planBlock}
 ${methodBlock}
-${clientBlock}${groundingBlock}
+${clientBlock}${groundingBlock}${bodyGroundingBlock}
 ${customBlock || `Включи один або два додатки що логічно доповнюють роботу відповідно до теми та структури (таблиці, схеми, зразки документів тощо).`}
 Мова: ${lang}. БЕЗ markdown, зірочок, жирного. Кожен додаток починається з нового рядка: ДОДАТОК А, ДОДАТОК Б тощо.`;
       }
