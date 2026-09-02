@@ -3,7 +3,7 @@ import { CODE_FILE_EXTENSIONS } from "../lib/planUtils.js";
 import { callClaude, MODEL_FAST } from "../lib/api.js";
 import { extractPdfText, extractPdfPageImages } from "../lib/pdfImages.js";
 
-const MAX_FILES = 20;
+const MAX_FILES = 70;
 const MAX_TEXT_CHARS = 50000;
 const OCR_PAGE_LIMIT = 20;
 const CODE_ACCEPT = CODE_FILE_EXTENSIONS.join(",");
