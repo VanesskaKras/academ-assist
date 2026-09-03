@@ -11,15 +11,16 @@ import { exportToPptxFile } from "./lib/exportPptx.js";
 import { extractPdfPageImages } from "./lib/pdfImages.js";
 import { callClaude, callGemini, MODEL, MODEL_FAST, resetGenerationCost } from "./lib/api.js";
 import { playDoneSound } from "./lib/audio.js";
-import { enforceWordCount, enforceTotalVolume, stripEmDash } from "./lib/wordCount.js";
-import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildMethodologyReadingPrompt, buildExampleWorkReadingPrompt, buildTemplateAnalysisPrompt, buildCommentAnalysisPrompt, buildIllustrationsPrompt, buildIllustrationsPdfPrompt, buildDrawingsDescriptionPrompt, buildClientMaterialsAnalysisPrompt, buildExtractStructurePrompt, buildContinuationPlanPrompt, buildAnnotationPrompt, buildAnnotationRegenPrompt, buildAntiPlagiarismSYS, buildAntiDetectionSYS, buildClientPlanEditsPrompt } from "./lib/prompts.js";
-import { extractReadyWorkStructure, quickParsePlanIds } from "./lib/readyWorkExtract.js";
-import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, getEmpiricalSections, getEconSections, getTechnicalSections, CODE_FILE_EXTENSIONS, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, parseTemplate, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, parseClientPlan, deriveStructureFromExampleTOC, mergeExampleWorkIntoMethodInfo, getLangLabels, insertBeforeTail, detectRequestedChapterCount, scanFigures, hasRealFigure, renumberSections, rebuildWithChapterConclusions, applyPlanEditOps, describePlanEditOp, extractOpeningSentences } from "./lib/planUtils.js";
+import { stripEmDash } from "./lib/wordCount.js";
+import { buildSYS, SYS_JSON, SYS_JSON_SHORT, SYS_JSON_ARRAY, STRUCTURE_READING_PROMPT, buildClientMaterialsAnalysisPrompt, buildExtractStructurePrompt, buildAnnotationRegenPrompt, buildAntiPlagiarismSYS, buildAntiDetectionSYS, buildClientPlanEditsPrompt } from "./lib/prompts.js";
+import { FIELD_LABELS, isPsychoPed, isEcon, isTechnical, hasEmpiricalResearch, getEmpiricalSections, getEconSections, getTechnicalSections, CODE_FILE_EXTENSIONS, STAGES_SOURCES_FIRST, STAGE_KEYS_SOURCES_FIRST, ORDER_STATUS, parsePagesAvg, buildPlanText, buildPreviewStructure, calcSourceDist, buildWorkConfig, getLangLabels, insertBeforeTail, scanFigures, renumberSections, rebuildWithChapterConclusions, applyPlanEditOps, describePlanEditOp, mergeIntroComponents } from "./lib/planUtils.js";
 import { serializeForFirestore } from "./lib/firestoreUtils.js";
 import { getAcademicDefaults, classifyAppendixItem, detectSpecialty, normalizeWorkType } from "./lib/academicDefaults.js";
-import { searchByPhrase, filterSourcesWithGemini, getEconInstitutionalSources, generateAlternatePhrases, paperToCitation, enrichSources } from "./lib/sourcesSearch.js";
-import { applyCitationRemap, buildFinalReferenceList, buildCiteFormats, createReferenceDeduper, detectSourceGrouping, insertMissingCitations, capCitationRepeats } from "./lib/citationFormatting.js";
+import { searchByPhrase, filterSourcesWithGemini, getEconInstitutionalSources, generateAlternatePhrases, enrichSources } from "./lib/sourcesSearch.js";
+import { createReferenceDeduper, detectSourceGrouping, capCitationRepeats } from "./lib/citationFormatting.js";
 import { fixDanglingFigures } from "./lib/figureFixup.js";
+import { fixMixedScript, typographQuotes, getIntroTasksProfile, INTRO_TASKS_MERGE_SPLIT_RULE, APPENDIX_FILL_MARKER, APPENDIX_FILL_MARKER_RULE, CODE_GROUNDING_RULE } from "./lib/textCleanup.js";
+import { runWritingSection, runPlanStage, runAnalyzeStage, runRemapStage } from "./lib/orderStages.js";
 import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
 import { StagePills } from "./components/StagePills.jsx";
 import { FieldBox, Heading, NavBtn, PrimaryBtn, GreenBtn, SaveIndicator } from "./components/Buttons.jsx";
@@ -36,54 +37,6 @@ import { WritingStage } from "./components/stages/WritingStage.jsx";
 import { SourcesStage } from "./components/stages/SourcesStage.jsx";
 import { DoneStage } from "./components/stages/DoneStage.jsx";
 import { ChecklistStage } from "./components/stages/ChecklistStage.jsx";
-
-// Fixes Latin characters accidentally inserted inside Cyrillic words by the AI model
-function fixMixedScript(text, lang) {
-  if (getLangLabels(lang).latinScript) return text;
-  const map = {
-    'a':'а','c':'с','e':'е','i':'і','o':'о','p':'р','x':'х','y':'у','g':'г','r':'р',
-    'A':'А','B':'В','C':'С','E':'Е','H':'Н','I':'І','K':'К','M':'М','O':'О','P':'Р','T':'Т','X':'Х',
-  };
-  return text.replace(/\S+/g, w => {
-    if (!/[Ѐ-ӿ]/.test(w) || !/[a-zA-Z]/.test(w)) return w;
-    const latinChars = w.match(/[a-zA-Z]/g) || [];
-    if (!latinChars.every(ch => ch in map)) return w; // не всі латинські літери мають кириличний двійник — це, найімовірніше, справжнє неперекладене слово, а не одруківка-гомогліф; чіпати не варто
-    return w.replace(/[a-zA-Z]/g, ch => map[ch]);
-  });
-}
-
-function typographQuotes(text) {
-  return text
-    .split(/(```[\s\S]*?```)/)
-    .map((part, i) => (i % 2 === 1 ? part : part
-      .replace(/[„""]([^"„""]*)["""]/g, "«$1»")
-      .replace(/"([^"]*)"/g, "«$1»")))
-    .join("");
-}
-
-// ── Профіль завдань дослідження у вступі: к-сть і характер за типом роботи ──
-function getIntroTasksProfile(type, course, mainSecsLength, isLarge) {
-  const wt = normalizeWorkType(type, course);
-  const PROFILES = {
-    course_1_2: { count: 4, nature: "переважно теоретичного й оглядового характеру (аналіз літератури, порівняння наукових підходів, узагальнення понять); практична складова мінімальна або відсутня" },
-    course_3_4: { count: 4, nature: "переважно теоретичного й оглядового характеру (аналіз літератури, порівняння наукових підходів, узагальнення понять); практична складова мінімальна або відсутня" },
-    bachelor: { count: 5, nature: "поєднання теоретичної частини з аналітичною/практичною складовою (аналіз конкретного підприємства, кейсу чи даних) — обов'язково" },
-    master: { count: 6, nature: "з вищою вимогою до наукової новизни: включають не лише аналіз, а й розробку власних пропозицій, моделей чи рекомендацій з обґрунтуванням їх ефективності" },
-  };
-  if (PROFILES[wt]) {
-    return { count: Math.min(PROFILES[wt].count, Math.max(mainSecsLength, 1)), nature: PROFILES[wt].nature };
-  }
-  return { count: Math.min(mainSecsLength, isLarge ? 8 : 5), nature: "" };
-}
-
-const INTRO_TASKS_MERGE_SPLIT_RULE = `Розділи плану — це змістова основа, а не буквальні назви завдань: сформулюй кожне завдання як дієслівну наукову конструкцію ("проаналізувати...", "систематизувати...", "розробити...", "обґрунтувати..." тощо). Якщо розділів більше, ніж потрібно завдань — об'єднай суміжні за змістом розділи в одне завдання; якщо розділів менше — розбий один розділ на 2 завдання за логічними частинами його підрозділів. Зберігаючи обов'язковий інфінітив на початку кожного пункту, свідомо чергуй довжину та граматичну складність формулювань: частина пунктів має бути короткою (дієслово + прямий додаток), частина — розгорнутою, з уточнювальною чи підрядною частиною ("...з урахуванням...", "...що охоплює..."). Пункти списку не повинні читатись як однорідна послідовність речень однакової структури.`;
-
-// ── Додатки з полями, що заповнюються автоматично після готовності основного тексту ──
-const APPENDIX_FILL_MARKER = "ЗАПОВНЮЄТЬСЯ_АВТОМАТИЧНО";
-const APPENDIX_FILL_MARKER_RULE = `Якщо для якогось конкретного поля додатку (очікуваний/фактичний результат, статус "пройдено/не пройдено", висновок, показник, кількість респондентів чи учасників, частка/відсоток відповідей, будь-яке число чи статистичний показник, що має збігатися з тим, що буде написано в основному тексті) значення логічно випливає із самої роботи, але наразі невідоме, бо основний текст роботи ще не написаний, — постав замість цього поля рівно текст ${APPENDIX_FILL_MARKER} (без лапок і додаткових символів), не вигадуй конкретне значення заздалегідь. Це стосується і кількісних даних вибірки (загальна кількість респондентів, кількість осіб за групами, кількість тих, хто погодився на подальшу участь тощо) — вони НЕ є особистими даними і мають позначатись маркером, а не порожнім бланком. Порожній підкреслений бланк "________" залишай лише для полів, що вимагають реальних особистих чи фізичних даних, яких ти не можеш знати (ім'я виконавця, дата, підпис, характеристики обладнання, номер академічної групи) — такі поля маркером НЕ позначай.`;
-
-// ── Заземлення технічних тверджень на реальному коді клієнта (проти вигаданого функціоналу) ──
-const CODE_GROUNDING_RULE = `Кожне технічне твердження про функціональність (назва методу, класу, поля, логіка обробки) має спиратися на конкретний фрагмент коду нижче. Якщо ти не можеш вказати, в якому саме методі це реалізовано — не згадуй це в тексті. Наявність поля чи структури, що натякає на функціональність (наприклад, поле IsConfirmed натякає на модерацію), не означає, що вся ця функціональність реалізована — описуй лише те, для чого є конкретний метод чи блок логіки в коді, а не те, що логічно мало б існувати. Використовуй лише наданий матеріал.`;
 
 const AUTO_STEPS = { analyze: "Аналіз шаблону", plan: "Генерація плану", sources: "Підбір джерел", writing: "Написання тексту" };
 
@@ -553,255 +506,48 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     setStage(s);
   }, [running, autoRunning]);
 
-  // ── Аналіз шаблону ──
+  // ── Аналіз шаблону — делеговано в src/lib/orderStages.js (runAnalyzeStage),
+  // яка й дає справжнє покрокове відновлення після збою; браузер тут завжди
+  // просить свіжий аналіз (analyzeProgress: {}), бо кожен клік на "Аналізувати"
+  // — свідомо нова спроба, а не відновлення після падіння. ──
+  const applyAnalyzePatch = (patch) => {
+    if (patch.info) setInfo(patch.info);
+    if ("methodInfo" in patch) setMethodInfo(patch.methodInfo);
+    if ("commentAnalysis" in patch) setCommentAnalysis(patch.commentAnalysis);
+    if ("illustrationDescs" in patch) setIllustrationDescs(patch.illustrationDescs);
+    if (patch.illustrations) setIllustrations(patch.illustrations);
+    if ("clientMaterialsSummary" in patch) setClientMaterialsSummary(patch.clientMaterialsSummary);
+    if (patch.titlePage) { setTitlePage(patch.titlePage); setTitlePageLines(patch.titlePageLines); }
+  };
+
   const doAnalyze = async () => {
     setRunning(true); runningRef.current = true; setLoadMsg("Аналізую шаблон...");
-
-    // КРОК 1: Аналіз шаблону замовлення (тільки текст, без PDF)
-    const msgs = [];
-    msgs.push({ type: "text", text: buildTemplateAnalysisPrompt(tplText, comment) });
-    let newInfo;
-    try {
-      const raw = await callClaude([{ role: "user", content: msgs }], null, SYS_JSON, 1000, null, MODEL_FAST);
-      const jsonMatch = raw.match(/\{[\s\S]*\}/);
-      const parsed = JSON.parse(jsonMatch?.[0] || raw.replace(/```json|```/g, "").trim());
-      newInfo = { ...parseTemplate(tplText), ...Object.fromEntries(Object.entries(parsed).filter(([, v]) => v != null && v !== "")) };
-    } catch (e) {
-      console.warn("doAnalyze fallback:", e.message);
-      newInfo = parseTemplate(tplText);
-    }
-    // Магістерська робота завжди на 6 курсі — підставляємо, якщо курс не вказано явно
-    if (!newInfo.course && /магістерськ/i.test(newInfo.type || "")) newInfo.course = "6";
-    // Автодетект категорії напряму якщо не задано вручну
-    if (!newInfo.workCategory) {
-      const dir = ((newInfo.direction || "") + " " + (newInfo.subject || "")).toLowerCase();
-      if (/економ|фінанс|менедж|облік|маркет|бізнес|бухгалт|аудит|логіст|підприємн|публічн.*управл|держ.*управл/.test(dir)) newInfo.workCategory = "Економічне";
-      else if (/біолог|медицин|хімі|фізіол|екол|природн|ветеринар/.test(dir)) newInfo.workCategory = "Біологічне";
-      else if (/техн|інформ|програм|комп|it\b|кібер|електр|машин|буд|архіт/.test(dir)) newInfo.workCategory = "Технічне";
-      else newInfo.workCategory = "Гуманітарне";
-    }
-    setInfo(newInfo);
-    // Переходимо на "Перевірку" одразу — далі йде методичка/коментар/ілюстрації, і це
-    // може тривати довго, тож не тримаємо користувача на екрані "Дані", а даємо
-    // аналізу дописатись у фоні (running лишається true, кнопки плану заблоковані).
+    setApiError("");
     setStage("parsed");
 
-    // КРОК 2: Якщо є методичка — пауза між запитами щоб не перевищити rate limit
-    setApiError("");
-    let methodParsed = methodInfo || null; // якщо PDF не завантажено — лишаємо попередній результат
-    if (fileB64) {
-      setLoadMsg("Читаю методичку...");
-      await new Promise(r => setTimeout(r, 2000)); // пауза між двома API-викликами
-      const docPart = { type: "document", source: { type: "base64", media_type: fileType || "application/pdf", data: fileB64 } };
-      try {
-        // Крок 1: витягуємо тільки структуру з chain-of-thought
-        setLoadMsg("Читаю методичку... крок 1/2");
-        const structMsgs = [docPart, { type: "text", text: STRUCTURE_READING_PROMPT }];
-        const structRaw = await callGemini([{ role: "user", content: structMsgs }], null, SYS_JSON_SHORT, 2000, null, "gemini-2.5-flash", true);
-        const structMatch = structRaw.match(/\{[\s\S]*\}/);
-        let structureInfo = null;
-        try { structureInfo = structMatch ? JSON.parse(structMatch[0]) : null; } catch (e) { console.warn("[methodology] structure step parse error:", e.message); }
-        console.log("[methodology] structure step:", structureInfo);
-
-        // Крок 2: повне читання методички з заблокованою структурою
-        await new Promise(r => setTimeout(r, 1500));
-        const methodMsgs = [docPart, { type: "text", text: buildMethodologyReadingPrompt(structureInfo) }];
-        const raw = await callGemini([{ role: "user", content: methodMsgs }], null, SYS_JSON_SHORT, 8000, (s) => setLoadMsg(`Читаю методичку... крок 2/2, зачекайте ${s}с`), "gemini-2.5-flash", true);
-        const jsonMatch = raw.match(/\{[\s\S]*\}/);
-        const parsed = JSON.parse(jsonMatch?.[0] || raw.replace(/```json|```/g, "").trim());
-        // Якщо крок 1 дав структуру — пріоритет її значень над кроком 2
-        if (structureInfo) {
-          if (structureInfo.chaptersCount != null) parsed.chaptersCount = structureInfo.chaptersCount;
-          if (structureInfo.subsectionsPerChapter != null) parsed.subsectionsPerChapter = structureInfo.subsectionsPerChapter;
-          parsed.subsectionsPerChapterOverrides = structureInfo.subsectionsPerChapterOverrides ?? null;
-          parsed.hasChapterConclusions = structureInfo.hasChapterConclusions;
-          if (structureInfo.chapterTypes?.length) parsed.chapterTypes = structureInfo.chapterTypes;
-          if (structureInfo.totalPages != null) parsed.totalPages = structureInfo.totalPages;
-          if (structureInfo.introPages != null) parsed.introPages = structureInfo.introPages;
-          if (structureInfo.conclusionsPages != null) parsed.conclusionsPages = structureInfo.conclusionsPages;
-        }
-        // Нормалізуємо поля, які Gemini може повернути як масив замість рядка
-        if (Array.isArray(parsed.recommendedSources)) parsed.recommendedSources = parsed.recommendedSources.join('; ');
-        if (Array.isArray(parsed.sourcesStyle)) parsed.sourcesStyle = parsed.sourcesStyle.join(', ');
-        if (Array.isArray(parsed.citationStyle)) parsed.citationStyle = parsed.citationStyle.join('; ');
-        if (typeof parsed.sourcesMinCount === 'string') parsed.sourcesMinCount = parseInt(parsed.sourcesMinCount) || null;
-        methodParsed = parsed;
-      } catch (e) {
-        console.warn("methodInfo extract failed:", e.message);
-        setApiError(e.message);
-      }
-    }
-
-    // КРОК 2b: Якщо є приклад роботи (зразок) — витягуємо структуру й оформлення з готового документа
-    let exampleParsed = null, exampleStructure = null;
-    if (exampleWorkFileB64) {
-      setLoadMsg("Читаю приклад роботи...");
-      await new Promise(r => setTimeout(r, 1500));
-      const exampleDocPart = { type: "document", source: { type: "base64", media_type: exampleWorkFileType || "application/pdf", data: exampleWorkFileB64 } };
-      try {
-        const exampleMsgs = [exampleDocPart, { type: "text", text: buildExampleWorkReadingPrompt() }];
-        const exampleRaw = await callGemini([{ role: "user", content: exampleMsgs }], null, SYS_JSON_SHORT, 6000, (s) => setLoadMsg(`Читаю приклад роботи... зачекайте ${s}с`), "gemini-2.5-flash", true);
-        const exampleMatch = exampleRaw.match(/\{[\s\S]*\}/);
-        exampleParsed = JSON.parse(exampleMatch?.[0] || exampleRaw.replace(/```json|```/g, "").trim());
-        if (Array.isArray(exampleParsed.sourcesStyle)) exampleParsed.sourcesStyle = exampleParsed.sourcesStyle.join(', ');
-        if (Array.isArray(exampleParsed.citationStyle)) exampleParsed.citationStyle = exampleParsed.citationStyle.join('; ');
-        exampleStructure = deriveStructureFromExampleTOC(exampleParsed.exampleTOC, newInfo?.language);
-      } catch (e) {
-        console.warn("exampleWork extract failed:", e.message);
-        setApiError(prev => prev || e.message);
-      }
-    }
-
-    // Об'єднуємо: явні поля методички мають пріоритет, приклад роботи заповнює те, чого в методичці нема
-    const finalMethodInfo = (exampleParsed || exampleStructure)
-      ? mergeExampleWorkIntoMethodInfo(methodParsed, exampleParsed, exampleStructure)
-      : methodParsed;
-
-    // Генералізація титульної сторінки (з методички або з прикладу роботи) — один раз, для фінального результату
-    let filledTitleText = null, filledTitleLines = null;
-    if (finalMethodInfo?.titlePageTemplate) {
-      const currentYear = new Date().getFullYear().toString();
-      const topic = newInfo?.topic || "";
-      const fillText = (t) => {
-        let s = t;
-        if (topic) {
-          s = s.replace(/\[ТЕМА\]/g, topic);
-          s = s.replace(/\(найменування\s+теми\)/gi, topic);
-          s = s.replace(/\(назва\s+теми\)/gi, topic);
-        }
-        s = s.replace(/\[РІК\]/g, currentYear).replace(/\[ДАТА\]/g, currentYear);
-        s = s.replace(/\b20\d\d\b/g, currentYear);
-        s = s.replace(/\b20\d?\s*[_]+/g, currentYear);
-        return s;
-      };
-      if (Array.isArray(finalMethodInfo.titlePageTemplate)) {
-        let filledLines = finalMethodInfo.titlePageTemplate.map(item => ({ ...item, text: fillText(item.text) }));
-        // Merge split-year lines: "Місто – 202" + "6" → "Місто – 2026"
-        filledLines = filledLines.reduce((acc, item) => {
-          const prev = acc[acc.length - 1];
-          if (prev && /–\s*\d{1,3}$/.test(prev.text) && /^\d{1,2}$/.test(item.text.trim())) {
-            acc[acc.length - 1] = { ...prev, text: prev.text + item.text.trim() };
-          } else {
-            acc.push(item);
-          }
-          return acc;
-        }, []);
-        filledTitleLines = filledLines;
-        filledTitleText = filledLines.map(item => item.text).join("\n");
-      } else {
-        filledTitleText = fillText(finalMethodInfo.titlePageTemplate);
-      }
-      setTitlePage(filledTitleText);
-      setTitlePageLines(filledTitleLines);
-    }
-
-    setMethodInfo(finalMethodInfo || null);
-    await saveToFirestore({
-      tplText, comment, clientPlan, info: newInfo,
-      ...(finalMethodInfo ? { methodInfo: finalMethodInfo } : {}),
-      fileLabel, exampleWorkFileName,
-      ...(filledTitleText ? { titlePage: filledTitleText, titlePageLines: filledTitleLines } : {}),
-      ...(appendicesText?.trim() ? { appendicesText } : {}),
-      stage: "parsed", status: "new",
+    const order = {
+      tplText, comment, clientPlan,
+      methodInfo,
+      methodichkaFile: fileB64 ? { b64: fileB64, mediaType: fileType || "application/pdf" } : null,
+      exampleWorkFile: exampleWorkFileB64 ? { b64: exampleWorkFileB64, mediaType: exampleWorkFileType || "application/pdf" } : null,
+      illustrationsPdfFile: illustrationsPdf ? { b64: illustrationsPdf.b64, mediaType: "application/pdf" } : null,
+      illustrations, photos, clientDrawings, clientMaterials, clientMaterialsText,
+      appendicesText, fileLabel, exampleWorkFileName,
+      analyzeProgress: {},
+    };
+    const patch = await runAnalyzeStage(order, {
+      callClaude, callGemini, onProgress: setLoadMsg,
+      onInfo: setInfo,
+      extractIllustrationsFromPdf: buildIllustrationsFromPdf,
+      save: async (p) => { applyAnalyzePatch(p); await saveToFirestore(p); },
     });
-
-    // КРОК 3: Аналіз коментаря клієнта (+ фото якщо є)
-    if (comment?.trim() || photos.length > 0) {
-      setLoadMsg("Аналізую коментар...");
-      await new Promise(r => setTimeout(r, 1000));
-      try {
-        const caContent = [];
-        // Додаємо фото перед текстом (Claude бачить їх перед запитом)
-        for (const ph of photos) {
-          caContent.push({ type: "image", source: { type: "base64", media_type: ph.type, data: ph.b64 } });
-        }
-        caContent.push({ type: "text", text: buildCommentAnalysisPrompt({ topic: newInfo?.topic, comment, photoCount: photos.length }) });
-        const caRaw = await callClaude([{ role: "user", content: caContent }],
-          null, SYS_JSON_SHORT, 600, null, MODEL_FAST);
-        const caMatch = caRaw.match(/\{[\s\S]*\}/);
-        const caParsed = JSON.parse(caMatch?.[0] || caRaw);
-        // Нормалізуємо поля, які AI може повернути як масив замість рядка
-        if (Array.isArray(caParsed.sourcesHints)) caParsed.sourcesHints = caParsed.sourcesHints.join('; ');
-        if (Array.isArray(caParsed.planHints)) caParsed.planHints = caParsed.planHints.join('; ');
-        if (Array.isArray(caParsed.textStructureHints)) caParsed.textStructureHints = caParsed.textStructureHints.join('; ');
-        if (Array.isArray(caParsed.writingHints)) caParsed.writingHints = caParsed.writingHints.join('; ');
-        setCommentAnalysis(caParsed);
-        await saveToFirestore({ tplText, comment, clientPlan, info: newInfo, commentAnalysis: caParsed, ...(appendicesText?.trim() ? { appendicesText } : {}), stage: "parsed", status: "new" });
-      } catch (e) {
-        console.warn("commentAnalysis failed:", e.message);
-        setCommentAnalysis(null);
-      }
-    } else {
-      setCommentAnalysis(null);
-    }
-
-    // КРОК 3.5: Опис ілюстрацій клієнта
-    if (illustrations.length > 0 || illustrationsPdf) {
-      setLoadMsg("Описую ілюстрації...");
-      await new Promise(r => setTimeout(r, 500));
-      try {
-        let illContent;
-        if (illustrationsPdf) {
-          illContent = [
-            { type: "document", source: { type: "base64", media_type: "application/pdf", data: illustrationsPdf.b64 } },
-            { type: "text", text: buildIllustrationsPdfPrompt({ topic: newInfo?.topic, planSections: sections, lang: newInfo?.language }) },
-          ];
-        } else {
-          illContent = [];
-          for (const ill of illustrations) {
-            illContent.push({ type: "image", source: { type: "base64", media_type: ill.type, data: ill.b64 } });
-          }
-          illContent.push({ type: "text", text: buildIllustrationsPrompt({ topic: newInfo?.topic, illustrations, planSections: sections, lang: newInfo?.language }) });
-        }
-        const illRaw = await callClaude([{ role: "user", content: illContent }], null, SYS_JSON_ARRAY, 1500, null, MODEL_FAST);
-        const illMatch = illRaw.match(/\[[\s\S]*\]/);
-        const illParsed = JSON.parse(illMatch?.[0] || illRaw);
-        setIllustrationDescs(illParsed);
-        await saveToFirestore({ ...(illustrationsPdf ? {} : { illustrations }), illustrationDescs: illParsed });
-        if (illustrationsPdf) await buildIllustrationsFromPdf(illustrationsPdf, illParsed);
-      } catch (e) {
-        console.warn("illustrationDescs failed:", e.message);
-        setIllustrationDescs([]);
-      }
-    } else {
-      setIllustrationDescs([]);
-    }
-
-    // КРОК 3.6: Опис креслень клієнта (лише для заземлення тексту — самі зображення в текст не вставляються)
-    let drawingDescsResult = [];
-    if (clientDrawings.length > 0) {
-      setLoadMsg("Описую креслення...");
-      await new Promise(r => setTimeout(r, 500));
-      try {
-        const drContent = clientDrawings.map(d => ({ type: "image", source: { type: "base64", media_type: d.type, data: d.b64 } }));
-        drContent.push({ type: "text", text: buildDrawingsDescriptionPrompt({ topic: newInfo?.topic, drawings: clientDrawings, lang: newInfo?.language }) });
-        const drRaw = await callClaude([{ role: "user", content: drContent }], null, SYS_JSON_ARRAY, 1200, null, MODEL_FAST);
-        const drMatch = drRaw.match(/\[[\s\S]*\]/);
-        drawingDescsResult = JSON.parse(drMatch?.[0] || drRaw);
-        await saveToFirestore({ clientDrawings });
-      } catch (e) {
-        console.warn("clientDrawingDescs failed:", e.message);
-      }
-    }
-
-    // КРОК 4: Матеріали клієнта — зберігаємо повний текст без стиснення
-    const combinedMaterialsText = [
-      ...clientMaterials.map(m => `=== ${m.name} ===\n${m.text}`),
-      ...drawingDescsResult.map(d => `=== Технічний опис креслення: ${d.name} ===\n${d.description}`),
-      clientMaterialsText?.trim() || "",
-    ].filter(Boolean).join("\n\n");
-
-    if (combinedMaterialsText.trim()) {
-      const rawSummary = { rawText: combinedMaterialsText };
-      setClientMaterialsSummary(rawSummary);
-      await saveToFirestore({ clientMaterialsSummary: rawSummary, clientMaterialsText: clientMaterialsText?.trim() || null });
-    } else {
-      setClientMaterialsSummary(null);
-    }
+    applyAnalyzePatch(patch);
+    if (patch.apiError) setApiError(patch.apiError);
 
     setRunning(false); runningRef.current = false; setLoadMsg("");
-    return newInfo;
+    return patch.info;
   };
+
 
   // ── Витяг реальних картинок з PDF-ілюстрацій (сторінка = одна ілюстрація) і підключення
   // їх до того самого масиву illustrations, яким уже користуються docx- і pptx-експорт.
@@ -853,457 +599,41 @@ export default function AcademAssist({ orderId, onOrderCreated, onBack }) {
     });
   }
 
-  // ── Парсинг плану клієнта ──
-  const buildDefaultPlan = (totalPages, lang = "Українська", chapCountOverride = null) => {
-    const lc = getLangLabels(lang);
-    const needThirdChapter = totalPages >= 40;
-    const mainPages = Math.round(totalPages * 0.80);
-    const chapCount = chapCountOverride || (needThirdChapter ? 3 : 2);
-    const pagesPerCh = Math.max(1, Math.round(mainPages / chapCount));
-    const pagesPerSub = Math.max(1, Math.round(pagesPerCh / 3));
-    const introPages = 2;
-    const concPages = totalPages > 40 ? 3 : 2;
-    const chapterNames = lc.chapterTemplate.slice(0, chapCount);
-    const chTypes = ["theory", "analysis", "recommendations"];
-    const sections = [];
-    chapterNames.forEach((chName, ci) => {
-      const chapNum = ci + 1;
-      for (let i = 1; i <= 3; i++) sections.push({ id: `${chapNum}.${i}`, label: `${chapNum}.${i} [${lc.subsWord} ${chapNum}.${i}]`, sectionTitle: chName, pages: pagesPerSub, type: chTypes[ci] });
-    });
-    sections.push({ id: "intro", label: lc.intro, pages: introPages, type: "intro" });
-    sections.push({ id: "conclusions", label: lc.conclusions, pages: concPages, type: "conclusions" });
-    sections.push({ id: "sources", label: lc.sources, pages: 1, type: "sources" });
-    return sections;
-  };
-
-  // ── Генерація плану ──
+  // Генерація плану делегована в src/lib/orderStages.js (runPlanStage) — та сама
+  // функція, яку викликає й серверний воркер, щоб дерево рішень плану не
+  // дублювалось і не розходилось між браузером і воркером.
   const doGenPlan = async () => {
     setPlanLoading(true); setSections([]); setPlanDisplay(""); setStage("plan"); setReadyWorkNeedsManualAI(false);
-    const d = infoRef.current; const totalPages = parsePagesAvg(d.pages);
-    const wc = buildWorkConfig({ info: d, methodInfo, commentAnalysis });
-    const introP = wc.introPages;
-    const conclP = wc.conclusionsPages;
-    const L = getLangLabels(d?.language);
-    const isEnglish = /англ|english/i.test(d?.language || "");
-    // Явно вказана клієнтом к-сть розділів (коментар/матеріали клієнта) має пріоритет
-    // над методичкою й дефолтом за обсягом сторінок. Клемп 1-3 — стільки шаблонів
-    // назв/типів розділів підтримує решта коду (chapterTemplate, chTypes).
-    const requestedChapCountRaw = detectRequestedChapterCount(
-      [comment, clientMaterialsSummary?.rawText, clientMaterialsText].filter(Boolean).join("\n")
-    );
-    const requestedChapCount = requestedChapCountRaw ? Math.min(Math.max(requestedChapCountRaw, 1), 3) : null;
-
-    const finalizeSections = async (secsIn) => {
-      const secs = secsIn.filter(s => {
-        if (s.type === "intro" && d?.includeIntro === false) return false;
-        if (s.type === "conclusions" && d?.includeConclusions === false) return false;
-        if (s.type === "sources" && d?.includeSources === false) return false;
-        return true;
-      });
-      const mapped = secs.map(s => {
-        let label = s.label;
-        if (s.id && /^\d+\.\d+$/.test(s.id) && !label.startsWith(s.id)) {
-          label = `${s.id} ${label}`;
-        }
-        return { ...s, label, prompts: s.type === "sources" ? 0 : Math.max(1, Math.ceil((s.pages || 1) / 3)) };
-      });
-
-      // Нормалізація: масштабуємо підрозділи до точної суми totalPages
-      const withPrompts = (() => {
-        const currentTotal = mapped.reduce((sum, s) => sum + (s.pages || 0), 0);
-        if (currentTotal === totalPages) return mapped;
-        const mainIdxs = mapped.reduce((acc, s, i) => {
-          if (!["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type)) acc.push(i);
-          return acc;
-        }, []);
-        const fixedTotal = mapped.reduce((sum, s, i) => mainIdxs.includes(i) ? sum : sum + (s.pages || 0), 0);
-        const pagesForMain = Math.max(mainIdxs.length, totalPages - fixedTotal);
-        const currentMainTotal = mainIdxs.reduce((sum, i) => sum + (mapped[i].pages || 1), 0);
-        const result = [...mapped];
-        let assigned = 0;
-        mainIdxs.forEach((idx, j) => {
-          const isLast = j === mainIdxs.length - 1;
-          const p = isLast
-            ? Math.max(1, pagesForMain - assigned)
-            : Math.max(1, Math.round((mapped[idx].pages / currentMainTotal) * pagesForMain));
-          result[idx] = { ...result[idx], pages: p, prompts: Math.max(1, Math.ceil(p / 3)) };
-          if (!isLast) assigned += p;
-        });
-        return result;
-      })();
-
-      setSections(withPrompts); setPlanDisplay(buildPlanText(withPrompts));
-      const { dist, total } = calcSourceDist(withPrompts, parsePagesAvg(d?.pages));
-      setSourceDist(dist); setSourceTotal(total);
-      setInfo(p => p ? { ...p, sourceCount: String(total) } : p);
-      await saveToFirestore({ sections: withPrompts, stage: "plan", status: "plan_ready", info: { ...d, sourceCount: String(total) } });
-      if (illustrations.length > 0 || illustrationsPdf) {
-        try {
-          let illContent;
-          if (illustrationsPdf) {
-            illContent = [
-              { type: "document", source: { type: "base64", media_type: "application/pdf", data: illustrationsPdf.b64 } },
-              { type: "text", text: buildIllustrationsPdfPrompt({ topic: d?.topic, planSections: withPrompts, lang: d?.language }) },
-            ];
-          } else {
-            illContent = illustrations.map(ill => ({
-              type: "image", source: { type: "base64", media_type: ill.type, data: ill.b64 }
-            }));
-            illContent.push({ type: "text", text: buildIllustrationsPrompt({ topic: d?.topic, illustrations, planSections: withPrompts, lang: d?.language }) });
-          }
-          const illRaw = await callClaude([{ role: "user", content: illContent }], null, SYS_JSON_ARRAY, 1500, null, MODEL_FAST);
-          const illMatch = illRaw.match(/\[[\s\S]*\]/);
-          const illParsed = JSON.parse(illMatch?.[0] || illRaw);
-          setIllustrationDescs(illParsed);
-          await saveToFirestore({ illustrationDescs: illParsed });
-          if (illustrationsPdf) await buildIllustrationsFromPdf(illustrationsPdf, illParsed);
-        } catch (e) {
-          console.warn("illustrationDescs re-analysis in plan:", e.message);
-        }
-      }
-      // Готову частину роботи клієнта більше НЕ підганяємо автоматично через ШІ тут — код-розпізнавання
-      // вже спробувало це вище; якщо не вийшло, клієнтка сама натискає кнопку "Аналізувати через ШІ".
-      setPlanLoading(false);
+    const d = infoRef.current;
+    const order = {
+      info: d, methodInfo, commentAnalysis, comment, clientPlan,
+      clientMaterialsSummary, clientMaterialsText, readyWorkText,
+      content: contentRef.current, citInputs, illustrations, illustrationsPdf,
     };
+    const patch = await runPlanStage(order, {
+      callClaude, callGemini, onProgress: setLoadMsg,
+      extractIllustrationsFromPdf: buildIllustrationsFromPdf,
+    });
 
-    // Якщо клієнт надав готову частину роботи — беремо структуру З НЕЇ (реальні заголовки й реальний обсяг),
-    // а не вигадуємо нову структуру і не підганяємо готовий текст під неї. Спочатку пробуємо чистим кодом
-    // (безкоштовно, миттєво); лише якщо код не зміг розпізнати заголовки — падаємо на ШІ-резерв.
-    if (readyWorkText?.trim()) {
-      try {
-        setLoadMsg("Аналізую структуру готової частини роботи клієнта...");
-        const planSections = clientPlan?.trim() ? quickParsePlanIds(clientPlan) : null;
-        const extracted = extractReadyWorkStructure({ documentText: readyWorkText, lang: d?.language, planSections });
+    setSections(patch.sections); setPlanDisplay(patch.planDisplay);
+    setSourceDist(patch.sourceDist); setSourceTotal(patch.sourceTotal);
+    if (patch.info) setInfo(patch.info);
+    if (patch.content) { setContent(patch.content); contentRef.current = patch.content; }
+    if (patch.citInputs) setCitInputs(patch.citInputs);
+    if (patch.readyWorkImportedIds) setReadyWorkImportedIds(patch.readyWorkImportedIds);
+    if (patch.illustrationDescs) setIllustrationDescs(patch.illustrationDescs);
+    setReadyWorkNeedsManualAI(!!patch.readyWorkNeedsManualAI);
 
-        if (extracted) {
-          let finalSecs = extracted.sections;
-          let finalContent = extracted.content;
-
-          // Немає окремого плану клієнта — перевіряємо, чи не бракує розділів (продовження) і догенеровуємо їх
-          if (!clientPlan?.trim()) {
-            const chapNums = finalSecs.map(s => parseInt(String(s.id).split(".")[0], 10)).filter(n => !isNaN(n));
-            const lastChapNum = chapNums.length ? Math.max(...chapNums) : 0;
-            const existingPages = finalSecs.reduce((sum, s) => sum + (s.pages || 0), 0);
-            const continuationBudget = totalPages;
-            // Методичка клієнта, якщо є, головна — інакше загальне правило за обсягом
-            const desiredChapCount = Math.max(lastChapNum, methodInfo?.chaptersCount || ((existingPages + continuationBudget) >= 40 ? 3 : 2));
-            const hasIntro = finalSecs.some(s => s.type === "intro");
-            const hasConclusions = finalSecs.some(s => s.type === "conclusions");
-            const hasSources = finalSecs.some(s => s.type === "sources");
-            const needsChapterConcl = methodInfo?.hasChapterConclusions === true;
-            const missingChapNums = [];
-            for (let n = lastChapNum + 1; n <= desiredChapCount; n++) missingChapNums.push(n);
-
-            if (missingChapNums.length || !hasIntro || !hasConclusions || !hasSources) {
-              setLoadMsg("Догенеровую відсутні розділи (продовження)...");
-              let newChapterData = [];
-              if (missingChapNums.length) {
-                try {
-                  const subsOverrides = methodInfo?.subsectionsPerChapterOverrides || {};
-                  const defaultSubsPerChapter = methodInfo?.subsectionsPerChapter || 3;
-                  const existingChapterTitles = [...new Set(finalSecs.filter(s => s.sectionTitle).map(s => s.sectionTitle))];
-                  const prompt = buildContinuationPlanPrompt({
-                    topic: d.topic, subject: d.subject, type: d.type, lang: d?.language,
-                    existingChapterTitles,
-                    newChapters: missingChapNums.map(num => ({
-                      num,
-                      subsCount: subsOverrides[String(num)] ?? defaultSubsPerChapter,
-                      forcedType: methodInfo?.chapterTypes?.[num - 1],
-                    })),
-                    otherRequirements: methodInfo?.otherRequirements,
-                  });
-                  const raw = await callClaude([{ role: "user", content: prompt }], null, SYS_JSON, 2000, null, MODEL_FAST);
-                  const jsonMatch = raw.match(/\{[\s\S]*\}/);
-                  const parsed = JSON.parse(jsonMatch?.[0] || raw.replace(/```json|```/g, "").trim());
-                  newChapterData = parsed.chapters || [];
-                } catch (e) { console.error("Продовження плану:", e); }
-              }
-
-              const newSubCount = newChapterData.reduce((sum, c) => sum + (c.subsections?.length || 0), 0);
-              const introPages = hasIntro ? 0 : 2;
-              const conclPages = hasConclusions ? 0 : 3;
-              const srcPages = hasSources ? 0 : 1;
-              const chapConclCount = needsChapterConcl ? newChapterData.length : 0;
-              const pagesForSubs = Math.max(newSubCount, continuationBudget - introPages - conclPages - srcPages - chapConclCount);
-              const pagesPerSub = newSubCount ? Math.max(1, Math.round(pagesForSubs / newSubCount)) : 0;
-
-              const newChapterSecs = [];
-              newChapterData.forEach(c => {
-                const forcedType = methodInfo?.chapterTypes?.[c.num - 1];
-                (c.subsections || []).forEach((subLabel, i) => {
-                  const idMatch = subLabel.match(/^(\d+\.\d+)/);
-                  const id = idMatch ? idMatch[1] : `${c.num}.${i + 1}`;
-                  newChapterSecs.push({ id, label: subLabel, sectionTitle: c.title, pages: pagesPerSub, type: forcedType || c.type || "theory" });
-                });
-                if (needsChapterConcl) {
-                  newChapterSecs.push({ id: `${c.num}.conclusions`, label: `Висновки до розділу ${c.num}`, sectionTitle: c.title, pages: 1, type: "chapter_conclusion" });
-                }
-              });
-
-              const mainExisting = finalSecs.filter(s => !["intro", "conclusions", "sources"].includes(s.type));
-              const introSec = finalSecs.find(s => s.type === "intro") || (hasIntro ? null : { id: "intro", label: "Вступ", pages: introPages, type: "intro" });
-              const conclSec = finalSecs.find(s => s.type === "conclusions") || (hasConclusions ? null : { id: "conclusions", label: "Висновки", pages: conclPages, type: "conclusions" });
-              const srcSec = finalSecs.find(s => s.type === "sources") || (hasSources ? null : { id: "sources", label: "Список використаних джерел", pages: srcPages, type: "sources" });
-
-              finalSecs = [introSec, ...mainExisting, ...newChapterSecs, conclSec, srcSec].filter(Boolean);
-            }
-          } else {
-            // Явний план клієнта є — додаємо пункти плану, яких НЕМА в самому документі, як порожні
-            // (звичайний крок "Написання" допише їх пізніше); обсяг для них ділимо порівну з рештою бюджету.
-            const foundIdsSet = new Set(finalSecs.map(s => s.id));
-            const missingPlanIds = (planSections || []).filter(p => !foundIdsSet.has(p.id));
-            if (missingPlanIds.length) {
-              const existingPages = finalSecs.reduce((sum, s) => sum + (s.pages || 0), 0);
-              const pagesLeft = Math.max(missingPlanIds.length, totalPages - existingPages);
-              const pagesPerMissing = Math.max(1, Math.round(pagesLeft / missingPlanIds.length));
-              missingPlanIds.forEach(p => {
-                finalSecs = [...finalSecs, { id: p.id, label: p.label, pages: pagesPerMissing, type: p.chapNum === 1 ? "theory" : p.chapNum === 2 ? "analysis" : "recommendations" }];
-              });
-              finalSecs.sort((a, b) => {
-                const na = String(a.id).split(".").map(Number), nb = String(b.id).split(".").map(Number);
-                if (a.id === "intro") return -1; if (b.id === "intro") return 1;
-                if (a.id === "conclusions" || a.id === "sources") return 1; if (b.id === "conclusions" || b.id === "sources") return -1;
-                return (na[0] - nb[0]) || ((na[1] || 0) - (nb[1] || 0));
-              });
-            }
-            if (!finalSecs.some(s => s.type === "intro")) finalSecs = [{ id: "intro", label: "Вступ", pages: 2, type: "intro" }, ...finalSecs];
-            if (!finalSecs.some(s => s.type === "conclusions")) finalSecs = [...finalSecs, { id: "conclusions", label: "Висновки", pages: 3, type: "conclusions" }];
-            if (!finalSecs.some(s => s.type === "sources")) finalSecs = [...finalSecs, { id: "sources", label: "Список використаних джерел", pages: 1, type: "sources" }];
-          }
-
-          const mergedContent = { ...contentRef.current, ...finalContent };
-          const mergedCitInputs = { ...citInputs, ...extracted.citInputs };
-          setSections(finalSecs);
-          setPlanDisplay(buildPlanText(finalSecs));
-          const { dist, total } = calcSourceDist(finalSecs, totalPages);
-          setSourceDist(dist); setSourceTotal(total);
-          setContent(mergedContent);
-          contentRef.current = mergedContent;
-          setCitInputs(mergedCitInputs);
-          setReadyWorkImportedIds(extracted.foundIds);
-          await saveToFirestore({
-            sections: finalSecs, planDisplay: buildPlanText(finalSecs),
-            content: mergedContent, citInputs: mergedCitInputs,
-            readyWorkImportedIds: extracted.foundIds, stage: "plan", status: "plan_ready",
-          });
-          setPlanLoading(false); setLoadMsg("");
-          return;
-        }
-
-        // Код не зміг розпізнати заголовки (нестандартне оформлення) — НЕ викликаємо ШІ автоматично.
-        // Звичайний план згенерується як завжди нижче; аналіз через ШІ клієнтка запускає вручну кнопкою на етапі плану.
-        console.warn("Структура з готової роботи: розпізнано замало розділів, повертаюсь до звичайної генерації плану");
-        setReadyWorkNeedsManualAI(true);
-      } catch (e) { console.error("Витяг структури з готової роботи:", e); }
-      setLoadMsg("");
-    }
-
-    if (clientPlan?.trim()) {
-      const parsed = parseClientPlan(clientPlan.trim(), totalPages, d?.language);
-      if (parsed) { await finalizeSections(parsed); return; }
-    }
-
-    // Якщо на фото є готовий план — використати його структуру як шаблон (тільки якщо план клієнта не надано)
-    if (!clientPlan?.trim() && commentAnalysis?.photoTOC && typeof commentAnalysis.photoTOC === "string" && commentAnalysis.photoTOC.length > 20) {
-      try {
-        const toc = commentAnalysis.photoTOC;
-        const subsMatches = toc.match(/^\s*\d+\.\d+/gm) || [];
-        const totalSubsPhoto = subsMatches.length || 4;
-        const chapConclCount = (toc.match(/висновк[^\s]*\s+до\s+|conclusions?\s+to\s+chapter/gi) || []).length;
-        const pagesPerSub = Math.max(3, Math.round((totalPages - introP - conclP - chapConclCount) / totalSubsPhoto));
-        const photoTplPrompt = `A client provided a READY PLAN from a photo. Use its EXACT structure (number of chapters, subsections per chapter, chapter conclusions if present) but create NEW titles matching the topic below. Do NOT copy titles from the plan.
-
-TOPIC: "${d.topic}". Type: ${d.type}. Field: ${d.subject}. Pages: ${totalPages}.
-Language of work: ${d.language || "Ukrainian"} — all labels (INTRODUCTION, CONCLUSIONS, chapter/section titles) must be in the work language.
-
-PLAN FROM PHOTO (structure only, do not copy titles):
-${toc}
-
-PAGE DISTRIBUTION (total must equal ${totalPages}):
-- ${L.intro}: ${introP} p.
-- ${L.conclusions}: ${conclP} p.
-- Chapter conclusions: 1 p. each (if present in photo plan)
-- Each subsection: ~${pagesPerSub} p. (total subsections: ${totalSubsPhoto})
-
-Return ONLY JSON without markdown:
-{"sections":[{"id":"1.1","label":"1.1 Title","sectionTitle":"${L.chapterWord} 1. TITLE","pages":8,"type":"theory"},{"id":"intro","label":"${L.intro}","pages":${introP},"type":"intro"},{"id":"conclusions","label":"${L.conclusions}","pages":${conclP},"type":"conclusions"},{"id":"sources","label":"${L.sources}","pages":2,"type":"sources"}]}`;
-        const raw = await callGemini([{ role: "user", content: photoTplPrompt }], null, SYS_JSON_SHORT, 3000);
-        const jsonMatch = raw.match(/\{[\s\S]*\}/);
-        const parsed = JSON.parse(jsonMatch?.[0] || raw.replace(/```json|```/g, "").trim());
-        const secs = parsed.sections || parsed;
-        if (Array.isArray(secs) && secs.length > 3) { await finalizeSections(secs); return; }
-      } catch (e) { console.warn("photoTOC plan failed:", e.message); }
-    }
-
-    // Якщо коментар містить приклад структури плану — використати як шаблон, адаптувати назви під тему (тільки якщо план клієнта не надано)
-    if (!clientPlan?.trim() && comment?.trim() && /розділ\s*\d+/i.test(comment)) {
-      try {
-        // Рахуємо розділи, підрозділи та висновки до розділів з прикладу
-        const chapNums = [...new Set((comment.match(/розділ\s*(\d+)/gi) || []).map(m => m.match(/\d+/)[0]))];
-        const chapCount = chapNums.length || 2;
-        // Рахуємо підрозділи per chapter
-        const chapSubsMap = {};
-        for (const line of comment.split('\n')) {
-          const m = line.trim().match(/^(\d+)\.(\d+)/);
-          if (m) chapSubsMap[m[1]] = (chapSubsMap[m[1]] || 0) + 1;
-        }
-        const subsCount = Object.values(chapSubsMap).reduce((a, b) => a + b, 0) || 4;
-        const chapStructure = chapNums.length
-          ? chapNums.map(n => `Chapter ${n}: EXACTLY ${chapSubsMap[n] || 2} subsection(s)`).join('\n')
-          : `Each chapter: EXACTLY 2 subsections`;
-        const chapConclCount = (comment.match(/висновк[^\s]*\s+до\s+/gi) || []).length;
-        const pagesForSubs = totalPages - introP - conclP - chapConclCount;
-        const pagesPerSub = Math.max(3, Math.round(pagesForSubs / subsCount));
-        const templatePrompt = `A client provided a STRUCTURE EXAMPLE. Use EXACTLY the structure below.
-
-Do NOT copy titles from the example. Create NEW titles for the topic below.
-MANDATORY STRUCTURE — you MUST follow this exactly:
-- EXACTLY ${chapCount} chapter(s)
-${chapStructure}
-${chapConclCount > 0 ? `- Chapter conclusions after each chapter` : `- NO chapter conclusions`}
-
-TOPIC: "${d.topic}". Type: ${d.type}. Field: ${d.subject}. Pages: ${totalPages}.
-Language of work: ${d.language || "Ukrainian"} — all labels must be in this language.
-
-EXAMPLE (structure only, do not copy titles):
-${comment}
-
-PAGE DISTRIBUTION (total must equal ${totalPages}):
-- ${L.intro}: ${introP} p.
-- ${L.conclusions}: ${conclP} p.
-- Chapter conclusions: 1 p. each (if present)
-- Each subsection: ${pagesPerSub} p. (total: ${subsCount})
-
-Allowed type values: "theory" | "analysis" | "recommendations" | "chapter_conclusion" | "intro" | "conclusions" | "sources"
-Chapter conclusion id format: "1.conclusions", "2.conclusions", "3.conclusions"
-
-Return ONLY JSON without markdown:
-{"sections":[
-  {"id":"1.1","label":"1.1 Section title","sectionTitle":"${L.chapterWord} 1. CHAPTER TITLE","pages":8,"type":"theory"},
-  ${chapConclCount > 0 ? `{"id":"1.conclusions","label":"${L.chapConclLabel(1)}","sectionTitle":"${L.chapterWord} 1. CHAPTER TITLE","pages":1,"type":"chapter_conclusion"},` : ""}
-  {"id":"2.1","label":"2.1 Section title","sectionTitle":"${L.chapterWord} 2. CHAPTER TITLE","pages":8,"type":"analysis"},
-  ${chapConclCount > 0 ? `{"id":"2.conclusions","label":"${L.chapConclLabel(2)}","sectionTitle":"${L.chapterWord} 2. CHAPTER TITLE","pages":1,"type":"chapter_conclusion"},` : ""}
-  {"id":"intro","label":"${L.intro}","pages":${introP},"type":"intro"},
-  {"id":"conclusions","label":"${L.conclusions}","pages":${conclP},"type":"conclusions"},
-  {"id":"sources","label":"${L.sources}","pages":2,"type":"sources"}
-]}`;
-        await new Promise(r => setTimeout(r, 1000));
-        const raw = await callGemini([{ role: "user", content: templatePrompt }], null, SYS_JSON_SHORT, 3000);
-        const jsonMatch = raw.match(/\{[\s\S]*\}/);
-        const parsed = JSON.parse(jsonMatch?.[0] || raw.replace(/```json|```/g, "").trim());
-        const secs = parsed.sections || parsed;
-        if (Array.isArray(secs) && secs.length > 3) { await finalizeSections(secs); return; }
-      } catch (e) { console.warn("comment template plan failed:", e.message); }
-    }
-
-    const commentHasConcl = commentAnalysis?.planHints ? /висновк[^\s]*\s+до\s+/i.test(commentAnalysis.planHints) : false;
-
-    // Дефолти за типом роботи — fallback коли клієнт нічого не вказав
-    const acadDefaults = (!commentAnalysis?.practicalApproach && !commentAnalysis?.researchDesign)
-      ? getAcademicDefaults(d.subject, d.type, d.course, d.topic)
-      : null;
-    const acadDefaultsBlock = acadDefaults
-      ? `\nRESEARCH TYPE FOR PRACTICAL CHAPTER (use as context for subsection naming): ${acadDefaults.researchType}. Methods: ${acadDefaults.methods.join(", ")}.${acadDefaults.notes ? ` Note: ${acadDefaults.notes}.` : ""}`
-      : "";
-
-    if (methodInfo) {
-      // Маємо готову структурну інфу з методички — генеруємо план без PDF
-      const chapCount = requestedChapCount || methodInfo.chaptersCount || (totalPages >= 40 ? 3 : 2);
-      const hasConcl = methodInfo.hasChapterConclusions === true || commentHasConcl || false;
-      const chTypes = methodInfo.chapterTypes?.length ? methodInfo.chapterTypes : ["theory", "analysis", "recommendations"].slice(0, chapCount);
-      const chapConclP = hasConcl ? chapCount : 0;
-
-      const subsPerChapter = methodInfo.subsectionsPerChapter || 3;
-      const subsOverrides = methodInfo.subsectionsPerChapterOverrides || {};
-      const chapSubsCounts = Array.from({ length: chapCount }, (_, i) => subsOverrides[String(i + 1)] ?? subsPerChapter);
-      const totalSubsCount = chapSubsCounts.reduce((a, b) => a + b, 0);
-      const pagesPerSub = Math.max(3, Math.round((totalPages - introP - conclP - chapConclP) / totalSubsCount));
-      const subsCountLine = chapSubsCounts.every(c => c === subsPerChapter)
-        ? `- Subsections per chapter: ${subsPerChapter}`
-        : chapSubsCounts.map((c, i) => `- Chapter ${i + 1} subsections: ${c}`).join('\n');
-
-      const planPrompt = `Create a plan for ${d.type} on topic: "${d.topic}". Field: ${d.subject}. Pages: ${totalPages}.
-Language of work: ${d.language || "Ukrainian"} — all labels and titles must be in this language.
-${clientPlan?.trim() ? `\nCLIENT'S REQUIRED CHAPTER TITLES — use these EXACTLY as sectionTitle values, in this exact order, do NOT rename or reorder them:\n${clientPlan}\n` : (commentAnalysis?.planHints ? `\nCLIENT HINTS:\n${commentAnalysis.planHints}\n` : "")}${acadDefaultsBlock}
-GUIDE REQUIREMENTS:
-- Chapters: ${chapCount}
-${subsCountLine}
-- Chapter conclusions: ${hasConcl ? "YES — add after last subsection of each chapter" : "NO — do not add"}
-- Chapter types: ${chTypes.join(", ")}
-${methodInfo.otherRequirements ? `- Other requirements: ${methodInfo.otherRequirements}` : ""}
-${methodInfo.exampleTOC ? `\nFORMATTING EXAMPLE FROM GUIDE (headings style only — do NOT copy titles or use as structure):
-${methodInfo.exampleTOC}` : ""}
-
-PAGE DISTRIBUTION (must sum to exactly ${totalPages}):
-- ${L.intro}: ${introP} p.
-- ${L.conclusions}: ${conclP} p.
-- Each subsection: ~${pagesPerSub} p. (total: ${totalSubsCount})
-${hasConcl ? `- Chapter conclusions: 1 p. each (${chapCount} total)` : ""}
-
-Allowed type values: "theory" | "analysis" | "recommendations" | "chapter_conclusion" | "intro" | "conclusions" | "sources"
-Chapter conclusion id format: "1.conclusions", "2.conclusions" etc.
-IMPORTANT: every subsection label MUST start with its numeric id (e.g. "1.1 ", "1.2 ", "2.3 "). Never omit the number prefix.
-
-Return ONLY JSON without markdown:
-{"sections":[
-  {"id":"1.1","label":"1.1 Section title","sectionTitle":"${L.chapterWord} 1. CHAPTER TITLE","pages":8,"type":"theory"},
-  {"id":"1.2","label":"1.2 Section title","sectionTitle":"${L.chapterWord} 1. CHAPTER TITLE","pages":7,"type":"theory"},${hasConcl ? `
-  {"id":"1.conclusions","label":"${L.chapConclLabel(1)}","sectionTitle":"${L.chapterWord} 1. CHAPTER TITLE","pages":1,"type":"chapter_conclusion"},` : ""}
-  {"id":"2.1","label":"2.1 Section title","sectionTitle":"${L.chapterWord} 2. CHAPTER TITLE","pages":8,"type":"analysis"},
-  {"id":"2.2","label":"2.2 Section title","sectionTitle":"${L.chapterWord} 2. CHAPTER TITLE","pages":7,"type":"analysis"},${hasConcl ? `
-  {"id":"2.conclusions","label":"${L.chapConclLabel(2)}","sectionTitle":"${L.chapterWord} 2. CHAPTER TITLE","pages":1,"type":"chapter_conclusion"},` : ""}
-  {"id":"intro","label":"${L.intro}","pages":${introP},"type":"intro"},
-  {"id":"conclusions","label":"${L.conclusions}","pages":${conclP},"type":"conclusions"},
-  {"id":"sources","label":"${L.sources}","pages":2,"type":"sources"}
-]}
-Order: subsections grouped by chapter, then intro, conclusions, sources.`;
-
-      try {
-        await new Promise(r => setTimeout(r, 3000)); // пауза після аналізу методички
-        const raw = await callGemini([{ role: "user", content: planPrompt }], null, SYS_JSON, 3000);
-        const jsonMatch = raw.match(/\{[\s\S]*\}/);
-        const parsed = JSON.parse(jsonMatch?.[0] || raw.replace(/```json|```/g, "").trim());
-        const secs = parsed.sections || parsed;
-        if (Array.isArray(secs) && secs.length > 3) { await finalizeSections(secs); return; }
-        console.warn("methodInfo plan: unexpected shape", parsed);
-      } catch (e) { console.error("methodInfo plan error:", e); }
-    }
-
-    const defaultSecs = buildDefaultPlan(totalPages, d?.language, requestedChapCount);
-    // Для психології/педагогіки — перейменовуємо емпіричний розділ:
-    // до 40 стор (2 розділи): емпіричне = розділ 2 (type "analysis")
-    // від 40 стор (3 розділи): емпіричне = розділ 3 (type "recommendations")
-    const hasThreeChapters = requestedChapCount ? requestedChapCount >= 3 : totalPages >= 40;
-    const empiricalChapNum = hasThreeChapters ? 3 : 2;
-    const planSecs = isPsychoPed(d)
-      ? defaultSecs.map(s => {
-        const chapNum = parseInt(s.id.split(".")[0]);
-        if (!hasThreeChapters && s.type === "analysis" && chapNum === 2) {
-          const title = isEnglish ? "CHAPTER 2. EMPIRICAL RESEARCH" : "РОЗДІЛ 2. ЕМПІРИЧНЕ ДОСЛІДЖЕННЯ";
-          return { ...s, sectionTitle: title };
-        }
-        if (hasThreeChapters && s.type === "recommendations" && chapNum === 3) {
-          const title = isEnglish ? "CHAPTER 3. EMPIRICAL RESEARCH" : "РОЗДІЛ 3. ЕМПІРИЧНЕ ДОСЛІДЖЕННЯ";
-          return { ...s, sectionTitle: title };
-        }
-        return s;
-      })
-      : defaultSecs;
-    const psychoPedNamingHint = isPsychoPed(d)
-      ? `\nIMPORTANT for Chapter ${empiricalChapNum} (empirical research): subsections should cover: research methodology and sample description, questionnaire/survey instrument, results analysis and interpretation.`
-      : "";
-    const namingPrompt = `For ${d.type} on topic "${d.topic}" (field: ${d.subject}) create subsection titles.${commentAnalysis?.planHints ? `\nHINTS:\n${commentAnalysis.planHints}` : ""}${psychoPedNamingHint}${acadDefaultsBlock}\nFixed structure:\n${planSecs.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type)).map(s => `${s.id} [${s.sectionTitle}]`).join("\n")}\n\nReturn ONLY JSON without markdown:\n{"titles":{"1.1":"Title","1.2":"Title","2.1":"Title","2.2":"Title"}}`;
-    try {
-      await new Promise(r => setTimeout(r, 2000)); // пауза перед запитом
-      const raw = await callClaude([{ role: "user", content: namingPrompt }], null, SYS_JSON, 1000, null, MODEL_FAST);
-      const jsonMatch = raw.match(/\{[\s\S]*\}/);
-      const parsed = JSON.parse(jsonMatch?.[0] || raw.replace(/```json|```/g, "").trim());
-      const namedSecs = planSecs.map(s => { const name = parsed.titles?.[s.id]; return name ? { ...s, label: `${s.id} ${name}` } : s; });
-      await finalizeSections(namedSecs);
-    } catch (e) {
-      console.error("Naming error:", e);
-      await finalizeSections(planSecs);
-    }
+    await saveToFirestore({
+      sections: patch.sections, planDisplay: patch.planDisplay,
+      ...(patch.content ? { content: patch.content } : {}),
+      ...(patch.citInputs ? { citInputs: patch.citInputs } : {}),
+      ...(patch.readyWorkImportedIds ? { readyWorkImportedIds: patch.readyWorkImportedIds } : {}),
+      ...(patch.illustrationDescs ? { illustrationDescs: patch.illustrationDescs } : {}),
+      ...(patch.info ? { info: patch.info } : {}),
+      stage: patch.stage, status: patch.status,
+    });
+    setPlanLoading(false); setLoadMsg("");
   };
 
   // ── Перерахувати сторінки рівномірно (чиста функція — придатна для повторного використання) ──
@@ -1493,7 +823,7 @@ Generate titles for placeholder sections only. They must fit the topic and not r
 Return ONLY JSON without markdown:
 {
   "subsections": {${subIds.map(id => `"${id}":"subsection title"`).join(",")}},
-  "chapters": {${chapIds.map(id => `"${id}":"chapter title (without РОЗДІЛ N. prefix)"`).join(",")}}
+  "chapters": {${chapIds.map(id => `"${id}":"chapter title (without the chapter-word N. prefix, e.g. without 'CHAPTER 1.' / 'РОЗДІЛ 1.')"`).join(",")}}
 }`;
 
     try {
@@ -1502,13 +832,14 @@ Return ONLY JSON without markdown:
       const parsed = JSON.parse(match?.[0] || raw);
       const subTitles = parsed.subsections || {};
       const chapTitles = parsed.chapters || {};
+      const chapWord = getLangLabels(info?.language).chapterWord;
 
       setSections(prev => {
         const next = prev.map(s => {
           const chNum = s.id.split(".")[0];
           // Оновлюємо sectionTitle якщо є нова назва розділу
           const newSectionTitle = chapTitles[chNum]
-            ? `РОЗДІЛ ${chNum}. ${chapTitles[chNum]}`
+            ? `${chapWord} ${chNum}. ${chapTitles[chNum]}`
             : s.sectionTitle;
           // Оновлюємо label підрозділу якщо є нова назва
           const newLabel = subTitles[s.id]
@@ -1541,19 +872,20 @@ CURRENT PLAN:
 ${planContext}
 
 Generate a title for ONE placeholder section: ${sectionId} (currently: "${target.label}"). It must fit the topic and not repeat existing sections.
-${isChapPlaceholder ? `Also generate a chapter title for РОЗДІЛ ${chNum}.` : ""}
+${isChapPlaceholder ? `Also generate a chapter title for chapter ${chNum}.` : ""}
 Return ONLY JSON:
-{"subsections":{"${sectionId}":"subsection title"}${isChapPlaceholder ? `,"chapters":{"${chNum}":"chapter title (without РОЗДІЛ N. prefix)"}` : ""}}`;
+{"subsections":{"${sectionId}":"subsection title"}${isChapPlaceholder ? `,"chapters":{"${chNum}":"chapter title (without the chapter-word N. prefix, e.g. without 'CHAPTER 1.' / 'РОЗДІЛ 1.')"}` : ""}}`;
     try {
       const raw = await callClaude([{ role: "user", content: prompt }], null, SYS_JSON_SHORT, 600, null, MODEL_FAST);
       const match = raw.match(/\{[\s\S]*\}/);
       const parsed = JSON.parse(match?.[0] || raw);
       const subTitles = parsed.subsections || {};
       const chapTitles = parsed.chapters || {};
+      const chapWord = getLangLabels(info?.language).chapterWord;
       setSections(prev => {
         const next = prev.map(s => {
           const cn = s.id.split(".")[0];
-          const newSectionTitle = chapTitles[cn] ? `РОЗДІЛ ${cn}. ${chapTitles[cn]}` : s.sectionTitle;
+          const newSectionTitle = chapTitles[cn] ? `${chapWord} ${cn}. ${chapTitles[cn]}` : s.sectionTitle;
           const newLabel = subTitles[s.id] ? `${s.id} ${subTitles[s.id]}` : s.label;
           return { ...s, label: newLabel, sectionTitle: newSectionTitle };
         });
@@ -1752,556 +1084,30 @@ ${allFigs.map((f, i) => `${i + 1}. ${f.label} (підрозділ: ${f.secLabel}
     runSection(sec);
   }, [stage, genIdx, paused, sections, appendicesText, appendicesLoading]);
 
+  // Генерація одного підрозділу делегована в src/lib/orderStages.js
+  // (runWritingSection) — та сама функція, яку викликає й серверний воркер,
+  // щоб логіка написання тексту не дублювалась і не розходилась між ними.
   const runSection = async (sec) => {
     runningRef.current = true; setRunning(true); setLoadMsg("Генерую: " + sec.label + "...");
     const ctrl = new AbortController(); abortRef.current = ctrl;
-    const d = info;
-    const lang = d?.language || "Українська";
-
-    // Будуємо повний multi-turn контекст як у Claude.ai
-    const buildMessages = (instruction) => {
-      const prevEntries = Object.entries(contentRef.current).filter(([k]) => k !== sec.id);
-      if (!prevEntries.length) return [{ role: "user", content: instruction }];
-      const isLargeWork = totalPages > 50;
-      const currentChapter = sec.id.split(".")[0];
-      const empSecsForConclusions = sec.type === "conclusions"
-        ? getEmpiricalSections(sections, d, commentAnalysis, methodInfo)
-        : null;
-      // Вступ пишеться ПІСЛЯ емпіричного підрозділу (ORDER у startGen), тому реальна вибірка
-      // (хто саме анкетувався) вже написана — але без цього винятку вона при стисненні
-      // контексту для великих робіт підставлялась би лише "першим абзацом", і мета/завдання
-      // могли сформулюватись про іншу популяцію (напр. "учнів"), ніж та, що фактично
-      // досліджена (напр. вчителі) — саме той розрив мета↔вибірка, який ловить рецензент.
-      const empSecsForIntro = sec.type === "intro"
-        ? getEmpiricalSections(sections, d, commentAnalysis, methodInfo)
-        : null;
-      const contextText = prevEntries.map(([k, v]) => {
-        const s = sections.find(x => x.id === k);
-        const label = s?.label || k;
-        if (!isLargeWork) return `=== ${label} ===\n${v}`;
-        const sameChapter = k.split(".")[0] === currentChapter;
-        const isIntroForConclusions = sec.type === "conclusions" && s?.type === "intro";
-        const isEmpiricalForConclusions = sec.type === "conclusions" && empSecsForConclusions &&
-          (empSecsForConclusions.chapterSectionIds.includes(k) || k === empSecsForConclusions.anchorId);
-        const isEmpiricalForIntro = sec.type === "intro" && empSecsForIntro &&
-          (empSecsForIntro.chapterSectionIds.includes(k) || k === empSecsForIntro.anchorId);
-        if (sameChapter || isIntroForConclusions || isEmpiricalForConclusions || isEmpiricalForIntro) return `=== ${label} ===\n${v}`;
-        // Інші розділи: лише перший змістовний абзац
-        const firstPara = v.split("\n").find(p => p.trim().length > 60) || v.slice(0, 400);
-        return `=== ${label} [перший абзац] ===\n${firstPara}`;
-      }).join("\n\n---\n\n");
-      // Висновки завжди отримують повний глосарій авторських термінів/назв методик з усіх
-      // розділів — навіть коли самі розділи вище підставлені лише "першим абзацом". Інакше
-      // модель не бачить термінів, введених глибше в тексті підрозділу, і вигадує власні.
-      const glossaryBlock = sec.type === "conclusions"
-        ? Object.entries(glossaryRef.current)
-          .map(([k, terms]) => {
-            if (!terms) return null;
-            const s = sections.find(x => x.id === k);
-            return `${s?.label || k}: ${terms}`;
-          })
-          .filter(Boolean)
-          .join("\n")
-        : "";
-      const fullContextText = glossaryBlock
-        ? `${contextText}\n\n---\n\n=== Глосарій ключових авторських термінів і назв методик за розділами ===\n${glossaryBlock}`
-        : contextText;
-      return [
-        { role: "user", content: "Ось вже написані частини цієї роботи:" },
-        { role: "assistant", content: fullContextText },
-        { role: "user", content: instruction },
-      ];
+    const order = {
+      info, sections, content: contentRef.current, citInputs, citStructured,
+      abstractsMap, sourceThesisMap, commentAnalysis, methodInfo, appendicesText,
+      clientMaterialsSummary, clientMaterialsText, econProfile, glossary: glossaryRef.current,
+      illustrationDescs, illustrations,
     };
-    const approxParas = Math.max(2, Math.round((sec.pages || 1) * 2.5));
-    const planSummary = sections
-      .filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type))
-      .map(s => s.label)
-      .join("\n");
-    const typeHints = {
-      theory: "теоретичний — визначення понять, аналіз літератури, огляд наукових підходів",
-      analysis: "аналітично-практичний — аналіз даних, виявлення закономірностей, порівняння",
-      recommendations: "рекомендаційний — практичні пропозиції, шляхи вирішення, прогнози",
-    };
-    let instruction = "";
-    const totalPages = parsePagesAvg(d?.pages);
-    const isLarge = totalPages > 40; // більше 40 стор — великий обсяг
-
-    if (sec.type === "intro") {
-      // Завдань — зазвичай стільки скільки підрозділів основної частини
-      const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
-      const tasksProfile = getIntroTasksProfile(d.type, d.course, mainSecs.length, isLarge);
-      const tasksCount = tasksProfile.count;
-
-      // Будуємо список елементів вступу: стандартні + з методички
-      const lc = getLangLabels(lang);
-      const il = lc.introLabels || {};
-      const defaultComponents = lc.defaultIntroComponents || ["актуальність теми", "мета дослідження", "завдання дослідження", "об'єкт дослідження", "предмет дослідження", "методи дослідження", "практичне значення дослідження", "структура роботи"];
-      const hasMethodIntroComponents = !!methodInfo?.introComponents?.length;
-      const allComponents = hasMethodIntroComponents
-        ? [...methodInfo.introComponents]
-        : [...defaultComponents];
-      // "Структура роботи" завжди йде останньою, незалежно від позиції в методичці
-      const structureRe = /структура|structure|struktura|štruktúra|aufbau/i;
-      const structureIdx = allComponents.findIndex(c => structureRe.test(c));
-      if (structureIdx !== -1 && structureIdx !== allComponents.length - 1) {
-        allComponents.push(allComponents.splice(structureIdx, 1)[0]);
-      }
-
-      // Формуємо рядки структури з урахуванням мови роботи
-      const componentLines = allComponents.map((comp, i) => {
-        const label = comp.charAt(0).toUpperCase() + comp.slice(1);
-        if (/актуальн|actuality|aktual|relevance|relevanz|pertine/i.test(comp)) {
-          const phrase = il.actuality || "Актуальність теми.";
-          return `${label}: one paragraph starting with "${phrase}" — immediately introduce why the topic is relevant today. Do not split into multiple paragraphs.`;
-        }
-        if (/теоретико|теоретичн.*основ|методологічн.*основ|podstawy.*teoret|theoretical.*basis/i.test(comp)) {
-          const phrase = il.theoryBasis || "Теоретико-методологічну основу дослідження становлять";
-          return `${label}: one paragraph starting with "${phrase}" — list scholarly works, authors, regulatory sources relevant to the topic.`;
-        }
-        if ((/мета|goal|cel|ziel|objetivo|purpose|účel|cieľ/i.test(comp)) && !/завдання|tasks|zadania|aufgaben|úkoly|úlohy/i.test(comp)) {
-          const phrase = il.goal || "Мета дослідження –";
-          return `${label}: write in format "${phrase} [clearly formulated goal for topic "${d.topic}"]".`;
-        }
-        if (/завдання|tasks|zadania|aufgaben|tareas|úkoly|úlohy/i.test(comp)) {
-          const phrase = il.tasks || "Завдання дослідження:";
-          const natureLine = tasksProfile.nature ? ` Завдання мають бути ${tasksProfile.nature}.` : "";
-          return `${label}: write in format "${phrase}" — then exactly ${tasksCount} numbered tasks.${natureLine} ${INTRO_TASKS_MERGE_SPLIT_RULE}\nСтруктура плану роботи (змістова основа для завдань):\n${mainSecs.map((s, j) => `   ${j + 1}) "${s.label}"`).join("\n")}`;
-        }
-        if (/об.єкт|przedmiot|gegenstand|objeto/i.test(comp) && !/предмет|subject|obiekt/i.test(comp)) {
-          const phrase = il.object || "Об'єкт дослідження –";
-          return `${label}: write in format "${phrase} [phenomenon or process being studied]".`;
-        }
-        if (/предмет|subject|obiekt/i.test(comp)) {
-          const phrase = il.subject || "Предмет дослідження –";
-          return `${label}: write in format "${phrase} [specific aspect of the object being analyzed]".`;
-        }
-        if (/метод|method/i.test(comp) && !/теоретико|методологічн.*основ|podstawy/i.test(comp)) {
-          const phrase = il.methods || "Методи дослідження:";
-          return `${label}: write in format "${phrase} [list of methods, comma-separated]".`;
-        }
-        if (/новизн|novelty|nowość|neuheit|novedad/i.test(comp)) {
-          const phrase = il.novelty || "Наукова новизна дослідження –";
-          return `${label}: write in format "${phrase} [new positions or solutions proposed by the author]".`;
-        }
-        if (/практичн|practical|praktyczn|praktisch|přínos|prínos/i.test(comp)) {
-          const phrase = il.practical || "Практична значущість:";
-          return `${label}: write in format "${phrase} [how results can be applied in practice]".`;
-        }
-        if (/апробац|approbation|aprobata/i.test(comp)) {
-          const phrase = il.approbation || "Апробація результатів дослідження –";
-          return `${label}: write in format "${phrase} [conferences, publications, seminars where results were presented]".`;
-        }
-        if (structureRe.test(comp)) {
-          const phrase = il.structure || "Структура роботи:";
-          const chapCount = new Set(mainSecs.map(s => s.id.split(".")[0])).size || mainSecs.length;
-          return `${label}: write EXACTLY one sentence following this template (translate it into the language of the work, keep the same structure), with NOTHING else added — no chapter-by-chapter description: "${phrase} the work consists of an introduction, ${chapCount} chapters, conclusions, and a list of sources. The total volume of the work is __TOTAL_PAGES__ pages." Keep the literal token __TOTAL_PAGES__ unchanged exactly as written (no digits) — it will be replaced automatically with the real page count once the whole work is generated.`;
-        }
-        return `${label}: write in format "${label} – [content relevant to topic "${d.topic}"]".`;
-      });
-
-      instruction = `Напиши ВСТУП для ${d.type} на тему "${d.topic}". Галузь: ${d.subject}.
-
-INTRO STRUCTURE (follow strictly, each element as a new paragraph):
-
-${componentLines.map((l, i) => `${i + 1}. ${l}`).join("\n\n")}
-${methodInfo?.otherRequirements ? `\nМЕТОДИЧКА ВИМОГИ: ${methodInfo.otherRequirements}` : ""}${commentAnalysis?.textStructureHints ? `\nКЛІЄНТ ВИМОГИ (ОБОВ'ЯЗКОВО): ${commentAnalysis.textStructureHints}` : ""}
-
-IMPORTANT: use already written sections (in context) for exact formulation of methods, sample, object — everything must match the text. Follow each element's format strictly. No citations. No bold or italic. Write in continuous paragraphs. EXCEPTION: research tasks — write as numbered list (1. 2. 3. ...), each task on a new line.
-
-КРИТИЧНО ВАЖЛИВО (об'єкт, предмет, мета, завдання): якщо в тексті вище (розділ з анкетуванням/емпіричним дослідженням) вже вказано РЕАЛЬНИХ respondents дослідження (напр. вчителі, батьки, фахівці) — об'єкт, предмет, мета і завдання ОБОВ'ЯЗКОВО мають описувати ефект/результат САМЕ щодо цієї реальної вибірки, а не абстрактної групи з теми (напр. учнів), яку дослідження фактично не вимірювало. Якщо тема стосується учнів, а опитані — вчителі, сформулюй мету про вплив на педагогічну практику/готовність вчителів (за потреби — з поясненням, що це опосередкований шлях впливу на учнів), а НЕ про безпосередній ефект на учнях. Розрив між заявленою метою та реально дослідженою вибіркою — груба методологічна помилка, яку одразу помітить рецензент.`;
-
-    } else if (sec.type === "conclusions") {
-      const conclReq = methodInfo?.conclusionsRequirements || "";
-      const mainSecsForConcl = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
-      const conclTasksProfile = getIntroTasksProfile(d.type, d.course, mainSecsForConcl.length, isLarge);
-
-      instruction = `Напиши ВИСНОВКИ для ${d.type} на тему "${d.topic}".
-${conclReq ? `ВИМОГИ МЕТОДИЧКИ: ${conclReq}\n` : ""}${commentAnalysis?.textStructureHints ? `ВИМОГИ КЛІЄНТА ДО СТРУКТУРИ (ОБОВ'ЯЗКОВО): ${commentAnalysis.textStructureHints}\n` : ""}
-ПРАВИЛА:
-- Обсяг: приблизно ${(sec.pages || 2) * 230} слів (~${sec.pages} стор.).
-- Перший абзац — загальний підсумок мети і що вдалось досягти
-- Далі — рівно ${conclTasksProfile.count} абзаців, по одному на кожне завдання дослідження, сформульоване у вступі (текст вступу є в контексті) — у тому самому порядку. Якщо завдання у вступі поєднувало кілька підрозділів плану — зведи їхні конкретні результати в одному абзаці; якщо завдання було розбите з одного підрозділу — розподіли результати на відповідну кількість абзаців
-- Кожен такий абзац = конкретний результат, що відповідає своєму завданню
-- Останній абзац — перспективи подальших досліджень
-- НЕ повторювати те що сказано у вступі, НЕ вводити нову інформацію
-- Абзаци-результати мають мати різний ритм і різні відкривачі речень: не починай кожен з підсумкової конструкції на кшталт "Аналіз... засвідчив, що...", чергуй з прямим твердженням, конкретним фактом чи розгортанням попередньої думки. Висновки загалом мають звучати іншим голосом, ніж вступ, а не повторювати його ритм у зворотному порядку.
-- Без посилань. Без жирного. Без нумерації. Пиши суцільними абзацами, не використовуй жодних списків.
-
-Спирайся на весь написаний текст роботи, включно з формулюваннями завдань у вступі (є в контексті) — формулюй конкретні висновки на основі реального змісту підрозділів.`;
-
-    } else if (sec.type === "chapter_conclusion") {
-      const chapNum = sec.chapterNum || sec.id.split(".")[0];
-      const chapConclReq = methodInfo?.chapterConclusionRequirements || "стисло підсумуй основні думки підрозділів, кожен абзац = один підрозділ";
-      instruction = `Напиши "Висновки до розділу ${chapNum}" для ${d.type} на тему "${d.topic}".
-${methodInfo?.chapterConclusionRequirements ? `ВИМОГИ МЕТОДИЧКИ: ${methodInfo.chapterConclusionRequirements}` : ""}
-Обсяг: 120–150 слів (не більше).
-Без нової інформації. Без посилань. Без жирного. Без нумерації. Пиши суцільними абзацами.
-Спирайся на повний текст підрозділів розділу ${chapNum} (є в контексті).`;
-    } else {
-      // Вимоги з методички для цього типу підрозділу
-      const methodReqMap = {
-        theory: methodInfo?.theoryRequirements,
-        analysis: methodInfo?.analysisRequirements,
-        recommendations: methodInfo?.analysisRequirements,
-      };
-      const methodReq = methodReqMap[sec.type] || methodInfo?.otherRequirements || "";
-
-      const empSecs = getEmpiricalSections(sections, d, commentAnalysis, methodInfo);
-      const isEmpChapter = empSecs.chapterSectionIds.includes(sec.id);
-      const isEmpAnchor = empSecs.anchorId === sec.id;
-      let empiricalBlock = "";
-
-      // Економічний блок
-      const econSecIds = getEconSections(sections, d);
-      const isEconSec = econSecIds.includes(sec.id);
-      let econBlock = "";
-      if (isEconSec) {
-        const secFormulas = (methodInfo?.requiredFormulas || []).filter(f => !f.section || f.section === sec.type);
-        const secTables = (methodInfo?.requiredTables || []).filter(t => !t.section || t.section === sec.type);
-        const formulasBlock = secFormulas.length
-          ? `\nОБОВ'ЯЗКОВІ ФОРМУЛИ З МЕТОДИЧКИ (підстав реалістичні числові значення та підрахуй результат):\n${secFormulas.map(f =>
-            `- ${f.name}: ${f.formula}\n  Змінні: ${f.variables}${f.interpretation ? `\n  Інтерпретація: ${f.interpretation}` : ""}`
-          ).join("\n")}`
-          : "";
-        const tablesBlock = secTables.length
-          ? `\nОБОВ'ЯЗКОВІ ТАБЛИЦІ З МЕТОДИЧКИ (відтвори структуру, заповни реалістичними даними під тему "${d.topic}"):\n${secTables.map(t =>
-            `- ${t.name}\n  Структура: ${t.structure}\n  Що заповнювати: ${t.instructions}`
-          ).join("\n")}`
-          : "";
-        const genericEcon = !secFormulas.length && !secTables.length
-          ? `\nОБОВ'ЯЗКОВО для цього підрозділу (економічна/управлінська робота):
-- Додай мінімум одну таблицю markdown (|---|---| формат) з конкретними числовими даними (показники за 2-3 роки або порівняння з нормою/конкурентами)
-- Після таблиці — аналіз динаміки або відхилень, конкретні висновки з цифрами
-- Якщо підрозділ рекомендаційний: додай таблицю прогнозних або планових показників після впровадження рекомендацій`
-          : "";
-        const profileBlock = econProfile
-          ? `\nФІКСОВАНІ БАЗОВІ ДАНІ ПІДПРИЄМСТВА (використовуй САМЕ ЦІ дані в усіх розрахунках і таблицях цього підрозділу, не вигадуй іншу назву/рік/цифри):\n${econProfile}\n`
-          : "";
-        econBlock = `${profileBlock}${formulasBlock}${tablesBlock}${genericEcon}`;
-      }
-
-      // Технічний блок (інженерія/будівництво/IT/кібербезпека)
-      const technicalSecIds = getTechnicalSections(sections, d);
-      const isTechnicalSec = technicalSecIds.includes(sec.id);
-      let technicalBlock = "";
-      if (isTechnicalSec) {
-        const secFormulasT = (methodInfo?.requiredFormulas || []).filter(f => !f.section || f.section === sec.type);
-        const secTablesT = (methodInfo?.requiredTables || []).filter(t => !t.section || t.section === sec.type);
-        const formulasBlockT = secFormulasT.length
-          ? `\nОБОВ'ЯЗКОВІ ФОРМУЛИ З МЕТОДИЧКИ (підстав реалістичні числові значення та підрахуй результат):\n${secFormulasT.map(f =>
-            `- ${f.name}: ${f.formula}\n  Змінні: ${f.variables}${f.interpretation ? `\n  Інтерпретація: ${f.interpretation}` : ""}`
-          ).join("\n")}`
-          : "";
-        const tablesBlockT = secTablesT.length
-          ? `\nОБОВ'ЯЗКОВІ ТАБЛИЦІ З МЕТОДИЧКИ (відтвори структуру, заповни реалістичними даними під тему "${d.topic}"):\n${secTablesT.map(t =>
-            `- ${t.name}\n  Структура: ${t.structure}\n  Що заповнювати: ${t.instructions}`
-          ).join("\n")}`
-          : "";
-        const genericTechnical = !secFormulasT.length && !secTablesT.length
-          ? `\nОБОВ'ЯЗКОВО для цього підрозділу (технічна/інженерна робота):
-- Наведи конкретний інженерний/технічний розрахунок з формулою і підстановкою реалістичних числових значень
-- Результати розрахунків зведи в таблицю markdown (|---|---| формат)`
-          : "";
-        const hasClientMaterials = !!(clientMaterialsSummary?.rawText || clientMaterialsText?.trim());
-        const codeSnippetBlock = hasClientMaterials
-          ? `\nЯКЩО серед МАТЕРІАЛІВ КЛІЄНТА є реальний вихідний код — цей підрозділ ОБОВ'ЯЗКОВО пиши на основі цього коду: опиши реальну структуру програми (модулі/класи/функції), послідовність роботи алгоритму та ключову логіку, посилаючись на фактичні назви функцій/класів/змінних із наданого коду. ${CODE_GROUNDING_RULE} Додатково наведи в тексті ОДИН короткий фрагмент (5-15 рядків) цього коду як ілюстрацію, оформлений у потрійних зворотних лапках (\`\`\`), точно як у наданому коді (не вигадуй новий код, не спотворюй). Якщо коду серед матеріалів немає — пропусти цю вимогу.`
-          : "";
-        technicalBlock = `${formulasBlockT}${tablesBlockT}${genericTechnical}${codeSnippetBlock}`;
-      }
-
-      const appendixBlock = appendicesText
-        ? `\nДОДАТОК А (вже згенерований — спирайся на нього точно):\n${appendicesText}\nПРАВИЛО ПОГОДЖЕННЯ ПОКАЗНИКІВ: якщо в тексті підрозділу наводиш відсоток чи цифру, пов'язану з даними з таблиці додатку, — або (а) вживай те саме число й те саме формулювання показника, що вже є в таблиці додатку, або (б) якщо це справді інший, ширший/агрегований показник (напр. частка тих, хто відповів "так" на будь-яке з кількох питань, — на відміну від частки конкретної відповіді на одне питання анкети) — прямо поясни в тексті, з яких показників таблиці він виводиться і чому число відрізняється. Не залишай поруч два близькі за формулюванням, але різні за суттю числа без явного пояснення зв'язку між ними.\n`
-        : "";
-
-      const rd = commentAnalysis?.researchDesign ?? (commentAnalysis?.empiricalHints ? { instrumentType: "questionnaire", groups: [], comparisonRequired: false, biographicalFields: [], statisticalMinN: null } : null);
-      const methodInfoHasEmpirical = !!(methodInfo && /анкет|опитуванн|емпіричн|респондент|вибірк|тест|експеримент|методик/i.test(
-        [methodInfo.analysisRequirements, methodInfo.otherRequirements, methodInfo.theoryRequirements].filter(Boolean).join(" ")
-      ));
-      const hasEmpirical = !!(rd || methodInfoHasEmpirical);
-      // Якщо клієнт явно вказав нон-анкетний тип практики — не нав'язуємо емпіричний блок
-      const practicalApproachEarly = commentAnalysis?.practicalApproach;
-      const suppressEmpiricalBlock = !!(practicalApproachEarly && practicalApproachEarly !== "questionnaire");
-
-      // Дефолтні методи за типом роботи — fallback коли клієнт нічого не вказав
-      const secAcadDefaults = (!rd && !methodInfoHasEmpirical && !practicalApproachEarly && ["analysis", "recommendations"].includes(sec.type))
-        ? getAcademicDefaults(d.subject, d.type, d.course, d.topic)
-        : null;
-      const secMethodsHint = secAcadDefaults?.methods?.length
-        ? `\nМЕТОДИ ДОСЛІДЖЕННЯ (за типом роботи): ${secAcadDefaults.researchType}. Використовувані методи: ${secAcadDefaults.methods.join(", ")}.${secAcadDefaults.notes ? ` Примітка: ${secAcadDefaults.notes}.` : ""}`
-        : "";
-
-      // Будуємо читабельний рядок з researchDesign або fallback
-      const buildEmpHint = (rd, legacyHint) => {
-        if (!rd) return legacyHint || "";
-        const parts = [];
-        if (rd.groups?.length) parts.push(`Групи: ${rd.groups.map(g => `${g.name}${g.minN ? ` (n≥${g.minN})` : ""}${g.criteria ? `, ${g.criteria}` : ""}`).join("; ")}.`);
-        if (rd.biographicalFields?.length) parts.push(`Біографічний блок: ${rd.biographicalFields.join(", ")}.`);
-        if (rd.statisticalMinN) parts.push(`Мін. вибірка: ${rd.statisticalMinN} осіб.`);
-        if (rd.comparisonRequired) parts.push("Порівняння між групами обов'язкове.");
-        return parts.join(" ") || legacyHint || "";
-      };
-      const empHint = buildEmpHint(rd, commentAnalysis?.empiricalHints || (methodInfo?.otherRequirements && /учасник|респондент|вибірк|осіб/i.test(methodInfo.otherRequirements) ? methodInfo.otherRequirements : "20-30 респондентів"));
-
-      const hasMultipleGroups = (rd?.groups?.length || 0) > 1;
-      const comparisonRequired = rd?.comparisonRequired || hasMultipleGroups;
-      const bioDesc = rd?.biographicalFields?.length ? rd.biographicalFields.join(", ") : "ПІБ, вік, стаж, кваліфікація";
-      const tableDataSource = appendicesText ? "по запитаннях з Додатку А" : "з репрезентативними відсотковими показниками за темою дослідження";
-      const appendixRef = appendicesText ? '\nДодай речення: "Анкета наведена у Додатку А."' : "";
-      const compTableInstruction = comparisonRequired ? `\nПорівняльна таблиця: ОБОВ'ЯЗКОВО окрема таблиця markdown що порівнює ключові показники між групами.` : "";
-
-      if (isEmpChapter && !suppressEmpiricalBlock) {
-        empiricalBlock = `
-
-КОНТЕКСТ (емпіричне дослідження):
-${appendixBlock}${empHint ? `ВИМОГА: ${empHint}\n` : ""}Цей підрозділ є частиною емпіричного дослідження. Визнач за назвою підрозділу що саме писати:
-- якщо підрозділ про організацію або методику дослідження: опиши вибірку (групи, кількість, критерії відбору), біографічний блок анкети (${bioDesc}), метод та принцип проведення.${appendixRef}
-- якщо підрозділ про аналіз або результати: таблиця markdown ${tableDataSource}, аналіз даних.${compTableInstruction}
-- якщо підрозділ про рекомендації: спирайся на результати з попередніх підрозділів, не повторюй опис вибірки.`;
-      } else if (isEmpAnchor && !suppressEmpiricalBlock) {
-        empiricalBlock = `
-
-ОБОВ'ЯЗКОВО для цього підрозділу (емпіричне дослідження):
-${appendixBlock}${empHint ? `ВИМОГА: ${empHint}\n` : ""}1. Вибірка: ${rd?.groups?.length ? rd.groups.map(g => `${g.name}${g.minN ? ` — мін. ${g.minN} осіб` : ""}${g.criteria ? ` (${g.criteria})` : ""}`).join("; ") : "25-30 осіб (вік, категорія, умови відбору)"}.
-2. Біографічний блок анкети: ${bioDesc}.
-3. Метод: ${rd?.instrumentType === "fitness_test" ? "фізичне тестування" : rd?.instrumentType === "psycho_scale" ? "психологічна методика/шкала" : rd?.instrumentType === "pedagogical_experiment" ? "педагогічний експеримент" : "анкетування"}. Мета, кількість запитань${appendicesText ? " — точно як в Додатку А" : " — відповідно до теми"}.
-4. Принцип проведення: умови та порядок.
-5. Результати: таблиця markdown (|---|---| формат) ${tableDataSource}.${compTableInstruction}
-6. Аналіз: інтерпретація результатів.${appendixRef}`;
-      } else if (hasEmpirical && ["analysis", "recommendations"].includes(sec.type) && !suppressEmpiricalBlock) {
-        const practicalSecs = sections.filter(s => ["analysis", "recommendations"].includes(s.type));
-        const secIdx = practicalSecs.findIndex(s => s.id === sec.id);
-        if (secIdx === 0) {
-          empiricalBlock = `
-
-ОБОВ'ЯЗКОВО для цього підрозділу (емпіричне дослідження):
-${appendixBlock}${empHint ? `ВИМОГА: ${empHint}\n` : ""}1. Організація дослідження: ${rd?.groups?.length ? `вибірка по групах: ${rd.groups.map(g => `${g.name}${g.minN ? ` (n≥${g.minN})` : ""}${g.criteria ? `, ${g.criteria}` : ""}`).join("; ")}` : "вибірка — кількість, категорії, критерії відбору"}.
-2. Біографічний блок анкети: ${bioDesc}.
-3. Метод: ${rd?.instrumentType === "fitness_test" ? "фізичне тестування" : rd?.instrumentType === "psycho_scale" ? "психологічна методика/шкала" : rd?.instrumentType === "pedagogical_experiment" ? "педагогічний експеримент" : "анкетування"}. ${appendicesText ? "Мета та кількість запитань — точно як в Додатку А." : "Опиши мету та орієнтовну кількість питань."}
-4. Принцип проведення: умови та порядок, якщо кілька груп — опиши кожну окремо.
-5. Результати: таблиця markdown (|---|---| формат) ${tableDataSource}.${compTableInstruction}
-6. Аналіз: інтерпретація результатів.${appendixRef}`;
-        } else if (secIdx < practicalSecs.length - 1) {
-          empiricalBlock = `
-
-КОНТЕКСТ (емпіричне дослідження):
-${appendixBlock}${empHint ? `ВИМОГА: ${empHint}\n` : ""}Цей підрозділ продовжує аналіз результатів. Таблиця markdown (|---|---| формат) ${tableDataSource}.${compTableInstruction} Аналіз і висновки. Не повторюй опис вибірки та методики.`;
-        } else {
-          empiricalBlock = `
-
-КОНТЕКСТ (емпіричне дослідження):
-${appendixBlock}${empHint ? `ВИМОГА: ${empHint}\n` : ""}Рекомендації на основі результатів дослідження з попередніх підрозділів. Не повторюй опис вибірки та методики.`;
-        }
-      }
-
-      // Практичний блок для нон-анкетних типів практики
-      let practicalBlock = "";
-      const practicalApproachRun = commentAnalysis?.practicalApproach;
-      if (practicalApproachRun && practicalApproachRun !== "questionnaire" && ["analysis", "recommendations"].includes(sec.type)) {
-        const appRef = appendicesText ? "\nДодай речення з посиланням на Додаток А." : "";
-        const appCtx = appendicesText ? `\nДОДАТОК А (вже згенерований — спирайся на нього точно):\n${appendicesText}\n` : "";
-        if (practicalApproachRun === "textbook_analysis") {
-          practicalBlock = `
-
-ОБОВ'ЯЗКОВО для цього підрозділу (аналіз підручників):${appCtx}Визнач за назвою підрозділу що саме писати:
-- підрозділ про критерії або методику аналізу: опиши принципи відбору підручників, параметри порівняння (структура, зміст, типи вправ, ілюстрації, методичний апарат, відповідність програмі).
-- підрозділ про аналіз або результати: таблиця markdown з порівнянням підручників за критеріями (спирайся на Додаток А). Після таблиці детальний аналіз кожного підручника.${appRef}
-- підрозділ про висновки або рекомендації: порівняльні висновки, який підручник краще відповідає меті навчання і чому.`;
-        } else if (practicalApproachRun === "lesson_observation") {
-          practicalBlock = `
-
-ОБОВ'ЯЗКОВО для цього підрозділу (аналіз уроків):${appCtx}Визнач за назвою підрозділу що саме писати:
-- підрозділ про методику спостереження: опиши протокол спостереження (Додаток А), кількість спостережуваних уроків, вчителів, клас.${appRef}
-- підрозділ про результати: таблиця markdown з результатами спостережень за аспектами (мотивація, пояснення, практика, організація тощо). Аналіз виявлених закономірностей.
-- підрозділ про рекомендації: методичні рекомендації вчителям на основі результатів спостережень.`;
-        } else if (practicalApproachRun === "materials_development") {
-          practicalBlock = `
-
-ОБОВ'ЯЗКОВО для цього підрозділу (розробка матеріалів):${appCtx}Визнач за назвою підрозділу що саме писати:
-- підрозділ про теоретичне обґрунтування: принципи розробки матеріалів, психолого-педагогічне підґрунтя вибору підходу.
-- підрозділ про опис матеріалів: детальний опис розроблених матеріалів (Додаток А) — структура, призначення, як використовувати на практиці.${appRef}
-- підрозділ про апробацію або ефективність: результати практичного застосування або обґрунтування очікуваної ефективності матеріалів.`;
-        }
-      }
-
-      const secSourceLines = (citInputs[sec.id] || "").split("\n").map(l => l.trim()).filter(Boolean);
-      const sourcesBlock = secSourceLines.length > 0
-        ? `\nДЖЕРЕЛА ДЛЯ ЦЬОГО ПІДРОЗДІЛУ (${secSourceLines.length} шт.) — спирайся на них при написанні, вставляй посилання [N] після відповідних тверджень:\n${secSourceLines.map((s, i) => {
-          const snippet = abstractsMap[s];
-          return snippet ? `[${i + 1}] ${s}\n    Зміст: ${snippet}` : `[${i + 1}] ${s}`;
-        }).join("\n")}\n`
-        : "";
-      const citNote = secSourceLines.length > 0
-        ? "Вставляй [N] у текст одразу після тверджень що спираються на джерело (де N — номер зі списку вище). ЗАБОРОНЕНО вигадувати імена авторів перед цитатою — не пиши 'Іванов А. стверджує...'. Використовуй безособові конструкції: 'у дослідженні зазначається [N]', 'науковці вказують [N]', 'встановлено [N]' тощо. Цитата в тексті — ЛИШЕ [N] (технічна позначка), НІКОЛИ не пиши саму цитату (прізвище, рік, сторінку) в жодному вигляді, ні круглими, ні квадратними дужками — фінальний стиль оформлення підставить система пізніше. Посилайся ЛИШЕ на джерела зі списку вище під їхніми номерами — не згадуй і не посилайся на будь-яке дослідження чи автора, якого немає в цьому списку. Розподіляй посилання рівномірно між усіма наданими джерелами — спочатку використай кожне хоч раз, і лише потім за потреби повторюй. Одне й те саме джерело [N] НЕ цитувати більше 2 разів у межах цього підрозділу."
-        : "Без посилань [1],[2].";
-
-      // Уже написані початки попередніх підрозділів цієї ж роботи — генерація йде строго
-      // послідовно (useEffect вище), тож увесь текст sec-ів до поточного вже готовий у
-      // contentRef.current. Без цього кожен підрозділ обирає стиль відкриття "наосліп",
-      // не знаючи що вже було, і схожість відкриттів між підрозділами (а не всередині
-      // одного) — саме те, що потім ловлять ШІ-детектори як статистичну одноманітність.
-      const priorMainSecIds = sections.slice(0, sections.findIndex(s => s.id === sec.id))
-        .filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type) && contentRef.current[s.id]);
-      const priorOpeningsBlock = priorMainSecIds.length
-        ? `\n\nУЖЕ НАПИСАНІ ПОЧАТКИ ПОПЕРЕДНІХ ПІДРОЗДІЛІВ ЦІЄЇ Ж РОБОТИ (не повторюй ні структуру речень, ні перше слово, ні порядок "теза-приклад-висновок" — обери інший стиль відкриття й інший ритм):\n${priorMainSecIds.map((s, i) => `${i + 1}. ${extractOpeningSentences(contentRef.current[s.id])}`).join("\n")}`
-        : "";
-
-      instruction = `Напиши підрозділ "${sec.label}" для ${d.type} на тему "${d.topic}". Галузь: ${d.subject}.
-Тип підрозділу: ${typeHints[sec.type] || "основний"}.
-${methodReq ? `ВИМОГИ МЕТОДИЧКИ ДО ЦЬОГО РОЗДІЛУ: ${methodReq}` : ""}${empiricalBlock}${practicalBlock}${econBlock}${technicalBlock}${secMethodsHint}${sourcesBlock}${priorOpeningsBlock}
-ПЛАН РОБОТИ (для розуміння структури та уникнення повторів):
-${planSummary}
-
-Обсяг: приблизно ${Math.round((sec.pages || 1) * 230)} слів (~${sec.pages} стор.).
-Не обривай текст. Завершуй підсумковим абзацом. ${citNote} Без жирного.
-ЗАБОРОНЕНО вставляти будь-які внутрішні підназви, заголовки абзаців або окремі рядки-мітки ("Загальна картина", "Результати аналізу" тощо). Кожен рядок тексту — повне речення, рядок таблиці або підпис до таблиці/рисунка.
-Абзаци мають різнитись за довжиною: чергуй короткі (2-3 речення) з довшими (5-7 речень).`;
-
-      // Вимога "мінімум 1 рисунок на розділ" (mandatoryFigureNote у buildSYS) — лише
-      // текстова інструкція в system-промпті, однакова для КОЖНОГО підрозділу окремо:
-      // жоден підрозділ "не знає", чи вже з'явився рисунок в іншому підрозділі того ж
-      // розділу, тож усі можуть покластись один на одного і розділ лишиться без рисунка
-      // взагалі (саме так сталось із розділом 1 у тестовій роботі). Перевіряємо кодом:
-      // якщо це ОСТАННІЙ підрозділ розділу і в жодному з попередніх ще немає рисунка —
-      // вимагаємо його прямо тут.
-      if (methodInfo?.hasFigures) {
-        const chapterMainTypes = ["theory", "analysis", "recommendations"];
-        const currentChapNum = sec.id.split(".")[0];
-        const chapterSecs = sections.filter(s => chapterMainTypes.includes(s.type) && s.id.split(".")[0] === currentChapNum);
-        const isLastInChapter = chapterSecs[chapterSecs.length - 1]?.id === sec.id;
-        const hasFigureAlready = chapterSecs.some(s => s.id !== sec.id && hasRealFigure(contentRef.current[s.id] || ""));
-        if (isLastInChapter && !hasFigureAlready) {
-          instruction += `\n\nОБОВ'ЯЗКОВО: жоден інший підрозділ цього розділу ще не містить рисунка — цей підрозділ МАЄ містити хоча б один рисунок (графік із таблиці даних або PlantUML-схема за правилами FIGURES вище), інакше вимога методички "щонайменше один рисунок на розділ" буде порушена.`;
-        }
-      }
-    }
-    const clientWritingReqs = [
-      commentAnalysis?.writingHints,
-      commentAnalysis?.textStructureHints,
-    ].filter(Boolean).join("\n");
-    if (clientWritingReqs) instruction += `\n\nВИМОГИ КЛІЄНТА (ОБОВ'ЯЗКОВО виконати при написанні):\n${clientWritingReqs}`;
-    const secIllustrations = getIllustrationsForSection(sec);
-    if (secIllustrations.length) {
-      const hasIndex = secIllustrations.every(ill => ill.index != null);
-      const illLines = secIllustrations.map(ill =>
-        `Рис. ${ill.figureNum}${ill.caption ? ` – ${ill.caption}` : ""}: ${ill.description}${hasIndex ? ` — маркер вставки: [КЛІЄНТ-ІЛЮСТРАЦІЯ:${ill.index}]` : ""}`
-      ).join("\n");
-      instruction += `\n\nІЛЮСТРАЦІЇ КЛІЄНТА ДО ЦЬОГО ПІДРОЗДІЛУ (вже надані, треба вставити в текст):\n${illLines}\nОБОВ'ЯЗКОВО для кожної ілюстрації: 1) додай посилання на неї в тексті (напр. "як показано на Рис. X.Y..."), використовуючи нумерацію X.Y відповідно до номера підрозділу;${hasIndex ? " 2) безпосередньо ПЕРЕД стандартним підписом рисунка (Рис. X.Y – Назва) додай окремим рядком точно вказаний вище маркер вставки у форматі [КЛІЄНТ-ІЛЮСТРАЦІЯ:N] — без жодних змін, більше нічого на цьому рядку." : ""}`;
-    }
-    const isTechnicalSecFinal = getTechnicalSections(sections, d).includes(sec.id);
-    // Матеріали клієнта — той самий великий (до 80к символів) блок повторюється в
-    // КОЖНОМУ підрозділі роботи без змін. Виносимо його з user-повідомлення в окремий
-    // кешований system-блок (opts.extraCached): перший підрозділ записує кеш, решта
-    // читають той самий блок в рази дешевше, замість пересилки по повній ціні щоразу.
-    const materialsRaw = clientMaterialsSummary?.rawText || clientMaterialsText?.trim() || "";
-    const materialsBlock = materialsRaw
-      ? `МАТЕРІАЛИ КЛІЄНТА (використовуй ці дані - не вигадуй, не замінюй):\n${materialsRaw.slice(0, 80000)}${isTechnicalSecFinal ? `\n\n${CODE_GROUNDING_RULE}` : ""}`
-      : "";
-    if (materialsBlock) instruction += `\n\nДив. МАТЕРІАЛИ КЛІЄНТА нижче в системному промпті - використовуй ці дані, не вигадуй і не замінюй їх.`;
-    const genOpts = { cache: true, ...(materialsBlock ? { extraCached: [materialsBlock] } : {}) };
-    const sectionMaxTokens = Math.min(60000, Math.max(8000, Math.round((sec.pages || 1) * 3000)));
-    const cleanResult = (raw) => typographQuotes(fixMixedScript(raw, lang)
-      .replace(/ — /g, ", ").replace(/— /g, " ").replace(/ —/g, " ")
-      .replace(/[ᄀ-ᇿ⺀-鿿ꀀ-꓿가-퟿豈-﫿]/g, "")
-)
-      .replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2")
-      .replace(/(\[[^\]]*)\]\s*\[([^\]]*\])/g, "$1; $2");
-    // Ціль в словах для перевірки фактичного обсягу після генерації (окремо від тексту промпту)
-    const targetWords = sec.type === "chapter_conclusion" ? 115 : Math.round((sec.pages || 1) * 230);
     try {
-      const raw = await callClaude(buildMessages(instruction), ctrl.signal, buildSYS(lang, methodInfo, normalizeWorkType(d.type, d.course)), sectionMaxTokens, (s) => setLoadMsg(`Генерую: ${sec.label}... зачекайте ${s}с`), undefined, genOpts);
-      // Видаляємо довге тире на всякий випадок (модель іноді ігнорує заборону)
-      const cleaned = cleanResult(raw);
-      const result = sec.type === "sources" ? cleaned : await enforceWordCount({
-        text: cleaned, targetWords, label: sec.label, callClaude,
-        sys: buildSYS(lang, methodInfo, normalizeWorkType(d.type, d.course)), signal: ctrl.signal, onProgress: setLoadMsg, clean: cleanResult,
-        cacheOpts: genOpts,
+      const patch = await runWritingSection(order, sec, {
+        callClaude, signal: ctrl.signal, onProgress: setLoadMsg,
       });
-
-      // Перевірка "гарячим слідом" — які з призначених підрозділу джерел модель
-      // не процитувала (незважаючи на пряму інструкцію в промпті), і одразу
-      // довставляємо пропущені, поки контекст іще той самий. Значно дешевше й
-      // надійніше, ніж ловити ті самі промахи пізніше по всій роботі відразу
-      // (doRemapCitations, крок 7б) — там довставка йде вже без контексту генерації.
-      let finalResult = result;
-      const localSourceLines = (citInputs[sec.id] || "").split("\n").map(l => l.trim()).filter(Boolean);
-      if (localSourceLines.length && !ctrl.signal.aborted) {
-        const citedLocalNums = new Set();
-        [...finalResult.matchAll(/\[\s*(\d+(?:\s*[,;]\s*\d+)*)/g)].forEach(m => {
-          m[1].split(/[,;]/).forEach(s => citedLocalNums.add(Number(s.trim())));
-        });
-        const missingLocal = localSourceLines
-          .map((line, i) => ({
-            number: i + 1, marker: `[${i + 1}]`, sourceText: line,
-            abstract: abstractsMap[line], thesis: sourceThesisMap[line],
-          }))
-          .filter(s => !citedLocalNums.has(s.number));
-        if (missingLocal.length) {
-          setLoadMsg(`Довставляю пропущені джерела: ${sec.label}...`);
-          try {
-            const { text, unresolved } = await insertMissingCitations({
-              sectionText: finalResult, insertions: missingLocal, lang, callClaude, signal: ctrl.signal,
-            });
-            finalResult = cleanResult(text);
-
-            // Джерела, які виявились такими, що не підтверджують жодного речення
-            // (замість форсованої хибної прив'язки "за темою") — пробуємо знайти
-            // заміну під ту саму тезу, під яку початкове джерело шукалось.
-            const updatedLines = [...localSourceLines];
-            let linesChanged = false;
-            if (unresolved.length && !ctrl.signal.aborted) {
-              for (const num of unresolved) {
-                const idx = num - 1;
-                const oldLine = localSourceLines[idx];
-                const thesis = sourceThesisMap[oldLine];
-                if (!thesis) continue;
-                setLoadMsg(`Шукаю заміну джерела: ${sec.label}...`);
-                const replacement = await retryUnmatchedSource({
-                  secId: sec.id, sectionText: finalResult, marker: `[${num}]`, thesis, lang, signal: ctrl.signal,
-                });
-                if (replacement) {
-                  finalResult = cleanResult(replacement.text);
-                  updatedLines[idx] = replacement.newLine;
-                  linesChanged = true;
-                  if (replacement.paper.abstract) {
-                    setAbstractsMap(prev => ({ ...prev, [replacement.newLine]: replacement.paper.abstract }));
-                  }
-                  setSourceThesisMap(prev => ({ ...prev, [replacement.newLine]: thesis }));
-                }
-              }
-            }
-            if (linesChanged) {
-              setCitInputs(prev => ({ ...prev, [sec.id]: updatedLines.join("\n") }));
-            }
-          } catch (e) { console.error("Довставлення пропущених джерел одразу після генерації:", e); }
-        }
-      }
-
-      finalResult = capCitationRepeats(finalResult);
-
-      if (!ctrl.signal.aborted) {
-        try {
-          finalResult = await fixDanglingFigures({ text: finalResult, lang, callClaude, signal: ctrl.signal });
-        } catch (e) { console.error("fixDanglingFigures:", e.message); }
-      }
-
-      const newContent = { ...contentRef.current, [sec.id]: finalResult };
-      setContent(newContent);
-
-      // Витягуємо авторські терміни/назви методик цього підрозділу окремим легким
-      // викликом і кладемо в спільний глосарій — щоб висновки бачили їх навіть тоді,
-      // коли сам підрозділ для економії контексту підставляється лише "першим абзацом".
-      if (["theory", "analysis", "recommendations"].includes(sec.type) && !ctrl.signal.aborted) {
-        try {
-          setLoadMsg(`Виділяю терміни: ${sec.label}...`);
-          const glossPrompt = `Текст підрозділу "${sec.label}" ${d.type} на тему "${d.topic}":\n\n${finalResult.slice(0, 16000)}\n\nВиділи 3-6 ключових авторських термінів, назв методик/моделей/технологій чи багаторівневих структур (напр. "Етап 1 – Етап 2 – Етап 3"), ВВЕДЕНИХ саме в цьому тексті. Якщо таких немає — поверни порожній масив.\nВідповідь — ТІЛЬКИ JSON масив рядків, напр. ["термін 1", "термін 2"].`;
-          const glossRaw = await callClaude([{ role: "user", content: glossPrompt }], null, SYS_JSON_ARRAY, 300, null, MODEL_FAST);
-          const terms = JSON.parse(glossRaw.match(/\[[\s\S]*\]/)?.[0] || "[]");
-          if (terms.length) setGlossary(prev => ({ ...prev, [sec.id]: terms.join("; ") }));
-        } catch (e) { console.error("Глосарій термінів підрозділу:", e.message); }
-      }
+      setContent(patch.content);
+      if (patch.citInputs !== order.citInputs) setCitInputs(patch.citInputs);
+      if (patch.abstractsMap !== order.abstractsMap) setAbstractsMap(patch.abstractsMap);
+      if (patch.sourceThesisMap !== order.sourceThesisMap) setSourceThesisMap(patch.sourceThesisMap);
+      if (patch.glossary !== order.glossary) setGlossary(patch.glossary);
 
       runningRef.current = false; setRunning(false); setLoadMsg("");
-      await saveToFirestore({ content: newContent, stage: "writing", status: "writing", genIdx: genIdx + 1 });
+      await saveToFirestore({ content: patch.content, stage: "writing", status: "writing", genIdx: genIdx + 1 });
       // Пауза між підрозділами щоб не вичерпати rate limit
       await new Promise(r => setTimeout(r, 2000));
       setGenIdx(g => g + 1);
@@ -2357,8 +1163,7 @@ ${planSummary}
       const lc = getLangLabels(lang);
       const il = lc.introLabels || {};
       const defaultComponents = lc.defaultIntroComponents || ["актуальність теми", "мета дослідження", "завдання дослідження", "об'єкт дослідження", "предмет дослідження", "методи дослідження", "практичне значення дослідження", "структура роботи"];
-      const hasMethodIntroComponents = !!methodInfo?.introComponents?.length;
-      const allComponents = hasMethodIntroComponents ? [...methodInfo.introComponents] : [...defaultComponents];
+      const allComponents = mergeIntroComponents(defaultComponents, methodInfo?.introComponents);
       const structureRe = /структура|structure|struktura|štruktúra|aufbau/i;
       const structureIdx = allComponents.findIndex(c => structureRe.test(c));
       if (structureIdx !== -1 && structureIdx !== allComponents.length - 1) {
@@ -3516,8 +2321,7 @@ ${slideSpecs.join("\n\n")}
         const lc = getLangLabels(lang);
         const il = lc.introLabels || {};
         const defaultComponents = lc.defaultIntroComponents || ["актуальність теми", "мета дослідження", "завдання дослідження", "об'єкт дослідження", "предмет дослідження", "методи дослідження", "структура роботи"];
-        const hasMethodIntroComponents = !!methodInfo?.introComponents?.length;
-        const allComponents = hasMethodIntroComponents ? [...methodInfo.introComponents] : [...defaultComponents];
+        const allComponents = mergeIntroComponents(defaultComponents, methodInfo?.introComponents);
         const structureRe = /структура|structure|struktura|štruktúra|aufbau/i;
         const structureIdx = allComponents.findIndex(c => structureRe.test(c));
         if (structureIdx !== -1 && structureIdx !== allComponents.length - 1) {
@@ -3954,46 +2758,9 @@ ${secBlock}
   };
 
   // ── Заміна джерела, яке хірургічна вставка (insertMissingCitations) чесно визнала
-  // таким, що не підтверджує жодного речення підрозділу ("match":false для всіх
-  // речень) — шукаємо нове джерело під ту саму тезу, під яку початкове шукалось,
-  // і намагаємось вставити його замість форсованої хибної прив'язки "за темою".
-  // Повертає null, якщо гідної заміни не знайшлось (тоді джерело просто лишається
-  // без цитати — чесніше за хибне посилання).
-  const retryUnmatchedSource = async ({ secId, sectionText, marker, thesis, lang, signal }) => {
-    if (!thesis) return null;
-    try {
-      const topicCtx = [info?.topic, info?.direction, info?.subject].filter(Boolean).join(' ');
-      const filterLabel = (sectionsRef.current.find(s => s.id === secId)?.label || '')
-        .replace(/^РОЗДІЛ\s+[IVXivxІVХ\d]+[.\s:]+/i, '').trim();
-      const existingTitles = new Set(
-        Object.values(citStructured).flat().map(p => (p.title || '').toLowerCase().slice(0, 60))
-      );
-      const candidates = await searchByPhrase(thesis, 15, 1, true, 0, '');
-      const fresh = candidates.filter(p => {
-        const key = (p.title || '').toLowerCase().slice(0, 60);
-        return key && !existingTitles.has(key);
-      });
-      if (!fresh.length || signal?.aborted) return null;
-      const filteredRaw = await filterSourcesWithGemini(fresh.slice(0, 25), filterLabel, topicCtx, 3, thesis);
-      const filtered = await enrichSources(filteredRaw);
-      const best = [...filtered]
-        .filter(p => p._complete !== false)
-        .sort((a, b) => (b.geminiScore ?? 0) - (a.geminiScore ?? 0))[0];
-      if (!best || (best.geminiScore ?? 0) < 70 || signal?.aborted) return null;
-
-      const newLine = paperToCitation(best);
-      if (!newLine) return null;
-      const { text, unresolved } = await insertMissingCitations({
-        sectionText, insertions: [{ number: 1, marker, sourceText: newLine, abstract: best.abstract, thesis }],
-        lang, callClaude, signal,
-      });
-      if (unresolved.length) return null; // заміна теж не підтвердила жодного речення
-      return { text, newLine, paper: best };
-    } catch (e) {
-      console.error('retryUnmatchedSource error:', e.message);
-      return null;
-    }
-  };
+  // (Пошук заміни непідтвердженого джерела для генерації підрозділу тепер
+  // живе в src/lib/orderStages.js — retryUnmatchedSource усередині
+  // runWritingSection; тут більше не дублюється.)
 
   // ── Ключові слова ──
   const doGenKeywords = async () => {
@@ -4272,44 +3039,6 @@ ${secBlocks}
     saveToFirestore({ citFootnotes: val });
   };
 
-  // ── Анотація (укр + англ) для магістерських/бакалаврських/дипломних робіт ──
-  const doGenAnnotation = async (contentForGen, refListForGen) => {
-    setAnnotationLoading(true);
-    try {
-      const intro = sections.find(s => s.type === "intro");
-      const concs = sections.find(s => s.type === "conclusions");
-      const introText = intro ? (contentForGen[intro.id] || "") : "";
-      const concsText = concs ? (contentForGen[concs.id] || "") : "";
-
-      const wt = normalizeWorkType(info?.type, info?.course);
-      const degreeLabel = wt === "master" ? "магістра (Master's)" : "бакалавра (Bachelor's)";
-      const chaptersCount = new Set(mainSections.map(s => s.id.split(".")[0])).size;
-      const sourcesCount = (refListForGen || refList || []).length;
-      const appendicesCount = (appendicesText.match(/^ДОДАТОК\s+[А-ЯA-Z]/gim) || []).length;
-      const pagesLabel = info?.pages || methodInfo?.totalPages || "";
-
-      const statsText = [
-        `Освітній ступінь: ${degreeLabel}`,
-        `Спеціальність/напрям: ${info?.subject || info?.direction || ""}`,
-        `Кількість розділів: ${chaptersCount}`,
-        `Кількість використаних джерел: ${sourcesCount}`,
-        appendicesCount ? `Кількість додатків: ${appendicesCount}` : "Додатків немає",
-        pagesLabel ? `Орієнтовний обсяг роботи: ${pagesLabel} сторінок` : "",
-      ].filter(Boolean).join("\n");
-
-      const prompt = buildAnnotationPrompt(info, methodInfo, statsText, introText, concsText);
-      const raw = await callClaude([{ role: "user", content: prompt }], null, SYS_JSON, 3000, null, MODEL);
-      const match = raw.match(/\{[\s\S]*\}/);
-      const parsed = JSON.parse(match?.[0] || raw.replace(/```json|```/g, "").trim());
-      setAnnotationUk(parsed.uk || "");
-      setAnnotationEn(parsed.en || "");
-      await saveToFirestore({ annotationUk: parsed.uk || "", annotationEn: parsed.en || "" });
-    } catch (e) {
-      console.error("doGenAnnotation error:", e);
-    }
-    setAnnotationLoading(false);
-  };
-
   // ── Точкове редагування анотації за коментарем (без повної регенерації) ──
   const doRegenAnnotation = async (comment) => {
     setAnnotationLoading(true);
@@ -4333,308 +3062,33 @@ ${secBlocks}
   // ── sources-first: ремаппінг локальних [N] → глобальні номери + форматування списку ──
   const stopRemap = () => { remapAbortRef.current?.abort(); setRemapLoading(false); };
 
+  // ── Фінальний крок після написання: перерозподіл цитат, список джерел,
+  // перевірка обсягу, анотація — делеговано в src/lib/orderStages.js
+  // (runRemapStage), та сама функція, яку викликає й серверний воркер. ──
   const doRemapCitations = async () => {
     setRemapLoading(true);
     resetGenerationCost();
     const ctrl = new AbortController(); remapAbortRef.current = ctrl;
-    try {
-    // callClaude, прив'язана до сигналу скасування цього запуску — щоб «⏹ Зупинити»
-    // переривала й вкладені виклики (форматування списку, довставлення цитат), а не
-    // лишала їх довиконуватись у фоні після того, як користувач уже пішов з екрана.
-    const callClaudeAbortable = (messages, _sig, systemPrompt, maxTokens, onWait, model, opts) =>
-      callClaude(messages, ctrl.signal, systemPrompt, maxTokens, onWait, model, opts);
-    // Усі секції, що можуть містити цитати клієнта чи ШІ, окрім самого списку джерел
-    // (вступ і висновки теж можуть цитувати джерела — раніше вони виключались і їхні
-    // цитати так і лишались зі старими, не перенумерованими локальними номерами).
-    const mainSecs = sections.filter(s => s.type !== "sources");
-    const _extraText2 = (methodInfo?.otherRequirements || "") + " " + (methodInfo?.citationStyle || "") + " " + (commentAnalysis?.sourcesHints || "");
-    const sourcesStyle = citStyleOverride
-      || methodInfo?.sourcesStyle
-      || (/APA/i.test(_extraText2) ? "APA" : /MLA/i.test(_extraText2) ? "MLA" : "ДСТУ 8302:2015");
-    const isAPA = /APA/i.test(sourcesStyle);
-    const isMLA = /MLA/i.test(sourcesStyle);
-    const isDstu = /ДСТУ/i.test(sourcesStyle);
-    const isFootnoteMode = citFootnotes && isDstu;
-    const _effectiveOrderRemap = sourcesOrderOverride || methodInfo?.sourcesOrder;
-    const isAlphabeticalOrder = !_effectiveOrderRemap || _effectiveOrderRemap === "alphabetical";
-
-    // ── 1. Локальна карта: secId → { localN: sourceText } ──
-    const secLocalSources = {};
-    mainSecs.forEach(sec => {
-      const lines = (citInputs[sec.id] || "").split("\n").map(l => l.trim()).filter(Boolean);
-      secLocalSources[sec.id] = {};
-      lines.forEach((line, i) => { secLocalSources[sec.id][i + 1] = line; });
-    });
-
-    // ── 2. Глобальна дедуплікація — нечітка (createReferenceDeduper): об'єднує не
-    // лише побайтово однакові тексти, а й "майже дублікати" того самого джерела
-    // (той самий запис з кодом УДК чи без нього, куций стаб-запис клієнта і повна
-    // версія, знайдена пошуком) за перетином ідентифікаційних токенів.
-    const deduper = createReferenceDeduper();
-    mainSecs.forEach(sec => {
-      Object.values(secLocalSources[sec.id]).forEach(text => { deduper.add(text); });
-    });
-    const rawRefs = deduper.canonicalRefs;
-
-    // ── 3-6. Форматування джерел через LLM (без права переставляти) → сортування
-    // кодом на вже правильно оформленому тексті → мапа localN→globalN → формат
-    // inline-посилань. Спільна логіка з
-    // remapAndFormatCitations (citationFormatting.js): buildFinalReferenceList сама
-    // звіряє відповідь LLM за змістом і, за потреби, ділить список навпіл, щоб
-    // відновитись після провалу валідації, замість відкидання всього списку.
-    const _remapWorkLang = info?.language || "Українська";
-    const _remapLatinFirst = /англ|english|польськ|polish|нім|german|франц|french|іспан|spanish|італ|italian/i.test(_remapWorkLang);
-    const _remapPageAbbrev = /англ|english/i.test(_remapWorkLang) ? "p." : "с.";
-
-    const structuredByTitle2 = {};
-    Object.values(citStructured).forEach(papers => {
-      (papers || []).forEach(p => {
-        if (p.title) structuredByTitle2[p.title.toLowerCase().slice(0, 60)] = p;
-      });
-    });
-    const findStructured2 = (refText) => {
-      const lower = refText.toLowerCase();
-      for (const [key, paper] of Object.entries(structuredByTitle2)) {
-        if (lower.includes(key)) return paper;
-      }
-      return null;
+    const order = {
+      sections, citInputs, citStructured, methodInfo, commentAnalysis,
+      citStyleOverride, sourcesOrderOverride, citFootnotes,
+      content: contentRef.current, info, appendicesText, refList,
     };
-
-    let { finalTexts: allRefs, indexMap } = await buildFinalReferenceList({
-      rawRefs, findStructured: findStructured2, sourcesStyle, isLatinWork: _remapLatinFirst,
-      sourcesFormatRules: methodInfo?.sourcesFormatRules, sourcesGrouping: methodInfo?.sourcesGrouping, callClaude: callClaudeAbortable,
-      skipSort: !isAlphabeticalOrder && !isDstu,
-    });
-    if (ctrl.signal.aborted) { setRemapLoading(false); return; }
-    let fmtLines = allRefs;
-    let fmtResult = allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n");
-
-    // ── Маппінг localN → globalN для кожного підрозділу ──
-    const secLocalToGlobal = {};
-    mainSecs.forEach(sec => {
-      secLocalToGlobal[sec.id] = {};
-      Object.entries(secLocalSources[sec.id]).forEach(([localN, text]) => {
-        const rawIdx = deduper.add(text); // ідемпотентно — знаходить уже канонічний індекс
-        secLocalToGlobal[sec.id][Number(localN)] = indexMap[rawIdx];
+    try {
+      const patch = await runRemapStage(order, { callClaude, signal: ctrl.signal });
+      if (ctrl.signal.aborted || !patch.stage) { setRemapLoading(false); return; }
+      setRefList(patch.refList);
+      setContent(patch.content);
+      setCitInputsSnapshot(JSON.stringify(citInputs));
+      if (patch.annotationUk !== undefined) setAnnotationUk(patch.annotationUk);
+      if (patch.annotationEn !== undefined) setAnnotationEn(patch.annotationEn);
+      await saveToFirestore({
+        content: patch.content, citInputs, citStructured, refList: patch.refList,
+        stage: patch.stage, status: patch.status,
+        ...(patch.annotationUk !== undefined ? { annotationUk: patch.annotationUk, annotationEn: patch.annotationEn } : {}),
       });
-    });
-
-    // ── Формат inline-посилань по стилю ──
-    const { refCiteText, pageRanges: pageRanges2 } = buildCiteFormats({
-      finalTexts: allRefs, rawRefs, indexMap, findStructured: findStructured2,
-      isAPA, isMLA, isFootnoteMode,
-    });
-
-    // ── 7. Заміна в тексті: [localN] / [localN, с. X] / [localN, localM] → фінал ──
-    // Сторінку, яку модель сама вписала при написанні, лишаємо (якщо вона в межах
-    // діапазону джерела); інакше підставляємо сторінку з діапазону. Кожна згадка
-    // джерела лишається окремою — повторне цитування одного джерела не видаляємо.
-    // Логіка спільна з applyCitationRemap (citationFormatting.js) — вона ж підтримує
-    // групові цитати [N, M], які може породжувати localizeCitations для готової
-    // частини клієнта.
-    const newContent = { ...contentRef.current };
-    mainSecs.forEach(sec => {
-      if (!newContent[sec.id]) return;
-      const mapping = secLocalToGlobal[sec.id];
-      if (!mapping || !Object.keys(mapping).length) return;
-      newContent[sec.id] = applyCitationRemap(newContent[sec.id], mapping, refCiteText, { pageRanges: pageRanges2, pageAbbrev: _remapPageAbbrev });
-    });
-
-    // ── 7б. Довставлення цитат для джерел, призначених підрозділу на етапі "Джерела",
-    // але які модель під час написання не процитувала жодного разу (типово — коли
-    // підрозділу призначено багато джерел і частина просто ігнорується). Без цього
-    // такі джерела тихо лишаються в бібліографії без жодної згадки в тексті.
-    const citedGlobalNums = new Set();
-    mainSecs.forEach(sec => {
-      const text = newContent[sec.id];
-      if (!text) return;
-      if (isFootnoteMode) {
-        [...text.matchAll(/%%FN(\d+)%%/g)].forEach(m => citedGlobalNums.add(Number(m[1])));
-      } else if (isAPA || isMLA) {
-        Object.entries(refCiteText).forEach(([n, cite]) => { if (text.includes(cite)) citedGlobalNums.add(Number(n)); });
-      } else {
-        [...text.matchAll(/\[\s*(\d+(?:\s*[,;]\s*\d+)*)/g)].forEach(m => {
-          m[1].split(/[,;]/).forEach(s => citedGlobalNums.add(Number(s.trim())));
-        });
-      }
-    });
-
-    const orphans = [];
-    const seenOrphanGlobalNums = new Set();
-    mainSecs.forEach(sec => {
-      Object.entries(secLocalToGlobal[sec.id] || {}).forEach(([, globalN]) => {
-        if (!globalN || citedGlobalNums.has(globalN) || seenOrphanGlobalNums.has(globalN)) return;
-        seenOrphanGlobalNums.add(globalN);
-        orphans.push({ sec, globalN });
-      });
-    });
-
-    // Групуємо за підрозділом і вставляємо ОДНИМ пакетним викликом на весь набір
-    // осиротілих джерел підрозділу (insertMissingCitations — точкова заміна
-    // "речення → речення з позначкою", а не переписування підрозділу цілком):
-    // підрозділи йдуть паралельно між собою, а всередині підрозділу всі його
-    // джерела — за один виклик, замість послідовного по одному.
-    const unresolvedOrphans = [];
-    const orphansBySec = new Map();
-    orphans.forEach(o => {
-      if (!newContent[o.sec.id]) return;
-      if (!orphansBySec.has(o.sec.id)) orphansBySec.set(o.sec.id, []);
-      orphansBySec.get(o.sec.id).push(o);
-    });
-    await Promise.all([...orphansBySec.entries()].map(async ([secId, secOrphans]) => {
-      if (ctrl.signal.aborted) return;
-      const insertions = secOrphans.map(({ globalN }) => ({
-        number: globalN,
-        marker: refCiteText[globalN] || `[${globalN}]`,
-        sourceText: allRefs[globalN - 1],
-      }));
-      try {
-        const { text, unresolved } = await insertMissingCitations({
-          sectionText: newContent[secId], insertions, lang: _remapWorkLang,
-          callClaude: callClaudeAbortable, signal: ctrl.signal,
-        });
-        newContent[secId] = text;
-        unresolvedOrphans.push(...unresolved);
-      } catch (e) {
-        console.error("Помилка вставки цитат непроцитованих джерел", secId, e);
-        unresolvedOrphans.push(...secOrphans.map(o => o.globalN));
-      }
-    }));
-    if (ctrl.signal.aborted) { setRemapLoading(false); return; }
-
-    // ── 7в. Джерела, які так і не вдалося процитувати (unresolvedOrphans) — вони
-    // ніде в тексті не згадуються, тож просто прибираємо їх зі списку літератури
-    // замість попередження користувачу. Для позиційних стилів (не APA/MLA) разом
-    // з видаленням компактно ренумеровуємо решту — без цього прибрані номери
-    // лишили б "дірку" в нумерації.
-    if (unresolvedOrphans.length) {
-      const removed = new Set(unresolvedOrphans);
-      const oldToNewGlobal = {};
-      let nextN = 1;
-      allRefs.forEach((_, i) => {
-        const oldN = i + 1;
-        if (!removed.has(oldN)) oldToNewGlobal[oldN] = nextN++;
-      });
-      if (!isAPA && !isMLA) {
-        const newRefCiteText = {};
-        const newPageRanges = {};
-        Object.entries(oldToNewGlobal).forEach(([oldNStr, newN]) => {
-          const oldN = Number(oldNStr);
-          newRefCiteText[newN] = isFootnoteMode ? `%%FN${newN}%%` : `[${newN}]`;
-          if (pageRanges2[oldN]) newPageRanges[newN] = pageRanges2[oldN];
-        });
-        mainSecs.forEach(sec => {
-          if (!newContent[sec.id]) return;
-          newContent[sec.id] = applyCitationRemap(newContent[sec.id], oldToNewGlobal, newRefCiteText, { pageRanges: newPageRanges, pageAbbrev: _remapPageAbbrev });
-        });
-      }
-      allRefs = allRefs.filter((_, i) => !removed.has(i + 1));
-      fmtLines = allRefs;
-      fmtResult = allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n");
-    }
-
-    // ── 8а. Очищення: прибираємо номери поза діапазоном реального списку (будь-який стиль) ──
-    if (!isAPA && !isMLA) {
-      mainSecs.forEach(sec => {
-        if (!newContent[sec.id]) return;
-        newContent[sec.id] = newContent[sec.id].replace(/\[\s*(\d+(?:\s*[,;]\s*\d+)*)\s*(?:,\s*[сc]\.?\s*\d*[^\]]*)?\s*\]/g, (match, nums) => {
-          const valid = nums.split(/[,;]/).every(n => {
-            const num = Number(n.trim());
-            return num >= 1 && num <= fmtLines.length;
-          });
-          return valid ? match : "";
-        });
-      });
-    }
-
-    // ── 8. Ренумерація для порядку за появою (не APA/MLA, не алфавітний) ──
-    if (!isAPA && !isMLA && !isAlphabeticalOrder) {
-      const firstSeen = [], seen = new Set();
-      mainSecs.forEach(sec => {
-        const text = newContent[sec.id] || "";
-        [...text.matchAll(/\[\s*(\d+(?:\s*[,;]\s*\d+)*)/g)].forEach(m => {
-          m[1].split(/[,;]/).forEach(s => {
-            const n = Number(s.trim());
-            if (!seen.has(n)) { seen.add(n); firstSeen.push(n); }
-          });
-        });
-      });
-      const oldToNew = {};
-      firstSeen.forEach((oldN, idx) => { oldToNew[oldN] = idx + 1; });
-      let nextNew = firstSeen.length + 1;
-      fmtLines.forEach((_, i) => { const n = i + 1; if (!oldToNew[n]) oldToNew[n] = nextNew++; });
-
-      if (Object.entries(oldToNew).some(([old, nw]) => Number(old) !== nw)) {
-        mainSecs.forEach(sec => {
-          if (!newContent[sec.id]) return;
-          let text = newContent[sec.id].replace(/\[\s*(\d+(?:\s*[,;]\s*\d+)*)\s*(?:,\s*[сc]\.?\s*(\d+)?[^\]]*)?\s*\]/g, (match, nums, page) => {
-            const newNums = nums.split(/[,;]/).map(s => oldToNew[Number(s.trim())]).filter(Boolean);
-            if (!newNums.length) return match;
-            if (newNums.length === 1) return `[${newNums[0]}${page ? `, с. ${page}` : ""}]`;
-            return `[${[...new Set(newNums)].join(", ")}]`;
-          });
-          newContent[sec.id] = text;
-        });
-
-        const newFmtLines = new Array(fmtLines.length);
-        fmtLines.forEach((line, i) => {
-          const newIdx = oldToNew[i + 1] - 1;
-          if (newIdx >= 0 && newIdx < newFmtLines.length) newFmtLines[newIdx] = line;
-        });
-        fmtResult = newFmtLines
-          .map((line, i) => line ? `${i + 1}. ${line.replace(/^\d+\.\s*/, "")}` : null)
-          .filter(Boolean).join("\n");
-      }
-    }
-
-    // ── 9. Оновлення секції "Список літератури" і стану ──
-    const srcSec = sections.find(s => s.type === "sources");
-    if (srcSec) newContent[srcSec.id] = fmtResult || allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n");
-    const newRefList = (fmtResult || allRefs.map((r, i) => `${i + 1}. ${r}`).join("\n"))
-      .split("\n").filter(Boolean);
-
-    // ── 9б. Фінальна перевірка сумарного обсягу готової роботи (вступ...список
-    // джерел — додатки й титулка й так поза sections/content, не займаються).
-    // enforceWordCount тримає в межах кожен підрозділ окремо, а цитати
-    // осиротілих джерел (крок 7 вище) довставляються вже ПІСЛЯ цієї перевірки —
-    // сумарний обсяг усієї роботи може вийти за межі заданої к-сті сторінок,
-    // навіть якщо кожен підрозділ окремо формально пройшов перевірку.
-    if (!ctrl.signal.aborted) {
-      const totalTargetWords = sections.reduce((sum, s) => sum + Number(s.pages || 0) * 230, 0);
-      const adjustedVolume = await enforceTotalVolume({
-        sections, content: newContent, targetWords: totalTargetWords,
-        isEligible: (s) => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type),
-        callClaude: callClaudeAbortable, signal: ctrl.signal,
-        sys: buildSYS(_remapWorkLang, methodInfo, normalizeWorkType(info?.type, info?.course)),
-        clean: stripEmDash,
-      });
-      Object.assign(newContent, adjustedVolume);
-    }
-
-    if (!ctrl.signal.aborted) {
-      // Підставляємо у "Структура роботи" фактичну (пораховану з готового тексту) к-сть
-      // сторінок замість запланованої — токен __TOTAL_PAGES__ ставить AI під час написання вступу.
-      const introSec = sections.find(s => s.type === "intro");
-      if (introSec && newContent[introSec.id]?.includes("__TOTAL_PAGES__")) {
-        const totalWords = sections
-          .reduce((sum, s) => sum + (newContent[s.id] || "").trim().split(/\s+/).filter(Boolean).length, 0);
-        const actualPages = Math.max(1, Math.round(totalWords / 230));
-        newContent[introSec.id] = newContent[introSec.id].replaceAll("__TOTAL_PAGES__", String(actualPages));
-      }
-    }
-
-    setRefList(newRefList);
-    setContent(newContent);
-    setCitInputsSnapshot(JSON.stringify(citInputs));
-    await saveToFirestore({ content: newContent, citInputs, citStructured, refList: newRefList, stage: "done", status: "done" });
-
-    const wt = normalizeWorkType(info?.type, info?.course);
-    if (wt === "master" || wt === "bachelor") {
-      await doGenAnnotation(newContent, newRefList);
-    }
-
-    setRemapLoading(false);
-    setStage("done");
+      setRemapLoading(false);
+      setStage(patch.stage);
     } catch (e) {
       if (e.name !== "AbortError" && !ctrl.signal.aborted) {
         console.error("doRemapCitations error:", e);
@@ -4644,6 +3098,7 @@ ${secBlocks}
       setRemapLoading(false);
     }
   };
+
 
   const copyAll = () => {
     const intro = sections.find(s => s.type === "intro");

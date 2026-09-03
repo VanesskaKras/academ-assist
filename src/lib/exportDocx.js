@@ -1,5 +1,6 @@
-import { getLangLabels } from "./planUtils.js";
+import { getLangLabels, detectChapterWord, CHAPTER_WORD_RE } from "./planUtils.js";
 import { PRACTICE_TYPE_GENITIVE } from "./practiceDefaults.js";
+import { deriveDegreeLevelFromType, fixMismatchedDegreeWord } from "./titlePageTokens.js";
 import {
   Document, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Header, HeadingLevel,
   TableOfContents, Table, TableRow, TableCell, WidthType, BorderStyle,
@@ -1099,8 +1100,12 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
     "[ФАКУЛЬТЕТ]": info?.faculty,
     "[КАФЕДРА]": info?.department,
     "[КЕРІВНИК]": info?.supervisorUniversity,
-    "[ОКР]": info?.degreeLevel,
-    "[СПЕЦІАЛЬНІСТЬ]": info?.specialty,
+    // degreeLevel/specialty існують як окремі поля лише в потоці практики (PracticePage) —
+    // для курсових/кваліфікаційних/магістерських робіт клієнт їх окремо не вказує, тож без
+    // фолбеків тут ці токени завжди підставляли б порожній рядок і в титулку проривався б
+    // буквальний ступінь/спеціальність чужого зразка з методички.
+    "[ОКР]": info?.degreeLevel || deriveDegreeLevelFromType(info?.type),
+    "[СПЕЦІАЛЬНІСТЬ]": info?.specialty || info?.direction,
     "[ГАЛУЗЬ_ЗНАНЬ]": info?.knowledgeField,
     "[ВИД_ПРАКТИКИ]": info?.practiceLabel,
   };
@@ -1215,11 +1220,23 @@ export async function exportToDocx({ content, info, displayOrder, appendicesText
       item.spaceBefore ? { ...item, spaceBefore: Math.round(item.spaceBefore * scale) } : item);
   }
 
-  const resolvedLines = autoFitTitlePageLines(titlePageLines?.length
+  let resolvedLines = autoFitTitlePageLines(titlePageLines?.length
     ? titlePageLines.map(item => ({ ...item, text: applyTopic(item.text) }))
     : (titlePage?.trim()
       ? titlePage.split("\n").map(text => ({ text: applyTopic(text), align: RIGHT_LINE_RE.test(text.trim()) ? "right" : "center" }))
       : buildDefaultTitlePageLines()));
+  // Страховка від недогляду кроку читання методички: якщо titlePageTemplate узятий із
+  // ЗАПОВНЕНОГО зразка в Додатках методички (напр. "на здобуття освітнього ступеня
+  // «бакалавр»") і крок токенізації не розпізнав ступінь як чужі дані для заміни на [ОКР],
+  // буквальний ступінь чужого зразка потрапляє прямо в титулку клієнта. На відміну від
+  // ПІБ/теми (які без токена просто лишаються порожніми), ступінь тут можна перевірити
+  // детерміновано — він завжди випливає з типу роботи ("Магістерська" → "магістр") — тому
+  // будь-яке розходження виправляємо кодом, а не покладаємось лише на слухняність ШІ.
+  const correctDegreeLevel = info?.degreeLevel || deriveDegreeLevelFromType(info?.type);
+  if (correctDegreeLevel && Array.isArray(resolvedLines)) {
+    resolvedLines = resolvedLines.map(item =>
+      item.text ? { ...item, text: fixMismatchedDegreeWord(item.text, correctDegreeLevel) } : item);
+  }
   if (resolvedLines) {
     resolvedLines.forEach((item, idx) => {
       const itemSize = item.fontSize ? item.fontSize * 2 : SIZE;
@@ -1725,18 +1742,20 @@ export async function exportPlanToDocx({ sections, info, methodInfo }) {
   const SIZE = Math.round((methodInfo?.formatting?.fontSize || 14) * 2);
   const LINE = 360, INDENT = 709;
   const langCode = detectTextLanguage(sections.map(s => `${s.label || ""} ${s.sectionTitle || ""}`).join(" "), info?.language);
+  const L = getLangLabels(info?.language);
   const mmToTwip = mm => Math.round(mm * 1440 / 25.4);
   const marg = methodInfo?.formatting?.margins || {};
   const toMm = v => (v != null && Number(v) > 0 ? Number(v) : null);
-  const L = mmToTwip(toMm(marg.left)   ?? 30);
-  const R = mmToTwip(toMm(marg.right)  ?? 15);
-  const T = mmToTwip(toMm(marg.top)    ?? 20);
-  const B = mmToTwip(toMm(marg.bottom) ?? 20);
+  const ML = mmToTwip(toMm(marg.left)   ?? 30);
+  const MR = mmToTwip(toMm(marg.right)  ?? 15);
+  const MT = mmToTwip(toMm(marg.top)    ?? 20);
+  const MB = mmToTwip(toMm(marg.bottom) ?? 20);
 
   const intro = sections.find(s => s.type === "intro");
   const concs = sections.find(s => s.type === "conclusions");
   const srcs = sections.find(s => s.type === "sources");
   const main = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
+  const chapWord = detectChapterWord(main.map(s => s.sectionTitle), L.chapterWord);
 
   const children = [];
   if (info?.topic) {
@@ -1750,12 +1769,12 @@ export async function exportPlanToDocx({ sections, info, methodInfo }) {
   const groups = {};
   for (const s of main) { const top = s.id.split(".")[0]; if (!groups[top]) groups[top] = []; groups[top].push(s); }
 
-  if (intro) children.push(new Paragraph({ heading: HeadingLevel.HEADING_1, spacing: { line: LINE, lineRule: "auto", before: LINE, after: Math.round(LINE / 2) }, alignment: AlignmentType.LEFT, indent: { firstLine: 0 }, children: [new TextRun({ text: "ВСТУП", font: FONT, size: SIZE, bold: true, color: "000000" })] }));
+  if (intro) children.push(new Paragraph({ heading: HeadingLevel.HEADING_1, spacing: { line: LINE, lineRule: "auto", before: LINE, after: Math.round(LINE / 2) }, alignment: AlignmentType.LEFT, indent: { firstLine: 0 }, children: [new TextRun({ text: intro.label || L.intro, font: FONT, size: SIZE, bold: true, color: "000000" })] }));
 
   for (const [num, items] of Object.entries(groups)) {
-    const rawTitle = items[0].sectionTitle || `РОЗДІЛ ${num}`;
-    const alreadyHasPrefix = rawTitle.trim().toUpperCase().startsWith(`РОЗДІЛ ${num}`);
-    const secLabel = alreadyHasPrefix ? rawTitle.trim() : `РОЗДІЛ ${num}. ${rawTitle}`;
+    const rawTitle = items[0].sectionTitle || `${chapWord} ${num}`;
+    const alreadyHasPrefix = CHAPTER_WORD_RE.test(rawTitle.trim());
+    const secLabel = alreadyHasPrefix ? rawTitle.trim() : `${chapWord} ${num}. ${rawTitle}`;
     children.push(new Paragraph({ heading: HeadingLevel.HEADING_1, spacing: { line: LINE, lineRule: "auto", before: LINE, after: Math.round(LINE / 2) }, alignment: AlignmentType.LEFT, indent: { firstLine: 0 }, children: [new TextRun({ text: secLabel, font: FONT, size: SIZE, bold: true, color: "000000" })] }));
     for (const s of items) {
       if (/^\d+\.\d+/.test(s.id)) {
@@ -1767,12 +1786,12 @@ export async function exportPlanToDocx({ sections, info, methodInfo }) {
       children.push(new Paragraph({ heading: HeadingLevel.HEADING_2, spacing: { line: LINE, lineRule: "auto", before: Math.round(LINE / 2), after: 0 }, alignment: AlignmentType.LEFT, indent: { firstLine: INDENT }, children: [new TextRun({ text: chapConc.label, font: FONT, size: SIZE, color: "000000" })] }));
     }
   }
-  if (concs) children.push(new Paragraph({ heading: HeadingLevel.HEADING_1, spacing: { line: LINE, lineRule: "auto", before: LINE, after: Math.round(LINE / 2) }, alignment: AlignmentType.LEFT, indent: { firstLine: 0 }, children: [new TextRun({ text: "ВИСНОВКИ", font: FONT, size: SIZE, bold: true, color: "000000" })] }));
-  if (srcs) children.push(new Paragraph({ heading: HeadingLevel.HEADING_1, spacing: { line: LINE, lineRule: "auto", before: LINE, after: Math.round(LINE / 2) }, alignment: AlignmentType.LEFT, indent: { firstLine: 0 }, children: [new TextRun({ text: "СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ", font: FONT, size: SIZE, bold: true, color: "000000" })] }));
+  if (concs) children.push(new Paragraph({ heading: HeadingLevel.HEADING_1, spacing: { line: LINE, lineRule: "auto", before: LINE, after: Math.round(LINE / 2) }, alignment: AlignmentType.LEFT, indent: { firstLine: 0 }, children: [new TextRun({ text: concs.label || L.conclusions, font: FONT, size: SIZE, bold: true, color: "000000" })] }));
+  if (srcs) children.push(new Paragraph({ heading: HeadingLevel.HEADING_1, spacing: { line: LINE, lineRule: "auto", before: LINE, after: Math.round(LINE / 2) }, alignment: AlignmentType.LEFT, indent: { firstLine: 0 }, children: [new TextRun({ text: srcs.label || L.sources, font: FONT, size: SIZE, bold: true, color: "000000" })] }));
 
   const doc = new Document({
     styles: { default: { document: { run: { font: FONT, size: SIZE, color: "000000", language: { value: langCode } }, paragraph: { spacing: { line: LINE, lineRule: "auto" } } } } },
-    sections: [{ properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: T, right: R, bottom: B, left: L } } }, children }],
+    sections: [{ properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: MT, right: MR, bottom: MB, left: ML } } }, children }],
   });
 
   const blob = await Packer.toBlob(doc);

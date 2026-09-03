@@ -6,6 +6,23 @@ export const CODE_FILE_EXTENSIONS = [
   ".html", ".htm", ".css", ".scss", ".sh", ".kt", ".swift", ".m", ".r", ".pl", ".lua",
 ];
 
+// Слово-маркер розділу різними мовами — щоб не змішувати "РОЗДІЛ" з "CHAPTER"/"KAPITEL"
+// тощо в межах однієї роботи (визначаємо фактично використане слово з наявних назв,
+// а не хардкодимо українське за замовчуванням).
+export const CHAPTER_WORD_RE = /^(РОЗДІЛ|CHAPTER|ROZDZIAŁ|CAP[IÍ]TULO|CAPITULO|KAPITEL|KAPITOLA|第\d*章)/i;
+const CHAPTER_PREFIX_NUM_RE = /^(?:РОЗДІЛ|CHAPTER|ROZDZIAŁ|CAP[IÍ]TULO|CAPITULO|KAPITEL|KAPITOLA|第\d*章)\s*\d+[.:]?\s*(.*)/i;
+
+// Визначає слово-маркер розділу за вже наявними назвами розділів (перше, що збіглося),
+// щоб перенумерація/експорт не додавали чуже мовою слово ("РОЗДІЛ") до назви, вже
+// написаної іншою мовою ("CHAPTER 1. ...") — інакше вийде подвійний префікс.
+export function detectChapterWord(titles, fallback = "РОЗДІЛ") {
+  for (const t of titles || []) {
+    const m = (t || "").match(CHAPTER_WORD_RE);
+    if (m) return m[1].toUpperCase();
+  }
+  return fallback;
+}
+
 const LATIN_APPENDIX_LETTERS = ["A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z"];
 // ДСТУ 3008: нумерація додатків українською абеткою без літер Ґ, Є, З, І, Ї, Й, О, Ч, Ь (схожі на цифри/інші літери)
 const UKRAINIAN_APPENDIX_LETTERS = ["А","Б","В","Г","Д","Е","Ж","И","К","Л","М","Н","П","Р","С","Т","У","Ф","Х","Ц","Ш","Щ","Ю","Я"];
@@ -56,6 +73,22 @@ export function stripNonContentSections(sections, fixedIds = ["intro", "conclusi
     const clean = (s.label || "").replace(/^[\d.)\s]+/, "").trim();
     return !NON_CONTENT_SECTION_RE.test(clean);
   });
+}
+
+// Компоненти вступу з методички ДОПОВНЮЮТЬ базовий обов'язковий список, а не замінюють
+// його. Раніше, якщо крок читання методички не розпізнав явно згаданий пункт (напр.
+// методичка каже "особливу увагу слід приділити поясненню методів дослідження" звичайним
+// реченням, а не підзаголовком "методи дослідження:"), непорожній methodInfo.introComponents
+// повністю витісняв дефолтний список — і пункт на кшталт "методи дослідження" просто
+// зникав із вступу, хоча його включення завжди доречне для наукової роботи. Об'єднання
+// (union) натомість лише додає специфічні для методички пункти (гіпотеза, апробація тощо)
+// понад базові, не ризикуючи прибрати щось обов'язкове через неповне розпізнавання.
+export function mergeIntroComponents(defaultComponents, methodComponents) {
+  const base = defaultComponents || [];
+  const extra = (methodComponents || []).filter(
+    mc => !base.some(dc => dc.trim().toLowerCase() === (mc || "").trim().toLowerCase())
+  );
+  return [...base, ...extra];
 }
 
 // Виявлення посилань на рисунки в тексті ("Рис. 1.2", "Figure 3" тощо) — спільна для
@@ -680,20 +713,14 @@ export function buildPlanText(secs) {
   const srcs = secs.find(s => s.type === "sources");
   const main = secs.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
   // Auto-detect chapter word from existing section titles so we never mix languages
-  const detectedChapWord = (() => {
-    for (const s of main) {
-      const m = (s.sectionTitle || "").match(/^(РОЗДІЛ|CHAPTER|ROZDZIAŁ|CAP[IÍ]TULO|CAPITULO|KAPITEL|KAPITOLA|第\d*章)/i);
-      if (m) return m[1].toUpperCase();
-    }
-    return "РОЗДІЛ";
-  })();
+  const detectedChapWord = detectChapterWord(main.map(s => s.sectionTitle));
   const lines = [];
   if (intro) lines.push((intro.label || "ВСТУП") + "\n");
   const groups = {};
   for (const s of main) { const top = s.id.split(".")[0]; if (!groups[top]) groups[top] = []; groups[top].push(s); }
   for (const [num, items] of Object.entries(groups)) {
     const rawTitle = items[0].sectionTitle || items[0].label.replace(/^\d+\.\d+\s+/, "").split(" ").slice(0, 7).join(" ").toUpperCase();
-    const alreadyHasPrefix = /^(РОЗДІЛ|CHAPTER|ROZDZIAŁ|CAP[IÍ]TULO|CAPITULO|KAPITEL|KAPITOLA|第\d*章)/i.test(rawTitle.trim());
+    const alreadyHasPrefix = CHAPTER_WORD_RE.test(rawTitle.trim());
     const secLabel = alreadyHasPrefix ? rawTitle.trim() : `${detectedChapWord} ${num}. ${rawTitle}`;
     lines.push(secLabel);
     for (const s of items) { if (/^\d+\.\d+/.test(s.id)) lines.push(`    ${s.label}`); }
@@ -755,14 +782,15 @@ export function renumberSections(sections) {
       if (!chapterTitles.includes(s.sectionTitle)) chapterTitles.push(s.sectionTitle);
     }
   });
+  const chapWord = detectChapterWord(chapterTitles);
   const chNumMap = {};
   chapterTitles.forEach((title, idx) => { chNumMap[title] = idx + 1; });
   const chTitleMap = {};
   chapterTitles.forEach(title => {
     const newN = chNumMap[title];
-    const match = title.match(/^РОЗДІЛ\s+\d+[.:]?\s*(.*)/i);
+    const match = title.match(CHAPTER_PREFIX_NUM_RE);
     const rest = match ? match[1] : title;
-    chTitleMap[title] = `РОЗДІЛ ${newN}. ${rest}`.trimEnd();
+    chTitleMap[title] = `${chapWord} ${newN}. ${rest}`.trimEnd();
   });
   const subCount = {};
   let lastChNum = 1;

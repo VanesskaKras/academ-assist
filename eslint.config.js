@@ -26,4 +26,12 @@ export default defineConfig([
       'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
     },
   },
+  {
+    // worker/ і *.test.js — звичайні Node-скрипти (CLI воркер, юніт-тести без
+    // фреймворка), а не браузерний бандл — потребують Node-глобалів (process тощо).
+    files: ['worker/**/*.js', '**/*.test.js'],
+    languageOptions: {
+      globals: globals.node,
+    },
+  },
 ])

@@ -12,6 +12,7 @@
   "dependencies": {
     "docx": "^8.5.0",
     "firebase": "^12.10.0",
+    "firebase-admin": "^14.3.0",
     "mammoth": "^1.12.0",
     "pdfjs-dist": "^6.1.200",
     "pptxgenjs": "^4.0.1",

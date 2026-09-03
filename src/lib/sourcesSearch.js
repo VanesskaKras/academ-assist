@@ -5,6 +5,14 @@
 
 import { normalizeAuthorsScript } from "./transliteration.js";
 
+// window.dispatchEvent('apicost', ...) — браузерний спосіб донести вартість
+// виклику до живого лічильника в UI. У Node-воркері window немає — там
+// виклик передає onCost і отримує ті самі дані прямим викликом функції.
+function reportCost(detail, onCost) {
+  if (onCost) { onCost(detail); return; }
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("apicost", { detail }));
+}
+
 // ── Стоп-слова: структурні/загальні слова що не несуть теми ──
 const STOP_WORDS = new Set([
   'аналіз', 'дослідження', 'особливості', 'формування', 'удосконалення',
@@ -425,7 +433,7 @@ function mapOpenAlex(p, forceLang) {
 }
 
 // ── Google Scholar через Serper.dev (проксі /api/search-scholar) ──
-async function fetchScholar(query, limit) {
+async function fetchScholar(query, limit, onCost) {
   try {
     const res = await fetch('/api/search-scholar', {
       method: 'POST',
@@ -436,7 +444,7 @@ async function fetchScholar(query, limit) {
     const data = await res.json();
     const sources = (data.sources || []).filter(p => p.title && !isBlocked(p));
     if (sources.length > 0)
-      window.dispatchEvent(new CustomEvent('apicost', { detail: { cost: 0.001, model: 'serper', inTok: 1, outTok: 0 } }));
+      reportCost({ cost: 0.001, model: 'serper', inTok: 1, outTok: 0 }, onCost);
     return sources;
   } catch { return []; }
 }
@@ -924,7 +932,7 @@ export async function searchSourcesForSection(ukKeywords, enKeywords, needed = 4
 // його спростувати. Ловить саме те, що один прохід пропускає: загальнотеоретичний збіг
 // лексики в тезі задовольняється джерелом з іншого предмета (інший вид мистецтва/
 // діяльності, інша вікова група, країна, період чи галузь) ──
-async function devilsAdvocateCheck(shortlist, sectionTitle, topic, thesisContext) {
+async function devilsAdvocateCheck(shortlist, sectionTitle, topic, thesisContext, onCost) {
   if (!shortlist.length) return shortlist;
   const items = shortlist.map((p, i) => {
     const abstractLine = p.abstract ? `\n   Анотація: ${p.abstract.slice(0, 220)}` : '\n   (анотації немає)';
@@ -985,7 +993,7 @@ ${items}
     const data = await res.json();
     if (data.usageMetadata) {
       const cost = (data.usageMetadata.promptTokenCount * 0.10 + data.usageMetadata.candidatesTokenCount * 0.40) / 1_000_000;
-      window.dispatchEvent(new CustomEvent('apicost', { detail: { cost, model: 'gemini-2.5-flash-lite', inTok: data.usageMetadata.promptTokenCount, outTok: data.usageMetadata.candidatesTokenCount } }));
+      reportCost({ cost, model: 'gemini-2.5-flash-lite', inTok: data.usageMetadata.promptTokenCount, outTok: data.usageMetadata.candidatesTokenCount }, onCost);
     }
     const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     const parsed = JSON.parse(raw);
@@ -1005,7 +1013,7 @@ ${items}
 // спростувати кожного кандидата з проходу А. Джерело йде далі лише якщо погодились обидва —
 // немає "тихого" дефолту: збій запиту чи непарситься відповідь трактуються як "нічого не
 // підтверджено", а не як "усе підходить".
-export async function filterSourcesWithGemini(candidates, sectionTitle, topic, maxResults = 15, thesisContext = '') {
+export async function filterSourcesWithGemini(candidates, sectionTitle, topic, maxResults = 15, thesisContext = '', onCost) {
   if (!candidates.length) return candidates;
   const items = candidates.map((p, i) => {
     const abstractLine = p.abstract
@@ -1071,7 +1079,7 @@ ${items}
     const data = await res.json();
     if (data.usageMetadata) {
       const cost = (data.usageMetadata.promptTokenCount * 0.10 + data.usageMetadata.candidatesTokenCount * 0.40) / 1_000_000;
-      window.dispatchEvent(new CustomEvent('apicost', { detail: { cost, model: 'gemini-2.5-flash-lite', inTok: data.usageMetadata.promptTokenCount, outTok: data.usageMetadata.candidatesTokenCount } }));
+      reportCost({ cost, model: 'gemini-2.5-flash-lite', inTok: data.usageMetadata.promptTokenCount, outTok: data.usageMetadata.candidatesTokenCount }, onCost);
     }
     const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     const parsed = JSON.parse(raw);
@@ -1089,7 +1097,7 @@ ${items}
       }));
     if (!passA.length) return passA;
     // Прохід Б: незалежна друга перевірка — не бачить оцінки/причини Проходу А
-    return devilsAdvocateCheck(passA, sectionTitle, topic, thesisContext);
+    return devilsAdvocateCheck(passA, sectionTitle, topic, thesisContext, onCost);
   } catch {
     // Мережевий збій або непарситься JSON — так само "нічого не підтверджено"
     return [];
@@ -1097,7 +1105,7 @@ ${items}
 }
 
 // ── Другий раунд добору при нестачі: альтернативні (синоніми/суміжні терміни) пошукові фрази ──
-export async function generateAlternatePhrases(topic, sectionTitle, triedPhrases = []) {
+export async function generateAlternatePhrases(topic, sectionTitle, triedPhrases = [], onCost) {
   const prompt = `Тема наукової роботи: "${topic}"
 Підрозділ: "${sectionTitle}"
 Вже пробували ці пошукові фрази (результатів бракує): ${triedPhrases.join('; ')}
@@ -1118,7 +1126,7 @@ export async function generateAlternatePhrases(topic, sectionTitle, triedPhrases
     const data = await res.json();
     if (data.usageMetadata) {
       const cost = (data.usageMetadata.promptTokenCount * 0.10 + data.usageMetadata.candidatesTokenCount * 0.40) / 1_000_000;
-      window.dispatchEvent(new CustomEvent('apicost', { detail: { cost, model: 'gemini-2.5-flash-lite', inTok: data.usageMetadata.promptTokenCount, outTok: data.usageMetadata.candidatesTokenCount } }));
+      reportCost({ cost, model: 'gemini-2.5-flash-lite', inTok: data.usageMetadata.promptTokenCount, outTok: data.usageMetadata.candidatesTokenCount }, onCost);
     }
     const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     const parsed = JSON.parse(raw);
@@ -1410,7 +1418,7 @@ export function paperToCitation(paper) {
   return `${authorsPart}${normTitle(paper.title)}.${venue} ${paper.year}.${issuePart}${pages}${urlPart}`.replace(/\.\s*\./g, '.').replace(/\s{2,}/g, ' ').trim();
 }
 
-export async function generateSearchPhrases(sectionLabel, topic, direction = '', subject = '') {
+export async function generateSearchPhrases(sectionLabel, topic, direction = '', subject = '', onCost) {
   const domainCtx = [direction, subject].filter(Boolean).join(', ');
   const prompt = `Тема наукової роботи: "${topic}"${domainCtx ? `\nГалузь: ${domainCtx}` : ''}
 Підрозділ: "${sectionLabel}"
@@ -1437,7 +1445,7 @@ export async function generateSearchPhrases(sectionLabel, topic, direction = '',
     const data = await res.json();
     if (data.usageMetadata) {
       const cost = (data.usageMetadata.promptTokenCount * 0.10 + data.usageMetadata.candidatesTokenCount * 0.40) / 1_000_000;
-      window.dispatchEvent(new CustomEvent('apicost', { detail: { cost, model: 'gemini-2.5-flash-lite', inTok: data.usageMetadata.promptTokenCount, outTok: data.usageMetadata.candidatesTokenCount } }));
+      reportCost({ cost, model: 'gemini-2.5-flash-lite', inTok: data.usageMetadata.promptTokenCount, outTok: data.usageMetadata.candidatesTokenCount }, onCost);
     }
     const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     const parsed = JSON.parse(raw);
