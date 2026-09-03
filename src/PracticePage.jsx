@@ -12,7 +12,7 @@ import {
   buildPracticeDiaryPrompt, buildDiaryTemplateAnalysisPrompt,
   buildTemplateAnalysisPrompt, buildPracticeDetailsPrompt, buildFigureInsertPrompt,
 } from "./lib/prompts.js";
-import { parseTemplate, isEcon, isTechnical, getEconSections, hasRealFigure, findDanglingFigureRefs, extractNumericFacts, extractOpeningSentences, normalizePageDistribution, stripNonContentSections, resolvePracticeFixedPages, getLangLabels } from "./lib/planUtils.js";
+import { parseTemplate, isEcon, isTechnical, getEconSections, hasRealFigure, findDanglingFigureRefs, extractNumericFacts, extractCodeFacts, extractOpeningSentences, normalizePageDistribution, stripNonContentSections, resolvePracticeFixedPages, getLangLabels } from "./lib/planUtils.js";
 import { locateFragment } from "./lib/textFragmentLocate.js";
 import { detectSpecialtyPrioritized } from "./lib/academicDefaults.js";
 import {
@@ -109,6 +109,20 @@ function buildPracticePlanText(sections) {
     lines.push(isSub ? `    ${s.label}` : s.label);
   });
   return lines.join("\n");
+}
+
+// Факти (цифри з одиницею, коди документів/журналів) для інструкції "вже зафіксовано, не
+// вигадуй нове" в buildPracticeWritingPrompt. СПЕРШУ йдуть факти з ОРИГІНАЛЬНИХ матеріалів
+// клієнта (rawText) — вони джерело правди; лише ПОТІМ факти з уже написаних розділів. Порядок
+// критичний: якщо це не так, а перший-таки написаний розділ помилково прочитає джерело (напр.
+// "4 хв" як "4 год"), ця вже написана-й-помилкова версія стає "зафіксованим фактом" і мовчки
+// тиражується у всі наступні розділи/таблиці/щоденник — сам механізм консистентності консервує
+// одну випадкову помилку замість того, щоб її виправити.
+function buildEstablishedFacts(clientMaterialsSummary, otherSectionsText) {
+  const sourceText = clientMaterialsSummary?.rawText || "";
+  const sourceFacts = [...extractNumericFacts(sourceText), ...extractCodeFacts(sourceText)];
+  const writtenFacts = otherSectionsText.flatMap(t => [...extractNumericFacts(t), ...extractCodeFacts(t)]);
+  return [...new Set([...sourceFacts, ...writtenFacts])];
 }
 
 // ─── Компонент пілюль ─────────────────────────────────────────────────────────
@@ -1390,9 +1404,10 @@ ${secBlock}
       const sec = writableSecs[idx];
       setGenIdx(idx);
       setLoadMsg(`Генерую: ${sec.label}...`);
-      const establishedFacts = writableSecs
-        .filter(s => s.id !== sec.id && finalContent[s.id])
-        .flatMap(s => extractNumericFacts(finalContent[s.id]));
+      const establishedFacts = buildEstablishedFacts(
+        clientMaterialsSummary,
+        writableSecs.filter(s => s.id !== sec.id && finalContent[s.id]).map(s => finalContent[s.id]),
+      );
       let instruction = buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterialsSummary, citInputs, abstractsMap, establishedFacts, deptGuidanceText);
 
       // Уже написані початки попередніх розділів цієї ж роботи — doWrite генерує строго
@@ -1473,9 +1488,10 @@ ${secBlock}
     if (!sec) return;
     setRegenLoading(true);
     const info = getPracticeInfo();
-    const establishedFacts = sections
-      .filter(s => s.id !== secId && s.id !== "sources" && content[s.id])
-      .flatMap(s => extractNumericFacts(content[s.id]));
+    const establishedFacts = buildEstablishedFacts(
+      clientMaterialsSummary,
+      sections.filter(s => s.id !== secId && s.id !== "sources" && content[s.id]).map(s => content[s.id]),
+    );
     let instruction = buildPracticeWritingPrompt(sec, info, methodInfo, clientMaterialsSummary, citInputs, abstractsMap, establishedFacts);
     if (regenPrompt.trim()) instruction += `\n\nДОДАТКОВІ ВИМОГИ: ${regenPrompt.trim()}`;
     const isTableSec = methodInfo?.reportFormat === "table_questionnaire" && sec.id !== "intro" && sec.id !== "conclusions";
