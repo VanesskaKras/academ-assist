@@ -4,6 +4,7 @@
 // Semantic Scholar — НЕ підтримує CORS, проксимо через /api/search-sources (Vercel)
 
 import { normalizeAuthorsScript } from "./transliteration.js";
+import { getApiBase } from "./api.js";
 
 // window.dispatchEvent('apicost', ...) — браузерний спосіб донести вартість
 // виклику до живого лічильника в UI. У Node-воркері window немає — там
@@ -245,7 +246,7 @@ export async function lookupDoiMetadata(doi) {
 export async function fetchPagesFromUrl(url) {
   if (!url) return null;
   try {
-    const res = await fetch('/api/fetch-meta', {
+    const res = await fetch(`${getApiBase()}/api/fetch-meta`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url }),
@@ -267,7 +268,7 @@ export async function fetchPagesFromUrl(url) {
 export async function verifyUrlOpens(url) {
   if (!url) return false;
   try {
-    const res = await fetch('/api/fetch-meta', {
+    const res = await fetch(`${getApiBase()}/api/fetch-meta`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url }),
@@ -435,7 +436,7 @@ function mapOpenAlex(p, forceLang) {
 // ── Google Scholar через Serper.dev (проксі /api/search-scholar) ──
 async function fetchScholar(query, limit, onCost) {
   try {
-    const res = await fetch('/api/search-scholar', {
+    const res = await fetch(`${getApiBase()}/api/search-scholar`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query, limit }),
@@ -453,7 +454,7 @@ async function fetchScholar(query, limit, onCost) {
 // Немає CORS у браузері — проксимо через /api/search-core (Vercel)
 async function fetchCORE(query, limit) {
   try {
-    const res = await fetch('/api/search-core', {
+    const res = await fetch(`${getApiBase()}/api/search-core`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query, limit }),
@@ -498,7 +499,7 @@ function mapCORE(result) {
 // Немає гарантованого CORS у браузері — проксимо через /api/search-doaj (Vercel)
 async function fetchDOAJ(query, limit) {
   try {
-    const res = await fetch('/api/search-doaj', {
+    const res = await fetch(`${getApiBase()}/api/search-doaj`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query, limit }),
@@ -580,7 +581,7 @@ async function fetchCrossRefBooks(query, limit) {
 // ── Google Books через Serper.dev (проксі /api/search-books) ──
 async function fetchBooksGoogle(query, limit) {
   try {
-    const res = await fetch('/api/search-books', {
+    const res = await fetch(`${getApiBase()}/api/search-books`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query, limit }),
@@ -623,7 +624,7 @@ async function fetchCrossRefUkrainian(query, limit, extraYears = 0) {
 // ── Semantic Scholar через бекенд (немає CORS у браузері) ──
 async function fetchEnglishViaBackend(enKeywords, limit) {
   try {
-    const res = await fetch('/api/search-sources', {
+    const res = await fetch(`${getApiBase()}/api/search-sources`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enKeywords, ukKeywords: [], needed: limit }),
@@ -958,7 +959,7 @@ ${items}
 
 Поверни JSON: {"results":[{"index":0,"reject":false,"reason":"..."}]}`;
   try {
-    const res = await fetch('/api/gemini', {
+    const res = await fetch(`${getApiBase()}/api/gemini`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1041,7 +1042,7 @@ ${items}
 
 Поверни JSON: {"results":[{"index":0,"objectMatch":true,"aspectMatch":true,"contextMatch":true,"score":85,"reason":"Розглядає..."}]}`;
   try {
-    const res = await fetch('/api/gemini', {
+    const res = await fetch(`${getApiBase()}/api/gemini`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1113,7 +1114,7 @@ export async function generateAlternatePhrases(topic, sectionTitle, triedPhrases
 Попередні фрази явно занадто вузькі — бракує результатів під них у наукових базах. Запропонуй 3 НОВІ, СУТТЄВО ШИРШІ пошукові фрази українською: прибери вузькі власні назви (конкретні імена, назви творів) і вузькоспеціальні терміни, залиш лише загальний предмет і суть теми підрозділу — так, як шукав би цю тему науковець, що формулює запит на рівень ширше за вже спробуване, а не просто підбирає синонім до того самого вузького словосполучення.
 Поверни JSON: {"phrases":["фраза1","фраза2","фраза3"]}`;
   try {
-    const res = await fetch('/api/gemini', {
+    const res = await fetch(`${getApiBase()}/api/gemini`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1432,7 +1433,7 @@ export async function generateSearchPhrases(sectionLabel, topic, direction = '',
 
 Поверни JSON: {"phrases":["укр 1","укр 2","укр 3","укр 4","en 1","en 2","en 3","en 4"]}`;
   try {
-    const res = await fetch('/api/gemini', {
+    const res = await fetch(`${getApiBase()}/api/gemini`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

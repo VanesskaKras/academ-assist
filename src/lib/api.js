@@ -62,6 +62,9 @@ export function getGenerationCost() { return defaultCostTracker.value; }
 // локальний dev-сервер).
 let API_BASE = "";
 export function setApiBase(base) { API_BASE = (base || "").replace(/\/$/, ""); }
+// sourcesSearch.js також викликає /api/*, але не з api.js — щоб не тримати
+// два окремі API_BASE, воно читає це саме значення через геттер.
+export function getApiBase() { return API_BASE; }
 
 // window.dispatchEvent('apicost', ...) — браузерний спосіб донести вартість
 // виклику до живого лічильника в UI (academic-assistant.jsx). У Node-воркері

@@ -2,29 +2,9 @@
 // на відміну від браузерного src/firebase.js (клієнтський SDK, публічний
 // конфіг, права через security rules прив'язані до автентифікованого
 // користувача), тут повні права на читання/запис без прив'язки до браузера.
-//
-// Потрібно перед запуском:
-//   1. Firebase Console → Project Settings → Service Accounts → Generate new
-//      private key → зберегти JSON-файл десь ЛОКАЛЬНО (не комітити в git!).
-//   2. Встановити змінні середовища:
-//        GOOGLE_APPLICATION_CREDENTIALS=шлях/до/service-account.json
-//        FIREBASE_PROJECT_ID=той самий projectId, що й у src/firebase.js
-import { initializeApp, applicationDefault, getApps } from "firebase-admin/app";
+// Налаштування (GOOGLE_APPLICATION_CREDENTIALS тощо) — див. firebaseApp.js.
 import { getFirestore } from "firebase-admin/firestore";
-
-function ensureApp() {
-  if (getApps().length) return;
-  if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-    throw new Error(
-      "GOOGLE_APPLICATION_CREDENTIALS не задано — потрібен шлях до JSON-ключа сервісного акаунта Firebase " +
-      "(Firebase Console → Project Settings → Service Accounts → Generate new private key)."
-    );
-  }
-  initializeApp({
-    credential: applicationDefault(),
-    projectId: process.env.FIREBASE_PROJECT_ID,
-  });
-}
+import { ensureApp } from "./firebaseApp.js";
 
 function ordersCollection() {
   ensureApp();

@@ -15,14 +15,15 @@ import { enforceWordCount, enforceTotalVolume, stripEmDash } from "./wordCount.j
 import { insertMissingCitations, capCitationRepeats, buildFinalReferenceList, buildCiteFormats, createReferenceDeduper, applyCitationRemap } from "./citationFormatting.js";
 import { fixDanglingFigures } from "./figureFixup.js";
 import { deriveDegreeLevelFromType } from "./titlePageTokens.js";
-import { fixMixedScript, typographQuotes, getIntroTasksProfile, INTRO_TASKS_MERGE_SPLIT_RULE, CODE_GROUNDING_RULE } from "./textCleanup.js";
+import { fixMixedScript, typographQuotes, getIntroTasksProfile, INTRO_TASKS_MERGE_SPLIT_RULE, CODE_GROUNDING_RULE, APPENDIX_FILL_MARKER, APPENDIX_FILL_MARKER_RULE } from "./textCleanup.js";
 import {
   getEmpiricalSections, getEconSections, getTechnicalSections, parsePagesAvg, hasRealFigure, extractOpeningSentences, getLangLabels,
   buildWorkConfig, calcSourceDist, buildPlanText, parseClientPlan, parseTemplate, detectRequestedChapterCount, isPsychoPed,
-  deriveStructureFromExampleTOC, mergeExampleWorkIntoMethodInfo, mergeIntroComponents,
+  deriveStructureFromExampleTOC, mergeExampleWorkIntoMethodInfo, mergeIntroComponents, stripLeadingAppendixLabel,
+  hasEmpiricalResearch, isEcon, isTechnical, CODE_FILE_EXTENSIONS,
 } from "./planUtils.js";
-import { getAcademicDefaults, normalizeWorkType } from "./academicDefaults.js";
-import { searchByPhrase, filterSourcesWithGemini, paperToCitation, enrichSources } from "./sourcesSearch.js";
+import { getAcademicDefaults, normalizeWorkType, classifyAppendixItem, detectSpecialty } from "./academicDefaults.js";
+import { searchByPhrase, filterSourcesWithGemini, paperToCitation, enrichSources, getEconInstitutionalSources, generateAlternatePhrases } from "./sourcesSearch.js";
 import { extractReadyWorkStructure, quickParsePlanIds } from "./readyWorkExtract.js";
 
 // ── Підбір ілюстрацій клієнта для розділу (перенесено з academic-assistant.jsx
@@ -1211,6 +1212,8 @@ export async function runAnalyzeStage(order, ctx) {
       if (Array.isArray(parsed.sourcesStyle)) parsed.sourcesStyle = parsed.sourcesStyle.join(', ');
       if (Array.isArray(parsed.citationStyle)) parsed.citationStyle = parsed.citationStyle.join('; ');
       if (typeof parsed.sourcesMinCount === 'string') parsed.sourcesMinCount = parseInt(parsed.sourcesMinCount) || null;
+      parsed.titlePageTemplate = stripLeadingAppendixLabel(parsed.titlePageTemplate);
+      parsed.taskSheetTemplate = stripLeadingAppendixLabel(parsed.taskSheetTemplate);
       methodParsed = parsed;
       progress.methodologyRead = true;
       await save({ methodInfo: methodParsed, analyzeProgress: progress });
@@ -1234,6 +1237,8 @@ export async function runAnalyzeStage(order, ctx) {
       exampleParsed = JSON.parse(exampleMatch?.[0] || exampleRaw.replace(/```json|```/g, "").trim());
       if (Array.isArray(exampleParsed.sourcesStyle)) exampleParsed.sourcesStyle = exampleParsed.sourcesStyle.join(', ');
       if (Array.isArray(exampleParsed.citationStyle)) exampleParsed.citationStyle = exampleParsed.citationStyle.join('; ');
+      exampleParsed.titlePageTemplate = stripLeadingAppendixLabel(exampleParsed.titlePageTemplate);
+      exampleParsed.taskSheetTemplate = stripLeadingAppendixLabel(exampleParsed.taskSheetTemplate);
       exampleStructure = deriveStructureFromExampleTOC(exampleParsed.exampleTOC, newInfo?.language);
       progress.exampleWorkRead = true;
     } catch (e) {
@@ -1744,4 +1749,678 @@ export async function runRemapStage(order, ctx) {
   }
 
   return patch;
+}
+
+// ── Чи потребує ЦЕЙ підрозділ уже готового Додатку А, перш ніж його можна
+// писати — та сама умова, що й ворота в циклі написання academic-assistant.jsx
+// (useEffect коло runSection: "appendicesLoading && !appendicesText" тощо).
+// Викликач (браузерний цикл чи воркер) має сам вирішувати, чи чекати, коли
+// ця функція повертає true, а Додаток А ще не готовий — сама вона нічого не чекає. ──
+export function sectionNeedsAppendix(sec, order) {
+  const empSecs = getEmpiricalSections(order.sections, order.info, order.commentAnalysis, order.methodInfo);
+  const hasEmpirical = hasEmpiricalResearch(order.commentAnalysis, order.methodInfo);
+  const practApproach = order.commentAnalysis?.practicalApproach;
+  return !!(empSecs.chapterSectionIds.includes(sec.id) || sec.id === empSecs.anchorId ||
+    (hasEmpirical && ["analysis", "recommendations"].includes(sec.type)) ||
+    (practApproach && practApproach !== "questionnaire" && ["analysis", "recommendations"].includes(sec.type)));
+}
+
+/**
+ * Чи потрібен Додаток А для цього замовлення взагалі, і якщо так — генерувати
+ * його ДО написання тексту (реальний інструмент: методика/тест/експеримент,
+ * або економічна/технічна робота — джерело істини не залежить від того, що
+ * напише ШІ) чи ВІДКЛАСТИ до готового тексту (авторська анкета без фіксованого
+ * інструменту — щоб додаток узгодився з реально написаною вибіркою). Та сама
+ * логіка, що й у startGen() (academic-assistant.jsx, needsAppendixForGen/
+ * appendixDeferredRef).
+ * @returns {{needsAppendix: boolean, deferred: boolean}}
+ */
+export function planAppendixGeneration(order) {
+  const info = order.info;
+  const acadDefaults = getAcademicDefaults(info?.subject, info?.type, info?.course, info?.topic);
+  const specialtyRecognized = !!detectSpecialty(info?.subject || "");
+  const needsAppendix = !!(order.commentAnalysis?.practicalApproach || isPsychoPed(info) || (acadDefaults?.appendicesAiGen?.length > 0) || !specialtyRecognized);
+  const instrumentType = order.commentAnalysis?.researchDesign?.instrumentType;
+  const isRealInstrument = ["psycho_scale", "fitness_test", "pedagogical_experiment"].includes(instrumentType);
+  const deferred = needsAppendix && !isRealInstrument && !isEcon(info) && !isTechnical(info);
+  return { needsAppendix, deferred };
+}
+
+// ── Додаток із лістингами вихідного коду клієнта (лише для технічних робіт,
+// коли серед матеріалів клієнта є файли коду) — перенесено без зміни логіки ──
+function buildCodeAppendixBlock(order, existingText, lang) {
+  if (!isTechnical(order.info)) return "";
+  const codeMaterials = (order.clientMaterials || []).filter(m =>
+    CODE_FILE_EXTENSIONS.some(ext => m.name.toLowerCase().endsWith(ext))
+  );
+  if (!codeMaterials.length) return "";
+
+  const abc = getLangLabels(lang).appendixLetters;
+  const usedLetters = new Set();
+  const re = /ДОДАТОК\s+([А-ЯA-Z])/gi;
+  let m;
+  while ((m = re.exec(existingText || "")) !== null) usedLetters.add(m[1].toUpperCase());
+  const letter = abc.find(l => !usedLetters.has(l)) || abc[abc.length - 1];
+
+  const listings = codeMaterials.map((mat, idx) =>
+    `Лістинг ${letter}.${idx + 1} — ${mat.name}\n\`\`\`\n${mat.text}\n\`\`\``
+  ).join("\n\n");
+  return `\nДОДАТОК ${letter}\nВихідний код програми\n\n${listings}`;
+}
+
+/**
+ * Генерує Додаток А (інструмент дослідження — анкета/методика/тест/експеримент
+ * — або таблиці/схеми/програми за таблицею academicDefaults, залежно від
+ * спеціальності). Перенесено з doGenAppendices без зміни логіки.
+ *
+ * @param {object} order - info, methodInfo, commentAnalysis, sections, content,
+ *   clientMaterialsSummary, clientMaterialsText, econProfile, appendicesCustomPrompt,
+ *   clientMaterials (для коду, лише технічні роботи)
+ * @param {object} ctx - { callClaude, signal?, onCost? }
+ * @param {object} [opts] - { econProfileOverride, finishedBodyTextOverride } —
+ *   friendBodyTextOverride задається для ВІДКЛАДЕНОЇ генерації (після тексту),
+ *   econProfileOverride — коли профіль підприємства щойно згенеровано окремо
+ *   і ще не встиг потрапити в order.econProfile
+ * @returns {Promise<{appendicesText: string}>}
+ */
+export async function runAppendicesStage(order, ctx, opts = {}) {
+  const info = order.info;
+  const methodInfo = order.methodInfo;
+  const commentAnalysis = order.commentAnalysis;
+  const sections = order.sections || [];
+  const content = order.content || {};
+  const lang = info?.language || "Українська";
+
+  const mainSecs = sections.filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
+  const planBlock = mainSecs.length
+    ? `СТРУКТУРА РОБОТИ:\n${mainSecs.map(s => `- ${s.label} (${s.type})`).join("\n")}`
+    : "";
+
+  const realMaterialsForApp = order.clientMaterialsSummary?.rawText || order.clientMaterialsText?.trim() || "";
+  const econProfileForApp = opts.econProfileOverride !== undefined ? opts.econProfileOverride : order.econProfile;
+  const groundingBlock = isTechnical(info) && realMaterialsForApp
+    ? `\nМАТЕРІАЛИ КЛІЄНТА (реальний код — використовуй ці дані: посилайся на фактичні назви класів/функцій, мову програмування та тип інтерфейсу з цього коду, не вигадуй іншу архітектуру):\n${realMaterialsForApp.slice(0, 80000)}\n`
+    : (isEcon(info) && econProfileForApp)
+      ? `\nФІКСОВАНІ БАЗОВІ ДАНІ ПІДПРИЄМСТВА (використовуй САМЕ ЦІ дані, не вигадуй іншу назву/рік/цифри):\n${econProfileForApp}\n`
+      : "";
+
+  const methodBlock = methodInfo?.theoryRequirements || methodInfo?.analysisRequirements || methodInfo?.otherRequirements
+    ? `ВИМОГИ МЕТОДИЧКИ: ${[methodInfo.theoryRequirements, methodInfo.analysisRequirements, methodInfo.otherRequirements].filter(Boolean).join(". ")}`
+    : "";
+
+  const bodyGroundingBlock = opts.finishedBodyTextOverride
+    ? `\nТЕКСТ РОБОТИ ВЖЕ ПОВНІСТЮ НАПИСАНИЙ. Нижче наведені завершені емпіричні підрозділи — Додаток А ОБОВ'ЯЗКОВО має точно відповідати тому, що в них уже стверджується: та сама вибірка (кількість осіб, вік/клас/категорія, критерії відбору), той самий тип респондентів, той самий інструмент і кількість запитань. Це джерело істини, воно ПЕРЕВАЖАЄ над будь-якими загальними дефолтами чи прикладами нижче.\n\nЗАВЕРШЕНИЙ ТЕКСТ ЕМПІРИЧНОГО ДОСЛІДЖЕННЯ:\n${opts.finishedBodyTextOverride.slice(0, 60000)}\n`
+    : "";
+
+  const clientBlock = commentAnalysis?.writingHints
+    ? `ПОБАЖАННЯ КЛІЄНТА: ${commentAnalysis.writingHints}`
+    : "";
+
+  const customBlock = order.appendicesCustomPrompt?.trim()
+    ? `\nДОДАТКОВІ ІНСТРУКЦІЇ: ${order.appendicesCustomPrompt.trim()}`
+    : "";
+
+  const empSecs = getEmpiricalSections(sections, info, commentAnalysis, methodInfo);
+  const hasEmpChapter = empSecs.chapterSectionIds.length > 0 || empSecs.anchorId;
+
+  const promisesAppendixAnketa = Object.values(content || {}).some(text =>
+    typeof text === "string" && text.split(/[.!?\n]/).some(s => /анкет/i.test(s) && /додат/i.test(s))
+  );
+
+  const rdApp = commentAnalysis?.researchDesign ?? (commentAnalysis?.empiricalHints ? { instrumentType: "questionnaire", groups: [], comparisonRequired: false, biographicalFields: [], statisticalMinN: null } : null);
+  const hasEmpiricalApp = hasEmpiricalResearch(commentAnalysis, methodInfo) || isPsychoPed(info) || hasEmpChapter || promisesAppendixAnketa;
+  const acadDefaultsApp = !rdApp ? getAcademicDefaults(info?.subject, info?.type, info?.course, info?.topic) : null;
+
+  const empClientBlock = (() => {
+    if (!rdApp && !commentAnalysis?.empiricalHints) return "";
+    const parts = [];
+    if (rdApp?.groups?.length) parts.push(`Групи учасників: ${rdApp.groups.map(g => `${g.name}${g.minN ? ` (мін. ${g.minN} осіб)` : ""}${g.criteria ? `, ${g.criteria}` : ""}`).join("; ")}.`);
+    if (rdApp?.biographicalFields?.length) parts.push(`Біографічний блок анкети: ${rdApp.biographicalFields.join(", ")}.`);
+    if (rdApp?.statisticalMinN) parts.push(`Загальна мін. вибірка: ${rdApp.statisticalMinN} осіб.`);
+    if (rdApp?.comparisonRequired || (rdApp?.groups?.length || 0) > 1) parts.push("Передбачити порівняння між групами — питання мають бути однаковими для всіх груп.");
+    if (!parts.length && commentAnalysis?.empiricalHints) return `ВИМОГА КЛІЄНТА: ${commentAnalysis.empiricalHints}\n`;
+    return parts.length ? `ВИМОГА КЛІЄНТА:\n${parts.join("\n")}\n` : "";
+  })();
+
+  const needTwoQuestionnaires = rdApp?.groups?.length >= 2 ||
+    /2\s*(дослідження|анкет|методик)|дві\s*(анкет|методик)|два\s*дослідження/i.test(commentAnalysis?.empiricalHints || "");
+
+  const instrumentType = rdApp?.instrumentType || "questionnaire";
+  const bioFieldsLine = rdApp?.biographicalFields?.length
+    ? `Біографічний блок (перші запитання анкети): ${rdApp.biographicalFields.join(", ")}.`
+    : "Біографічний блок (перші 4-5 запитань): ПІБ або псевдонім, вік, стаж, кваліфікація або посада.";
+
+  const buildQuestionnairePrompt = (appendixLabel, groupDesc) => `Перший рядок: ${appendixLabel}
+Другий рядок: назва анкети відповідно до теми роботи: "${info?.topic}"${groupDesc ? `, для групи: ${groupDesc}` : ""}.
+Звернення до респондента та інструкція (2-3 речення).
+${bioFieldsLine}
+12-15 запитань закритого типу з варіантами відповідей: а), б), в), г).
+Запитання логічно охоплюють різні аспекти теми "${info?.topic}"${groupDesc ? ` для групи: ${groupDesc}` : ""}.
+В кінці: "Дякуємо за участь у дослідженні!"`;
+
+  const buildScalePrompt = (appendixLabel) => `Перший рядок: ${appendixLabel}
+Обери РЕАЛЬНУ, загальновідому стандартизовану психологічну методику (шкалу, опитувальник, тест), яка справді існує і відповідає темі роботи "${info?.topic}" (наприклад методики Айзенка, Розенберга, Кеттелла, Холмса-Рея, Спілбергера (оригінальна версія STAI, без російських адаптацій) та подібні залежно від теми).
+СТРОГО ЗАБОРОНЕНО обирати методику, автор або адаптатор якої є російським чи білоруським науковцем (наприклад НЕ використовуй "Спілбергера-Ханіна" — Ханін є радянським/російським психологом; НЕ використовуй методики з прізвищами авторів-адаптаторів з Росії чи Білорусі). Обирай лише методики західних, українських або інших міжнародних (не рос./білор.) авторів. Якщо загальновідома методика має поширену в СНД назву з російським прізвищем — використай оригінальну назву автора (напр. оригінал Spielberger State-Trait Anxiety Inventory, без "-Ханіна").
+Другий рядок: справжня назва цієї методики та автор(и).
+Опис методики: мета, сфера застосування, кількість тверджень — як в оригіналі.
+Інструкція для респондента — як в оригінальній методиці.
+Відтвори пункти методики максимально точно як в офіційному оригіналі (ця методика загальновідома і вільно публікується в методичних збірниках, тому відтворення доречне). Якщо не повністю впевнений у дослівному формулюванні якогось пункту — формулюй його максимально близько до відомої структури та змісту цієї методики, не вигадуй нову методику з нуля.
+Шкала відповідей та ключ до обробки — як в оригінальній методиці (розподіл балів, рівні).
+СТРОГО ЗАБОРОНЕНО видавати вигадану (неіснуючу) методику за реальну. Якщо для теми справді немає підходящої стандартизованої методики — обери найближчу за тематикою реальну (не рос./білор. автора) і зазнач можливість адаптації.`;
+
+  const buildFitnessTestPrompt = (appendixLabel) => `Перший рядок: ${appendixLabel}
+Другий рядок: назва батареї тестів відповідно до теми роботи: "${info?.topic}".
+Перелік 5-8 фізичних тестів або вимірювань: назва тесту, одиниці вимірювання, порядок проведення.
+Нормативна таблиця: вікові норми або рівні (низький/нижчий за середній/середній/вищий за середній/високий).
+Протокол фіксації результатів (таблиця для заповнення).`;
+
+  const buildExperimentPrompt = (appendixLabel) => `Перший рядок: ${appendixLabel}
+Другий рядок: назва протоколу педагогічного експерименту відповідно до теми роботи: "${info?.topic}".
+Мета та гіпотеза експерименту відповідно до теми роботи: "${info?.topic}".
+Опис контрольної та експериментальної груп (кількість, критерії відбору).
+Констатувальний етап: діагностичний інструментарій (тести, завдання, спостереження) — 10-15 пунктів.
+Формувальний етап: короткий опис педагогічного впливу або програми.
+Контрольний етап: ті самі діагностичні інструменти для порівняння.
+Протокол фіксації результатів до і після.`;
+
+  const buildDataTableAppendixPart = (slot, itemName, topic) => `${slot} — ${itemName}.
+Створи ілюстративну таблицю markdown (|---|---| формат) відповідно до теми "${topic}". Підпис таблиці одним рядком перед нею. За потреби короткий пояснювальний коментар під таблицею (2-3 речення).
+Якщо ця таблиця узагальнює результати дослідження/опитування, що також описуються в основному тексті роботи (частки відповідей, середні оцінки, кількісні показники тощо) — постав у відповідні клітинки маркер із правила нижче замість вигаданих чисел, щоб цифри згодом узгодились з основним текстом. Якщо ж таблиця містить довідкові/нормативні дані, не пов'язані з результатами конкретного дослідження (наприклад загальні класифікації, нормативи, характеристики об'єктів) — заповнюй її реалістичними, правдоподібними даними одразу.`;
+
+  const buildSchemeAppendixPart = (slot, itemName, topic) => `${slot} — ${itemName}.
+Опиши схему/структуру у вигляді чіткого структурованого тексту (список рівнів, блоків і зв'язків між ними) відповідно до теми "${topic}". Це текстовий опис схеми, графічний рендер недоступний.`;
+
+  const buildProgramAppendixPart = (slot, itemName, topic) => `${slot} — ${itemName}.
+Розроби структуровану програму/методику/стратегію відповідно до теми "${topic}": мета, етапи або напрями роботи, конкретні заходи чи кроки, очікувані результати.`;
+
+  const buildDocumentAppendixPart = (slot, itemName, topic) => `${slot} — ${itemName}.
+Сформуй перелік або документ-зразок відповідно до теми "${topic}" — конкретні пункти, назви, реквізити. Не вигадуй реальні номери судових справ чи назви конкретних організацій, якщо вони не підтверджені контекстом.`;
+
+  const buildFormAppendixPart = (slot, itemName, topic) => `${slot} — ${itemName}.
+Створи бланк/протокол/гайд відповідно до теми "${topic}": структура, поля для заповнення, інструкція, 8-15 пунктів де доречно.`;
+
+  const buildSoftwareTestProtocolAppendixPart = (slot, itemName, topic) => `${slot} — ${itemName}.
+Створи протокол тестування функціональності програми відповідно до теми "${topic}": короткий вступний блок (назва програмного продукту, версія, мова реалізації, середовище виконання, шкала оцінювання результату: ПРОЙДЕНО / ПРОВАЛЕНО / ЧАСТКОВО), далі markdown-таблиця (|---|---| формат) з колонками: Тест | Умова | Очікуваний результат | Фактичний результат | Статус | Примітки. 6-10 рядків, що покривають ключові функції програми відповідно до теми (якщо в матеріалах клієнта є реальний код — тести мають відповідати саме тим функціям, що є в цьому коді). В кінці окремим рядком додай "Дата тестування: ${APPENDIX_FILL_MARKER}" — для цього протоколу дата теж позначається маркером (виняток із загального правила про порожній бланк для дати), бо вона підставляється автоматично.
+У колонках "Фактичний результат" і "Статус" НЕ вигадуй конкретне значення — постав туди рівно текст ${APPENDIX_FILL_MARKER}, ці дані стають відомі лише після завершення написання роботи.`;
+
+  const APPENDIX_BUILDERS = {
+    data_table: buildDataTableAppendixPart,
+    scheme: buildSchemeAppendixPart,
+    program: buildProgramAppendixPart,
+    document: buildDocumentAppendixPart,
+    form: buildFormAppendixPart,
+  };
+
+  const isItSpecialty = detectSpecialty(info?.subject) === "it";
+
+  const buildAcadDefaultsAppendixBlock = (candidates, topic) => {
+    const parts = candidates.map(item => {
+      const builder = (isItSpecialty && /тест/i.test(item))
+        ? buildSoftwareTestProtocolAppendixPart
+        : (APPENDIX_BUILDERS[classifyAppendixItem(item)] || buildFormAppendixPart);
+      return builder("[ДОДАТОК]", item, topic);
+    });
+    const abc = getLangLabels(lang).appendixLetters;
+    const sample = abc.slice(0, 3).join(", ");
+    return `Можливі додатки для цієї роботи (оціни кожен і обери лише ті, що дійсно логічно потрібні для теми "${topic}" — не обов'язково всі, зазвичай достатньо 2-4):
+
+${parts.join("\n\n---\n\n")}
+
+Для кожного обраного додатку постав послідовну позначку ДОДАТОК ${sample}... з ${abc.length === 24 ? "цієї української абетки (без Ґ, Є, З, І, Ї, Й, О, Ч, Ь)" : "латинської абетки"} (тільки для тих що дійсно генеруєш, без пропусків у нумерації).
+Якщо для якогось додатку доречно посилатись на конкретну методику, теорію, модель або стандарт — СТРОГО ЗАБОРОНЕНО використовувати ті, чий автор є російським чи білоруським науковцем. Обирай лише західні, українські або інші міжнародні (не рос./білор.) джерела.`;
+  };
+
+  let prompt;
+  if (hasEmpiricalApp && !order.appendicesCustomPrompt?.trim()) {
+    const header = `Згенеруй інструмент дослідження (Додаток А) для ${info?.type || "наукової роботи"} на тему "${info?.topic}". Галузь: ${info?.subject}.
+${planBlock}
+${methodBlock}
+${empClientBlock}${clientBlock}${groundingBlock}${bodyGroundingBlock}
+Мова: ${lang}. БЕЗ markdown, зірочок, жирного. Звичайний текст.`;
+
+    if (instrumentType === "psycho_scale") {
+      prompt = `${header}\n\n${buildScalePrompt("ДОДАТОК А")}`;
+    } else if (instrumentType === "fitness_test") {
+      prompt = `${header}\n\n${buildFitnessTestPrompt("ДОДАТОК А")}`;
+    } else if (instrumentType === "pedagogical_experiment") {
+      prompt = `${header}\n\n${buildExperimentPrompt("ДОДАТОК А")}`;
+    } else if (needTwoQuestionnaires && rdApp?.groups?.length >= 2) {
+      const g1 = rdApp.groups[0];
+      const g2 = rdApp.groups[1];
+      prompt = `${header}
+
+Кожен додаток — окрема анкета для своєї групи учасників.
+
+ДОДАТОК А — анкета для групи: ${g1.name}${g1.criteria ? ` (${g1.criteria})` : ""}.
+${buildQuestionnairePrompt("ДОДАТОК А", g1.name)}
+
+---
+
+ДОДАТОК Б — анкета для групи: ${g2.name}${g2.criteria ? ` (${g2.criteria})` : ""}.
+${buildQuestionnairePrompt("ДОДАТОК Б", g2.name)}
+${rdApp.groups.length > 2 ? `\nПримітка: якщо є третя група (${rdApp.groups[2]?.name}), використовують той самий інструмент що й для найближчої за профілем групи.` : ""}`;
+    } else if (acadDefaultsApp?.instrumentsCount > 1) {
+      const n = acadDefaultsApp.instrumentsCount;
+      const letters = (getLangLabels(lang).appendixLetters || []).slice(0, n);
+      const blocks = letters.map((letter, i) => {
+        const label = `ДОДАТОК ${letter}`;
+        if (i === 0) return `${label} — авторська анкета.\n${buildQuestionnairePrompt(label, "")}`;
+        return `${label} — окрема реальна психологічна методика (шкала/тест), відмінна від анкети та інших методик у цьому списку.\n${buildScalePrompt(label)}`;
+      }).join("\n\n---\n\n");
+      prompt = `${header}
+
+Згенеруй ${n} окремі додатки — інструменти дослідження для емпіричної частини (${letters[0]} — авторська анкета, решта — реальні стандартизовані психологічні методики, кожна відмінна від інших), усі відповідно до теми.
+
+${blocks}`;
+    } else if (acadDefaultsApp?.appendicesAiGen?.length > 0) {
+      prompt = `${header}
+
+${buildAcadDefaultsAppendixBlock(acadDefaultsApp.appendicesAiGen, info?.topic)}`;
+    } else {
+      prompt = `${header}
+
+Додаток А містить анкету для емпіричного дослідження.${rdApp?.groups?.length ? ` Основна група респондентів: ${rdApp.groups[0].name}${rdApp.groups[0].criteria ? ` (${rdApp.groups[0].criteria})` : ""}.` : ""}
+Визнач що саме досліджується відповідно до теми.
+
+${buildQuestionnairePrompt("ДОДАТОК А", rdApp?.groups?.[0]?.name || "")}`;
+    }
+  } else if (!order.appendicesCustomPrompt?.trim() && acadDefaultsApp?.appendicesAiGen?.length > 0) {
+    const header = `Згенеруй Додатки для ${info?.type || "наукової роботи"} на тему "${info?.topic}". Галузь: ${info?.subject}.
+${planBlock}
+${methodBlock}
+${clientBlock}${groundingBlock}${bodyGroundingBlock}
+Мова: ${lang}. БЕЗ markdown, зірочок, жирного. Звичайний текст.`;
+    prompt = `${header}
+
+${buildAcadDefaultsAppendixBlock(acadDefaultsApp.appendicesAiGen, info?.topic)}`;
+  } else {
+    prompt = `Згенеруй розділ "Додатки" для ${info?.type || "наукової роботи"} на тему "${info?.topic}". Галузь: ${info?.subject || ""}.
+${planBlock}
+${methodBlock}
+${clientBlock}${groundingBlock}${bodyGroundingBlock}
+${customBlock || `Включи один або два додатки що логічно доповнюють роботу відповідно до теми та структури (таблиці, схеми, зразки документів тощо).`}
+Мова: ${lang}. БЕЗ markdown, зірочок, жирного. Кожен додаток починається з нового рядка: ДОДАТОК А, ДОДАТОК Б тощо.`;
+  }
+
+  prompt += `\n\n${APPENDIX_FILL_MARKER_RULE}`;
+
+  const raw = await ctx.callClaude(
+    [{ role: "user", content: prompt }], ctx.signal, buildSYS(lang, methodInfo, normalizeWorkType(info?.type, info?.course)), 6000, null, MODEL, { onCost: ctx.onCost }
+  );
+  const result = typographQuotes(raw
+    .replace(/ — /g, ", ").replace(/— /g, " ").replace(/ —/g, " ")
+    .replace(/[ᄀ-ᇿ⺀-鿿ꀀ-꓿가-퟿豈-﫿]/g, "")
+  )
+    .replace(/\n{2,}/g, '\n');
+  const finalResult = result + buildCodeAppendixBlock(order, result, lang);
+  return { appendicesText: finalResult };
+}
+
+/**
+ * Автозаповнення полів Додатків, позначених маркером ЗАПОВНЮЄТЬСЯ_АВТОМАТИЧНО,
+ * коли основний текст роботи вже готовий (напр. "Фактичний результат"/"Статус"
+ * у протоколі тестування — стають відомі лише після написання розділів).
+ * Перенесено з doFillAppendixData; на відміну від оригіналу тут немає
+ * "виконати лише раз" — це рішення викликача (там був appendixFillDoneRef).
+ *
+ * @param {object} order - appendicesText, sections, content, info, methodInfo
+ * @param {object} ctx - { callClaude, signal?, onCost? }
+ * @returns {Promise<{appendicesText?: string}>} порожній патч, якщо маркерів
+ *   немає взагалі (нічого робити) або якщо фінальний виклик ШІ провалився
+ *   (лишаємо appendicesText як є, так само як в оригіналі)
+ */
+export async function runFillAppendixDataStage(order, ctx) {
+  if (!order.appendicesText || !order.appendicesText.includes(APPENDIX_FILL_MARKER)) return {};
+  const info = order.info;
+  const lang = info?.language || "Українська";
+  const todayStr = new Date().toLocaleDateString("uk-UA");
+  const dateFilledText = order.appendicesText.replace(
+    new RegExp(`(Дата тестування:\\s*)${APPENDIX_FILL_MARKER}`, "g"),
+    `$1${todayStr}`
+  );
+  if (!dateFilledText.includes(APPENDIX_FILL_MARKER)) {
+    return { appendicesText: dateFilledText };
+  }
+  const finishedText = (order.sections || [])
+    .filter(s => s.type !== "sources")
+    .map(s => (order.content || {})[s.id])
+    .filter(Boolean)
+    .join("\n\n");
+  const prompt = `Нижче наведено розділ "Додатки" ${info?.type || "наукової роботи"} на тему "${info?.topic}", у якому частину полів позначено маркером ${APPENDIX_FILL_MARKER} — їх потрібно заповнити значеннями, узгодженими з основним текстом роботи, який тепер повністю готовий.
+
+ОСНОВНИЙ ТЕКСТ РОБОТИ (спирайся на нього, не вигадуй даних, що суперечать йому):
+${finishedText.slice(0, 60000)}
+
+ДОДАТКИ З МАРКЕРАМИ:
+${dateFilledText}
+
+Заміни КОЖЕН маркер ${APPENDIX_FILL_MARKER} на конкретне значення, узгоджене з тим, що вже стверджується в основному тексті роботи (наприклад, якщо текст стверджує, що функціонал працює коректно — постав відповідний фактичний результат і статус "ПРОЙДЕНО"; якщо десь згадано проблему чи обмеження — врахуй це). Решту тексту додатків НЕ змінюй і поверни дослівно, окрім заміни маркерів. Мова: ${lang}. БЕЗ markdown, зірочок, жирного (markdown-таблиці, що вже є в тексті, лишаються у форматі |---|---|).`;
+  try {
+    const raw = await ctx.callClaude([{ role: "user", content: prompt }], ctx.signal, buildSYS(lang, order.methodInfo, normalizeWorkType(info?.type, info?.course)), 6000, null, MODEL, { onCost: ctx.onCost });
+    if (raw && raw.trim()) {
+      return { appendicesText: stripEmDash(raw.trim()) };
+    }
+    return { appendicesText: dateFilledText };
+  } catch (e) {
+    console.warn("Автозаповнення додатків не вдалося:", e.message);
+    return {};
+  }
+}
+
+// ── Виконує async-задачі з обмеженим паралелізмом (пул) — перенесено без змін.
+// На відміну від браузерної версії немає stopRef (кнопка "⏹ зупинити пошук" —
+// ручний UI-контроль, поза межами цієї фази) ──
+async function runWithConcurrency(items, limit, worker) {
+  let cursor = 0;
+  const runNext = async () => {
+    while (cursor < items.length) {
+      const item = items[cursor++];
+      await worker(item);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, runNext));
+}
+
+// ── Тези + пошукові фрази для ОДНОГО підрозділу — адаптовано з
+// regenerateThesesAndPhrases (academic-assistant.jsx), яка вже й в оригіналі
+// генерує по одній секції за раз (на відміну від doGenKeywords, що пакетує
+// по 8 секцій в один виклик — свідомо спрощуємо до по-секційного підходу
+// regenerateThesesAndPhrases, як і зафіксовано в плані: простіше й краще
+// відновлюється воркером). callGemini замість сирого fetch("/api/gemini") —
+// той самий фікс, що вже зробили для api.js/sourcesSearch.js. ──
+async function genThesesForSection(order, sec, ctx) {
+  const info = order.info;
+  const commentAnalysis = order.commentAnalysis;
+  const methodInfo = order.methodInfo;
+  const sourceDist = order.sourceDist || {};
+  const content = order.content || {};
+  const txt = content[sec.id]
+    ? `\n${content[sec.id].substring(0, 1200).replace(/["\\]/g, " ").replace(/\n+/g, " ")}`
+    : "";
+  const domainCtx = [info?.direction, info?.subject].filter(Boolean).join(', ');
+  const commentCtx = [commentAnalysis?.planHints, commentAnalysis?.writingHints].filter(Boolean).join(' ').slice(0, 400);
+  const methodCtx = [methodInfo?.otherRequirements, methodInfo?.theoryRequirements, methodInfo?.analysisRequirements].filter(Boolean).join(' ').slice(0, 400);
+  const secBlock = `### ${sec.label} (потрібно ${sourceDist[sec.id] || 3} джерела)${txt}`;
+  const prompt = `Ти допомагаєш знайти наукові джерела для академічної роботи на тему "${info?.topic}"${domainCtx ? ` (галузь: ${domainCtx})` : ''}.
+
+ЗАВДАННЯ — для підрозділу:
+
+КРОК 1. Визнач 4–5 конкретних тез — повних змістовних тверджень про те, що саме доводитиметься у цьому підрозділі: який об'єкт/група/явище, в якому аспекті, в якому контексті (країна, період, галузь). Не назва розділу і не загальна категорія, а конкретне твердження (7–14 слів).
+Приклад: тема "Дистанційна зайнятість в ІТ" → теза "вплив дистанційної роботи на продуктивність працівників ІТ-компаній України", а НЕ просто "дистанційна робота" чи "продуктивність праці".
+
+КРОК 2. Для кожної тези склади 3 пошукові фрази українською:
+- 2 КОНКРЕТНІ = [1–2 ключових слова з ТЕМИ роботи] + [конкретний аспект тези] — як точний прицільний пошук.
+- 1 ШИРША — РІВНО ДВА ключових поняття із загального предмета тези, не більше (не три і не чотири) — без вузьких власних назв, конкретних імен чи вузькоспеціальних термінів. Що менше понять — то ширше знаходить пошук: перевірено, що фраза з двох понять "філософія та естетика романтизму" знаходить у десятки разів більше, ніж фраза з трьох понять "символізм надприродного в романтизмі" про той самий предмет. Тому: обери два НАЙЗАГАЛЬНІШІ поняття з теми й тези, відкинь решту деталізації.
+Приклад: теза "вплив натурфілософії Шеллінга на образ надприродного в романтизмі" → конкретні: "Шеллінг натурфілософія романтизм", "філософія природи Шеллінг надприродне"; ширша (лише два поняття): "філософія та естетика романтизму".
+ВАЖЛИВО: конкретні фрази мають містити точний предмет теми; широка фраза — той самий загальний контекст без надмірної деталізації, не втрачаючи зв'язку з темою.${commentCtx ? `\nПОБАЖАННЯ КЛІЄНТА: ${commentCtx}` : ''}${methodCtx ? `\nВИМОГИ МЕТОДИЧКИ: ${methodCtx}` : ''}
+
+КРОК 3. Додай 3 пошукові фрази АНГЛІЙСЬКОЮ для підрозділу загалом (academic English, ширші за тезу) —
+для пошуку в міжнародних англомовних базах.
+
+ПІДРОЗДІЛ:
+${secBlock}
+
+Поверни валідний JSON: {"theses": масив об'єктів {"thesis": рядок, "phrases": масив рядків}, "enPhrases": масив з 3 англомовних фраз}`;
+
+  const raw = await ctx.callGemini([{ role: "user", content: prompt }], ctx.signal, undefined, 1200, null, "gemini-2.5-flash-lite", true, { onCost: ctx.onCost });
+  const jsonMatch = raw.match(/\{[\s\S]*\}/);
+  const parsed = JSON.parse(jsonMatch?.[0] || raw.replace(/```json|```/g, "").trim());
+  const theses = (Array.isArray(parsed.theses) ? parsed.theses : [])
+    .map(t => ({
+      thesis: String(t.thesis || '').trim(),
+      phrases: (Array.isArray(t.phrases) ? t.phrases : []).map(String).filter(Boolean),
+    }))
+    .filter(t => t.phrases.length > 0);
+  const enPhrases = (Array.isArray(parsed.enPhrases) ? parsed.enPhrases : []).map(String).filter(Boolean);
+  return { theses, enPhrases };
+}
+
+// ── Пошук + фільтрація + збагачення + каскад добору при нестачі — перенесено
+// з doSearchSources (academic-assistant.jsx) без зміни логіки каскаду
+// (непокриті тези → +2/+3/+8 років → альтернативні фрази → повна регенерація
+// тез), лише без setState (повертає накопичені групи, а не пише в стан) ──
+async function searchSourcesForSection(order, sec, theses, enPhrases, ctx) {
+  const info = order.info;
+  const secId = sec.id;
+  const needed = (order.sourceDist || {})[secId] || 4;
+  const isEconSecForSources = isEcon(info) && getEconSections(order.sections, info).includes(secId);
+  const isTechnicalWork = isTechnical(info);
+  const institutionalGroup = isEconSecForSources
+    ? [{ phrase: "Офіційна статистика", papers: getEconInstitutionalSources() }]
+    : [];
+  const globalSeen = ctx.crossSectionSeen || new Set();
+  const updatedGroups = [...institutionalGroup];
+
+  const filterLabel = (sec.label || '').replace(/^РОЗДІЛ\s+[IVXivxІVХ\d]+[.\s:]+/i, '').trim() || sec.label;
+  const topicCtx = [info?.topic, info?.direction, info?.subject].filter(Boolean).join(' ');
+  const nextEnPhrase = (i) => enPhrases.length ? enPhrases[i % enPhrases.length] : '';
+
+  const phraseTasks = [];
+  for (const { thesis, phrases } of theses) {
+    (phrases || []).forEach((phrase, pi) => phraseTasks.push({ thesis, phrase, pi }));
+  }
+  const processPhrase = async ({ thesis, phrase, pi }) => {
+    const useScholar = pi === 0 || isTechnicalWork;
+    const candidates = await searchByPhrase(phrase, 15, 1, useScholar, 0, nextEnPhrase(pi));
+    const fresh = candidates.filter(p => {
+      const key = (p.title || '').toLowerCase().slice(0, 60);
+      return key && !globalSeen.has(key);
+    });
+    if (!fresh.length) return;
+    const top15raw = await filterSourcesWithGemini(fresh.slice(0, 25), filterLabel, topicCtx, 20, thesis, ctx.onCost);
+    const top15tagged = thesis ? top15raw.map(p => ({ ...p, sourceThesis: thesis })) : top15raw;
+    const top15enriched = await enrichSources(top15tagged);
+    const top15 = top15enriched.filter(p => {
+      const key = (p.title || '').toLowerCase().slice(0, 60);
+      return key && !globalSeen.has(key);
+    });
+    if (!top15.length) return;
+    top15.forEach(p => globalSeen.add((p.title || '').toLowerCase().slice(0, 60)));
+    const existingIdx = updatedGroups.findIndex(g => g.phrase === phrase);
+    if (existingIdx >= 0) {
+      updatedGroups[existingIdx] = { phrase, papers: [...updatedGroups[existingIdx].papers, ...top15] };
+    } else {
+      updatedGroups.push({ phrase, papers: top15 });
+    }
+  };
+  await runWithConcurrency(phraseTasks, 4, processPhrase);
+
+  if (updatedGroups.length || theses.length) {
+    const isGood = (p, min) => (p.geminiScore ?? 0) >= min && p._complete !== false;
+    const countAtScore = (min) => updatedGroups.flatMap(g => g.papers).filter(p => isGood(p, min)).length;
+    const countGood = () => countAtScore(70);
+    const countForThesis = (t) => updatedGroups.flatMap(g => g.papers).filter(p => p.sourceThesis === t && isGood(p, 70)).length;
+    const stillShort = () => countGood() < needed;
+    let triedPhrases = theses.flatMap(t => t.phrases || []);
+
+    const backfillPhrase = async (phrase, extraYears, enPhrase = '', thesisText = '') => {
+      const candidates = await searchByPhrase(phrase, 15, 1, true, extraYears, enPhrase);
+      const fresh = candidates.filter(p => {
+        const key = (p.title || '').toLowerCase().slice(0, 60);
+        return key && !globalSeen.has(key);
+      });
+      if (!fresh.length) return;
+      const filteredRaw = await filterSourcesWithGemini(fresh.slice(0, 25), filterLabel, topicCtx, 20, thesisText, ctx.onCost);
+      const filteredTagged = thesisText ? filteredRaw.map(p => ({ ...p, sourceThesis: thesisText })) : filteredRaw;
+      const filtered = await enrichSources(filteredTagged);
+      filtered.forEach(p => globalSeen.add((p.title || '').toLowerCase().slice(0, 60)));
+      const existingIdx = updatedGroups.findIndex(g => g.phrase === phrase);
+      if (existingIdx >= 0) {
+        updatedGroups[existingIdx] = { phrase, papers: [...updatedGroups[existingIdx].papers, ...filtered] };
+      } else {
+        updatedGroups.push({ phrase, papers: filtered });
+      }
+    };
+
+    const uncoveredTheses = theses.filter(t => t.thesis && countForThesis(t.thesis) === 0);
+    for (const t of uncoveredTheses) {
+      if (countForThesis(t.thesis) > 0) continue;
+      for (let i = 0; i < (t.phrases || []).length; i++) {
+        if (countForThesis(t.thesis) > 0) break;
+        await backfillPhrase(t.phrases[i], 2, nextEnPhrase(i), t.thesis);
+      }
+    }
+
+    for (const extraYears of [2, 3, 8]) {
+      if (countGood() >= needed) break;
+      for (let i = 0; i < triedPhrases.length; i++) {
+        if (countGood() >= needed) break;
+        await backfillPhrase(triedPhrases[i], extraYears, nextEnPhrase(i));
+      }
+    }
+
+    const maxAltRounds = 3;
+    for (let round = 0; round < maxAltRounds && stillShort() && triedPhrases.length; round++) {
+      const altPhrases = await generateAlternatePhrases(topicCtx, filterLabel, triedPhrases, ctx.onCost);
+      if (!altPhrases.length) break;
+      triedPhrases = [...triedPhrases, ...altPhrases];
+      for (let i = 0; i < altPhrases.length; i++) {
+        if (!stillShort()) break;
+        await backfillPhrase(altPhrases[i], 3, nextEnPhrase(i));
+      }
+    }
+
+    // Остання автоматична спроба — повна регенерація тез підрозділу (та сама
+    // функція, що й для першого проходу — виправдана спрощена версія: жодна
+    // з двох генерацій не залежить від попереднього результату).
+    if (stillShort()) {
+      try {
+        const { theses: regenTheses, enPhrases: regenEnPhrases } = await genThesesForSection(order, sec, ctx);
+        const regenPhrases = regenTheses.flatMap(t => t.phrases || []);
+        const nextRegenEnPhrase = (i) => regenEnPhrases.length ? regenEnPhrases[i % regenEnPhrases.length] : '';
+        for (let i = 0; i < regenPhrases.length; i++) {
+          if (!stillShort()) break;
+          await backfillPhrase(regenPhrases[i], 3, nextRegenEnPhrase(i));
+        }
+      } catch (e) {
+        console.error('Auto thesis regeneration error:', e.message);
+      }
+    }
+  }
+
+  return { groups: updatedGroups, seenKeys: globalSeen };
+}
+
+// ── Автовибір знайдених джерел для вставки — перенесено з auto-insert
+// useEffect у SourcesStage.jsx (autoInsertedRef) без зміни логіки: лише
+// підтверджені (score≥70 і гейт повноти, або інституційні), розподіл по колу
+// за тезою (не просто топ-N за оцінкою — щоб покриття тем було рівномірним),
+// з квотою на зарубіжні джерела. ──
+export function autoSelectSources(groups, needed, isTechnicalWork) {
+  const suggestions = groups.flatMap(g => g.papers);
+  const foreignFraction = isTechnicalWork ? 0.5 : 0.3;
+  const maxForeign = Math.max(1, Math.round(needed * foreignFraction));
+  const confirmed = suggestions.filter(p =>
+    p.source === 'institutional' || ((p.geminiScore ?? 0) >= 70 && p._complete !== false)
+  );
+  const grouped = {};
+  for (const p of confirmed) {
+    const key = p.sourceThesis || '';
+    (grouped[key] ||= []).push(p);
+  }
+  Object.values(grouped).forEach(arr => arr.sort((a, b) => (b.geminiScore ?? 100) - (a.geminiScore ?? 100)));
+  const thesisKeys = Object.keys(grouped);
+  const nextIdx = Object.fromEntries(thesisKeys.map(k => [k, 0]));
+  const top = [];
+  let foreignCount = 0;
+  let progress = true;
+  while (top.length < needed && progress) {
+    progress = false;
+    for (const key of thesisKeys) {
+      if (top.length >= needed) break;
+      const arr = grouped[key];
+      while (nextIdx[key] < arr.length) {
+        const cand = arr[nextIdx[key]];
+        nextIdx[key]++;
+        const isForeign = cand.lang !== 'uk';
+        if (isForeign && foreignCount >= maxForeign) continue;
+        top.push(cand);
+        if (isForeign) foreignCount++;
+        progress = true;
+        break;
+      }
+    }
+  }
+  return top;
+}
+
+// ── Вставка обраних джерел у citInputs/citStructured/abstractsMap/
+// sourceThesisMap — перенесено з insertSources (SourcesStage.jsx), без
+// браузерного авторозтягування textarea (DOM, тут не потрібне) ──
+async function insertSourcesIntoOrder(order, secId, papersToAdd, { capForeign = true } = {}) {
+  const unchanged = { citInputs: order.citInputs || {}, citStructured: order.citStructured || {}, abstractsMap: order.abstractsMap || {}, sourceThesisMap: order.sourceThesisMap || {} };
+  if (!papersToAdd.length) return unchanged;
+
+  const enriched = await enrichSources(papersToAdd);
+
+  const needed = (order.sourceDist || {})[secId] || 4;
+  const foreignFraction = isTechnical(order.info) ? 0.5 : 0.3;
+  const maxForeign = Math.max(1, Math.round(needed * foreignFraction));
+  const ukPapers = enriched.filter(p => p.lang === 'uk');
+  const enPapers = capForeign
+    ? enriched.filter(p => p.lang !== 'uk').slice(0, maxForeign)
+    : enriched.filter(p => p.lang !== 'uk');
+  const papers = [...ukPapers, ...enPapers];
+
+  const newLines = papers.map(paperToCitation).filter(Boolean);
+  if (!newLines.length) return unchanged;
+
+  let abstractsMap = order.abstractsMap || {};
+  papers.forEach((p, i) => {
+    if (p.abstract && newLines[i]) abstractsMap = { ...abstractsMap, [newLines[i]]: p.abstract };
+  });
+
+  let sourceThesisMap = order.sourceThesisMap || {};
+  papers.forEach((p, i) => {
+    if (p.sourceThesis && newLines[i]) sourceThesisMap = { ...sourceThesisMap, [newLines[i]]: p.sourceThesis };
+  });
+
+  const cur = (order.citInputs?.[secId] || '').trimEnd();
+  const curLinesNorm = cur ? cur.split('\n').map(l => l.trim().toLowerCase()) : [];
+  const uniqueNewLines = newLines.filter(l => !curLinesNorm.includes(l.trim().toLowerCase()));
+  const citInputs = uniqueNewLines.length
+    ? { ...(order.citInputs || {}), [secId]: cur + (cur ? '\n' : '') + uniqueNewLines.join('\n') }
+    : (order.citInputs || {});
+
+  const citStructured = {
+    ...(order.citStructured || {}),
+    [secId]: [...((order.citStructured || {})[secId] || []), ...papers],
+  };
+
+  return { citInputs, citStructured, abstractsMap, sourceThesisMap };
+}
+
+/**
+ * Підбирає й довставляє джерела для ОДНОГО підрозділу: генерує тези й пошукові
+ * фрази (спрощено — по одній секції, не пакетами по 8, як в оригінальному
+ * doGenKeywords), шукає з каскадом добору при нестачі (doSearchSources), і
+ * автоматично вставляє підтверджені джерела в citInputs (авто-вставка з
+ * SourcesStage.jsx — раніше єдине місце, куди воркер не мав доступу взагалі).
+ *
+ * Природний чекпойнт: якщо order.citInputs[sec.id] вже непорожній, викликач
+ * має просто пропустити цю секцію — та сама ознака "секція готова", яку й
+ * досі використовує авто-вставка в браузері ("вже є джерела — не втручаємось").
+ *
+ * @param {object} order - info, sections, sourceDist, citInputs, citStructured,
+ *   abstractsMap, sourceThesisMap, content, commentAnalysis, methodInfo
+ * @param {object} sec - підрозділ зі order.sections
+ * @param {object} ctx - { callGemini, signal?, onCost?, crossSectionSeen? } —
+ *   crossSectionSeen (Set) можна передати спільним для всіх секцій одного
+ *   замовлення, щоб те саме джерело не потрапило у два підрозділи (як
+ *   doGenKeywords робить у браузері); якщо не передати — ізольовано на секцію.
+ * @returns {Promise<{citInputs, citStructured, abstractsMap, sourceThesisMap}>}
+ */
+export async function runSourcesStage(order, sec, ctx) {
+  const secId = sec.id;
+  const { theses, enPhrases } = await genThesesForSection(order, sec, ctx);
+
+  const isEconSecForSources = isEcon(order.info) && getEconSections(order.sections, order.info).includes(secId);
+  if (!theses.length && !isEconSecForSources) {
+    return { citInputs: order.citInputs || {}, citStructured: order.citStructured || {}, abstractsMap: order.abstractsMap || {}, sourceThesisMap: order.sourceThesisMap || {} };
+  }
+
+  const { groups } = await searchSourcesForSection(order, sec, theses, enPhrases, ctx);
+  const needed = (order.sourceDist || {})[secId] || 4;
+  const top = autoSelectSources(groups, needed, isTechnical(order.info));
+  return await insertSourcesIntoOrder(order, secId, top, { capForeign: true });
 }

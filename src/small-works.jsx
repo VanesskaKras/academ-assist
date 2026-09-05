@@ -12,6 +12,8 @@ import { enforceWordCount } from "./lib/wordCount.js";
 import { SpinDot, Shimmer } from "./components/SpinDot.jsx";
 import { FieldBox, Heading, NavBtn, PrimaryBtn, GreenBtn, SaveIndicator } from "./components/Buttons.jsx";
 import { DropZone } from "./components/DropZone.jsx";
+import { DeptGuidanceZone } from "./components/DeptGuidanceZone.jsx";
+import { ExampleFileZone } from "./components/ExampleFileZone.jsx";
 import { parsePagesAvg, exportSimpleDocx, TA, TA_WHITE, SHARED_STYLES } from "./shared.jsx";
 import { getLangLabels } from "./lib/planUtils.js";
 import { fixDanglingFigures } from "./lib/figureFixup.js";
@@ -274,6 +276,11 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
   // Тези — матеріал для роботи (текст + файли що аналізуються при генерації)
   const [materialText, setMaterialText] = useState("");
   const [materialFiles, setMaterialFiles] = useState([]); // [{name, b64, type}]
+  // Додаткові рекомендації кафедри/викладача (текст або фото/скріншоти — не офіційна методичка) — для реферату
+  const [deptGuidanceText, setDeptGuidanceText] = useState("");
+  // Зразок структури реферату (docx/pdf) — текст витягується одразу при завантаженні
+  const [structureExampleName, setStructureExampleName] = useState("");
+  const [structureExampleText, setStructureExampleText] = useState("");
   const [instrFiles, setInstrFiles] = useState([]); // презентація — файли з інструкціями оформлення
 
   // Тези — дані автора
@@ -406,6 +413,9 @@ export default function SmallWorks({ orderId, onOrderCreated, onBack }) {
           if (d.citStructured) setCitStructured(d.citStructured);
           if (d.searchPhrases?.length) setSearchPhrases(d.searchPhrases);
           if (d.materialText) setMaterialText(d.materialText);
+          if (d.deptGuidanceText) setDeptGuidanceText(d.deptGuidanceText);
+          if (d.structureExampleName) setStructureExampleName(d.structureExampleName);
+          if (d.structureExampleText) setStructureExampleText(d.structureExampleText);
           if (d.instrFiles?.length) setInstrFiles(d.instrFiles);
           if (d.sourcesFormatted) setSourcesFormatted(d.sourcesFormatted);
           if (d.methodInfo) setMethodInfo(d.methodInfo);
@@ -598,12 +608,15 @@ introStructure — якщо у методичці явно вказана стр
       const materialHint = ((isTezy || isSimpleWithSources || isReferat || workType === "prezentatsiya") && materialText.trim())
         ? `\nМАТЕРІАЛ (фрагмент для розуміння теми):\n${materialText.trim().slice(0, 1500)}`
         : "";
+      const deptGuidanceHint = (isReferat && deptGuidanceText.trim())
+        ? `\nДОДАТКОВІ РЕКОМЕНДАЦІЇ КАФЕДРИ/ВИКЛАДАЧА (враховуй нарівні з методичкою): ${deptGuidanceText.trim()}`
+        : "";
 
       const prompt = `Проаналізуй замовлення на ${WORK_TYPES[workType]?.label || workType}.
 
 ШАБЛОН:
 ${tplText}
-${comment ? `\nКОМЕНТАР: ${comment}` : ""}${materialHint}
+${comment ? `\nКОМЕНТАР: ${comment}` : ""}${materialHint}${deptGuidanceHint}
 
 Поверни ТІЛЬКИ JSON (без markdown):
 {"type":"${WORK_TYPES[workType]?.label || workType}","pages":"","topic":"","subject":"","direction":"","uniqueness":"","language":"Українська","deadline":"","orderNumber":"","requirements":"","formatting":{"left":null,"right":null,"top":null,"bottom":null}${tezyFields}${simpleFields}${stattiaFields}${referatFields}}
@@ -684,7 +697,7 @@ formatting — поля сторінки в мм якщо явно вказан�
       if (mergedMethodInfo) setMethodInfo(prev => ({ ...(prev || {}), ...mergedMethodInfo, formatting: { ...(prev?.formatting || {}), ...mergedMethodInfo.formatting } }));
 
       if (workType === "referat") {
-        await saveToFirestore({ tplText, comment, clientPlan, materialText, info: newInfo, ...(extractedMethodReqs ? { methodRequirements: extractedMethodReqs } : {}), ...(mergedMethodInfo ? { methodInfo: mergedMethodInfo } : {}), stage: "plan", status: "new" });
+        await saveToFirestore({ tplText, comment, clientPlan, materialText, deptGuidanceText, structureExampleName, structureExampleText, info: newInfo, ...(extractedMethodReqs ? { methodRequirements: extractedMethodReqs } : {}), ...(mergedMethodInfo ? { methodInfo: mergedMethodInfo } : {}), stage: "plan", status: "new" });
         setStage("plan");
       } else if (isTezy && newInfo.needsSources !== false) {
         await saveToFirestore({ tplText, comment, materialText, authorData, info: newInfo, ...(extractedMethodReqs ? { methodRequirements: extractedMethodReqs } : {}), ...(mergedMethodInfo ? { methodInfo: mergedMethodInfo } : {}), stage: "sources", status: "new" });
@@ -1140,8 +1153,10 @@ ${supervisorBlock}`;
 Тема: "${info?.topic}". Галузь: ${info?.subject || ""}. Обсяг: ${totalPages} стор.
 Кількість основних розділів: ${chapCount}.
 ${info?.requirements ? `Вимоги методички: ${info.requirements}` : ""}
+${deptGuidanceText?.trim() ? `\nДодаткові рекомендації кафедри/викладача (враховуй нарівні з методичкою): ${deptGuidanceText.trim()}\n` : ""}
+${structureExampleText?.trim() ? `\nЗРАЗОК СТРУКТУРИ реферату — побудуй план розділів за реальною структурою цього зразка:\n${structureExampleText.trim().slice(0, 4000)}\n` : ""}
 
-Назви розділів мають відповідати темі. Якщо у методичці є конкретна структура — використай її.
+Назви розділів мають відповідати темі. Якщо є зразок структури — пріоритет за ним, інакше якщо у методичці є конкретна структура — використай її.
 
 Поверни ТІЛЬКИ JSON:
 {"sections":[
@@ -1450,6 +1465,9 @@ ${planContext}
     // Номер розділу (для нумерації таблиць/рисунків X.Y) — підтримує і цілий розділ ("2"), і підрозділ ("2.1")
     const chapNum = sec.id.includes(".") ? sec.id.split(".")[0] : (/^\d+$/.test(sec.id) ? sec.id : null);
     const commentBlock = comment?.trim() ? `\nКОМЕНТАР ДО РОБОТИ: ${comment.trim()}\n` : "";
+    const deptGuidanceBlock = isReferat && deptGuidanceText?.trim()
+      ? `\nРЕКОМЕНДАЦІЇ КАФЕДРИ/ВИКЛАДАЧА (враховуй нарівні з методичкою): ${deptGuidanceText.trim()}\n`
+      : "";
 
     let instruction = "";
     if (sec.id === "intro") {
@@ -1465,12 +1483,12 @@ ${planContext}
 Абзац 5 — починай рядок зі слів "Завдання дослідження:" і одразу на тому ж рядку — 3-4 завдання через крапку з комою АБО кожне з нового рядка як продовження абзацу.
 ЗАБОРОНЕНО: НЕ пиши мітку окремим рядком а текст нижче — мітка і текст завжди разом на одному рядку.`;
       instruction = `Напиши ВСТУП для реферату на тему "${info?.topic}".
-${materialContext}${methodReqBlock}${commentBlock}${introStructure}
+${materialContext}${methodReqBlock}${commentBlock}${deptGuidanceBlock}${introStructure}
 ${!methodReqBlock && info?.requirements ? `\nДодаткові вимоги: ${info.requirements}` : ""}
 Обсяг: ~${approxParas} абзаців (~${pagesPerSec} стор.). Без цитат на джерела. Починай одразу з тексту — не пиши слово "Вступ" на початку.`;
     } else if (sec.id === "conclusions") {
       instruction = `Напиши ВИСНОВКИ для реферату на тему "${info?.topic}".
-${materialContext}${methodReqBlock}${commentBlock}Підсумуй основні результати по кожному розділу. Конкретні висновки без загальних фраз.
+${materialContext}${methodReqBlock}${commentBlock}${deptGuidanceBlock}Підсумуй основні результати по кожному розділу. Конкретні висновки без загальних фраз.
 ${!methodReqBlock && info?.requirements ? `Вимоги: ${info.requirements}\n` : ""}Обсяг: ~${approxParas} абзаців (~${pagesPerSec} стор.). Без цитат. Без жирного. Без нумерації. Пиши суцільними абзацами.`;
     } else if (sec.sectionTitle) {
       // Підрозділ — частина розбитого розділу
@@ -1478,14 +1496,14 @@ ${!methodReqBlock && info?.requirements ? `Вимоги: ${info.requirements}\n`
         ? `Таблиці нумеруй: Таблиця ${chapNum}.Y – Назва (Y — порядковий номер у цьому розділі, починаючи з 1). Рисунки нумеруй: Рис. ${chapNum}.Y – Назва.`
         : "";
       instruction = `Напиши підрозділ "${sec.label}" розділу "${sec.sectionTitle}" для реферату на тему "${info?.topic}". Галузь: ${info?.subject || ""}.
-${materialContext}${methodReqBlock}${commentBlock}${sourcesBlock}${!methodReqBlock && info?.requirements ? `Вимоги до оформлення: ${info.requirements}\n` : ""}${tableNumInstr ? tableNumInstr + "\n" : ""}Обсяг: ~${approxParas} абзаців (~${pagesPerSec} стор.). ${citNote} Без жирного. Завершуй підсумковим реченням.
+${materialContext}${methodReqBlock}${commentBlock}${deptGuidanceBlock}${sourcesBlock}${!methodReqBlock && info?.requirements ? `Вимоги до оформлення: ${info.requirements}\n` : ""}${tableNumInstr ? tableNumInstr + "\n" : ""}Обсяг: ~${approxParas} абзаців (~${pagesPerSec} стор.). ${citNote} Без жирного. Завершуй підсумковим реченням.
 НЕ включай назву підрозділу у відповідь — починай одразу з тексту.`;
     } else {
       const tableNumInstr = chapNum
         ? `Таблиці нумеруй: Таблиця ${chapNum}.Y – Назва (Y — порядковий номер у цьому розділі, починаючи з 1). Рисунки нумеруй: Рис. ${chapNum}.Y – Назва.`
         : "";
       instruction = `Напиши розділ "${sec.label}" для реферату на тему "${info?.topic}". Галузь: ${info?.subject || ""}.
-${materialContext}${methodReqBlock}${commentBlock}${sourcesBlock}${!methodReqBlock && info?.requirements ? `Вимоги до оформлення: ${info.requirements}\n` : ""}${tableNumInstr ? tableNumInstr + "\n" : ""}Обсяг: ~${approxParas} абзаців (~${pagesPerSec} стор.). ${citNote} Без жирного. Завершуй підсумковим реченням.
+${materialContext}${methodReqBlock}${commentBlock}${deptGuidanceBlock}${sourcesBlock}${!methodReqBlock && info?.requirements ? `Вимоги до оформлення: ${info.requirements}\n` : ""}${tableNumInstr ? tableNumInstr + "\n" : ""}Обсяг: ~${approxParas} абзаців (~${pagesPerSec} стор.). ${citNote} Без жирного. Завершуй підсумковим реченням.
 НЕ включай заголовок розділу у відповідь — починай одразу з тексту.`;
     }
 
@@ -2179,6 +2197,28 @@ ${reqBlock}${materialContext}${commentBlock}${sourcesBlock}
                     <DropZone fileLabel={null} onFile={handleAddFile} accept=".pdf,.docx,.jpg,.jpeg,.png" />
                   )}
                 </div>
+              </FieldBox>
+            )}
+
+            {workType === "referat" && (
+              <FieldBox label="Додаткові рекомендації кафедри (необов'язково)" tooltip="Якщо крім методички є ще вказівки викладача/кафедри (напр. скріншоти посту в Telegram) — вставте текст або завантажте фото, програма врахує їх при написанні плану та тексту">
+                <DeptGuidanceZone
+                  value={deptGuidanceText}
+                  onChange={text => { setDeptGuidanceText(text); saveToFirestore({ deptGuidanceText: text }); }}
+                />
+              </FieldBox>
+            )}
+
+            {workType === "referat" && (
+              <FieldBox label="Зразок структури реферату (необов'язково)" tooltip="Приклад готового реферату — план розділів згенерується за його реальною структурою. Приймається .docx та .pdf; якщо файл .doc — спершу збережіть його як .pdf.">
+                <ExampleFileZone
+                  fileName={structureExampleName}
+                  hint="Перетягніть або клікніть — .docx, .pdf (.doc спершу збережіть як .pdf)"
+                  onExtracted={(name, text) => {
+                    setStructureExampleName(name); setStructureExampleText(text);
+                    saveToFirestore({ structureExampleName: name, structureExampleText: text });
+                  }}
+                />
               </FieldBox>
             )}
 

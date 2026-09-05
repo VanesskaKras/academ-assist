@@ -9,15 +9,19 @@
 //     node worker/runOrder.js <orderId> [--api-base=https://...]
 //
 // Межі цієї фази (навмисно не автоматизовано):
-//   - стадія "sources" (пошук і довставка джерел) — виконується вручну через
-//     сайт; скрипт зупиняється й просить довести замовлення до стадії
-//     "writing" через звичайний UI;
-//   - Додаток А для емпіричних робіт (doGenAppendices) — якщо секція
-//     потребує вже готового додатку, а його нема, секція просто генерується
-//     без цього контексту (у браузері генерація в такому разі чекає на
-//     Додаток А — тут ні). Не критично для тестових замовлень без Додатку А.
+//   - "ширший період"/"оновити джерела" для окремого підрозділу — ручні кнопки
+//     дороблення в браузері, не частина автоматичного потоку;
+//   - профіль підприємства для економічних робіт (doGenEconProfile) — якщо
+//     Додаток А економічної роботи мав би спиратись на щойно згенерований
+//     профіль, а econProfile в замовленні ще порожній, Додаток А генерується
+//     без цього блоку (не критично для тестових замовлень без цього кроку).
 import { loadOrder, saveOrderPatch } from "./firestoreAdmin.js";
-import { runAnalyzeStage, runPlanStage, runWritingSection, runRemapStage } from "../src/lib/orderStages.js";
+import {
+  runAnalyzeStage, runPlanStage, runSourcesStage, runWritingSection, runRemapStage,
+  runAppendicesStage, runFillAppendixDataStage, sectionNeedsAppendix, planAppendixGeneration,
+} from "../src/lib/orderStages.js";
+import { getEmpiricalSections } from "../src/lib/planUtils.js";
+import { APPENDIX_FILL_MARKER } from "../src/lib/textCleanup.js";
 import { callClaude, callGemini, setApiBase, createCostTracker, resetGenerationCost } from "../src/lib/api.js";
 import { createTokenAccumulator } from "./tokenAccumulator.js";
 
@@ -69,21 +73,45 @@ async function main() {
   }
 
   if (order.stage === "plan" || order.stage === "sources") {
-    console.log(`\n⏸ Замовлення на стадії "${order.stage}" — підбір і довставка джерел у цій фазі виконується вручну через сайт.`);
-    console.log(`  Довстав джерела через звичайний UI, доведи замовлення до стадії "writing" (кнопка "До написання"), і запусти скрипт знову.`);
-    return;
-  }
-
-  if (order.stage === "writing") {
-    // generationStartedAt — той самий підхід, що й startGen() у браузері: якщо
-    // вже виставлено (замовлення почав браузер) — не чіпаємо, лише довіряємось
-    // йому для фінального підрахунку generationDurationSec.
+    // generationStartedAt — той самий підхід і той самий момент, що й
+    // startGen() у браузері: виставляється на самому початку sources-фази,
+    // до самого пошуку джерел, а не пізніше на "writing".
     if (!order.generationStartedAt) {
       await save({ generationStartedAt: new Date().toISOString() });
     }
+    console.log("→ Підбір джерел...");
+    const mainSecs = (order.sections || []).filter(s => !["intro", "conclusions", "sources", "chapter_conclusion"].includes(s.type));
+    // crossSectionSeen — спільний для всіх підрозділів цього запуску, щоб те
+    // саме джерело не потрапило в citInputs двох різних підрозділів одразу
+    // (той самий підхід, що doGenKeywords використовує в браузері).
+    const crossSectionSeen = new Set();
+    for (const sec of mainSecs) {
+      if ((order.citInputs?.[sec.id] || "").trim()) continue; // вже є джерела — природний чекпойнт, як і авто-вставка в браузері
+      console.log(`  [джерела] ${sec.label}`);
+      const patch = await runSourcesStage(order, sec, { callGemini: wrappedCallGemini, onCost: tokenAcc.onCost, crossSectionSeen });
+      await save({ ...patch, workflowMode: "sources-first", stage: "sources", status: "writing" });
+    }
+    await save({ stage: "writing", status: "writing" });
+  }
+
+  if (order.stage === "writing") {
+    // Додаток А: реальний інструмент (методика/тест/експеримент) чи додатки
+    // з реальним обґрунтуванням генеруємо ДО тексту — вони не залежать від
+    // того, що напише ШІ. Авторську анкету (немає фіксованого джерела істини)
+    // відкладаємо до готового тексту — той самий підхід, що й startGen().
+    if (!order.appendicesText) {
+      const { needsAppendix, deferred } = planAppendixGeneration(order);
+      if (needsAppendix && !deferred) {
+        console.log("→ Генерую Додаток А (до написання тексту)...");
+        const patch = await runAppendicesStage(order, { callClaude: wrappedCallClaude, onCost: tokenAcc.onCost });
+        await save(patch);
+      }
+    }
+
     const sections = order.sections || [];
     let genIdx = order.genIdx || 0;
     console.log(`→ Написання: ${genIdx}/${sections.length} підрозділів уже готово`);
+    const deferredSecIds = [];
     while (genIdx < sections.length) {
       const sec = sections[genIdx];
       if (order.content?.[sec.id] !== undefined) { genIdx++; continue; }
@@ -92,11 +120,49 @@ async function main() {
         await save({ content: { ...order.content, [sec.id]: "[Додайте джерела на кроці «Джерела»]" }, genIdx });
         continue;
       }
+      if (!order.appendicesText && sectionNeedsAppendix(sec, order)) {
+        // Додаток А ще не готовий (відкладена генерація) — цей підрозділ
+        // пропускаємо, повернемось до нього після написання решти й генерації додатку.
+        deferredSecIds.push(sec.id);
+        genIdx++;
+        continue;
+      }
       console.log(`  [${genIdx + 1}/${sections.length}] ${sec.label}`);
       const patch = await runWritingSection(order, sec, { callClaude: wrappedCallClaude, onProgress, onCost: tokenAcc.onCost });
       genIdx++;
       await save({ content: patch.content, citInputs: patch.citInputs, abstractsMap: patch.abstractsMap, sourceThesisMap: patch.sourceThesisMap, glossary: patch.glossary, stage: "writing", status: "writing", genIdx });
       await new Promise(r => setTimeout(r, 2000)); // пауза проти rate limit, як і в браузері
+    }
+
+    // Відкладена генерація Додатку А — тепер, коли решта тексту готова,
+    // додаток узгоджується з реально написаною вибіркою (той самий підхід,
+    // що deferred-ефект у браузері) — і дописуємо підрозділи, які на нього чекали.
+    if (deferredSecIds.length && !order.appendicesText) {
+      console.log("→ Генерую Додаток А (відкладено, узгоджено з готовим текстом)...");
+      const empSecsForApp = getEmpiricalSections(order.sections, order.info, order.commentAnalysis, order.methodInfo);
+      const empIds = new Set([...(empSecsForApp.chapterSectionIds || []), empSecsForApp.anchorId].filter(Boolean));
+      const empText = order.sections.filter(s => empIds.has(s.id)).map(s => order.content[s.id]).filter(Boolean).join("\n\n");
+      const finishedBodyText = empText || order.sections.filter(s => s.type !== "sources").map(s => order.content[s.id]).filter(Boolean).join("\n\n");
+      const appPatch = await runAppendicesStage(order, { callClaude: wrappedCallClaude, onCost: tokenAcc.onCost }, { finishedBodyTextOverride: finishedBodyText });
+      await save(appPatch);
+
+      for (const secId of deferredSecIds) {
+        const sec = order.sections.find(s => s.id === secId);
+        if (!sec || order.content?.[sec.id] !== undefined) continue;
+        console.log(`  [відкладений] ${sec.label}`);
+        const patch = await runWritingSection(order, sec, { callClaude: wrappedCallClaude, onProgress, onCost: tokenAcc.onCost });
+        await save({ content: patch.content, citInputs: patch.citInputs, abstractsMap: patch.abstractsMap, sourceThesisMap: patch.sourceThesisMap, glossary: patch.glossary });
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    }
+
+    // Автозаповнення полів Додатку А, позначених маркером (напр. "Фактичний
+    // результат"/"Статус" для ІТ-протоколу тестування) — тепер, коли основний
+    // текст точно готовий, так само як в браузері.
+    if (order.appendicesText?.includes(APPENDIX_FILL_MARKER)) {
+      console.log("→ Автозаповнення полів Додатку А...");
+      const fillPatch = await runFillAppendixDataStage(order, { callClaude: wrappedCallClaude, onCost: tokenAcc.onCost });
+      if (fillPatch.appendicesText) await save(fillPatch);
     }
 
     console.log("→ Усі підрозділи готові. Перерозподіл цитат, список джерел, фінальне оформлення...");

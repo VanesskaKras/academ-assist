@@ -501,6 +501,18 @@ export function resolvePracticeFixedPages(practiceText, deptGuidanceText) {
   return { introPages, conclPages };
 }
 
+// Методичка часто зберігає зразки титулки/завдання у ВЛАСНИХ додатках
+// ("ДОДАТОК В", "ДОДАТОК Г" тощо) — цей ярлик належить нумерації додатків
+// методички, а не сторінці студентської роботи (де титулка й завдання —
+// обов'язкові структурні елементи без жодного "Додаток"-заголовка). AI іноді
+// копіює цей рядок разом із самим зразком; прибираємо його детерміновано.
+export function stripLeadingAppendixLabel(templateArr) {
+  if (!Array.isArray(templateArr) || !templateArr.length) return templateArr;
+  const first = (templateArr[0]?.text || "").trim();
+  if (/^ДОДАТОК\s+[А-ЯA-Z]\.?$/i.test(first)) return templateArr.slice(1);
+  return templateArr;
+}
+
 export function parseTemplate(text) {
   const g = (re, fb = "") => { const m = text.match(re); return m ? m[1].trim() : fb; };
   return {
