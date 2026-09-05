@@ -54,7 +54,7 @@ export function isWorkingDay(date) {
   return !isUkrainianPublicHoliday(date);
 }
 
-function parseDdMmYyyy(str) {
+export function parseDdMmYyyy(str) {
   const m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec((str || "").trim());
   if (!m) return null;
   const [, d, mo, y] = m;

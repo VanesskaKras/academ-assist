@@ -1540,16 +1540,25 @@ ${secBlock}
     setDocxLoading(true);
     try {
       const info = getPracticeInfo();
-      const displayOrder = [
-        ...sections.filter(s => s.id !== "sources"),
-        ...(refList ? [{ id: "sources", label: "Список використаних джерел", pages: 0 }] : []),
-      ];
+      // Список джерел має йти ПЕРЕД Додатками (вимога методички), а не автоматично в самому кінці —
+      // секція "Додатки" це звичайний писемний розділ у masивi sections і природно опиняється
+      // останньою, тож джерела треба вставити ПЕРЕД нею, а не після.
+      const nonSourceSecs = sections.filter(s => s.id !== "sources");
+      const sourcesEntry = refList ? [{ id: "sources", label: "Список використаних джерел", pages: 0 }] : [];
+      const appendixIdx = nonSourceSecs.findIndex(s => /додат/i.test(s.label || ""));
+      const displayOrder = appendixIdx >= 0
+        ? [...nonSourceSecs.slice(0, appendixIdx), ...sourcesEntry, ...nonSourceSecs.slice(appendixIdx)]
+        : [...nonSourceSecs, ...sourcesEntry];
       const exportContent = {
         ...content,
         ...(refList ? { sources: refList } : {}),
       };
-      // Титульна сторінка: пріоритет — зразок із методички, інакше складаємо з витягнутих даних практики
-      const titlePageLines = methodInfo?.titlePageTemplate?.length
+      // Титульна сторінка: пріоритет — зразок ІЗ МЕТОДИЧКИ, АЛЕ лише якщо це справді зразок для
+      // звіту з практики (згадує "практик...") — та сама методичка часто містить титулку для
+      // курсової/кваліфікаційної роботи (інший жанр, з рядком "з дисципліни"), яку не можна
+      // підставляти в звіт з практики. Інакше складаємо з витягнутих даних практики.
+      const methodTitlePageMatchesPractice = methodInfo?.titlePageTemplate?.some(l => /практик/i.test(l?.text || ""));
+      const titlePageLines = (methodInfo?.titlePageTemplate?.length && methodTitlePageMatchesPractice)
         ? methodInfo.titlePageTemplate
         : buildPracticeTitlePageLines(info);
       // Зразок без підрозділів → звіт це один суцільний розділ "main" (без вступу/висновків) —
@@ -1600,7 +1609,7 @@ ${secBlock}
       const diaryCalendarGraphWeeks = dti?.calendarGraphWeeksCount || 6;
       const { mainText: diaryMainText, calendarGraphText } = splitDiaryCalendarGraph(diaryContent);
       const diaryCalendarGraphRows = dti?.hasCalendarGraphSection
-        ? parseDiaryCalendarGraphRows(calendarGraphText, diaryCalendarGraphWeeks)
+        ? parseDiaryCalendarGraphRows(calendarGraphText, diaryCalendarGraphWeeks, info.dateStart)
         : [];
       const diaryWorkRecords = parseDiaryWorkRecords(diaryMainText);
       await exportToDocx({

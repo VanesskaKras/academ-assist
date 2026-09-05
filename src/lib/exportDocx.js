@@ -1,4 +1,5 @@
 import { getLangLabels, detectChapterWord, CHAPTER_WORD_RE } from "./planUtils.js";
+import { parseDdMmYyyy } from "./ukrainianHolidays.js";
 import { PRACTICE_TYPE_GENITIVE } from "./practiceDefaults.js";
 import { deriveDegreeLevelFromType, fixMismatchedDegreeWord } from "./titlePageTokens.js";
 import {
@@ -591,14 +592,44 @@ export function splitDiaryCalendarGraph(diaryText) {
   return { mainText: diaryText.slice(0, idx).trim(), calendarGraphText: diaryText.slice(idx + CALENDAR_GRAPH_MARKER.length) };
 }
 
+// Знаходить першу дату "дд.мм" чи "дд.мм.рррр" у тексті клітинки календарного графіка.
+function extractFirstDayMonth(text) {
+  const m = /(\d{1,2})\.(\d{1,2})(?:\.(\d{4}))?/.exec(text || "");
+  return m ? { day: +m[1], month: +m[2], year: m[3] ? +m[3] : null } : null;
+}
+
+// Номер тижня (0-індекс), у якому фактично лежить дата з клітинки, рахуючи від dateStart —
+// незалежно від того, в яку колонку таблиці ШІ цю дату помилково вписав (ШІ регулярно ставить
+// усі дати в колонку "Тиждень 1", ігноруючи реальний тиждень практики).
+function weekIndexForCell(cellText, startDate, weeksCount) {
+  if (!startDate) return null;
+  const parsed = extractFirstDayMonth(cellText);
+  if (!parsed) return null;
+  const year = parsed.year || startDate.getUTCFullYear();
+  const cellDate = new Date(Date.UTC(year, parsed.month - 1, parsed.day));
+  const diffDays = Math.round((cellDate - startDate) / 86400000);
+  if (diffDays < 0) return null;
+  return Math.min(weeksCount - 1, Math.floor(diffDays / 7));
+}
+
 // Таблиця "Календарний графік" → рядки для exportToDocx: [{ name, weeks: [...], note }]
-export function parseDiaryCalendarGraphRows(calendarGraphText, weeksCount) {
+export function parseDiaryCalendarGraphRows(calendarGraphText, weeksCount, dateStart) {
+  const startDate = parseDdMmYyyy(dateStart);
   return parseMdTableDataRows(calendarGraphText)
-    .map(cells => ({
-      name: cells[0] || "",
-      weeks: Array.from({ length: weeksCount }, (_, i) => cells[i + 1] || ""),
-      note: cells[weeksCount + 1] || "Виконано",
-    }))
+    .map(cells => {
+      const weeks = Array.from({ length: weeksCount }, () => "");
+      for (let i = 1; i <= weeksCount; i++) {
+        const cellText = (cells[i] || "").trim();
+        if (!cellText) continue;
+        const targetIdx = weekIndexForCell(cellText, startDate, weeksCount) ?? (i - 1);
+        weeks[targetIdx] = weeks[targetIdx] ? `${weeks[targetIdx]}, ${cellText}` : cellText;
+      }
+      return {
+        name: cells[0] || "",
+        weeks,
+        note: cells[weeksCount + 1] || "Виконано",
+      };
+    })
     .filter(r => r.name);
 }
 
